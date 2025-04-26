@@ -91,6 +91,10 @@ func FromList(effects []effectus.Effect) *Program {
 // Run executes a program with an executor, returning the final value
 func Run(program *Program, executor effectus.Executor) (interface{}, error) {
 	if program.Tag == PureProgramTag {
+		// Check if the Pure value is an error
+		if err, isError := program.Pure.(error); isError {
+			return nil, err
+		}
 		return program.Pure, nil
 	}
 

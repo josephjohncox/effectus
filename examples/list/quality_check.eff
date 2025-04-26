@@ -4,7 +4,7 @@ rule "QUALITY_CHECK" priority 10 {
         part.quality.level > 2
     }
     then {
-        LogInfo("Quality check required", { "part_id": part.id })
-        RequestQualityInspection(part.id, "detailed")
+        LogInfo message:"Quality check required" part:part.id
+        RequestQualityInspection part:part.id type:"detailed"
     }
 } 

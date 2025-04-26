@@ -13,7 +13,10 @@ import (
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
 	"github.com/effectus/effectus-go/flow"
+	"github.com/effectus/effectus-go/list"
 	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/unified"
+	"github.com/effectus/effectus-go/util"
 )
 
 // SimpleExecutor is a basic implementation of effectus.Executor
@@ -131,6 +134,8 @@ func (e *SimpleExecutor) Do(effect effectus.Effect) (interface{}, error) {
 		}, nil
 	case "logActivity":
 		return "activity_logged", nil
+	case "DoSomething":
+		return "DoSomething", nil
 	default:
 		return nil, nil
 	}
@@ -190,195 +195,272 @@ func main() {
 	flag.Parse()
 
 	if flag.NArg() < 1 {
-		fmt.Println("Usage: test [-mode=parse|compile|run] [-verbose] [-execute] [-ast] <file>")
+		fmt.Println("Usage: test [-mode=parse|compile|run] [-verbose] [-execute] [-ast] <file> [<file2> ...]")
 		os.Exit(1)
 	}
 
-	filename := flag.Arg(0)
+	// Get all file arguments
+	filenames := flag.Args()
 
 	if verbose {
-		fmt.Printf("Processing file: %s in mode: %s\n", filename, mode)
+		fmt.Printf("Processing %d file(s) in mode: %s\n", len(filenames), mode)
 	}
 
 	switch mode {
 	case "parse":
-		parseFile(filename, verbose, dumpAST)
+		parseFiles(filenames, verbose, dumpAST)
 	case "compile":
-		compileFile(filename, verbose, dumpAST)
+		compileFiles(filenames, verbose, dumpAST)
 	case "run":
-		runFile(filename, verbose, execute, dumpAST)
+		runFiles(filenames, verbose, execute, dumpAST)
 	default:
 		fmt.Printf("Unknown mode: %s\n", mode)
 		os.Exit(1)
 	}
 }
 
-// parseFile parses a rule file and displays its structure
-func parseFile(filename string, verbose bool, dumpAST bool) {
-	// Parse the file
-	file, err := effectus.ParseFile(filename)
-	if err != nil {
-		fmt.Printf("Parser error: %v\n", err)
-		os.Exit(1)
-	}
+// parseFiles parses multiple rule files and displays their structure
+func parseFiles(filenames []string, verbose bool, dumpAST bool) {
+	for _, filename := range filenames {
+		fmt.Printf("Parsing file: %s\n", filename)
 
-	// Print the parsed file structure
-	fmt.Printf("Successfully parsed %s!\n", filename)
-	fmt.Printf("Includes: %d\n", len(file.Includes))
-	fmt.Printf("Rules: %d\n", len(file.Rules))
-	fmt.Printf("Flows: %d\n", len(file.Flows))
+		// Parse the file
+		file, err := effectus.ParseFile(filename)
+		if err != nil {
+			fmt.Printf("Parser error for %s: %v\n", filename, err)
+			continue
+		}
 
-	if verbose || dumpAST {
-		dumpASTStructure(file)
+		// Print the parsed file structure
+		fmt.Printf("Successfully parsed %s!\n", filename)
+
+		// Fix: AST File structure may have changed, check fields before accessing
+		if dumpAST {
+			dumpASTStructure(file)
+		}
 	}
 }
 
 // dumpASTStructure dumps the AST structure
 func dumpASTStructure(file *ast.File) {
-	if len(file.Flows) > 0 {
-		flow := file.Flows[0]
-		fmt.Printf("\nFlow Details:\n")
-		fmt.Printf("  Name: %s\n", flow.Name)
-		fmt.Printf("  Priority: %d\n", flow.Priority)
-
-		if flow.When != nil && flow.When.Predicates != nil {
-			fmt.Printf("  Predicates: %d\n", len(flow.When.Predicates))
-			for i, pred := range flow.When.Predicates {
-				fmt.Printf("    Predicate %d: %s %s\n", i+1, pred.Path, pred.Op)
-				if pred.Lit.String != nil {
-					fmt.Printf("      Compare with string: %s\n", *pred.Lit.String)
-				} else if pred.Lit.Int != nil {
-					fmt.Printf("      Compare with int: %d\n", *pred.Lit.Int)
-				} else if pred.Lit.Float != nil {
-					fmt.Printf("      Compare with float: %f\n", *pred.Lit.Float)
-				}
-			}
-		}
-
-		if flow.Steps != nil && flow.Steps.Steps != nil {
-			fmt.Printf("  Steps: %d\n", len(flow.Steps.Steps))
-
-			for i, step := range flow.Steps.Steps {
-				fmt.Printf("    Step %d: %s\n", i+1, step.Verb)
-				fmt.Printf("      Args: %d\n", len(step.Args))
-				for j, arg := range step.Args {
-					fmt.Printf("        Arg %d: %s\n", j+1, arg.Name)
-					if arg.Value != nil {
-						if arg.Value.VarRef != "" {
-							fmt.Printf("          VarRef: %s\n", arg.Value.VarRef)
-						} else if arg.Value.FactPath != "" {
-							fmt.Printf("          FactPath: %s\n", arg.Value.FactPath)
-						} else if arg.Value.Literal != nil {
-							fmt.Printf("          Literal: %v\n", describeLiteral(arg.Value.Literal))
-						}
-					}
-				}
-				if step.BindName != "" {
-					fmt.Printf("      BindName: %s\n", step.BindName)
-				}
-			}
-		}
-	}
+	dumper := util.NewStdoutASTDumper()
+	dumper.DumpFile(file)
 }
 
-// Helper function to describe literals nicely
-func describeLiteral(lit *ast.Literal) string {
-	if lit.String != nil {
-		return fmt.Sprintf("string(%s)", *lit.String)
-	}
-	if lit.Int != nil {
-		return fmt.Sprintf("int(%d)", *lit.Int)
-	}
-	if lit.Float != nil {
-		return fmt.Sprintf("float(%f)", *lit.Float)
-	}
-	if lit.Bool != nil {
-		return fmt.Sprintf("bool(%t)", *lit.Bool)
-	}
-	return "unknown"
-}
+// compileFiles compiles multiple rule files using the appropriate compiler
+func compileFiles(filenames []string, verbose bool, dumpAST bool) {
+	// Group files by type
+	effFiles := []string{}
+	effxFiles := []string{}
 
-// compileFile compiles a rule file using the appropriate compiler
-func compileFile(filename string, verbose bool, dumpAST bool) {
-	// Determine the appropriate compiler based on file extension
-	ext := filepath.Ext(filename)
-	var compiler effectus.Compiler
+	for _, path := range filenames {
+		ext := filepath.Ext(path)
+		switch ext {
+		case ".eff":
+			effFiles = append(effFiles, path)
+		case ".effx":
+			effxFiles = append(effxFiles, path)
+		default:
+			fmt.Printf("Unsupported file extension for %s: %s (must be .eff or .effx)\n", path, ext)
+		}
+	}
 
-	switch ext {
-	case ".eff":
-		fmt.Println("Using list-style compiler")
-		// In a complete implementation, we would use:
-		// compiler = &list.Compiler{}
-		fmt.Println("List compiler not implemented in this demo")
-		os.Exit(1)
-	case ".effx":
-		fmt.Println("Using flow-style compiler")
-		compiler = &flow.Compiler{}
-	default:
-		fmt.Printf("Unsupported file extension: %s\n", ext)
+	// Check if we have valid files to compile
+	if len(effFiles) == 0 && len(effxFiles) == 0 {
+		fmt.Println("No valid files to compile")
 		os.Exit(1)
 	}
 
 	// Create a schema
 	schema := &schema.SimpleSchema{}
 
-	// Compile the file
-	spec, err := compiler.CompileFile(filename, schema)
+	// Compile all files and merge them
+	mergedSpec, err := compileAllFiles(effFiles, effxFiles, schema)
 	if err != nil {
 		fmt.Printf("Compilation error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Successfully compiled %s!\n", filename)
-	fmt.Printf("Required facts: %v\n", spec.RequiredFacts())
+	fmt.Printf("Successfully compiled %d files!\n", len(effFiles)+len(effxFiles))
+	fmt.Printf("Required facts: %v\n", mergedSpec.RequiredFacts())
 
-	if dumpAST {
-		// Parse the file again to dump the AST
-		file, err := effectus.ParseFile(filename)
-		if err == nil {
-			dumpASTStructure(file)
+	if dumpAST && verbose {
+		// Parse the files again to dump the AST
+		for _, filename := range filenames {
+			file, err := effectus.ParseFile(filename)
+			if err == nil {
+				fmt.Printf("\nAST for %s:\n", filename)
+				dumpASTStructure(file)
+			}
 		}
 	}
 }
 
-// runFile compiles and executes a rule file
-func runFile(filename string, verbose bool, execute bool, dumpAST bool) {
-	// Compile the file first
-	ext := filepath.Ext(filename)
-	var compiler effectus.Compiler
+// compileAllFiles compiles both list and flow style rule files and merges them into a single spec
+func compileAllFiles(effFiles, effxFiles []string, schema effectus.SchemaInfo) (effectus.Spec, error) {
+	var listSpec *list.Spec
+	var flowSpec *flow.Spec
 
-	switch ext {
-	case ".eff":
-		fmt.Println("Using list-style compiler")
-		// In a complete implementation, we would use:
-		// compiler = &list.Compiler{}
-		fmt.Println("List compiler not implemented in this demo")
-		os.Exit(1)
-	case ".effx":
-		fmt.Println("Using flow-style compiler")
-		compiler = &flow.Compiler{}
-	default:
-		fmt.Printf("Unsupported file extension: %s\n", ext)
+	// Compile list-style (.eff) files if any
+	if len(effFiles) > 0 {
+		listCompiler := &list.Compiler{}
+		var specs []effectus.Spec
+
+		for _, path := range effFiles {
+			spec, err := listCompiler.CompileFile(path, schema)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile %s: %w", path, err)
+			}
+			specs = append(specs, spec)
+		}
+
+		// Merge list specs
+		listSpec = mergeListSpecs(specs)
+	}
+
+	// Compile flow-style (.effx) files if any
+	if len(effxFiles) > 0 {
+		flowCompiler := &flow.Compiler{}
+
+		var specs []effectus.Spec
+		for _, path := range effxFiles {
+			spec, err := flowCompiler.CompileFile(path, schema)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile %s: %w", path, err)
+			}
+			specs = append(specs, spec)
+		}
+
+		// Merge flow specs
+		flowSpec = mergeFlowSpecs(specs)
+	}
+
+	// Create unified spec that combines both types
+	unifiedSpec := &unified.Spec{
+		ListSpec: listSpec,
+		FlowSpec: flowSpec,
+		Name:     "unified",
+	}
+
+	return unifiedSpec, nil
+}
+
+// mergeListSpecs merges multiple list specs into a single one
+func mergeListSpecs(specs []effectus.Spec) *list.Spec {
+	if len(specs) == 0 {
+		return nil
+	}
+
+	merged := &list.Spec{
+		Rules:     []*list.CompiledRule{},
+		FactPaths: []string{},
+	}
+
+	factPathSet := make(map[string]struct{})
+
+	for _, spec := range specs {
+		listSpec, ok := spec.(*list.Spec)
+		if !ok {
+			continue
+		}
+
+		// Add rules
+		merged.Rules = append(merged.Rules, listSpec.Rules...)
+
+		// Collect fact paths
+		for _, path := range listSpec.FactPaths {
+			factPathSet[path] = struct{}{}
+		}
+	}
+
+	// Extract unique fact paths
+	for path := range factPathSet {
+		merged.FactPaths = append(merged.FactPaths, path)
+	}
+
+	return merged
+}
+
+// mergeFlowSpecs merges multiple flow specs into a single one
+func mergeFlowSpecs(specs []effectus.Spec) *flow.Spec {
+	if len(specs) == 0 {
+		return nil
+	}
+
+	merged := &flow.Spec{
+		Flows:     []*flow.CompiledFlow{},
+		FactPaths: []string{},
+	}
+
+	factPathSet := make(map[string]struct{})
+
+	for _, spec := range specs {
+		flowSpec, ok := spec.(*flow.Spec)
+		if !ok {
+			continue
+		}
+
+		// Add flows
+		merged.Flows = append(merged.Flows, flowSpec.Flows...)
+
+		// Collect fact paths
+		for _, path := range flowSpec.FactPaths {
+			factPathSet[path] = struct{}{}
+		}
+	}
+
+	// Extract unique fact paths
+	for path := range factPathSet {
+		merged.FactPaths = append(merged.FactPaths, path)
+	}
+
+	return merged
+}
+
+// runFiles compiles and executes multiple rule files
+func runFiles(filenames []string, verbose bool, execute bool, dumpAST bool) {
+	// First compile the files
+	effFiles := []string{}
+	effxFiles := []string{}
+
+	for _, path := range filenames {
+		ext := filepath.Ext(path)
+		switch ext {
+		case ".eff":
+			effFiles = append(effFiles, path)
+		case ".effx":
+			effxFiles = append(effxFiles, path)
+		default:
+			fmt.Printf("Unsupported file extension for %s: %s (must be .eff or .effx)\n", path, ext)
+		}
+	}
+
+	// Check if we have valid files to compile
+	if len(effFiles) == 0 && len(effxFiles) == 0 {
+		fmt.Println("No valid files to run")
 		os.Exit(1)
 	}
 
 	// Create a schema
 	schema := &schema.SimpleSchema{}
 
-	// Compile the file
-	spec, err := compiler.CompileFile(filename, schema)
+	// Compile all files and merge them
+	mergedSpec, err := compileAllFiles(effFiles, effxFiles, schema)
 	if err != nil {
 		fmt.Printf("Compilation error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Successfully compiled %s!\n", filename)
+	fmt.Printf("Successfully compiled %d files!\n", len(effFiles)+len(effxFiles))
 
 	if dumpAST {
-		// Parse the file again to dump the AST
-		file, err := effectus.ParseFile(filename)
-		if err == nil {
-			dumpASTStructure(file)
+		// Parse the files again to dump the AST
+		for _, filename := range filenames {
+			file, err := effectus.ParseFile(filename)
+			if err == nil {
+				fmt.Printf("\nAST for %s:\n", filename)
+				dumpASTStructure(file)
+			}
 		}
 	}
 
@@ -398,6 +480,7 @@ func runFile(filename string, verbose bool, execute bool, dumpAST bool) {
 			"order.id":        "ORD-54321",
 			"order.total":     100.50,
 			"order.items":     3,
+			"test.value":      "test",
 		},
 	}
 
@@ -412,7 +495,7 @@ func runFile(filename string, verbose bool, execute bool, dumpAST bool) {
 
 	// Execute the spec
 	ctx := context.Background()
-	err = spec.Execute(ctx, facts, executor)
+	err = mergedSpec.Execute(ctx, facts, executor)
 	if err != nil {
 		fmt.Printf("Execution error: %v\n", err)
 		os.Exit(1)

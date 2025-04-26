@@ -6,6 +6,7 @@ import (
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
+	"github.com/effectus/effectus-go/eval"
 )
 
 // Compiler implements the Compiler interface for list-style rules
@@ -68,7 +69,7 @@ func compileRule(rule *ast.Rule, schema effectus.SchemaInfo) (*CompiledRule, err
 
 	// Compile predicates
 	if rule.When != nil && rule.When.Predicates != nil {
-		predicates := make([]*Predicate, 0, len(rule.When.Predicates))
+		predicates := make([]*eval.Predicate, 0, len(rule.When.Predicates))
 		factPaths := make(map[string]struct{})
 
 		for _, pred := range rule.When.Predicates {
@@ -81,7 +82,7 @@ func compileRule(rule *ast.Rule, schema effectus.SchemaInfo) (*CompiledRule, err
 			factPaths[pred.Path] = struct{}{}
 
 			// Create compiled predicate
-			compiledPred := &Predicate{
+			compiledPred := &eval.Predicate{
 				Path: pred.Path,
 				Op:   pred.Op,
 				Lit:  compileLiteral(&pred.Lit),
@@ -103,9 +104,13 @@ func compileRule(rule *ast.Rule, schema effectus.SchemaInfo) (*CompiledRule, err
 		effects := make([]effectus.Effect, 0, len(rule.Then.Effects))
 
 		for _, effect := range rule.Then.Effects {
+			compiledArgs, err := eval.CompileArgs(effect.Args, nil)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile args: %w", err)
+			}
 			compiledEffect := effectus.Effect{
 				Verb:    effect.Verb,
-				Payload: compileArgs(effect.Args),
+				Payload: compiledArgs,
 			}
 			effects = append(effects, compiledEffect)
 		}
@@ -147,17 +152,3 @@ func compileLiteral(lit *ast.Literal) interface{} {
 	return nil
 }
 
-// compileArgs converts a slice of AST literals to a runtime value
-func compileArgs(args []ast.Literal) interface{} {
-	if len(args) == 0 {
-		return nil
-	}
-	if len(args) == 1 {
-		return compileLiteral(&args[0])
-	}
-	result := make([]interface{}, 0, len(args))
-	for _, arg := range args {
-		result = append(result, compileLiteral(&arg))
-	}
-	return result
-}

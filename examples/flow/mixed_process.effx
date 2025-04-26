@@ -1,5 +1,3 @@
-include "../list/quality_check.eff"
-
 flow "MIXED_PROCESS" priority 3 {
     when {
         order.type == "precision"

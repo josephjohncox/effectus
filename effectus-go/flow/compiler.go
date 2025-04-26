@@ -3,10 +3,10 @@ package flow
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
+	"github.com/effectus/effectus-go/eval"
 )
 
 // Compiler implements the Compiler interface for flow-style rules
@@ -26,6 +26,12 @@ func (c *Compiler) CompileFile(path string, schema effectus.SchemaInfo) (effectu
 		return nil, err
 	}
 
+	// Compile the file
+	return c.CompileParsedFile(file, path, schema)
+}
+
+// CompileParsedFile compiles a parsed file into a flow-style spec
+func (c *Compiler) CompileParsedFile(file *ast.File, path string, schema effectus.SchemaInfo) (effectus.Spec, error) {
 	// Ensure the file contains flows
 	if len(file.Flows) == 0 {
 		return nil, fmt.Errorf("no flows found in file %s", path)
@@ -41,8 +47,12 @@ func (c *Compiler) CompileFile(path string, schema effectus.SchemaInfo) (effectu
 	for _, flow := range file.Flows {
 		compiledFlow, err := compileFlow(flow, schema)
 		if err != nil {
-			return nil, fmt.Errorf("failed to compile flow %s: %w", flow.Name, err)
+			return nil, fmt.Errorf("failed to compile flow %s in %s: %w", flow.Name, path, err)
 		}
+
+		// Store source file information in compiled flow
+		compiledFlow.SourceFile = path
+
 		spec.Flows = append(spec.Flows, compiledFlow)
 
 		// Collect fact paths
@@ -60,6 +70,47 @@ func (c *Compiler) CompileFile(path string, schema effectus.SchemaInfo) (effectu
 	return spec, nil
 }
 
+// CompileFiles compiles multiple rule files into a single flow-style spec
+func (c *Compiler) CompileFiles(paths []string, schema effectus.SchemaInfo) (effectus.Spec, error) {
+	// Create merged spec
+	mergedSpec := &Spec{
+		Flows:     make([]*CompiledFlow, 0),
+		FactPaths: make([]string, 0),
+		Name:      "merged",
+	}
+
+	factPathSet := make(map[string]struct{})
+
+	// Compile each file and merge results
+	for _, path := range paths {
+		spec, err := c.CompileFile(path, schema)
+		if err != nil {
+			return nil, fmt.Errorf("error compiling %s: %w", path, err)
+		}
+
+		// Merge the compiled spec
+		flowSpec, ok := spec.(*Spec)
+		if !ok {
+			return nil, fmt.Errorf("unexpected spec type for %s", path)
+		}
+
+		// Add flows to merged spec
+		mergedSpec.Flows = append(mergedSpec.Flows, flowSpec.Flows...)
+
+		// Collect fact paths
+		for _, factPath := range flowSpec.FactPaths {
+			factPathSet[factPath] = struct{}{}
+		}
+	}
+
+	// Extract unique fact paths
+	for path := range factPathSet {
+		mergedSpec.FactPaths = append(mergedSpec.FactPaths, path)
+	}
+
+	return mergedSpec, nil
+}
+
 // compileFlow compiles a single flow into a CompiledFlow
 func compileFlow(flow *ast.Flow, schema effectus.SchemaInfo) (*CompiledFlow, error) {
 	compiledFlow := &CompiledFlow{
@@ -69,7 +120,7 @@ func compileFlow(flow *ast.Flow, schema effectus.SchemaInfo) (*CompiledFlow, err
 
 	// Compile predicates
 	if flow.When != nil && flow.When.Predicates != nil {
-		predicates := make([]*Predicate, 0, len(flow.When.Predicates))
+		predicates := make([]*eval.Predicate, 0, len(flow.When.Predicates))
 		factPaths := make(map[string]struct{})
 
 		for _, pred := range flow.When.Predicates {
@@ -82,10 +133,10 @@ func compileFlow(flow *ast.Flow, schema effectus.SchemaInfo) (*CompiledFlow, err
 			factPaths[pred.Path] = struct{}{}
 
 			// Create compiled predicate
-			compiledPred := &Predicate{
+			compiledPred := &eval.Predicate{
 				Path: pred.Path,
 				Op:   pred.Op,
-				Lit:  compileLiteral(&pred.Lit),
+				Lit:  eval.CompileLiteral(&pred.Lit),
 			}
 			predicates = append(predicates, compiledPred)
 		}
@@ -124,40 +175,16 @@ func compileSteps(steps []*ast.Step, bindings map[string]interface{}, schema eff
 	if len(steps) == 0 {
 		return Pure(nil), nil
 	}
-
 	step := steps[0]
 
-	// Compile arguments, resolving any variable references and fact paths
-	args := make(map[string]interface{})
-	for _, arg := range step.Args {
-		var value interface{}
-
-		if arg.Value != nil {
-			if arg.Value.VarRef != "" {
-				// It's a variable reference like $varName
-				varName := strings.TrimPrefix(arg.Value.VarRef, "$")
-				if boundValue, exists := bindings[varName]; exists {
-					value = boundValue
-				} else {
-					return nil, fmt.Errorf("undefined variable reference: %s", arg.Value.VarRef)
-				}
-			} else if arg.Value.FactPath != "" {
-				// It's a fact path like customer.email
-				// This gets resolved at execution time, so we just pass it as a string
-				value = arg.Value.FactPath
-			} else if arg.Value.Literal != nil {
-				// It's a literal value
-				value = compileLiteral(arg.Value.Literal)
-			}
-		}
-
-		args[arg.Name] = value
-	}
-
 	// Create the effect
+	compiledArgs, err := eval.CompileArgs(step.Args, bindings)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compile args: %w", err)
+	}
 	effect := effectus.Effect{
 		Verb:    step.Verb,
-		Payload: args,
+		Payload: compiledArgs,
 	}
 
 	// Create the program with the remaining steps
@@ -174,51 +201,31 @@ func compileSteps(steps []*ast.Step, bindings map[string]interface{}, schema eff
 			// Compile remaining steps with updated bindings
 			nextProgram, err := compileSteps(steps[1:], newBindings, schema)
 			if err != nil {
-				// Can't return error here, so we return an "error program"
-				// In a real implementation, we'd need a better strategy
-				return Pure(fmt.Errorf("failed to compile next steps: %w", err))
+				// Return a program that immediately returns this error to ensure proper error propagation
+				return Error(fmt.Errorf("failed to compile next steps: %w", err))
 			}
 			return nextProgram
 		}), nil
 	} else {
 		// If not binding, just continue with remaining steps
-		nextProgram, err := compileSteps(steps[1:], bindings, schema)
-		if err != nil {
-			return nil, err
-		}
 		return Do(effect, func(_ interface{}) *Program {
+			nextProgram, err := compileSteps(steps[1:], bindings, schema)
+			if err != nil {
+				// Return a program that immediately returns this error to ensure proper error propagation
+				return Error(fmt.Errorf("failed to compile next steps: %w", err))
+			}
 			return nextProgram
 		}), nil
 	}
 }
 
-// compileLiteral converts an AST literal to a runtime value
-func compileLiteral(lit *ast.Literal) interface{} {
-	if lit.String != nil {
-		return *lit.String
+
+// Error creates a program that immediately returns an error
+func Error(err error) *Program {
+	// Create a program that contains the error as its Pure value
+	// This will be detected and treated as an error during execution
+	return &Program{
+		Tag:  PureProgramTag, // This is declared in program.go
+		Pure: err,            // Store the error in the Pure field
 	}
-	if lit.Int != nil {
-		return *lit.Int
-	}
-	if lit.Float != nil {
-		return *lit.Float
-	}
-	if lit.Bool != nil {
-		return *lit.Bool
-	}
-	if lit.List != nil {
-		list := make([]interface{}, 0, len(lit.List))
-		for _, item := range lit.List {
-			list = append(list, compileLiteral(&item))
-		}
-		return list
-	}
-	if lit.Map != nil {
-		m := make(map[string]interface{}, len(lit.Map))
-		for _, entry := range lit.Map {
-			m[entry.Key] = compileLiteral(&entry.Value)
-		}
-		return m
-	}
-	return nil
 }

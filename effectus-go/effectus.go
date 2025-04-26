@@ -18,6 +18,10 @@ type Executor interface {
 
 // Spec is the interface implemented by both list.Spec and flow.Spec
 type Spec interface {
+
+	// Name returns the name of the spec
+	GetName() string
+
 	// RequiredFacts returns the list of fact paths required by this spec
 	RequiredFacts() []string
 
