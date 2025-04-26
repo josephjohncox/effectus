@@ -1,0 +1,27 @@
+// Example flow file for testing the unified compiler
+flow "ComplexFlow" priority 10 {
+  when {
+    customer.name == "Example Customer"
+    order.total > 50.0
+  }
+
+  steps {
+    // Direct use of a dotted fact path in an effect parameter
+    validateOrder param1:"check" param2:order.total
+    
+    // Using a binding with result and referencing a dotted fact path
+    processPayment method:"credit" amount:order.total customerId:customer.id -> payment
+    
+    // Using a bound variable in a subsequent step
+    sendNotification type:"email" recipient:customer.email template:"order_confirmation" status:$payment
+    
+    // Multiple bindings and references
+    calculateTax amount:order.total region:customer.region -> taxInfo
+    
+    // Using multiple bound variables
+    finalizeOrder orderId:order.id payment:$payment tax:$taxInfo -> orderResult
+    
+    // Log the final result
+    logActivity action:"order_completed" details:$orderResult
+  }
+} 

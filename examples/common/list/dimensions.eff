@@ -1,0 +1,21 @@
+rule "DIMENSION_CHECK" priority 100 {
+    when {
+        product.type == "physical"
+        product.dimensions.length <= 0
+    }
+    then {
+        Reject("Product length must be positive")
+        LogWarning("Invalid dimensions", { "product_id": product.id })
+    }
+}
+
+rule "WEIGHT_CHECK" priority 90 {
+    when {
+        product.type == "physical"
+        product.weight <= 0
+    }
+    then {
+        Reject("Product weight must be positive")
+        LogWarning("Invalid weight", { "product_id": product.id })
+    }
+} 

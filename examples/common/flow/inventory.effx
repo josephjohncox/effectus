@@ -1,0 +1,16 @@
+flow "INVENTORY_CHECK" priority 80 {
+    when {
+        order.status == "new"
+        order.items.length > 0
+    }
+    steps {
+        // Check inventory levels for each item
+        inventoryResult = CheckInventory(order.items) -> result
+        
+        // If inventory is insufficient, reject the order
+        if (result.insufficient) {
+            Reject("Insufficient inventory", { "items": result.insufficient_items })
+            LogWarning("Inventory check failed", { "order_id": order.id })
+        }
+    }
+} 

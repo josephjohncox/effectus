@@ -1,0 +1,19 @@
+flow "test_flow" {
+  priority: 100
+
+  when {
+    customer.age >= 18
+    customer.country == "US"
+  }
+  
+  steps {
+    log("Validating customer") as result
+    validate_customer(customer_id: customer.id) as validation_result
+    if (validation_result.success == true) {
+      send_welcome_email(
+        to: customer.email, 
+        template: "welcome_us"
+      )
+    }
+  }
+} 

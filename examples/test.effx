@@ -1,0 +1,8 @@
+flow "TEST" priority 1 {
+    when {
+        test.value == "test"
+    }
+    steps {
+        DoSomething("test")
+    }
+} 

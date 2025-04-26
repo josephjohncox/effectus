@@ -1,0 +1,10 @@
+rule "QUALITY_CHECK" priority 10 {
+    when {
+        part.category == "precision"
+        part.quality.level > 2
+    }
+    then {
+        LogInfo("Quality check required", { "part_id": part.id })
+        RequestQualityInspection(part.id, "detailed")
+    }
+} 

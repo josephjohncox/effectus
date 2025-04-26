@@ -1,0 +1,16 @@
+flow "STANDARD MILL" priority 5 {
+    when {
+        customer.code   == "ABC"
+        part.tolerance  <= 0.0005
+    }
+
+    steps {
+        reserve_material qty:1 lot:"A1"                -> mat
+        allocate_machine group:"5AXIS" input:$mat      -> m
+        set_cut_params   machine:$m sfm:7000           -> p
+        generate_setup_sheet machine:$m params:$p      -> sheet
+        require_cert     type:"FAI"  doc:$sheet   
+        release_job      sheet:$sheet               -> job
+        schedule_inspection job:$job stage:"IP"
+    }
+} 

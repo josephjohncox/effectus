@@ -1,0 +1,8 @@
+flow "SIMPLE" priority 1 {
+    when {
+        test.value == "test"
+    }
+    steps {
+        simple_action param1:"value1" param2:123
+    }
+} 

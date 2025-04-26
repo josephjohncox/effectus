@@ -1,0 +1,9 @@
+flow "VAR_REFERENCE" priority 1 {
+    when {
+        test.value == "test"
+    }
+    steps {
+        first_step param1:"value1" -> result
+        second_step input:$result
+    }
+} 
