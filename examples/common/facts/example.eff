@@ -1,0 +1,28 @@
+// Example rules using proto-defined facts
+rule "VIPCustomerDiscount" priority 100 {
+    when {
+        customer.vip == true
+        order.total > 75.0
+    }
+    then {
+        ApplyDiscount amount:10.0 customer_id:customer.id order_id:order.id
+    }
+}
+
+rule "LargeOrderNotification" priority 90 {
+    when {
+        order.total > 100.0
+    }
+    then {
+        SendNotification type:"email" to:customer.email subject:"Large Order Confirmation"
+    }
+}
+
+rule "NewCustomerWelcome" priority 80 {
+    when {
+        customer.id contains "CUST"
+    }
+    then {
+        SendWelcomeEmail to:customer.email name:customer.name
+    }
+} 

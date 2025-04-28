@@ -1,0 +1,14 @@
+version: v1
+name: buf.build/effectus/examples
+deps: []
+build:
+  excludes: []
+lint:
+  use:
+    - DEFAULT
+  except:
+    - PACKAGE_VERSION_SUFFIX
+  ignore: []
+breaking:
+  use:
+    - FILE

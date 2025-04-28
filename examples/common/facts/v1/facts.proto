@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package facts.v1;
+
+import "examples/common/facts/v1/customer.proto";
+import "examples/common/facts/v1/order.proto";
+
+option go_package = "github.com/effectus/examples/common/facts/v1";
+
+// Facts is a container for all fact types in the system.
+// New fact types can be added to this message without breaking existing rules.
+message Facts {
+  Customer customer = 1;
+  Order order = 2;
+  // Reserved fields for future fact types
+  reserved 3 to 100;
+} 

@@ -1,12 +1,12 @@
 package schema
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
+	"google.golang.org/protobuf/proto"
 )
 
 // Type represents a data type in the Effectus type system
@@ -420,10 +420,16 @@ func (ts *TypeSystem) TypeCheckFile(file *ast.File) error {
 }
 
 // LoadTypesFromProto loads type information from protobuf definitions
-// This is a placeholder for future implementation when protobuf is available
 func (ts *TypeSystem) LoadTypesFromProto(protoFile string) error {
-	// This would be implemented when proto definitions are available
-	return errors.New("not yet implemented")
+	// Create a proto loader to handle the proto file
+	loader := NewProtoTypeLoader()
+	return loader.LoadProtoFile(protoFile, ts)
+}
+
+// LoadTypesFromProtoMessage loads type information directly from a proto message
+func (ts *TypeSystem) LoadTypesFromProtoMessage(msg proto.Message) {
+	// Start with an empty prefix for the top-level message
+	RegisterProtoMessageTypes(msg, ts, "")
 }
 
 // InferTypes infers types from the usage of facts and variables in rules and flows

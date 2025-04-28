@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package facts.v1;
+
+option go_package = "github.com/effectus/examples/common/facts/v1";
+
+// Product represents a product in the catalog
+message Product {
+  string id = 1;
+  string name = 2;
+  string category = 3;
+  double price = 4;
+  int32 stock = 5;
+  bool available = 6;
+  repeated string tags = 7;
+} 

@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package facts.v1;
+
+option go_package = "github.com/effectus/examples/common/facts/v1";
+
+// OrderItem represents an item in an order
+message OrderItem {
+  string product_id = 1;
+  string name = 2;
+  double price = 3;
+  int32 quantity = 4;
+}
+
+// Order represents a customer order
+message Order {
+  string id = 1;
+  string customer_id = 2;
+  double total = 3;
+  string status = 4;
+  repeated OrderItem items = 5;
+  int64 created_at = 6; // Unix timestamp
+} 

@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package facts.v1;
+
+import "examples/common/facts/v1/customer.proto";
+import "examples/common/facts/v1/order.proto";
+import "examples/common/facts/v1/product.proto";
+
+option go_package = "github.com/effectus/examples/common/facts/v1";
+
+// FactsExtended extends the base Facts message with additional fact types.
+// This demonstrates how to extend the schema without breaking existing rules.
+message FactsExtended {
+  // Original fact types from Facts
+  Customer customer = 1;
+  Order order = 2;
+  
+  // New fact types
+  Product product = 3;
+  
+  // Reserved fields for future fact types
+  reserved 4 to 100;
+} 

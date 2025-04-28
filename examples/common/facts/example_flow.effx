@@ -1,0 +1,32 @@
+// Example flow using proto-defined facts
+flow "OrderProcessing" priority 100 {
+  when {
+    order.total > 0.0
+    customer.id != ""
+  }
+
+  steps {
+    // Validate the order
+    ValidateOrder id:order.id total:order.total -> validation
+
+    // Check inventory
+    CheckInventory order_id:order.id items:order.items -> inventory
+    
+    // Process the payment
+    ProcessPayment order_id:order.id customer_id:customer.id amount:order.total -> payment
+    
+    // If VIP customer, apply special handling
+    ConditionalStep condition:customer.vip {
+      ApplyVIPBenefits customer_id:customer.id order_id:order.id
+    }
+    
+    // Generate the invoice
+    GenerateInvoice order_id:order.id customer_name:customer.name total:order.total -> invoice
+    
+    // Send confirmation email
+    SendOrderConfirmation email:customer.email name:customer.name order_id:order.id total:order.total
+    
+    // Log the order completion
+    LogActivity type:"order_completed" customer_id:customer.id order_id:order.id payment_status:$payment invoice_id:$invoice
+  }
+} 
