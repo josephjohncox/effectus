@@ -1,204 +1,140 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/spf13/cobra"
+	"strings"
 
 	"github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/flow"
-	"github.com/effectus/effectus-go/list"
+	"github.com/effectus/effectus-go/compiler"
 	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/unified"
+)
+
+var (
+	typeCheck = flag.Bool("typecheck", false, "Perform type checking on the input files")
+	format    = flag.Bool("format", false, "Format the input files")
+	output    = flag.String("output", "", "Output file for reports (defaults to stdout)")
+	report    = flag.Bool("report", false, "Generate type report")
+	verbose   = flag.Bool("verbose", false, "Show detailed output")
 )
 
 func main() {
-	rootCmd := &cobra.Command{
-		Use:   "effectusc",
-		Short: "Effectus rule compiler",
-		Long:  "Effectus rule compiler - compiles .eff and .effx rule files",
-	}
+	flag.Parse()
 
-	rootCmd.AddCommand(
-		newCompileCommand(),
-		newLintCommand(),
-		newRunCommand(),
-	)
-
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Println(err)
+	args := flag.Args()
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: effectusc [options] <file1> [file2...]")
+		flag.PrintDefaults()
 		os.Exit(1)
 	}
+
+	// Get all file arguments
+	filenames := args
+
+	if *verbose {
+		fmt.Printf("Processing %d file(s)\n", len(filenames))
+	}
+
+	if *typeCheck || *report {
+		typeCheckFiles(filenames)
+	} else {
+		parseFiles(filenames)
+	}
 }
 
-func newCompileCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "compile [files]",
-		Short: "Compile rule files (.eff and/or .effx)",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// Get rule file paths
-			rulePaths := args
+// parseFiles parses multiple files without type checking
+func parseFiles(filenames []string) {
+	comp := compiler.NewCompiler()
 
-			// Group files by type
-			effFiles := []string{}
-			effxFiles := []string{}
-
-			for _, path := range rulePaths {
-				ext := filepath.Ext(path)
-				switch ext {
-				case ".eff":
-					effFiles = append(effFiles, path)
-				case ".effx":
-					effxFiles = append(effxFiles, path)
-				default:
-					return fmt.Errorf("unsupported file extension: %s (must be .eff or .effx)", ext)
-				}
-			}
-
-			// Load schema (simplified - in a real implementation we'd load protobuf descriptors)
-			schemaInfo := &schema.SimpleSchema{}
-
-			// Create merged spec
-			mergedSpec, err := compileAllFiles(effFiles, effxFiles, schemaInfo)
-			if err != nil {
-				return fmt.Errorf("compilation failed: %w", err)
-			}
-
-			// Output compiled spec
-			fmt.Printf("Successfully compiled %d files\n", len(rulePaths))
-			fmt.Printf("Required facts: %v\n", mergedSpec.RequiredFacts())
-
-			return nil
-		},
-	}
-
-	return cmd
-}
-
-// compileAllFiles compiles both list and flow style rule files and merges them into a single spec
-func compileAllFiles(effFiles, effxFiles []string, schema effectus.SchemaInfo) (effectus.Spec, error) {
-	var listSpec *list.Spec
-	var flowSpec *flow.Spec
-
-	// Compile list-style (.eff) files if any
-	if len(effFiles) > 0 {
-		listCompiler := &list.Compiler{}
-		var specs []effectus.Spec
-
-		for _, path := range effFiles {
-			spec, err := listCompiler.CompileFile(path, schema)
-			if err != nil {
-				return nil, fmt.Errorf("failed to compile %s: %w", path, err)
-			}
-			specs = append(specs, spec)
+	for _, filename := range filenames {
+		if *verbose {
+			fmt.Printf("Parsing %s...\n", filename)
 		}
 
-		// Merge list specs
-		listSpec = mergeListSpecs(specs)
-	}
-
-	// Compile flow-style (.effx) files if any
-	if len(effxFiles) > 0 {
-		flowCompiler := &flow.Compiler{}
-		var flowErr error
-		spec, flowErr := flowCompiler.CompileFiles(effxFiles, schema)
-		if flowErr != nil {
-			return nil, flowErr
-		}
-		// Type assertion to convert from effectus.Spec to *flow.Spec
-		if spec != nil {
-			var ok bool
-			flowSpec, ok = spec.(*flow.Spec)
-			if !ok {
-				return nil, fmt.Errorf("unexpected spec type from flow compiler")
-			}
-		}
-	}
-
-	// Create unified spec that combines both types
-	unifiedSpec := &unified.Spec{
-		ListSpec: listSpec,
-		FlowSpec: flowSpec,
-		Name:     "unified",
-	}
-
-	return unifiedSpec, nil
-}
-
-// mergeListSpecs merges multiple list specs into a single one
-func mergeListSpecs(specs []effectus.Spec) *list.Spec {
-	if len(specs) == 0 {
-		return nil
-	}
-
-	merged := &list.Spec{
-		Rules:     []*list.CompiledRule{},
-		FactPaths: []string{},
-	}
-
-	factPathSet := make(map[string]struct{})
-
-	for _, spec := range specs {
-		listSpec, ok := spec.(*list.Spec)
-		if !ok {
+		file, err := comp.ParseFile(filename)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing %s: %v\n", filename, err)
 			continue
 		}
 
-		// Add rules
-		merged.Rules = append(merged.Rules, listSpec.Rules...)
+		fmt.Printf("Successfully parsed %s: %d rules, %d flows\n",
+			filename, len(file.Rules), len(file.Flows))
+	}
+}
 
-		// Collect fact paths
-		for _, path := range listSpec.FactPaths {
-			factPathSet[path] = struct{}{}
+// typeCheckFiles parses and type checks multiple files
+func typeCheckFiles(filenames []string) {
+	comp := compiler.NewCompiler()
+	combinedReport := strings.Builder{}
+
+	// Create empty facts for now
+	facts := createEmptyFacts()
+
+	// Process all files
+	for _, filename := range filenames {
+		if *verbose {
+			fmt.Printf("Processing %s...\n", filename)
+		}
+
+		// Parse and type check
+		file, err := comp.ParseAndTypeCheck(filename, facts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error processing %s: %v\n", filename, err)
+			continue
+		}
+
+		if *report {
+			// Add file-specific report
+			fileReport := fmt.Sprintf("# File: %s\n\n", filepath.Base(filename))
+			fileReport += fmt.Sprintf("- Rules: %d\n", len(file.Rules))
+			fileReport += fmt.Sprintf("- Flows: %d\n\n", len(file.Flows))
+			combinedReport.WriteString(fileReport)
+		} else {
+			fmt.Printf("Successfully parsed and type-checked %s: %d rules, %d flows\n",
+				filename, len(file.Rules), len(file.Flows))
 		}
 	}
 
-	// Extract unique fact paths
-	for path := range factPathSet {
-		merged.FactPaths = append(merged.FactPaths, path)
-	}
+	// If generating a report, append the type information
+	if *report {
+		// Generate and output type report
+		typeReport := comp.GenerateTypeReport()
+		combinedReport.WriteString(typeReport)
 
-	return merged
-}
-
-func newLintCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "lint [file|dir]",
-		Short: "Lint rule files",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// Simplified implementation
-			fmt.Println("Linting is not implemented yet")
-			return nil
-		},
-	}
-
-	return cmd
-}
-
-func newRunCommand() *cobra.Command {
-	var mode string
-
-	cmd := &cobra.Command{
-		Use:   "run [file|dir]",
-		Short: "Run rules against input facts",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// Check mode
-			if mode != "list" && mode != "flow" && mode != "unified" {
-				return fmt.Errorf("invalid mode: %s, must be 'list', 'flow', or 'unified'", mode)
+		report := combinedReport.String()
+		if *output != "" {
+			err := os.WriteFile(*output, []byte(report), 0644)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing report: %v\n", err)
+				os.Exit(1)
 			}
-
-			// Simplified implementation
-			fmt.Printf("Running in %s mode is not implemented yet\n", mode)
-			return nil
-		},
+			fmt.Printf("Report written to %s\n", *output)
+		} else {
+			fmt.Println(report)
+		}
 	}
+}
 
-	cmd.Flags().StringVar(&mode, "mode", "unified", "Execution mode (list|flow|unified)")
+// createEmptyFacts creates an empty set of facts for type checking
+func createEmptyFacts() *testFacts {
+	schemaInfo := &schema.SimpleSchema{}
+	simpleFacts := schema.NewSimpleFacts(map[string]interface{}{}, schemaInfo)
+	return &testFacts{SimpleFacts: simpleFacts}
+}
 
-	return cmd
+// testFacts implements the Facts interface for the CLI tool
+type testFacts struct {
+	*schema.SimpleFacts
+}
+
+// Schema returns the schema information
+func (f *testFacts) Schema() effectus.SchemaInfo {
+	return f.SimpleFacts.Schema()
+}
+
+// Get returns the value at the given path
+func (f *testFacts) Get(path string) (interface{}, bool) {
+	return f.SimpleFacts.Get(path)
 }

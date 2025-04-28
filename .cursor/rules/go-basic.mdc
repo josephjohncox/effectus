@@ -1,0 +1,130 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+This project is in Go. But also uses functional programming principles and type theory and category theory to define the language that we are building.
+
+---
+
+## 0. Kick-off
+
+> **“We’re building a typed rule engine in Go.  
+> Model rules as *initial algebras* (lists) and *free monads* (flows) over a functor `F X = 1 + E × X`.  
+>  Derive the Go interfaces that correspond to the categorical constructions, then show a tiny toy interpreter.”**
+
+---
+
+## 1. Protobuf Schemas
+> **“Generate `.proto` files for context and verb payload
+>  Then write `buf.gen.yaml` and the Go code (`protoc-gen-go`).”**
+
+---
+
+## 2. Core Data-Types
+
+> **“Create Go structs for  
+>  `Temporal`, `Predicate`, `Effect`, `Rule`.  
+>  Ensure `Temporal` covers `Within`, `Since`, `NotBefore`; add JSON tags; embed `proto.Message` where needed.”**
+
+---
+
+## 3. Denotational Semantics (Predicates)
+
+> **“Implement `func (p Predicate) Denote(f Facts, now time.Time) bool` exactly as the denotational equations:
+
+⟦within Δ P⟧ = ⟦P⟧ ∧ (ts ≥ now−Δ)
+⟦since  t₀ P⟧ = ⟦P⟧ ∧ (ts ≥ t₀)
+…
+
+>   Write table-driven tests that freeze `now`.”**
+
+---
+
+## 4. Operational Semantics (List Engine)
+
+> **“Given `[]Effect`, write `func Execute(ctx, facts) []Effect` such that each effect’s `(cap,key)` is locked (in-memory map) and released in order.  
+>  Show small-step trace logging that matches the rules in Appendix B.”**
+
+---
+
+## 5. Free-Monad Flow
+
+> **“Define `type Prog[A any] struct { ... }` for the free monad over `EffectF`.  
+>  Implement `Bind`, `Pure`, and `Do`.  
+>  Compile an `.effx` file into a value of `Prog[()]`.  
+>  Show how `Bind` corresponds to the catamorphism fold.”**
+
+---
+
+## 6. Extensible Effect Table
+
+> **“Create verb proto with a `VerbSpec` row for each verb  
+>  Generate a Go map `var VerbTable = map[uint32]VerbSpec{ ... }` and compute `CurrentVerbHash = sha256(JSON(VerbTable))`.  
+>  Write code that fails `operator` startup if spec hash mismatches.”**
+
+---
+
+## 7. Saga Executor
+
+> **“Implement a `SagaExec` decorator:  
+>  *log* each effect to Postgres (`tx_id, seq, payload, status`).  
+>  On failure walk log backwards and call inverse verbs.  
+>  Use Go generics for `Executor` interface.”**
+
+---
+
+## 8. Redis Locks w/ Fencing
+
+> **“Write `Lock(cap,key) (fenceToken int64, unlock func(), err)`.  
+>  Use `SET resource NX PX 30s GET`.  
+>  Return fencing token; include it in MES REST header `X-Effectus-Fence`.  
+>  Add unit tests with two goroutines racing.”**
+
+---
+
+## 9. OCI Bundle Loader
+
+> **“Using `oras-go`, pull tasks and unmarshal `RuleBundle`.  
+>  Hot-reload every 30 s with atomic `atomic.Value` swap.”**
+
+---
+
+## 10. Fact Source (Kafka)
+
+> **“Set up `github.com/segmentio/kafka-go` reader; stream JSON envelopes, insert Lamport clock, forward to engine.  
+>  Show back-pressure handling: commit offsets only after all effects succeed.”**
+
+---
+
+## 11. PII Redaction
+
+> **“Before logging or emitting Effects, walk `Fact` struct paths listed in `bundle.masks` and replace with `***`.  
+>  Show reflection helper using `github.com/fatih/structs`.”**
+
+---
+
+## 12. Prom Metrics
+
+> **“Expose `/metrics` : `rules_fired_total{rule=...}`, `lock_contention_seconds`, `saga_compensations_total` using `prometheus/client_golang`.”**
+
+---
+
+## 13. CLI & Lint
+
+> **“Create `cmd/effectusc/main.go` with sub-commands:  
+>  `list`, `flow`, `lint`, `test`, `doctor`, `bundle`.  
+>  For `lint` parse all rule files, run denotational type-check, exit 1 on error.”**
+
+---
+
+## 14. VS-Code WASM Linter
+
+> **“Build the predicate parser with TinyGo to WASM; expose `lint(input string) []Diagnostic`.  
+>  Wire to Monaco in a VS-Code extension.”**
+
+---
+
+### 🔄 Iterate
+Use any prompt again when you refactor or extend—e.g., add `between`/`during` to Temporal, port to Rust, generate docs.  
+
