@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	"github.com/effectus/effectus-go"
+	"github.com/effectus/effectus-go/eval"
 	"github.com/effectus/effectus-go/flow"
 	"github.com/effectus/effectus-go/list"
-	"github.com/effectus/effectus-go/eval"
 )
 
 // Spec implements the effectus.Spec interface for both list and flow style rules
@@ -165,4 +165,28 @@ func (e *contextExecutor) Do(effect effectus.Effect) (interface{}, error) {
 
 	// Execute the effect
 	return e.executor.Do(effect)
+}
+
+// GetStats returns statistics about the unified spec
+func (s *Spec) GetStats() map[string]int {
+	stats := make(map[string]int)
+
+	// Count rules if we have a list spec
+	if s.ListSpec != nil {
+		stats["rules"] = len(s.ListSpec.Rules)
+	} else {
+		stats["rules"] = 0
+	}
+
+	// Count flows if we have a flow spec
+	if s.FlowSpec != nil {
+		stats["flows"] = len(s.FlowSpec.Flows)
+	} else {
+		stats["flows"] = 0
+	}
+
+	// Count total fact paths
+	stats["factPaths"] = len(s.RequiredFacts())
+
+	return stats
 }

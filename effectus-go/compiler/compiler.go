@@ -4,54 +4,33 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 
 	"github.com/alecthomas/participle/v2"
-	"github.com/alecthomas/participle/v2/lexer"
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
+	"github.com/effectus/effectus-go/flow"
+	"github.com/effectus/effectus-go/list"
 	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/unified"
 )
 
 // Compiler handles parsing and type checking of Effectus files
 type Compiler struct {
-	parser      *participle.Parser[ast.File]
-	typeChecker *schema.TypeChecker
+	parser       *participle.Parser[ast.File]
+	typeChecker  *schema.TypeChecker
+	flowCompiler *flow.Compiler
+	listCompiler *list.Compiler
 }
 
 // NewCompiler creates a new compiler
 func NewCompiler() *Compiler {
 	return &Compiler{
-		parser:      createParser(),
-		typeChecker: schema.NewTypeChecker(),
+		parser:       effectus.GetParser(),
+		typeChecker:  schema.NewTypeChecker(),
+		flowCompiler: &flow.Compiler{},
+		listCompiler: &list.Compiler{},
 	}
-}
-
-// createParser creates the participle parser for the Effectus language
-func createParser() *participle.Parser[ast.File] {
-	// Define the lexer for the Effectus language
-	effectusLexer := lexer.MustSimple([]lexer.SimpleRule{
-		{"Comment", `//.*|/\*.*?\*/`},
-		{"String", `"[^"]*"`},
-		{"Float", `\d+\.\d+`},
-		{"Int", `\d+`},
-		{"FactPath", `[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)+`},
-		{"VarRef", `\$[a-zA-Z_][a-zA-Z0-9_]*`},
-		{"Ident", `[a-zA-Z_][a-zA-Z0-9_]*`},
-		{"Operator", `==|!=|<=|>=|<|>|in|contains`},
-		{"Punct", `[-[!@#$%^&*()+_={}\|:;"'<,>.?/]|]`},
-		{"Whitespace", `[ \t\n\r]+`},
-	})
-
-	// Build the parser
-	parser, err := participle.Build[ast.File](
-		participle.Lexer(effectusLexer),
-		participle.Elide("Comment", "Whitespace"),
-	)
-	if err != nil {
-		// This should never happen unless there's a bug in the AST definitions
-		panic(fmt.Sprintf("failed to create parser: %v", err))
-	}
-	return parser
 }
 
 // ParseFile parses a file into an AST
@@ -94,6 +73,163 @@ func (c *Compiler) ParseAndTypeCheck(filename string, facts effectus.Facts) (*as
 	}
 
 	return file, nil
+}
+
+// CompileFiles compiles multiple rule files into a unified spec
+func (c *Compiler) CompileFiles(filenames []string, facts effectus.Facts) (effectus.Spec, error) {
+	// Group files by extension
+	effFiles := []string{}
+	effxFiles := []string{}
+
+	for _, path := range filenames {
+		ext := filepath.Ext(path)
+		switch ext {
+		case ".eff":
+			effFiles = append(effFiles, path)
+		case ".effx":
+			effxFiles = append(effxFiles, path)
+		default:
+			return nil, fmt.Errorf("unsupported file extension for %s: %s (must be .eff or .effx)", path, ext)
+		}
+	}
+
+	// Create a schema
+	schema := facts.Schema()
+
+	// Compile all files and merge them
+	return c.compileAllFiles(effFiles, effxFiles, schema)
+}
+
+// compileAllFiles compiles both list and flow style rule files and merges them into a single spec
+func (c *Compiler) compileAllFiles(effFiles, effxFiles []string, schema effectus.SchemaInfo) (effectus.Spec, error) {
+	var listSpec *list.Spec
+	var flowSpec *flow.Spec
+
+	// Compile list-style (.eff) files if any
+	if len(effFiles) > 0 {
+		var specs []effectus.Spec
+
+		for _, path := range effFiles {
+			spec, err := c.listCompiler.CompileFile(path, schema)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile %s: %w", path, err)
+			}
+			specs = append(specs, spec)
+		}
+
+		// Merge list specs
+		listSpec = c.mergeListSpecs(specs)
+	}
+
+	// Compile flow-style (.effx) files if any
+	if len(effxFiles) > 0 {
+		var specs []effectus.Spec
+		for _, path := range effxFiles {
+			spec, err := c.flowCompiler.CompileFile(path, schema)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile %s: %w", path, err)
+			}
+			specs = append(specs, spec)
+		}
+
+		// Merge flow specs
+		flowSpec = c.mergeFlowSpecs(specs)
+	}
+
+	// Create unified spec that combines both types
+	unifiedSpec := &unified.Spec{
+		ListSpec: listSpec,
+		FlowSpec: flowSpec,
+		Name:     "unified",
+	}
+
+	return unifiedSpec, nil
+}
+
+// mergeListSpecs merges multiple list specs into a single one
+func (c *Compiler) mergeListSpecs(specs []effectus.Spec) *list.Spec {
+	if len(specs) == 0 {
+		return nil
+	}
+
+	merged := &list.Spec{
+		Rules:     []*list.CompiledRule{},
+		FactPaths: []string{},
+	}
+
+	factPathSet := make(map[string]struct{})
+
+	for _, spec := range specs {
+		listSpec, ok := spec.(*list.Spec)
+		if !ok {
+			continue
+		}
+
+		// Add rules
+		merged.Rules = append(merged.Rules, listSpec.Rules...)
+
+		// Collect fact paths
+		for _, path := range listSpec.FactPaths {
+			factPathSet[path] = struct{}{}
+		}
+	}
+
+	// Extract unique fact paths
+	for path := range factPathSet {
+		merged.FactPaths = append(merged.FactPaths, path)
+	}
+
+	return merged
+}
+
+// mergeFlowSpecs merges multiple flow specs into a single one
+func (c *Compiler) mergeFlowSpecs(specs []effectus.Spec) *flow.Spec {
+	if len(specs) == 0 {
+		return nil
+	}
+
+	merged := &flow.Spec{
+		Flows:     []*flow.CompiledFlow{},
+		FactPaths: []string{},
+	}
+
+	factPathSet := make(map[string]struct{})
+
+	for _, spec := range specs {
+		flowSpec, ok := spec.(*flow.Spec)
+		if !ok {
+			continue
+		}
+
+		// Add flows
+		merged.Flows = append(merged.Flows, flowSpec.Flows...)
+
+		// Collect fact paths
+		for _, path := range flowSpec.FactPaths {
+			factPathSet[path] = struct{}{}
+		}
+	}
+
+	// Extract unique fact paths
+	for path := range factPathSet {
+		merged.FactPaths = append(merged.FactPaths, path)
+	}
+
+	return merged
+}
+
+// ParseAndCompileFiles parses, type checks, and compiles multiple files
+func (c *Compiler) ParseAndCompileFiles(filenames []string, facts effectus.Facts) (effectus.Spec, error) {
+	// Type check all files
+	for _, filename := range filenames {
+		_, err := c.ParseAndTypeCheck(filename, facts)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Compile all files into a unified spec
+	return c.CompileFiles(filenames, facts)
 }
 
 // registerDefaultVerbTypes registers some basic verb types for demonstration purposes

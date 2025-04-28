@@ -38,6 +38,16 @@ var (
 	)
 )
 
+// GetParser returns the effectus parser for use by other packages
+func GetParser() *participle.Parser[ast.File] {
+	return parser
+}
+
+// GetLexer returns the effectus lexer for use by other packages
+func GetLexer() lexer.Definition {
+	return effectusLexer
+}
+
 // ParseFile parses a rule file and returns the AST
 func ParseFile(filename string) (*ast.File, error) {
 	// Read the file
