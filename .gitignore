@@ -29,6 +29,8 @@ bin/
 
 #VSCode
 .vscode/
+.direnv/
+
 
 # Build and output artifacts
 *.log
