@@ -37,10 +37,30 @@ type PredicateBlock struct {
 
 // Predicate represents a single condition
 type Predicate struct {
-	Pos  lexer.Position
-	Path string  `parser:"@(FactPath | Ident)"`
-	Op   string  `parser:"@Operator"`
-	Lit  Literal `parser:"@@"`
+	Pos      lexer.Position
+	PathExpr *PathExpression `parser:"@@"`
+	Op       string          `parser:"@Operator"`
+	Lit      Literal         `parser:"@@"`
+}
+
+// PathExpression represents a parsed path in the AST
+type PathExpression struct {
+	Raw string `parser:"@(FactPath | Ident)"` // The raw path string
+
+	// Resolved will be filled during post-processing
+	Namespace string
+	Segments  []string
+
+	// For array indexing and more complex paths
+	// The indexed path segments stores path segments with index information
+	// (segment name and index, if any). This is filled during resolution.
+	IndexedSegments []PathSegmentInfo
+}
+
+// PathSegmentInfo contains information about a segment in a path, including indexing
+type PathSegmentInfo struct {
+	Name  string // The segment name
+	Index *int   // Optional array index (nil if not indexed)
 }
 
 // EffectBlock represents a block of effects
@@ -81,9 +101,9 @@ type StepArg struct {
 // a variable reference, or a fact path
 type ArgValue struct {
 	Pos      lexer.Position
-	VarRef   string   `parser:"  @VarRef"`
-	FactPath string   `parser:"| @FactPath"`
-	Literal  *Literal `parser:"| @@"`
+	VarRef   string          `parser:"  @VarRef"`
+	PathExpr *PathExpression `parser:"| @@"`
+	Literal  *Literal        `parser:"| @@"`
 }
 
 // Literal represents a literal value (string, number, boolean, etc.)

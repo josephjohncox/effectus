@@ -22,10 +22,10 @@ func CompileArgs(args []*ast.StepArg, bindings map[string]interface{}) (map[stri
 				} else {
 					return nil, fmt.Errorf("undefined variable reference: %s", arg.Value.VarRef)
 				}
-			} else if arg.Value.FactPath != "" {
+			} else if arg.Value.PathExpr != nil {
 				// It's a fact path like customer.email
 				// This gets resolved at execution time, so we just pass it as a string
-				value = arg.Value.FactPath
+				value = arg.Value.PathExpr.GetFullPath()
 			} else if arg.Value.Literal != nil {
 				// It's a literal value
 				value = CompileLiteral(arg.Value.Literal)

@@ -10,16 +10,16 @@ effectusc-build:
 	cd effectus-go/cmd/effectusc && go build -o {{base_dir}}/bin/effectusc
 
 effectusc-compile +files: effectusc-build
-	./bin/effectusc compile {{files}}
+	./bin/effectusc -compile {{files}}
 
 effectusc-run +files: 
-	cd effectus-go/cmd/effectusc && go run main.go compile {{files}}
+	cd effectus-go/cmd/effectusc && go run main.go -compile {{files}}
 
 test-standard-mill: 
-	cd effectus-go/cmd/effectusc && go run main.go compile {{base_dir}}/examples/flow/standard_mill.effx
+	cd effectus-go/cmd/effectusc && go run main.go -compile {{base_dir}}/examples/flow/standard_mill.effx
 
 test-mixed-process: 
-	cd effectus-go/cmd/effectusc && go run main.go compile {{base_dir}}/examples/flow/mixed_process.effx {{base_dir}}/examples/list/quality_check.eff
+	cd effectus-go/cmd/effectusc && go run main.go -compile {{base_dir}}/examples/flow/mixed_process.effx {{base_dir}}/examples/list/quality_check.eff
 
 test-flow-parse: 
 	cd effectus-go/cmd/test && go run main.go -mode=parse -ast -verbose {{base_dir}}/examples/test_flow.effx {{base_dir}}/examples/test.eff

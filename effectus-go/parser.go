@@ -21,7 +21,7 @@ var (
 		{"String", `"[^"]*"`},
 		{"VarRef", `\$[a-zA-Z_]\w*`},                 // Variable references like $result
 		{"FactPath", `[a-zA-Z_]\w*\.[a-zA-Z_0-9.]+`}, // Fact paths like customer.email
-		{"Operator", `==|!=|<=|>=|<|>|in|contains`},
+		{"Operator", `==|!=|<=|>=|<|>|\bin\b|\bcontains\b`},
 		// {"Keyword", `\b(rule|flow|when|then|steps|include|priority|true|false)\b`},
 		{"Dollar", `\$`},
 		{"Ident", `[a-zA-Z_]\w*`},

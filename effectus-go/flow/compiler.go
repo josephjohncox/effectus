@@ -124,17 +124,24 @@ func compileFlow(flow *ast.Flow, schema effectus.SchemaInfo) (*CompiledFlow, err
 		factPaths := make(map[string]struct{})
 
 		for _, pred := range flow.When.Predicates {
+			// Get the path from the PathExpression
+			if pred.PathExpr == nil {
+				return nil, fmt.Errorf("predicate has no path expression")
+			}
+
+			path := pred.PathExpr.GetFullPath()
+
 			// Validate path against schema
-			if !schema.ValidatePath(pred.Path) {
-				return nil, fmt.Errorf("invalid path: %s", pred.Path)
+			if !schema.ValidatePath(path) {
+				return nil, fmt.Errorf("invalid path: %s", path)
 			}
 
 			// Save path for later fact requirements
-			factPaths[pred.Path] = struct{}{}
+			factPaths[path] = struct{}{}
 
 			// Create compiled predicate
 			compiledPred := &eval.Predicate{
-				Path: pred.Path,
+				Path: path,
 				Op:   pred.Op,
 				Lit:  eval.CompileLiteral(&pred.Lit),
 			}
@@ -218,7 +225,6 @@ func compileSteps(steps []*ast.Step, bindings map[string]interface{}, schema eff
 		}), nil
 	}
 }
-
 
 // Error creates a program that immediately returns an error
 func Error(err error) *Program {

@@ -77,7 +77,15 @@ func (d *ASTDumper) dumpPredicates(when *ast.PredicateBlock, indentStr string) {
 
 	fmt.Fprintf(d.writer, "%sPredicates (%d):\n", indentStr, len(when.Predicates))
 	for i, pred := range when.Predicates {
-		fmt.Fprintf(d.writer, "%s  Predicate %d: %s %s\n", indentStr, i+1, pred.Path, pred.Op)
+		pathStr := ""
+		if pred.PathExpr != nil {
+			pathStr = pred.PathExpr.Raw
+			if pred.PathExpr.Namespace != "" {
+				pathStr = fmt.Sprintf("%s (namespace: %s, segments: %v)",
+					pred.PathExpr.Raw, pred.PathExpr.Namespace, pred.PathExpr.Segments)
+			}
+		}
+		fmt.Fprintf(d.writer, "%s  Predicate %d: %s %s\n", indentStr, i+1, pathStr, pred.Op)
 		if pred.Lit.String != nil {
 			fmt.Fprintf(d.writer, "%s    Compare with string: %s\n", indentStr, *pred.Lit.String)
 		} else if pred.Lit.Int != nil {
@@ -135,8 +143,13 @@ func (d *ASTDumper) dumpArgs(args []*ast.StepArg, indentStr string) {
 		if arg.Value != nil {
 			if arg.Value.VarRef != "" {
 				fmt.Fprintf(d.writer, "%s    VarRef: %s\n", indentStr, arg.Value.VarRef)
-			} else if arg.Value.FactPath != "" {
-				fmt.Fprintf(d.writer, "%s    FactPath: %s\n", indentStr, arg.Value.FactPath)
+			} else if arg.Value.PathExpr != nil {
+				pathInfo := arg.Value.PathExpr.Raw
+				if arg.Value.PathExpr.Namespace != "" {
+					pathInfo = fmt.Sprintf("%s (namespace: %s, segments: %v)",
+						arg.Value.PathExpr.Raw, arg.Value.PathExpr.Namespace, arg.Value.PathExpr.Segments)
+				}
+				fmt.Fprintf(d.writer, "%s    FactPath: %s\n", indentStr, pathInfo)
 			} else if arg.Value.Literal != nil {
 				fmt.Fprintf(d.writer, "%s    Literal: %s\n", indentStr, describeLiteral(arg.Value.Literal))
 			}

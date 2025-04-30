@@ -187,9 +187,14 @@ func (ts *TypeSystem) GetFactType(path string) (*Type, bool) {
 
 // TypeCheckPredicate checks if a predicate's comparison is type-safe
 func (ts *TypeSystem) TypeCheckPredicate(pred *ast.Predicate) error {
-	factType, exists := ts.GetFactType(pred.Path)
+	if pred.PathExpr == nil {
+		return fmt.Errorf("predicate has no path expression")
+	}
+
+	factPath := pred.PathExpr.GetFullPath()
+	factType, exists := ts.GetFactType(factPath)
 	if !exists {
-		return fmt.Errorf("unknown fact type for path: %s", pred.Path)
+		return fmt.Errorf("unknown fact type for path: %s", factPath)
 	}
 
 	var literalType *Type
@@ -268,11 +273,12 @@ func (ts *TypeSystem) TypeCheckEffect(effect *ast.Effect, bindings map[string]*T
 				}
 			}
 			argType = varType
-		} else if arg.Value.FactPath != "" {
+		} else if arg.Value.PathExpr != nil {
 			// Check fact path
-			factType, factExists := ts.GetFactType(arg.Value.FactPath)
+			factPath := arg.Value.PathExpr.GetFullPath()
+			factType, factExists := ts.GetFactType(factPath)
 			if !factExists {
-				return fmt.Errorf("unknown fact type for path: %s", arg.Value.FactPath)
+				return fmt.Errorf("unknown fact type for path: %s", factPath)
 			}
 			argType = factType
 		} else if arg.Value.Literal != nil {
@@ -438,9 +444,12 @@ func (ts *TypeSystem) InferTypes(file *ast.File, facts effectus.Facts) error {
 	for _, rule := range file.Rules {
 		if rule.When != nil {
 			for _, pred := range rule.When.Predicates {
-				factValue, exists := facts.Get(pred.Path)
-				if exists {
-					ts.InferFactType(pred.Path, factValue)
+				if pred.PathExpr != nil {
+					factPath := pred.PathExpr.GetFullPath()
+					factValue, exists := facts.Get(factPath)
+					if exists {
+						ts.InferFactType(factPath, factValue)
+					}
 				}
 			}
 		}
@@ -449,9 +458,12 @@ func (ts *TypeSystem) InferTypes(file *ast.File, facts effectus.Facts) error {
 	for _, flow := range file.Flows {
 		if flow.When != nil {
 			for _, pred := range flow.When.Predicates {
-				factValue, exists := facts.Get(pred.Path)
-				if exists {
-					ts.InferFactType(pred.Path, factValue)
+				if pred.PathExpr != nil {
+					factPath := pred.PathExpr.GetFullPath()
+					factValue, exists := facts.Get(factPath)
+					if exists {
+						ts.InferFactType(factPath, factValue)
+					}
 				}
 			}
 		}

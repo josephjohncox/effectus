@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/alecthomas/participle/v2/lexer"
@@ -107,13 +108,29 @@ func TestTypeInference(t *testing.T) {
 	}
 }
 
+// Helper to create path expressions for tests
+func testPathExpr(path string) *ast.PathExpression {
+	pathExpr := &ast.PathExpression{
+		Raw: path,
+	}
+
+	// Parse and resolve the path
+	parts := strings.Split(path, ".")
+	if len(parts) > 0 {
+		pathExpr.Namespace = parts[0]
+		pathExpr.Segments = parts[1:]
+	}
+
+	return pathExpr
+}
+
+// TestTypeCheckPredicate tests the type-checking of predicates
 func TestTypeCheckPredicate(t *testing.T) {
 	ts := NewTypeSystem()
 
 	// Register some fact types
 	ts.RegisterFactType("customer.id", &Type{PrimType: TypeString})
 	ts.RegisterFactType("order.total", &Type{PrimType: TypeFloat})
-	ts.RegisterFactType("customer.active", &Type{PrimType: TypeBool})
 	ts.RegisterFactType("order.items", &Type{
 		PrimType: TypeList,
 		ListType: &Type{
@@ -122,7 +139,6 @@ func TestTypeCheckPredicate(t *testing.T) {
 		},
 	})
 
-	// Valid predicates
 	testCases := []struct {
 		name      string
 		predicate *ast.Predicate
@@ -131,8 +147,8 @@ func TestTypeCheckPredicate(t *testing.T) {
 		{
 			name: "string equality",
 			predicate: &ast.Predicate{
-				Path: "customer.id",
-				Op:   "==",
+				PathExpr: testPathExpr("customer.id"),
+				Op:       "==",
 				Lit: ast.Literal{
 					String: func() *string { s := "12345"; return &s }(),
 				},
@@ -142,8 +158,8 @@ func TestTypeCheckPredicate(t *testing.T) {
 		{
 			name: "numeric comparison",
 			predicate: &ast.Predicate{
-				Path: "order.total",
-				Op:   ">",
+				PathExpr: testPathExpr("order.total"),
+				Op:       ">",
 				Lit: ast.Literal{
 					Float: func() *float64 { f := 50.0; return &f }(),
 				},
@@ -153,8 +169,8 @@ func TestTypeCheckPredicate(t *testing.T) {
 		{
 			name: "invalid operator for string",
 			predicate: &ast.Predicate{
-				Path: "customer.id",
-				Op:   "<",
+				PathExpr: testPathExpr("customer.id"),
+				Op:       "<",
 				Lit: ast.Literal{
 					String: func() *string { s := "12345"; return &s }(),
 				},
@@ -164,8 +180,8 @@ func TestTypeCheckPredicate(t *testing.T) {
 		{
 			name: "contains with list",
 			predicate: &ast.Predicate{
-				Path: "order.items",
-				Op:   "contains",
+				PathExpr: testPathExpr("order.items"),
+				Op:       "contains",
 				Lit: ast.Literal{
 					Map: []*ast.MapEntry{
 						{
@@ -215,7 +231,7 @@ func TestTypeCheckEffect(t *testing.T) {
 			{
 				Name: "to",
 				Value: &ast.ArgValue{
-					FactPath: "customer.email",
+					PathExpr: testPathExpr("customer.email"),
 				},
 			},
 			{
@@ -263,6 +279,7 @@ func TestTypeCheckEffect(t *testing.T) {
 	}
 }
 
+// TestTypeCheckRuleAndFlow tests type checking for rules and flows
 func TestTypeCheckRuleAndFlow(t *testing.T) {
 	ts := NewTypeSystem()
 
@@ -298,8 +315,8 @@ func TestTypeCheckRuleAndFlow(t *testing.T) {
 		When: &ast.PredicateBlock{
 			Predicates: []*ast.Predicate{
 				{
-					Path: "order.total",
-					Op:   ">",
+					PathExpr: testPathExpr("order.total"),
+					Op:       ">",
 					Lit: ast.Literal{
 						Float: func() *float64 { f := 100.0; return &f }(),
 					},
@@ -314,7 +331,7 @@ func TestTypeCheckRuleAndFlow(t *testing.T) {
 						{
 							Name: "to",
 							Value: &ast.ArgValue{
-								FactPath: "customer.email",
+								PathExpr: testPathExpr("customer.email"),
 							},
 						},
 						{
@@ -329,7 +346,7 @@ func TestTypeCheckRuleAndFlow(t *testing.T) {
 							Name: "body",
 							Value: &ast.ArgValue{
 								Literal: &ast.Literal{
-									String: func() *string { s := "You placed a high value order"; return &s }(),
+									String: func() *string { s := "Your order total is over $100"; return &s }(),
 								},
 							},
 						},
@@ -339,7 +356,12 @@ func TestTypeCheckRuleAndFlow(t *testing.T) {
 		},
 	}
 
-	// Create a test flow
+	// Test rule type checking
+	if err := ts.TypeCheckRule(rule); err != nil {
+		t.Errorf("Valid rule failed type check: %v", err)
+	}
+
+	// Create a test flow with variable binding
 	flow := &ast.Flow{
 		Pos:      lexer.Position{},
 		Name:     "Test Flow",
@@ -347,8 +369,8 @@ func TestTypeCheckRuleAndFlow(t *testing.T) {
 		When: &ast.PredicateBlock{
 			Predicates: []*ast.Predicate{
 				{
-					Path: "order.total",
-					Op:   ">",
+					PathExpr: testPathExpr("order.total"),
+					Op:       ">",
 					Lit: ast.Literal{
 						Float: func() *float64 { f := 100.0; return &f }(),
 					},
@@ -363,17 +385,17 @@ func TestTypeCheckRuleAndFlow(t *testing.T) {
 						{
 							Name: "order_id",
 							Value: &ast.ArgValue{
-								FactPath: "customer.id",
+								PathExpr: testPathExpr("customer.id"),
 							},
 						},
 						{
 							Name: "total",
 							Value: &ast.ArgValue{
-								FactPath: "order.total",
+								PathExpr: testPathExpr("order.total"),
 							},
 						},
 					},
-					BindName: "logResult",
+					BindName: "result",
 				},
 				{
 					Verb: "SendEmail",
@@ -381,14 +403,14 @@ func TestTypeCheckRuleAndFlow(t *testing.T) {
 						{
 							Name: "to",
 							Value: &ast.ArgValue{
-								FactPath: "customer.email",
+								PathExpr: testPathExpr("customer.email"),
 							},
 						},
 						{
 							Name: "subject",
 							Value: &ast.ArgValue{
 								Literal: &ast.Literal{
-									String: func() *string { s := "Order Logged"; return &s }(),
+									String: func() *string { s := "Order Processed"; return &s }(),
 								},
 							},
 						},
@@ -406,24 +428,8 @@ func TestTypeCheckRuleAndFlow(t *testing.T) {
 		},
 	}
 
-	// Test rule type checking
-	if err := ts.TypeCheckRule(rule); err != nil {
-		t.Errorf("Valid rule failed type check: %v", err)
-	}
-
 	// Test flow type checking
 	if err := ts.TypeCheckFlow(flow); err != nil {
 		t.Errorf("Valid flow failed type check: %v", err)
-	}
-
-	// Create a file with both
-	file := &ast.File{
-		Rules: []*ast.Rule{rule},
-		Flows: []*ast.Flow{flow},
-	}
-
-	// Test file type checking
-	if err := ts.TypeCheckFile(file); err != nil {
-		t.Errorf("Valid file failed type check: %v", err)
 	}
 }

@@ -73,17 +73,24 @@ func compileRule(rule *ast.Rule, schema effectus.SchemaInfo) (*CompiledRule, err
 		factPaths := make(map[string]struct{})
 
 		for _, pred := range rule.When.Predicates {
+			// Get the path from the PathExpression
+			if pred.PathExpr == nil {
+				return nil, fmt.Errorf("predicate has no path expression")
+			}
+
+			path := pred.PathExpr.GetFullPath()
+
 			// Validate path against schema
-			if !schema.ValidatePath(pred.Path) {
-				return nil, fmt.Errorf("invalid path: %s", pred.Path)
+			if !schema.ValidatePath(path) {
+				return nil, fmt.Errorf("invalid path: %s", path)
 			}
 
 			// Save path for later fact requirements
-			factPaths[pred.Path] = struct{}{}
+			factPaths[path] = struct{}{}
 
 			// Create compiled predicate
 			compiledPred := &eval.Predicate{
-				Path: pred.Path,
+				Path: path,
 				Op:   pred.Op,
 				Lit:  compileLiteral(&pred.Lit),
 			}
@@ -151,4 +158,3 @@ func compileLiteral(lit *ast.Literal) interface{} {
 	}
 	return nil
 }
-

@@ -155,7 +155,12 @@ func Contains(container, item interface{}) bool {
 		}
 	case string:
 		if s, ok := item.(string); ok {
-			return c == s // This should be strings.Contains for a real implementation
+			// Properly check for substring containment
+			for i := 0; i <= len(c)-len(s); i++ {
+				if i+len(s) <= len(c) && c[i:i+len(s)] == s {
+					return true
+				}
+			}
 		}
 	}
 	return false
