@@ -6,6 +6,7 @@ import (
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
+	"github.com/effectus/effectus-go/common"
 	"github.com/effectus/effectus-go/eval"
 )
 
@@ -185,7 +186,7 @@ func compileSteps(steps []*ast.Step, bindings map[string]interface{}, schema eff
 	step := steps[0]
 
 	// Create the effect
-	compiledArgs, err := eval.CompileArgs(step.Args, bindings)
+	compiledArgs, err := common.CompileArgs(step.Args, bindings)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compile args: %w", err)
 	}

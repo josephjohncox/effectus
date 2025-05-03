@@ -1,4 +1,4 @@
-package eval
+package common
 
 import (
 	"fmt"
@@ -7,8 +7,8 @@ import (
 	"github.com/effectus/effectus-go/ast"
 )
 
-// Compile arguments, resolving any variable references and fact paths
-func CompileArgs(args []*ast.StepArg, bindings map[string]interface{}) (map[string]interface{}, error) {
+// CompileArgs resolves any variable references and fact paths in arguments
+func CompileArgs(args []*ast.NamedArg, bindings map[string]interface{}) (map[string]interface{}, error) {
 	compiledArgs := make(map[string]interface{})
 	for _, arg := range args {
 		var value interface{}

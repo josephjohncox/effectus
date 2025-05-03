@@ -3,6 +3,6 @@ rule "TEST" priority 40 {
         test.value == "test"
     }
     then {
-        DoSomething msg:test.value
+        DoSomething(msg: test.value)
     }
 } 

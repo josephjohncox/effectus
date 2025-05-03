@@ -64,42 +64,74 @@ func (d *ASTDumper) DumpRules(rules []*ast.Rule) {
 	for i, rule := range rules {
 		fmt.Fprintf(d.writer, "%sRule %d: %s\n", d.indent, i+1, rule.Name)
 		fmt.Fprintf(d.writer, "%s  Priority: %d\n", d.indent, rule.Priority)
-		d.dumpPredicates(rule.When, d.indent+"  ")
-		d.dumpEffects(rule.Then, d.indent+"  ")
+		for j, block := range rule.Blocks {
+			fmt.Fprintf(d.writer, "%s  Block %d:\n", d.indent, j+1)
+			d.dumpLogicalExpression(block.When.Expression, d.indent+"    ")
+			d.dumpEffects(block.Then, d.indent+"    ")
+		}
 	}
 }
 
-// dumpPredicates dumps the predicate block
-func (d *ASTDumper) dumpPredicates(when *ast.PredicateBlock, indentStr string) {
-	if when == nil || when.Predicates == nil {
+// dumpLogicalExpression dumps a logical expression
+func (d *ASTDumper) dumpLogicalExpression(expr *ast.LogicalExpression, indentStr string) {
+	if expr == nil {
 		return
 	}
 
-	fmt.Fprintf(d.writer, "%sPredicates (%d):\n", indentStr, len(when.Predicates))
-	for i, pred := range when.Predicates {
-		pathStr := ""
-		if pred.PathExpr != nil {
-			pathStr = pred.PathExpr.Raw
-			if pred.PathExpr.Namespace != "" {
-				pathStr = fmt.Sprintf("%s (namespace: %s, segments: %v)",
-					pred.PathExpr.Raw, pred.PathExpr.Namespace, pred.PathExpr.Segments)
-			}
-		}
-		fmt.Fprintf(d.writer, "%s  Predicate %d: %s %s\n", indentStr, i+1, pathStr, pred.Op)
-		if pred.Lit.String != nil {
-			fmt.Fprintf(d.writer, "%s    Compare with string: %s\n", indentStr, *pred.Lit.String)
-		} else if pred.Lit.Int != nil {
-			fmt.Fprintf(d.writer, "%s    Compare with int: %d\n", indentStr, *pred.Lit.Int)
-		} else if pred.Lit.Float != nil {
-			fmt.Fprintf(d.writer, "%s    Compare with float: %f\n", indentStr, *pred.Lit.Float)
-		} else if pred.Lit.Bool != nil {
-			fmt.Fprintf(d.writer, "%s    Compare with bool: %t\n", indentStr, *pred.Lit.Bool)
-		} else if pred.Lit.List != nil {
-			fmt.Fprintf(d.writer, "%s    Compare with list: %s\n", indentStr, describeLiteralList(pred.Lit.List))
-		} else if pred.Lit.Map != nil {
-			fmt.Fprintf(d.writer, "%s    Compare with map: %s\n", indentStr, describeLiteralMap(pred.Lit.Map))
+	fmt.Fprintf(d.writer, "%sLogical Expression:\n", indentStr)
+	if expr.Left != nil {
+		if expr.Left.Predicate != nil {
+			d.dumpPredicate(expr.Left.Predicate, indentStr+"  ")
+		} else if expr.Left.SubExpr != nil {
+			fmt.Fprintf(d.writer, "%s  Sub-expression:\n", indentStr)
+			d.dumpLogicalExpression(expr.Left.SubExpr, indentStr+"    ")
 		}
 	}
+
+	if expr.Op != "" && expr.Right != nil {
+		fmt.Fprintf(d.writer, "%s  Operator: %s\n", indentStr, expr.Op)
+		d.dumpLogicalExpression(expr.Right, indentStr+"  ")
+	}
+}
+
+// dumpPredicate dumps a single predicate
+func (d *ASTDumper) dumpPredicate(pred *ast.Predicate, indentStr string) {
+	if pred == nil {
+		return
+	}
+
+	pathStr := ""
+	if pred.PathExpr != nil {
+		pathStr = pred.PathExpr.Raw
+		if pred.PathExpr.Namespace != "" {
+			pathStr = fmt.Sprintf("%s (namespace: %s, segments: %v)",
+				pred.PathExpr.Raw, pred.PathExpr.Namespace, pred.PathExpr.Segments)
+		}
+	}
+	fmt.Fprintf(d.writer, "%sPredicate: %s %s\n", indentStr, pathStr, pred.Op)
+	if pred.Lit.String != nil {
+		fmt.Fprintf(d.writer, "%s  Compare with string: %s\n", indentStr, *pred.Lit.String)
+	} else if pred.Lit.Int != nil {
+		fmt.Fprintf(d.writer, "%s  Compare with int: %d\n", indentStr, *pred.Lit.Int)
+	} else if pred.Lit.Float != nil {
+		fmt.Fprintf(d.writer, "%s  Compare with float: %f\n", indentStr, *pred.Lit.Float)
+	} else if pred.Lit.Bool != nil {
+		fmt.Fprintf(d.writer, "%s  Compare with bool: %t\n", indentStr, *pred.Lit.Bool)
+	} else if pred.Lit.List != nil {
+		fmt.Fprintf(d.writer, "%s  Compare with list: %s\n", indentStr, describeLiteralList(pred.Lit.List))
+	} else if pred.Lit.Map != nil {
+		fmt.Fprintf(d.writer, "%s  Compare with map: %s\n", indentStr, describeLiteralMap(pred.Lit.Map))
+	}
+}
+
+// dumpPredicates dumps the predicate block (for compatibility with older code)
+func (d *ASTDumper) dumpPredicates(when *ast.PredicateBlock, indentStr string) {
+	if when == nil || when.Expression == nil {
+		return
+	}
+
+	fmt.Fprintf(d.writer, "%sPredicates:\n", indentStr)
+	d.dumpLogicalExpression(when.Expression, indentStr+"  ")
 }
 
 // dumpSteps dumps the steps block
@@ -126,13 +158,17 @@ func (d *ASTDumper) dumpEffects(effects *ast.EffectBlock, indentStr string) {
 
 	fmt.Fprintf(d.writer, "%sEffects (%d):\n", indentStr, len(effects.Effects))
 	for i, effect := range effects.Effects {
-		fmt.Fprintf(d.writer, "%s  Effect %d: %s\n", indentStr, i+1, effect.Verb)
-		d.dumpArgs(effect.Args, indentStr+"  ")
+		effectDesc := effect.Verb
+		if effect.BindName != "" {
+			effectDesc = effect.BindName + " = " + effect.Verb
+		}
+		fmt.Fprintf(d.writer, "%s  Effect %d: %s\n", indentStr, i+1, effectDesc)
+		d.dumpNamedArgs(effect.Args, indentStr+"  ")
 	}
 }
 
-// dumpArgs dumps step or effect arguments
-func (d *ASTDumper) dumpArgs(args []*ast.StepArg, indentStr string) {
+// dumpNamedArgs dumps named arguments
+func (d *ASTDumper) dumpNamedArgs(args []*ast.NamedArg, indentStr string) {
 	if len(args) == 0 {
 		return
 	}
@@ -155,6 +191,11 @@ func (d *ASTDumper) dumpArgs(args []*ast.StepArg, indentStr string) {
 			}
 		}
 	}
+}
+
+// For backward compatibility
+func (d *ASTDumper) dumpArgs(args []*ast.NamedArg, indentStr string) {
+	d.dumpNamedArgs(args, indentStr)
 }
 
 // Helper function to describe literals

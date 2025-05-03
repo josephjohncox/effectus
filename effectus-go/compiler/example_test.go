@@ -82,12 +82,12 @@ func TestCompilerWithTypeChecking(t *testing.T) {
 	ruleContent := `
 rule "HighValueOrderEmail" priority 10 {
   when {
-    order.total > 1000.0
+    order.total > 1000.0 &&
     customer.vip == true
   }
   then {
-    SendEmail to: customer.email subject: "VIP Order" body: "Thank you for your high-value order!"
-    LogOrder order_id: order.id total: order.total
+    SendEmail(to: customer.email, subject: "VIP Order", body: "Thank you for your high-value order!")
+    LogOrder(order_id: order.id, total: order.total)
   }
 }
 
@@ -96,8 +96,8 @@ flow "NewCustomerFlow" priority 5 {
     customer.isNew == true
   }
   steps {
-    CreateOrder customer_id: customer.id items: customer.cart -> order
-    SendEmail to: customer.email subject: "Welcome" body: "Thank you for your first order!"
+    order = CreateOrder(customer_id: customer.id, items: customer.cart)
+    SendEmail(to: customer.email, subject: "Welcome", body: "Thank you for your first order!")
   }
 }
 `
@@ -174,15 +174,21 @@ flow "NewCustomerFlow" priority 5 {
 	}
 
 	// Verify rule predicates
-	ruleWhen := file.Rules[0].When
-	if len(ruleWhen.Predicates) != 2 {
-		t.Errorf("Expected 2 predicates in rule, got %d", len(ruleWhen.Predicates))
+	if len(file.Rules[0].Blocks) == 0 {
+		t.Errorf("Expected at least one block in rule, got none")
+	} else {
+		ruleWhen := file.Rules[0].Blocks[0].When
+		if ruleWhen == nil || ruleWhen.Expression == nil {
+			t.Errorf("Expected a logical expression in rule block, got nil")
+		}
 	}
 
 	// Verify rule effects
-	ruleThen := file.Rules[0].Then
-	if len(ruleThen.Effects) != 2 {
-		t.Errorf("Expected 2 effects in rule, got %d", len(ruleThen.Effects))
+	if len(file.Rules[0].Blocks) > 0 {
+		ruleThen := file.Rules[0].Blocks[0].Then
+		if ruleThen == nil || len(ruleThen.Effects) != 2 {
+			t.Errorf("Expected 2 effects in rule, got %d", len(ruleThen.Effects))
+		}
 	}
 
 	// Verify some inferred types

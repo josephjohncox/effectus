@@ -1,11 +1,11 @@
 flow "MIXED_PROCESS" priority 3 {
     when {
-        order.type == "precision"
+        order.type == "precision" &&
         customer.priority >= 2
     }
     steps {
-        analyze_requirements order_id:order.id specs:order.specs -> req
-        create_timeline requirements:$req milestone:"design"     -> timeline
-        notify_engineering timeline:$timeline reason:"New design requirement"
+        req = analyze_requirements(order_id: order.id, specs: order.specs)
+        timeline = create_timeline(requirements: $req, milestone: "design")
+        notify_engineering(timeline: $timeline, reason: "New design requirement")
     }
 } 

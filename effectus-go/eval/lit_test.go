@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/effectus/effectus-go/ast"
+	"github.com/effectus/effectus-go/common"
 )
 
 func TestCompileLiteral(t *testing.T) {
@@ -146,7 +147,7 @@ func TestCompileLiteral(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := CompileLiteral(&tt.literal)
+			result := common.CompileLiteral(&tt.literal)
 
 			if !reflect.DeepEqual(result, tt.expected) {
 				t.Errorf("CompileLiteral() = %v, want %v", result, tt.expected)

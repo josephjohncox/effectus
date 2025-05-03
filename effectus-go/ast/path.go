@@ -8,9 +8,9 @@ import (
 func ResolvePathExpressions(file *File) error {
 	// Process rules
 	for _, rule := range file.Rules {
-		if rule.When != nil {
-			for _, pred := range rule.When.Predicates {
-				if err := resolvePathExpression(pred.PathExpr); err != nil {
+		for _, block := range rule.Blocks {
+			if block.When != nil && block.When.Expression != nil {
+				if err := resolveLogicalExpression(block.When.Expression); err != nil {
 					return err
 				}
 			}
@@ -19,11 +19,9 @@ func ResolvePathExpressions(file *File) error {
 
 	// Process flows
 	for _, flow := range file.Flows {
-		if flow.When != nil {
-			for _, pred := range flow.When.Predicates {
-				if err := resolvePathExpression(pred.PathExpr); err != nil {
-					return err
-				}
+		if flow.When != nil && flow.When.Expression != nil {
+			if err := resolveLogicalExpression(flow.When.Expression); err != nil {
+				return err
 			}
 		}
 
@@ -37,6 +35,35 @@ func ResolvePathExpressions(file *File) error {
 					}
 				}
 			}
+		}
+	}
+
+	return nil
+}
+
+// resolveLogicalExpression resolves paths in a logical expression
+func resolveLogicalExpression(expr *LogicalExpression) error {
+	if expr == nil {
+		return nil
+	}
+
+	// Resolve left side
+	if expr.Left != nil {
+		if expr.Left.Predicate != nil && expr.Left.Predicate.PathExpr != nil {
+			if err := resolvePathExpression(expr.Left.Predicate.PathExpr); err != nil {
+				return err
+			}
+		} else if expr.Left.SubExpr != nil {
+			if err := resolveLogicalExpression(expr.Left.SubExpr); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Resolve right side if it exists
+	if expr.Right != nil {
+		if err := resolveLogicalExpression(expr.Right); err != nil {
+			return err
 		}
 	}
 

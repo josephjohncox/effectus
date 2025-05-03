@@ -135,8 +135,8 @@ func (tc *TypeChecker) BuildTypeSchemaFromFacts(facts effectus.Facts) {
 	}
 }
 
-// VerbSpec represents the type specification for a verb
-type VerbSpec struct {
+// VerbTypeSpec represents the type specification for a verb
+type VerbTypeSpec struct {
 	ArgTypes   map[string]Type `json:"arg_types"`
 	ReturnType Type            `json:"return_type"`
 }
@@ -150,7 +150,7 @@ func (tc *TypeChecker) LoadVerbSpecs(filename string) error {
 	}
 
 	// Parse the verb specs
-	var verbSpecs map[string]VerbSpec
+	var verbSpecs map[string]VerbTypeSpec
 	if err := json.Unmarshal(content, &verbSpecs); err != nil {
 		return fmt.Errorf("parsing verb spec file: %w", err)
 	}

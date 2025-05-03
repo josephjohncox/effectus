@@ -3,7 +3,7 @@ flow "TEST_BINDING" priority 1 {
         test.value == "test"
     }
     steps {
-        first_step param1:"value1" -> result
-        second_step input:$result
+        result = first_step(param1: "value1")
+        second_step(input: $result)
     }
 } 

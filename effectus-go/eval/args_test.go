@@ -239,7 +239,7 @@ func TestCompileArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := CompileArgs(tt.args, tt.bindings)
+			result, err := common.CompileArgs(tt.args, tt.bindings)
 
 			if tt.wantErr && err == nil {
 				t.Errorf("CompileArgs() expected error but got none")

@@ -3,6 +3,6 @@ flow "SIMPLE" priority 1 {
         test.value == "test"
     }
     steps {
-        simple_action param1:"value1" param2:123
+        simple_action(param1: "value1", param2: 123)
     }
 } 

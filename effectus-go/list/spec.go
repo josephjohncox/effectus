@@ -5,8 +5,14 @@ import (
 	"fmt"
 
 	"github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/eval"
+	"github.com/effectus/effectus-go/common"
 )
+
+// Effect represents a verb to be executed along with its arguments
+type Effect struct {
+	Verb string                 // Name of the verb
+	Args map[string]interface{} // Arguments to the verb
+}
 
 // Spec implements the effectus.Spec interface for list rules
 type Spec struct {
@@ -38,13 +44,18 @@ func (s *Spec) Execute(ctx context.Context, facts effectus.Facts, ex effectus.Ex
 		}
 
 		// Evaluate rule predicates
-		if !eval.EvaluatePredicates(rule.Predicates, facts) {
+		if !rule.Matches(facts) {
 			continue
 		}
 
 		// Execute effects
 		for _, effect := range rule.Effects {
-			_, err := ex.Do(effect)
+			// Convert to effectus.Effect
+			execEffect := effectus.Effect{
+				Verb:    effect.Verb,
+				Payload: effect.Args,
+			}
+			_, err := ex.Do(execEffect)
 			if err != nil {
 				return fmt.Errorf("error executing effect %s: %w", effect.Verb, err)
 			}
@@ -58,9 +69,101 @@ func (s *Spec) Execute(ctx context.Context, facts effectus.Facts, ex effectus.Ex
 type CompiledRule struct {
 	Name       string
 	Priority   int
-	Predicates []*eval.Predicate
-	Effects    []effectus.Effect
+	Predicates []*common.Predicate
+	Effects    []*Effect
 	FactPaths  []string
+}
+
+// Matches checks if a rule matches the given facts
+func (r *CompiledRule) Matches(facts effectus.Facts) bool {
+	// All predicates must match
+	for _, pred := range r.Predicates {
+		// Get the fact value
+		factValue, exists := facts.Get(pred.Path)
+		if !exists {
+			return false
+		}
+
+		// Compare using the operator
+		switch pred.Op {
+		case "==":
+			if factValue != pred.Lit {
+				return false
+			}
+		case "!=":
+			if factValue == pred.Lit {
+				return false
+			}
+		case ">":
+			// Handle numeric comparisons
+			if !compareGreaterThan(factValue, pred.Lit) {
+				return false
+			}
+		case ">=":
+			// Handle numeric comparisons
+			if !compareGreaterOrEqual(factValue, pred.Lit) {
+				return false
+			}
+		case "<":
+			// Handle numeric comparisons
+			if !compareLessThan(factValue, pred.Lit) {
+				return false
+			}
+		case "<=":
+			// Handle numeric comparisons
+			if !compareLessOrEqual(factValue, pred.Lit) {
+				return false
+			}
+		case "in":
+			// Check if fact value is in a collection
+			if !isInCollection(factValue, pred.Lit) {
+				return false
+			}
+		case "contains":
+			// Check if fact value contains an item
+			if !contains(factValue, pred.Lit) {
+				return false
+			}
+		default:
+			// Unknown operator
+			return false
+		}
+	}
+
+	// All predicates matched
+	return true
+}
+
+// Helper comparison functions - these would be implemented
+// to handle different numeric types and conversions
+func compareGreaterThan(a, b interface{}) bool {
+	// Implementation would handle different numeric types
+	return false
+}
+
+func compareGreaterOrEqual(a, b interface{}) bool {
+	// Implementation would handle different numeric types
+	return false
+}
+
+func compareLessThan(a, b interface{}) bool {
+	// Implementation would handle different numeric types
+	return false
+}
+
+func compareLessOrEqual(a, b interface{}) bool {
+	// Implementation would handle different numeric types
+	return false
+}
+
+func isInCollection(item, collection interface{}) bool {
+	// Implementation would handle different collection types
+	return false
+}
+
+func contains(collection, item interface{}) bool {
+	// Implementation would handle different collection types
+	return false
 }
 
 // sortRulesByPriority sorts rules by priority (highest first)

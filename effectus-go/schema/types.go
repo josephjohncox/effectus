@@ -359,20 +359,22 @@ func isTypeCompatible(provided, expected *Type) bool {
 
 // TypeCheckRule performs type checking on a rule
 func (ts *TypeSystem) TypeCheckRule(rule *ast.Rule) error {
-	// Check predicates
-	if rule.When != nil {
-		for _, pred := range rule.When.Predicates {
-			if err := ts.TypeCheckPredicate(pred); err != nil {
+	// Check the rule's WhenThenBlocks
+	for _, block := range rule.Blocks {
+		// Check predicates in the When block
+		if block.When != nil && block.When.Expression != nil {
+			// Walk the expression tree and check each predicate
+			if err := ts.checkLogicalExpression(block.When.Expression); err != nil {
 				return fmt.Errorf("in rule %s, when: %w", rule.Name, err)
 			}
 		}
-	}
 
-	// Check effects
-	if rule.Then != nil {
-		for _, effect := range rule.Then.Effects {
-			if err := ts.TypeCheckEffect(effect, nil); err != nil {
-				return fmt.Errorf("in rule %s, then: %w", rule.Name, err)
+		// Check effects in the Then block
+		if block.Then != nil && block.Then.Effects != nil {
+			for _, effect := range block.Then.Effects {
+				if err := ts.TypeCheckEffect(effect, nil); err != nil {
+					return fmt.Errorf("in rule %s, then: %w", rule.Name, err)
+				}
 			}
 		}
 	}
@@ -380,14 +382,40 @@ func (ts *TypeSystem) TypeCheckRule(rule *ast.Rule) error {
 	return nil
 }
 
+// checkLogicalExpression recursively checks the logical expression tree
+func (ts *TypeSystem) checkLogicalExpression(expr *ast.LogicalExpression) error {
+	if expr == nil {
+		return nil
+	}
+
+	// Check the left term
+	if expr.Left != nil {
+		if expr.Left.Predicate != nil {
+			if err := ts.TypeCheckPredicate(expr.Left.Predicate); err != nil {
+				return err
+			}
+		} else if expr.Left.SubExpr != nil {
+			if err := ts.checkLogicalExpression(expr.Left.SubExpr); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Check the right expression if there's an operator
+	if expr.Op != "" && expr.Right != nil {
+		return ts.checkLogicalExpression(expr.Right)
+	}
+
+	return nil
+}
+
 // TypeCheckFlow performs type checking on a flow
 func (ts *TypeSystem) TypeCheckFlow(flow *ast.Flow) error {
-	// Check predicates
-	if flow.When != nil {
-		for _, pred := range flow.When.Predicates {
-			if err := ts.TypeCheckPredicate(pred); err != nil {
-				return fmt.Errorf("in flow %s, when: %w", flow.Name, err)
-			}
+	// Check predicates in the When block
+	if flow.When != nil && flow.When.Expression != nil {
+		// Walk the expression tree and check each predicate
+		if err := ts.checkLogicalExpression(flow.When.Expression); err != nil {
+			return fmt.Errorf("in flow %s, when: %w", flow.Name, err)
 		}
 	}
 
@@ -453,24 +481,31 @@ func (ts *TypeSystem) LoadTypesFromProtoMessage(msg proto.Message) {
 
 // InferTypes infers types from the usage of facts and variables in rules and flows
 func (ts *TypeSystem) InferTypes(file *ast.File, facts effectus.Facts) error {
-	// Infer fact types from predicates
+	// Infer fact types from predicates in rules
 	for _, rule := range file.Rules {
-		if rule.When != nil {
-			for _, pred := range rule.When.Predicates {
-				if pred.PathExpr != nil {
-					factPath := pred.PathExpr.GetFullPath()
-					factValue, exists := facts.Get(factPath)
-					if exists {
-						ts.InferFactType(factPath, factValue)
+		for _, block := range rule.Blocks {
+			if block.When != nil && block.When.Expression != nil {
+				// Collect all predicates from the logical expression tree
+				predicates := collectPredicatesFromExpression(block.When.Expression)
+				for _, pred := range predicates {
+					if pred.PathExpr != nil {
+						factPath := pred.PathExpr.GetFullPath()
+						factValue, exists := facts.Get(factPath)
+						if exists {
+							ts.InferFactType(factPath, factValue)
+						}
 					}
 				}
 			}
 		}
 	}
 
+	// Infer fact types from predicates in flows
 	for _, flow := range file.Flows {
-		if flow.When != nil {
-			for _, pred := range flow.When.Predicates {
+		if flow.When != nil && flow.When.Expression != nil {
+			// Collect all predicates from the logical expression tree
+			predicates := collectPredicatesFromExpression(flow.When.Expression)
+			for _, pred := range predicates {
 				if pred.PathExpr != nil {
 					factPath := pred.PathExpr.GetFullPath()
 					factValue, exists := facts.Get(factPath)
@@ -484,4 +519,29 @@ func (ts *TypeSystem) InferTypes(file *ast.File, facts effectus.Facts) error {
 
 	// After inferring types, perform type checking
 	return ts.TypeCheckFile(file)
+}
+
+// collectPredicatesFromExpression recursively collects all predicates from a logical expression
+func collectPredicatesFromExpression(expr *ast.LogicalExpression) []*ast.Predicate {
+	if expr == nil {
+		return nil
+	}
+
+	var predicates []*ast.Predicate
+
+	// Check the left term
+	if expr.Left != nil {
+		if expr.Left.Predicate != nil {
+			predicates = append(predicates, expr.Left.Predicate)
+		} else if expr.Left.SubExpr != nil {
+			predicates = append(predicates, collectPredicatesFromExpression(expr.Left.SubExpr)...)
+		}
+	}
+
+	// Check the right expression if there's an operator
+	if expr.Op != "" && expr.Right != nil {
+		predicates = append(predicates, collectPredicatesFromExpression(expr.Right)...)
+	}
+
+	return predicates
 }

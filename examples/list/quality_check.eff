@@ -1,10 +1,10 @@
 rule "QUALITY_CHECK" priority 10 {
     when {
-        part.category == "precision"
+        part.category == "precision" &&
         part.quality.level > 2
     }
     then {
-        LogInfo message:"Quality check required" part:part.id
-        RequestQualityInspection part:part.id type:"detailed"
+        LogInfo(message: "Quality check required", part: part.id)
+        RequestQualityInspection(part: part.id, type: "detailed")
     }
 } 

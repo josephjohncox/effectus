@@ -1,4 +1,4 @@
-package eval
+package common
 
 import (
 	"github.com/effectus/effectus-go/ast"
@@ -6,6 +6,10 @@ import (
 
 // CompileLiteral converts an AST literal to a runtime value
 func CompileLiteral(lit *ast.Literal) interface{} {
+	if lit == nil {
+		return nil
+	}
+
 	if lit.String != nil {
 		return *lit.String
 	}

@@ -14,10 +14,17 @@ type File struct {
 // Rule represents a list-style rule (when-then)
 type Rule struct {
 	Pos      lexer.Position
-	Name     string          `parser:"'rule' @String"`
-	Priority int             `parser:"'priority' @Int '{'"`
-	When     *PredicateBlock `parser:"'when' '{' @@? '}'"`
-	Then     *EffectBlock    `parser:"'then' '{' @@? '}' '}'"`
+	Name     string           `parser:"'rule' @String"`
+	Priority int              `parser:"'priority' @Int '{'"`
+	Blocks   []*WhenThenBlock `parser:"@@*"`
+	End      string           `parser:"'}'"`
+}
+
+// WhenThenBlock represents a when-then pair within a rule
+type WhenThenBlock struct {
+	Pos  lexer.Position
+	When *PredicateBlock `parser:"'when' '{' @@? '}'"`
+	Then *EffectBlock    `parser:"'then' '{' @@? '}'"`
 }
 
 // Flow represents a flow-style rule (when-steps)
@@ -32,7 +39,22 @@ type Flow struct {
 // PredicateBlock represents a block of predicates
 type PredicateBlock struct {
 	Pos        lexer.Position
-	Predicates []*Predicate `parser:"@@*"`
+	Expression *LogicalExpression `parser:"@@"`
+}
+
+// LogicalExpression represents a logical expression with AND/OR operators
+type LogicalExpression struct {
+	Pos   lexer.Position
+	Left  *PredicateTerm     `parser:"@@"`
+	Op    string             `parser:"(@LogicalOp"`
+	Right *LogicalExpression `parser:"@@)?"`
+}
+
+// PredicateTerm represents either a predicate or a parenthesized logical expression
+type PredicateTerm struct {
+	Pos       lexer.Position
+	Predicate *Predicate         `parser:"@@"`
+	SubExpr   *LogicalExpression `parser:"| '(' @@ ')'"`
 }
 
 // Predicate represents a single condition
@@ -71,9 +93,10 @@ type EffectBlock struct {
 
 // Effect represents a verb and its arguments
 type Effect struct {
-	Pos  lexer.Position
-	Verb string     `parser:"@Ident"`
-	Args []*StepArg `parser:"@@*"`
+	Pos      lexer.Position
+	BindName string      `parser:"(@Ident '=')?"` // Optional variable binding
+	Verb     string      `parser:"@Ident"`
+	Args     []*NamedArg `parser:"'(' @@? (',' @@)* ')'"`
 }
 
 // StepBlock represents a block of steps
@@ -85,13 +108,14 @@ type StepBlock struct {
 // Step represents a single step in a flow
 type Step struct {
 	Pos      lexer.Position
-	Verb     string     `parser:"@Ident"`
-	Args     []*StepArg `parser:"@@*"`
-	BindName string     `parser:"('->' @Ident)?"`
+	BindName string      `parser:"(@Ident '=')?"` // Optional variable binding
+	Verb     string      `parser:"@Ident"`
+	Args     []*NamedArg `parser:"'(' @@? (',' @@)* ')'"`
+	Arrow    string      `parser:"('->' @Ident)?"`
 }
 
-// StepArg represents a named argument to a step
-type StepArg struct {
+// NamedArg represents a named argument to a verb
+type NamedArg struct {
 	Pos   lexer.Position
 	Name  string    `parser:"@Ident ':'"`
 	Value *ArgValue `parser:"@@"`

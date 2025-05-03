@@ -27,6 +27,7 @@ var (
 		// - Mixed access (inventory.items[0].tags["color"])
 		{"FactPath", `[a-zA-Z_]\w*(\.[a-zA-Z_]\w*|\.\d+|\[[0-9]+\]|\["[^"]*"\])+`},
 		{"Operator", `==|!=|<=|>=|<|>|\bin\b|\bcontains\b`},
+		{"LogicalOp", `&&|\|\|`},
 		// {"Keyword", `\b(rule|flow|when|then|steps|include|priority|true|false)\b`},
 		{"Dollar", `\$`},
 		{"Ident", `[a-zA-Z_]\w*`},

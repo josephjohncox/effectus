@@ -3,6 +3,6 @@ flow "MINIMAL" priority 1 {
         test.value == "test"
     }
     steps {
-        do_nothing
+        do_nothing()
     }
 } 
