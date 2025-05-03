@@ -1,4 +1,4 @@
-package eval
+package tests
 
 import (
 	"reflect"
@@ -6,7 +6,6 @@ import (
 
 	"github.com/effectus/effectus-go/ast"
 	"github.com/effectus/effectus-go/common"
-	"github.com/effectus/effectus-go/pathutil"
 )
 
 func TestCompileArgs(t *testing.T) {
@@ -80,8 +79,7 @@ func TestCompileArgs(t *testing.T) {
 					Name: "customer_id",
 					Value: &ast.ArgValue{
 						PathExpr: &ast.PathExpression{
-							Raw:       "customer.id",
-							Path:      pathutil.NewPath("customer", []pathutil.PathElement{pathutil.NewElement("id")}),
+							Path: "customer.id",
 						},
 					},
 				},
@@ -89,8 +87,7 @@ func TestCompileArgs(t *testing.T) {
 					Name: "order_total",
 					Value: &ast.ArgValue{
 						PathExpr: &ast.PathExpression{
-							Raw:       "order.total",
-							Path:      pathutil.NewPath("order", []pathutil.PathElement{pathutil.NewElement("total")}),
+							Path: "order.total",
 						},
 					},
 				},
@@ -158,8 +155,7 @@ func TestCompileArgs(t *testing.T) {
 					Name: "path",
 					Value: &ast.ArgValue{
 						PathExpr: &ast.PathExpression{
-							Raw:       "customer.email",
-							Path:      pathutil.NewPath("customer", []pathutil.PathElement{pathutil.NewElement("email")}),
+							Path: "customer.email",
 						},
 					},
 				},

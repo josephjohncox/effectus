@@ -23,25 +23,18 @@ func NewTypedProvider(provider pathutil.FactProvider, typeSystem *TypeSystem) *T
 }
 
 // Get retrieves a value using a structured path
-func (p *TypedProvider) Get(path pathutil.Path) (interface{}, bool) {
+func (p *TypedProvider) Get(path string) (interface{}, bool) {
 	return p.provider.Get(path)
 }
 
 // GetWithContext retrieves a value with detailed resolution information including type
-func (p *TypedProvider) GetWithContext(path pathutil.Path) (interface{}, *pathutil.ResolutionResult) {
+func (p *TypedProvider) GetWithContext(path string) (interface{}, *pathutil.ResolutionResult) {
 	// Get value from underlying provider
 	value, result := p.provider.GetWithContext(path)
 
 	// If path doesn't exist, just return the result
 	if !result.Exists || result.Error != nil {
 		return value, result
-	}
-
-	// Try to get type information
-	typ, err := p.typeSystem.GetFactType(path)
-	if err == nil && typ != nil {
-		// Add type information to result
-		result.Type = typ
 	}
 
 	return value, result

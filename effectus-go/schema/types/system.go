@@ -8,14 +8,12 @@ import (
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/pathutil"
 )
 
 // TypeSystem is the central type management system for Effectus
 type TypeSystem struct {
 	// Facts type registry - maps paths to types
 	factTypes map[string]*Type
-	factPaths map[string]pathutil.Path
 
 	// Verb specifications
 	verbSpecs map[string]*VerbSpec
@@ -54,7 +52,6 @@ type VerbInfo struct {
 func NewTypeSystem() *TypeSystem {
 	return &TypeSystem{
 		factTypes: make(map[string]*Type),
-		factPaths: make(map[string]pathutil.Path),
 		verbSpecs: make(map[string]*VerbSpec),
 		types:     make(map[string]*Type),
 		verbTypes: make(map[string]*VerbInfo),
@@ -87,24 +84,23 @@ func (ts *TypeSystem) GetType(name string) (*Type, bool) {
 }
 
 // RegisterFactType registers a type for a fact path
-func (ts *TypeSystem) RegisterFactType(path pathutil.Path, typ *Type) {
-	ts.factTypes[path.String()] = typ
-	ts.factPaths[path.String()] = path
+func (ts *TypeSystem) RegisterFactType(path string, typ *Type) {
+	ts.factTypes[path] = typ
 }
 
 // GetFactType retrieves the type for a fact path
-func (ts *TypeSystem) GetFactType(path pathutil.Path) (*Type, error) {
-	typ, exists := ts.factTypes[path.String()]
+func (ts *TypeSystem) GetFactType(path string) (*Type, error) {
+	typ, exists := ts.factTypes[path]
 	if !exists {
-		return nil, fmt.Errorf("no type registered for path: %s", path.String())
+		return nil, fmt.Errorf("no type registered for path: %s", path)
 	}
 	return typ, nil
 }
 
 // GetAllFactPaths returns all registered fact paths
-func (ts *TypeSystem) GetAllFactPaths() []pathutil.Path {
-	paths := make([]pathutil.Path, 0, len(ts.factTypes))
-	for _, path := range ts.factPaths {
+func (ts *TypeSystem) GetAllFactPaths() []string {
+	paths := make([]string, 0, len(ts.factTypes))
+	for path := range ts.factTypes {
 		paths = append(paths, path)
 	}
 	return paths
@@ -161,11 +157,7 @@ func (ts *TypeSystem) LoadSchemaFile(filename string) error {
 	}
 
 	for _, entry := range schemaEntries {
-		parsedPath, err := pathutil.ParseString(entry.Path)
-		if err != nil {
-			return fmt.Errorf("invalid path: %w", err)
-		}
-		ts.RegisterFactType(parsedPath, &entry.Type)
+		ts.RegisterFactType(entry.Path, &entry.Type)
 	}
 
 	return nil
@@ -251,32 +243,8 @@ func (ts *TypeSystem) GetVerbType(verbName string) (*VerbInfo, bool) {
 }
 
 // TypeCheckPredicateAST checks a predicate in the AST
-func (ts *TypeSystem) TypeCheckPredicateAST(pred *ast.Predicate) error {
-	if pred == nil || pred.PathExpr == nil {
-		return fmt.Errorf("invalid predicate: missing path expression")
-	}
-
-	// Get the type of the fact at this path
-	factType, err := ts.GetFactType(pred.PathExpr.Path)
-	if err != nil {
-		return fmt.Errorf("unknown fact path in predicate: %s", pred.PathExpr.Path)
-	}
-
-	// We need to adapt to the actual field name used in the AST
-	// Check if the operator is compatible with this type
-	if err := ts.OperatorCompatibility(pred.Op, factType); err != nil {
-		return err
-	}
-
-	// We need to adapt to the actual field name used in the AST
-	// For a literal, check its compatibility with the fact type
-	valueType := InferTypeFromLiteral(&pred.Lit)
-	if err := ts.CheckValueTypeCompatibility(pred.Op, factType, valueType); err != nil {
-		return fmt.Errorf("value type mismatch in predicate: %w", err)
-	}
-
-	return nil
-}
+// This function is now replaced by the implementation in expr_adapter.go
+// The new implementation handles string expressions directly
 
 // GetAllTypes returns all registered named types
 func (ts *TypeSystem) GetAllTypes() map[string]*Type {
@@ -306,20 +274,7 @@ func (ts *TypeSystem) TypeCheckPayload(payload interface{}, expectedType *Type) 
 }
 
 // typeCheckPredicate uses TypeCheckPredicateAST but adds fact checking
-func (ts *TypeSystem) typeCheckPredicate(pred *ast.Predicate, facts effectus.Facts) error {
-	if pred.PathExpr == nil {
-		return fmt.Errorf("predicate missing path expression")
-	}
-
-	// Validate that the path exists in facts
-	path := pred.PathExpr.Path
-	_, exists := facts.Get(path)
-	if !exists {
-		return fmt.Errorf("fact path does not exist: %s", path)
-	}
-
-	return ts.TypeCheckPredicateAST(pred)
-}
+// This function is now replaced by the implementation in expr_adapter.go
 
 // typeCheckEffect checks an effect for type correctness
 func (ts *TypeSystem) typeCheckEffect(effect *ast.Effect, facts effectus.Facts) error {
@@ -493,7 +448,7 @@ func (ts *TypeSystem) TypeCheckValue(value interface{}, expectedType *Type) erro
 }
 
 // TypeCheckFact checks if a fact at the given path has the expected type
-func (ts *TypeSystem) TypeCheckFact(facts effectus.Facts, path pathutil.Path, expectedType *Type) error {
+func (ts *TypeSystem) TypeCheckFact(facts effectus.Facts, path string, expectedType *Type) error {
 	value, exists := facts.Get(path)
 	if !exists {
 		return fmt.Errorf("fact path does not exist: %s", path)
@@ -503,7 +458,7 @@ func (ts *TypeSystem) TypeCheckFact(facts effectus.Facts, path pathutil.Path, ex
 }
 
 // InferTypeFromFactPath tries to infer a type from a fact if no type is registered
-func (ts *TypeSystem) InferTypeFromFactPath(facts effectus.Facts, path pathutil.Path) (*Type, error) {
+func (ts *TypeSystem) InferTypeFromFactPath(facts effectus.Facts, path string) (*Type, error) {
 	// First, check if a type is already registered
 	existingType, err := ts.GetFactType(path)
 	if err == nil && existingType != nil {
@@ -531,44 +486,8 @@ func (ts *TypeSystem) AutoRegisterTypes(facts effectus.Facts) {
 }
 
 // TypeCheckLogicalExpressionAST checks a logical expression in AST
-func (ts *TypeSystem) TypeCheckLogicalExpressionAST(expr *ast.LogicalExpression) error {
-	if expr == nil {
-		return nil
-	}
-
-	// Check left side
-	if expr.Left != nil {
-		if expr.Left.Predicate != nil {
-			if err := ts.TypeCheckPredicateAST(expr.Left.Predicate); err != nil {
-				return fmt.Errorf("in left predicate: %w", err)
-			}
-		} else if expr.Left.SubExpr != nil {
-			if err := ts.TypeCheckLogicalExpressionAST(expr.Left.SubExpr); err != nil {
-				return fmt.Errorf("in left sub-expression: %w", err)
-			}
-		} else {
-			return fmt.Errorf("left expression is empty")
-		}
-	} else {
-		return fmt.Errorf("missing left side of logical expression")
-	}
-
-	// For unary operators, we're done
-	if expr.Op == "" && expr.Right == nil {
-		return nil
-	}
-
-	// For binary operators, check right side
-	if expr.Right == nil {
-		return fmt.Errorf("binary operator %s missing right expression", expr.Op)
-	}
-
-	if err := ts.TypeCheckLogicalExpressionAST(expr.Right); err != nil {
-		return fmt.Errorf("in right expression: %w", err)
-	}
-
-	return nil
-}
+// This function is now replaced by the implementation in expr_adapter.go
+// The new implementation handles string expressions directly
 
 // TypeCheckArgumentValue type checks an argument value against the required type
 func (ts *TypeSystem) TypeCheckArgumentValue(arg *ast.ArgValue, requiredType *Type, facts Facts) error {
@@ -690,11 +609,6 @@ func IsCoercibleTo(sourceType, targetType *Type) bool {
 
 // TypeCheckFile performs type checking on a parsed file
 func (ts *TypeSystem) TypeCheckFile(file *ast.File, facts effectus.Facts) error {
-	// Ensure paths are resolved
-	if err := ast.ResolvePathExpressions(file); err != nil {
-		return fmt.Errorf("path resolution error: %w", err)
-	}
-
 	// Type check rules
 	for _, rule := range file.Rules {
 		if err := ts.typeCheckRule(rule, facts); err != nil {
@@ -714,15 +628,13 @@ func (ts *TypeSystem) TypeCheckFile(file *ast.File, facts effectus.Facts) error 
 
 // typeCheckRule performs type checking on a rule
 func (ts *TypeSystem) typeCheckRule(rule *ast.Rule, facts effectus.Facts) error {
-	// Type check predicates in each when-then block
-	for _, block := range rule.Blocks {
-		if block.When != nil && block.When.Expression != nil {
-			if err := ts.typeCheckLogicalExpression(block.When.Expression, facts); err != nil {
-				return fmt.Errorf("predicate error: %w", err)
-			}
-		}
+	// Type check predicates in each when-then block using the helper from expr_adapter.go
+	if err := ts.typeCheckRulePredicates(rule, facts); err != nil {
+		return err
+	}
 
-		// Type check effects
+	// Type check effects
+	for _, block := range rule.Blocks {
 		if block.Then != nil {
 			for _, effect := range block.Then.Effects {
 				if err := ts.typeCheckEffect(effect, facts); err != nil {
@@ -737,11 +649,9 @@ func (ts *TypeSystem) typeCheckRule(rule *ast.Rule, facts effectus.Facts) error 
 
 // typeCheckFlow performs type checking on a flow
 func (ts *TypeSystem) typeCheckFlow(flow *ast.Flow, facts effectus.Facts) error {
-	// Type check predicates
-	if flow.When != nil && flow.When.Expression != nil {
-		if err := ts.typeCheckLogicalExpression(flow.When.Expression, facts); err != nil {
-			return fmt.Errorf("predicate error: %w", err)
-		}
+	// Type check predicates using the helper from expr_adapter.go
+	if err := ts.typeCheckFlowPredicates(flow, facts); err != nil {
+		return err
 	}
 
 	// Type check steps
@@ -757,28 +667,4 @@ func (ts *TypeSystem) typeCheckFlow(flow *ast.Flow, facts effectus.Facts) error 
 }
 
 // typeCheckLogicalExpression type checks a logical expression
-func (ts *TypeSystem) typeCheckLogicalExpression(expr *ast.LogicalExpression, facts effectus.Facts) error {
-	if expr == nil {
-		return nil
-	}
-
-	// Check left side
-	if expr.Left.Predicate != nil {
-		if err := ts.typeCheckPredicate(expr.Left.Predicate, facts); err != nil {
-			return err
-		}
-	} else if expr.Left.SubExpr != nil {
-		if err := ts.typeCheckLogicalExpression(expr.Left.SubExpr, facts); err != nil {
-			return err
-		}
-	}
-
-	// Check right side if exists
-	if expr.Right != nil {
-		if err := ts.typeCheckLogicalExpression(expr.Right, facts); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
+// This function is now replaced by the implementation in expr_adapter.go

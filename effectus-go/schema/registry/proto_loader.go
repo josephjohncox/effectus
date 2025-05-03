@@ -2,192 +2,223 @@ package registry
 
 import (
 	"fmt"
+	"path/filepath"
 	"os"
 	"strings"
 
-	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema/types"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/descriptorpb"
 )
 
-// ProtoSchemaLoader loads schemas from protobuf descriptor files
-type ProtoSchemaLoader struct {
-	// Optional prefix for fact paths
-	pathPrefix string
+// ProtoLoader loads schema definitions from Protocol Buffers files
+type ProtoLoader struct{}
+
+// NewProtoLoader creates a new Protocol Buffers loader
+func NewProtoLoader() *ProtoLoader {
+	return &ProtoLoader{}
 }
 
-// NewProtoSchemaLoader creates a new protobuf schema loader
-func NewProtoSchemaLoader(prefix string) *ProtoSchemaLoader {
-	return &ProtoSchemaLoader{
-		pathPrefix: prefix,
-	}
+// CanLoad checks if the loader can handle this file
+func (l *ProtoLoader) CanLoad(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".proto"
 }
 
-// CanLoad checks if this loader can handle the given file
-func (l *ProtoSchemaLoader) CanLoad(path string) bool {
-	return strings.HasSuffix(path, ".pb") || strings.HasSuffix(path, ".proto.bin")
-}
-
-// Load loads type definitions from a protobuf descriptor file
-func (l *ProtoSchemaLoader) Load(path string, ts *types.TypeSystem) error {
-	// Read the file
-	content, err := os.ReadFile(path)
+// Load loads schema definitions from a proto file
+func (l *ProtoLoader) Load(path string, ts *types.TypeSystem) error {
+	// Read the proto file
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("reading proto file: %w", err)
 	}
 
-	// Parse the FileDescriptorSet
-	fileDescSet := &descriptorpb.FileDescriptorSet{}
-	if err := proto.Unmarshal(content, fileDescSet); err != nil {
-		return fmt.Errorf("parsing proto descriptor: %w", err)
+	// Parse the file contents
+	protoContent := string(data)
+
+	// Extract message definitions
+	messages, err := l.extractMessages(protoContent)
+	if err != nil {
+		return fmt.Errorf("extracting messages: %w", err)
 	}
-
-	// Process each file descriptor
-	for _, fileDesc := range fileDescSet.GetFile() {
-		if err := l.registerMessagesFromFile(fileDesc, ts); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// registerMessagesFromFile registers all messages from a file descriptor
-func (l *ProtoSchemaLoader) registerMessagesFromFile(fileDesc *descriptorpb.FileDescriptorProto, ts *types.TypeSystem) error {
-	// Get package name
-	pkgName := fileDesc.GetPackage()
 
 	// Process each message
-	for _, msgDesc := range fileDesc.GetMessageType() {
-		msgPath := pkgName
-		if msgPath != "" {
-			msgPath += "."
-		}
-		msgPath += msgDesc.GetName()
-
-		if err := l.registerMessageType(msgDesc, msgPath, ts); err != nil {
-			return err
+	namespace := l.getNamespaceFromProto(protoContent)
+	for _, msg := range messages {
+		if err := l.processMessage(ts, msg, namespace); err != nil {
+			return fmt.Errorf("processing message %s: %w", msg.Name, err)
 		}
 	}
 
 	return nil
 }
 
-// registerMessageType registers a message type and its fields
-func (l *ProtoSchemaLoader) registerMessageType(msgDesc *descriptorpb.DescriptorProto, path string, ts *types.TypeSystem) error {
-	// Register the message type itself
-	msgName := msgDesc.GetName()
-
-	// Create a named type for the message
-	msgType := &types.Type{
-		Name:       msgName,
-		PrimType:   types.TypeMap,
-		Properties: make(map[string]*types.Type),
-	}
-	// Maps with string keys
-	msgType.Properties["__key"] = &types.Type{PrimType: types.TypeString}
-	// Map values depend on field types
-	msgType.Properties["__value"] = &types.Type{PrimType: types.TypeUnknown}
-
-	// Register the message type
-	ts.RegisterType(msgName, msgType)
-
-	// Full package path for this message
-	fullPath := path
-	if l.pathPrefix != "" {
-		fullPath = l.pathPrefix + "." + path
-	}
-
-	// Register each field
-	for _, field := range msgDesc.GetField() {
-		fieldName := field.GetName()
-		fieldPath := fullPath + "." + fieldName
-
-		// Convert field type
-		fieldType, err := l.protoFieldToType(field, ts)
-		if err != nil {
-			return fmt.Errorf("converting field %s: %w", fieldName, err)
-		}
-
-		// Register the field type
-		parsedPath, err := pathutil.FromString(fieldPath)
-		if err != nil {
-			return fmt.Errorf("parsing fact path %s: %w", fieldPath, err)
-		}
-		ts.RegisterFactType(parsedPath, fieldType)
-	}
-
-	// Process nested messages
-	for _, nestedMsg := range msgDesc.GetNestedType() {
-		nestedPath := path + "." + nestedMsg.GetName()
-		if err := l.registerMessageType(nestedMsg, nestedPath, ts); err != nil {
-			return err
-		}
-	}
-
-	return nil
+// protoMessage represents a parsed Protocol Buffers message
+type protoMessage struct {
+	Name   string
+	Fields []protoField
 }
 
-// protoFieldToType converts a protobuf field to a Type
-func (l *ProtoSchemaLoader) protoFieldToType(field *descriptorpb.FieldDescriptorProto, ts *types.TypeSystem) (*types.Type, error) {
-	// Check if field is repeated
-	repeated := field.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
+// protoField represents a field in a Protocol Buffers message
+type protoField struct {
+	Name     string
+	Type     string
+	Repeated bool
+	Optional bool
+}
 
-	// Get the base type
-	var baseType *types.Type
+// extractMessages parses a proto file and extracts message definitions
+func (l *ProtoLoader) extractMessages(content string) ([]protoMessage, error) {
+	// Simplified parser for demo purposes - in a real implementation, use a proper parser
+	messages := []protoMessage{}
 
-	switch field.GetType() {
-	case descriptorpb.FieldDescriptorProto_TYPE_DOUBLE,
-		descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
-		baseType = &types.Type{PrimType: types.TypeFloat}
+	// Split into lines
+	lines := strings.Split(content, "\n")
 
-	case descriptorpb.FieldDescriptorProto_TYPE_INT64,
-		descriptorpb.FieldDescriptorProto_TYPE_UINT64,
-		descriptorpb.FieldDescriptorProto_TYPE_INT32,
-		descriptorpb.FieldDescriptorProto_TYPE_FIXED64,
-		descriptorpb.FieldDescriptorProto_TYPE_FIXED32,
-		descriptorpb.FieldDescriptorProto_TYPE_UINT32,
-		descriptorpb.FieldDescriptorProto_TYPE_SFIXED32,
-		descriptorpb.FieldDescriptorProto_TYPE_SFIXED64,
-		descriptorpb.FieldDescriptorProto_TYPE_SINT32,
-		descriptorpb.FieldDescriptorProto_TYPE_SINT64:
-		baseType = &types.Type{PrimType: types.TypeInt}
+	var currentMessage *protoMessage
+	inMessage := false
 
-	case descriptorpb.FieldDescriptorProto_TYPE_BOOL:
-		baseType = &types.Type{PrimType: types.TypeBool}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
 
-	case descriptorpb.FieldDescriptorProto_TYPE_STRING:
-		baseType = &types.Type{PrimType: types.TypeString}
-
-	case descriptorpb.FieldDescriptorProto_TYPE_MESSAGE:
-		// Reference to another message
-		typeName := field.GetTypeName()
-		// Remove leading dot if present
-		if typeName != "" && typeName[0] == '.' {
-			typeName = typeName[1:]
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "//") {
+			continue
 		}
-		// Get the short name (last component)
-		parts := strings.Split(typeName, ".")
-		shortName := parts[len(parts)-1]
 
-		baseType = &types.Type{Name: shortName}
+		// Detect message start
+		if strings.HasPrefix(line, "message ") {
+			inMessage = true
+			msgName := strings.TrimPrefix(line, "message ")
+			msgName = strings.TrimSuffix(strings.TrimSpace(msgName), "{")
+			msgName = strings.TrimSpace(msgName)
 
-	case descriptorpb.FieldDescriptorProto_TYPE_ENUM:
-		// Enums are represented as strings
-		baseType = &types.Type{PrimType: types.TypeString}
-
-	default:
-		return nil, fmt.Errorf("unsupported proto field type: %v", field.GetType())
+			currentMessage = &protoMessage{
+				Name:   msgName,
+				Fields: []protoField{},
+			}
+		} else if inMessage && line == "}" {
+			// Message end
+			inMessage = false
+			messages = append(messages, *currentMessage)
+			currentMessage = nil
+		} else if inMessage && currentMessage != nil {
+			// Process field
+			l.parseField(line, currentMessage)
+		}
 	}
 
-	// If field is repeated, wrap in a list type
+	return messages, nil
+}
+
+// parseField parses a field definition
+func (l *ProtoLoader) parseField(line string, msg *protoMessage) {
+	// Skip if not a field definition
+	if !strings.Contains(line, ";") {
+		return
+	}
+
+	// Remove trailing semicolon and any comments
+	line = strings.Split(line, ";")[0]
+	if idx := strings.Index(line, "//"); idx >= 0 {
+		line = line[:idx]
+	}
+	line = strings.TrimSpace(line)
+
+	// Check for repeated/optional
+	repeated := strings.HasPrefix(line, "repeated ")
 	if repeated {
-		return &types.Type{
-			PrimType:    types.TypeList,
-			ElementType: baseType,
-		}, nil
+		line = strings.TrimPrefix(line, "repeated ")
 	}
 
-	return baseType, nil
+	optional := strings.HasPrefix(line, "optional ")
+	if optional {
+		line = strings.TrimPrefix(line, "optional ")
+	}
+
+	// Split type and name
+	parts := strings.Fields(line)
+	if len(parts) < 2 {
+		return
+	}
+
+	fieldType := parts[0]
+	fieldName := parts[1]
+
+	// Handle equal sign (for field numbers)
+	if idx := strings.Index(fieldName, "="); idx >= 0 {
+		fieldName = strings.TrimSpace(fieldName[:idx])
+	}
+
+	field := protoField{
+		Name:     fieldName,
+		Type:     fieldType,
+		Repeated: repeated,
+		Optional: optional,
+	}
+
+	msg.Fields = append(msg.Fields, field)
+}
+
+// getNamespaceFromProto extracts the package name from a proto file
+func (l *ProtoLoader) getNamespaceFromProto(content string) string {
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "package ") {
+			pkg := strings.TrimPrefix(line, "package ")
+			pkg = strings.TrimSuffix(pkg, ";")
+			return strings.TrimSpace(pkg)
+		}
+	}
+	return "proto"
+}
+
+// processMessage converts a proto message to schema types
+func (l *ProtoLoader) processMessage(ts *types.TypeSystem, msg protoMessage, namespace string) error {
+	// Create object type for message
+	msgType := types.NewObjectType()
+	msgType.Name = msg.Name
+
+	// Register message type
+	msgPath := namespace + "." + msg.Name
+	ts.RegisterFactType(msgPath, msgType)
+
+	// Process all fields
+	for _, field := range msg.Fields {
+		fieldPath := msgPath + "." + field.Name
+		fieldType := l.protoTypeToEffectusType(field.Type)
+
+		// Handle repeated fields (arrays)
+		if field.Repeated {
+			fieldType = types.NewListType(fieldType)
+		}
+
+		// Register field type
+		ts.RegisterFactType(fieldPath, fieldType)
+
+		// Add property to message type
+		if err := msgType.AddProperty(field.Name, fieldType); err != nil {
+			return fmt.Errorf("adding property %s: %w", field.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// protoTypeToEffectusType converts Protocol Buffers types to Effectus types
+func (l *ProtoLoader) protoTypeToEffectusType(protoType string) *types.Type {
+	switch protoType {
+	case "bool":
+		return types.NewBoolType()
+	case "int32", "int64", "uint32", "uint64", "sint32", "sint64", "fixed32", "fixed64", "sfixed32", "sfixed64":
+		return types.NewIntType()
+	case "float", "double":
+		return types.NewFloatType()
+	case "string", "bytes":
+		return types.NewStringType()
+	default:
+		// Assume it's a message reference
+		return &types.Type{
+			ReferenceType: protoType,
+		}
+	}
 }

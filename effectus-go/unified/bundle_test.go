@@ -86,9 +86,10 @@ func TestBundleBuilder(t *testing.T) {
 
 	// Register schema loaders
 	jsonLoader := registry.NewJSONSchemaLoader("user")
-	protoLoader := registry.NewProtoSchemaLoader("")
+	// ProtoSchemaLoader is no longer available, using only JSON loader for tests
+	// protoLoader := registry.NewProtoSchemaLoader("")
 	builder.RegisterSchemaLoader(jsonLoader)
-	builder.RegisterSchemaLoader(protoLoader)
+	// builder.RegisterSchemaLoader(protoLoader)
 
 	// Skip rule compilation for testing
 	builder.SkipRuleCompilation()

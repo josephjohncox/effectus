@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema/types"
+	"github.com/tidwall/gjson"
 )
 
 // SchemaRegistry provides centralized management of schemas
@@ -14,8 +14,8 @@ type SchemaRegistry struct {
 	// typeSystem manages type definitions
 	typeSystem *types.TypeSystem
 
-	// factProvider is the underlying data provider
-	factProvider *pathutil.Registry
+	// factData is the raw JSON data for facts
+	factData string
 
 	// loaders for different schema formats
 	loaders []SchemaLoader
@@ -37,9 +37,8 @@ func NewSchemaRegistry(typeSystem *types.TypeSystem) *SchemaRegistry {
 	}
 
 	return &SchemaRegistry{
-		typeSystem:   typeSystem,
-		factProvider: pathutil.NewRegistry(),
-		loaders:      make([]SchemaLoader, 0),
+		typeSystem: typeSystem,
+		loaders:    make([]SchemaLoader, 0),
 	}
 }
 
@@ -48,14 +47,45 @@ func (sr *SchemaRegistry) RegisterLoader(loader SchemaLoader) {
 	sr.loaders = append(sr.loaders, loader)
 }
 
-// RegisterProvider registers a fact provider for a namespace
-func (sr *SchemaRegistry) RegisterProvider(namespace string, provider pathutil.FactProvider) {
-	sr.factProvider.Register(namespace, provider)
+// RegisterFactData sets the raw JSON data for facts
+func (sr *SchemaRegistry) RegisterFactData(jsonData string) {
+	sr.factData = jsonData
 }
 
-// GetFactProvider returns the underlying fact provider registry
-func (sr *SchemaRegistry) GetFactProvider() *pathutil.Registry {
-	return sr.factProvider
+// GetFactValue gets a fact value from the registered fact data
+func (sr *SchemaRegistry) GetFactValue(path string) (interface{}, bool) {
+	if sr.factData == "" {
+		return nil, false
+	}
+
+	result := gjson.Get(sr.factData, path)
+	if !result.Exists() {
+		return nil, false
+	}
+
+	// Convert to proper Go type
+	var value interface{}
+	switch result.Type {
+	case gjson.True:
+		value = true
+	case gjson.False:
+		value = false
+	case gjson.Number:
+		value = result.Num
+	case gjson.String:
+		value = result.Str
+	case gjson.JSON:
+		// Handle arrays and objects
+		if result.IsArray() {
+			value = result.Array()
+		} else {
+			value = result.Map()
+		}
+	default:
+		value = nil
+	}
+
+	return value, true
 }
 
 // GetTypeSystem returns the underlying type system
@@ -106,10 +136,4 @@ func (sr *SchemaRegistry) LoadDirectory(dir string) error {
 	}
 
 	return nil
-}
-
-// Resolve is a convenience method to resolve a path string
-func (sr *SchemaRegistry) Resolve(pathStr string) (interface{}, bool, error) {
-	resolver := pathutil.NewPathResolver(false)
-	return resolver.ParseAndResolve(sr.factProvider, pathStr)
 }

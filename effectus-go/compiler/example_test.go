@@ -20,7 +20,7 @@ func (f *typedTestFacts) Schema() effectus.SchemaInfo {
 	return f.schema
 }
 
-func (f *typedTestFacts) Get(path pathutil.Path) (interface{}, bool) {
+func (f *typedTestFacts) Get(path string) (interface{}, bool) {
 	return f.factRegistry.Get(path)
 }
 
@@ -30,7 +30,7 @@ func createTypedTestFacts(compiler *Compiler, data map[string]interface{}) effec
 	schemaInfo := &testSchema{}
 
 	// Create a memory provider with the data
-	provider := pathutil.NewMemoryProvider(data)
+	provider := pathutil.NewGjsonProvider(data)
 
 	// Create a registry and register the provider
 	registry := pathutil.NewRegistry()
@@ -76,14 +76,14 @@ func (f *testFacts) Schema() effectus.SchemaInfo {
 	return f.schema
 }
 
-func (f *testFacts) Get(path pathutil.Path) (interface{}, bool) {
+func (f *testFacts) Get(path string) (interface{}, bool) {
 	return f.factRegistry.Get(path)
 }
 
 // Simple schema implementation for testing
 type testSchema struct{}
 
-func (s *testSchema) ValidatePath(path pathutil.Path) bool {
+func (s *testSchema) ValidatePath(path string) bool {
 	// Simple implementation that accepts all paths for testing
 	return true
 }
@@ -94,7 +94,7 @@ func createTestFacts(data map[string]interface{}) effectus.Facts {
 	schemaInfo := &testSchema{}
 
 	// Create a memory provider with the data
-	provider := pathutil.NewMemoryProvider(data)
+	provider := pathutil.NewGjsonProvider(data)
 
 	// Create a registry and register the provider
 	registry := pathutil.NewRegistry()
@@ -202,8 +202,8 @@ flow "NewCustomerFlow" priority 5 {
 		t.Errorf("Expected at least one block in rule, got none")
 	} else {
 		ruleWhen := file.Rules[0].Blocks[0].When
-		if ruleWhen == nil || ruleWhen.Expression == nil {
-			t.Errorf("Expected a logical expression in rule block, got nil")
+		if ruleWhen == nil || ruleWhen.Expression == "" {
+			t.Errorf("Expected a logical expression in rule block, got nil or empty string")
 		}
 	}
 
@@ -216,7 +216,7 @@ flow "NewCustomerFlow" priority 5 {
 	}
 
 	// Verify some inferred types
-	orderTotalType, err := compiler.typeSystem.GetFactType(pathutil.NewPath("order", []pathutil.PathElement{pathutil.NewElement("total")}))
+	orderTotalType, err := compiler.typeSystem.GetFactType("order.total")
 	if err != nil || orderTotalType.PrimType != types.TypeFloat {
 		t.Errorf("Expected order.total to be a float, got %v", orderTotalType)
 	}

@@ -50,20 +50,12 @@ func TestBasicFacts(t *testing.T) {
 		PrimType: types.TypeObject,
 		Name:     "Settings",
 	}
-	namespace, elements, err := pathutil.ParsePath("app.users")
-	if err != nil {
-		t.Fatalf("Failed to parse path: %v", err)
-	}
-	schema.RegisterPathType(pathutil.NewPath(namespace, elements), &types.Type{
-		PrimType: types.TypeList,
+	schema.RegisterPathType("app.users", &types.Type{
+		PrimType:    types.TypeList,
 		ElementType: userType,
 	})
 
-	namespace, elements, err = pathutil.ParsePath("app.settings")
-	if err != nil {
-		t.Fatalf("Failed to parse path: %v", err)
-	}
-	schema.RegisterPathType(pathutil.NewPath(namespace, elements), settingsType)
+	schema.RegisterPathType("app.settings", settingsType)
 
 	// Create facts
 	facts := NewBasicFacts(data, schema)
@@ -88,11 +80,7 @@ func testImmutability(t *testing.T, facts *BasicFacts, originalData map[string]i
 	}
 
 	// Verify facts data was not changed
-	namespace, elements, err := pathutil.ParsePath("app.settings.theme")
-	if err != nil {
-		t.Fatalf("Failed to parse path: %v", err)
-	}
-	value, exists := facts.Get(pathutil.NewPath(namespace, elements))
+	value, exists := facts.Get("app.settings.theme")
 	if !exists {
 		t.Fatal("Expected path to exist: app.settings.theme")
 	}
@@ -112,11 +100,7 @@ func testImmutability(t *testing.T, facts *BasicFacts, originalData map[string]i
 	updatedFacts := facts.WithData(updatedData)
 
 	// Verify updated facts has the change
-	namespace, elements, err = pathutil.ParsePath("app.settings.theme")
-	if err != nil {
-		t.Fatalf("Failed to parse path: %v", err)
-	}
-	value, exists = updatedFacts.Get(pathutil.NewPath(namespace, elements))
+	value, exists = updatedFacts.Get("app.settings.theme")
 	if !exists {
 		t.Fatal("Expected path to exist in updated facts: app.settings.theme")
 	}
@@ -144,11 +128,7 @@ func testPathAccess(t *testing.T, facts *BasicFacts) {
 	}
 
 	for _, test := range tests {
-		namespace, elements, err := pathutil.ParsePath(test.path)
-		if err != nil {
-			t.Fatalf("Failed to parse path: %v", err)
-		}
-		value, exists := facts.Get(pathutil.NewPath(namespace, elements))
+		value, exists := facts.Get(test.path)
 
 		if exists != test.shouldExist {
 			t.Errorf("Path '%s': expected exists=%v, got %v", test.path, test.shouldExist, exists)
@@ -167,11 +147,7 @@ func testPathAccess(t *testing.T, facts *BasicFacts) {
 
 func testTypeInformation(t *testing.T, facts *BasicFacts) {
 	// Get value with context to check type information
-	namespace, elements, err := pathutil.ParsePath("app.users")
-	if err != nil {
-		t.Fatalf("Failed to parse path: %v", err)
-	}
-	_, result := facts.GetWithContext(pathutil.NewPath(namespace, elements))
+	_, result := facts.GetWithContext("app.users")
 
 	if result == nil || !result.Exists {
 		t.Fatal("Expected path to exist: app.users")
@@ -198,28 +174,59 @@ func testPathParsing(t *testing.T) {
 	}
 
 	for _, pathStr := range testPaths {
-		path, err := pathutil.ParseString(pathStr)
-
-		if err != nil {
-			t.Errorf("Failed to parse path '%s': %v", pathStr, err)
-			continue
-		}
+		// Create a Path from the string
+		path := pathutil.Path(pathStr)
 
 		// Verify the path can be converted back to string
 		backToString := path.String()
 
-		// The exact format may be slightly different (e.g., with spaces),
-		// but parsing it again should give the same structure
-		reparsed, err := pathutil.ParseString(backToString)
+		// Parsing string path is straightforward now
+		if backToString != pathStr {
+			t.Errorf("String conversion mismatch: original=%s, converted=%s",
+				pathStr, backToString)
+		}
 
-		if err != nil {
-			t.Errorf("Failed to parse formatted path '%s': %v", backToString, err)
+		// Test namespace extraction
+		namespace := path.Namespace()
+		if namespace == "" {
+			t.Errorf("Expected non-empty namespace for path: %s", pathStr)
+		}
+
+		// Test withNamespace function
+		newPath := path.WithNamespace("new")
+		if newPath.Namespace() != "new" {
+			t.Errorf("Expected namespace 'new', got '%s' for path: %s",
+				newPath.Namespace(), pathStr)
+		}
+	}
+}
+
+// deepCopyMap creates a deep copy of a map
+func deepCopyMap(original map[string]interface{}) map[string]interface{} {
+	copy := make(map[string]interface{})
+	for key, value := range original {
+		// Handle nested maps
+		if nestedMap, ok := value.(map[string]interface{}); ok {
+			copy[key] = deepCopyMap(nestedMap)
 			continue
 		}
 
-		if len(path.Elements) != len(reparsed.Elements) {
-			t.Errorf("Element count mismatch: original=%d, reparsed=%d",
-				len(path.Elements), len(reparsed.Elements))
+		// Handle nested slices
+		if nestedSlice, ok := value.([]interface{}); ok {
+			copySlice := make([]interface{}, len(nestedSlice))
+			for i, item := range nestedSlice {
+				if itemMap, ok := item.(map[string]interface{}); ok {
+					copySlice[i] = deepCopyMap(itemMap)
+				} else {
+					copySlice[i] = item
+				}
+			}
+			copy[key] = copySlice
+			continue
 		}
+
+		// For other types, just copy the value
+		copy[key] = value
 	}
+	return copy
 }

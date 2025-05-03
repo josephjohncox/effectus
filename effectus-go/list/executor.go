@@ -9,7 +9,7 @@ import (
 	eff "github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/common"
 	"github.com/effectus/effectus-go/eval"
-	"github.com/effectus/effectus-go/pathutil"
+	"github.com/effectus/effectus-go/schema/verb"
 )
 
 // ExecutorOption defines an option for configuring the executor
@@ -39,9 +39,13 @@ type VerbRegistry interface {
 
 // VerbSpec defines the interface for verb specifications
 type VerbSpec interface {
-	GetCapability() uint32
+	GetCapability() verb.Capability
+	GetResourceSet() verb.ResourceSet
 	GetExecutor() VerbExecutor
 	GetInverse() string // Method to get inverse verb name
+	IsIdempotent() bool
+	IsCommutative() bool
+	IsExclusive() bool
 }
 
 // VerbExecutor defines the interface for verb execution
@@ -69,7 +73,7 @@ type effectusFactsAdapter struct {
 	facts common.Facts
 }
 
-func (f *effectusFactsAdapter) Get(path pathutil.Path) (interface{}, bool) {
+func (f *effectusFactsAdapter) Get(path string) (interface{}, bool) {
 	return f.facts.Get(path)
 }
 
@@ -83,29 +87,17 @@ type effectusSchemaAdapter struct {
 	schema common.SchemaInfo
 }
 
-func (s *effectusSchemaAdapter) ValidatePath(path pathutil.Path) bool {
+func (s *effectusSchemaAdapter) ValidatePath(path string) bool {
 	return s.schema.ValidatePath(path)
 }
 
 // ExecuteRule executes a single rule against facts
 func (le *Executor) ExecuteRule(ctx context.Context, rule *CompiledRule, facts common.Facts) ([]eff.Effect, error) {
-	// Check if rule predicates match
-	matched := true
-	for _, pred := range rule.Predicates {
-		// Get fact value
-		value, exists := facts.Get(pred.Path)
-		if !exists {
-			matched = false
-			break
-		}
+	// Create adapter to use with eval system
+	factsAdapter := &effectusFactsAdapter{facts: facts}
 
-		// Compare based on operator
-		if !eval.CompareFact(value, pred.Op, pred.Lit) {
-			matched = false
-			break
-		}
-	}
-
+	// Check if rule predicates match using the expression evaluator
+	matched := eval.EvaluatePredicates(rule.Predicates, factsAdapter)
 	if !matched {
 		return nil, nil
 	}
@@ -143,6 +135,10 @@ func (le *Executor) executeEffects(ctx context.Context, txID string, effects []*
 
 	// Collect locks needed
 	locks := make(map[string][]string) // capability -> []keys
+
+	// Collect resource capabilities that need locking
+	resourceLocks := make(map[string]verb.Capability)
+
 	for _, effect := range effects {
 		// Get verb spec
 		verbSpec, exists := le.verbRegistry.GetVerb(effect.Verb)
@@ -150,15 +146,30 @@ func (le *Executor) executeEffects(ctx context.Context, txID string, effects []*
 			return nil, fmt.Errorf("unknown verb: %s", effect.Verb)
 		}
 
-		// TODO: Implement effect capability -> key mapping
-		// Use the verb's capability for locking
-		cap := fmt.Sprintf("%d", verbSpec.GetCapability())
+		// Get resources affected by this verb
+		resources := verbSpec.GetResourceSet()
+		for _, resource := range resources {
+			// For each resource, add its capability to the map
+			// If we already have a lock for this resource, combine capabilities
+			existingCap, exists := resourceLocks[resource.Resource]
+			if exists {
+				resourceLocks[resource.Resource] = existingCap | resource.Cap
+			} else {
+				resourceLocks[resource.Resource] = resource.Cap
+			}
+		}
 
-		// Extract keys from effect
-		// This would be based on arguments that represent resource IDs
-		keys := []string{effect.Verb} // Default to just the verb name
+		// If verb is exclusive, we need to lock based on the verb itself too
+		if verbSpec.IsExclusive() {
+			capStr := fmt.Sprintf("exclusive:%s", effect.Verb)
+			locks[capStr] = []string{effect.Verb}
+		}
+	}
 
-		locks[cap] = append(locks[cap], keys...)
+	// Add resource locks
+	for resource, cap := range resourceLocks {
+		capStr := fmt.Sprintf("%s:%d", resource, cap)
+		locks[capStr] = []string{resource}
 	}
 
 	// Acquire locks in order
@@ -229,22 +240,11 @@ func (le *Executor) resolveValue(value interface{}, facts common.Facts) (interfa
 	switch v := value.(type) {
 	case string:
 		// Check if it's a fact path reference
-		if len(v) > 0 && v[0] == '$' {
-			pathStr := v[1:] // Remove $ prefix
-
-			// Convert string path to pathutil.Path
-			path, err := pathutil.ParseString(pathStr)
-			if err != nil {
-				return nil, fmt.Errorf("invalid path: %s: %w", pathStr, err)
-			}
-
-			factVal, exists := facts.Get(path)
-			if !exists {
-				return nil, fmt.Errorf("fact not found: %s", pathStr)
-			}
-			return factVal, nil
+		factVal, exists := facts.Get(v)
+		if !exists {
+			return nil, fmt.Errorf("fact not found: %s", v)
 		}
-		return v, nil
+		return factVal, nil
 	default:
 		return v, nil
 	}
@@ -388,4 +388,3 @@ func (lm *LockManager) AcquireLocks(locks map[string][]string) (func(), error) {
 		}
 	}, nil
 }
-

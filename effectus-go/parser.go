@@ -19,6 +19,7 @@ var (
 		{"Float", `[-+]?\d*\.\d+([eE][-+]?\d+)?`},
 		{"Int", `[-+]?\d+`},
 		{"String", `"[^"]*"`},
+		// Add RawExpr for capturing expressions within when blocks
 		{"VarRef", `\$[a-zA-Z_]\w*`}, // Variable references like $result
 		// Enhanced FactPath pattern that supports:
 		// - Regular paths (customer.email)
@@ -28,17 +29,21 @@ var (
 		{"FactPath", `[a-zA-Z_]\w*(\.[a-zA-Z_]\w*|\.\d+|\[[0-9]+\]|\["[^"]*"\])+`},
 		{"Operator", `==|!=|<=|>=|<|>|\bin\b|\bcontains\b`},
 		{"LogicalOp", `&&|\|\|`},
-		// {"Keyword", `\b(rule|flow|when|then|steps|include|priority|true|false)\b`},
+		// Add tokens for common operators in expressions
 		{"Dollar", `\$`},
 		{"Ident", `[a-zA-Z_]\w*`},
 		{"Arrow", `->`},
+		{"Braces", `[{}]`},
+		// {"RawString", "`[^`]+`"},
+		// {"MultiLineBlock", `{[^\{\}]*}`},
+		// {"RawExpr", `[a-zA-Z_]`},
 		{"Punct", `[-[!@#%^&*()+_={}\|:;"'<,>.?/]|]`},
 	})
 
 	// parser is our participle parser for Effectus rule files
 	parser = participle.MustBuild[ast.File](
 		participle.Lexer(effectusLexer),
-		participle.Unquote("String"),
+		// participle.Unquote("String"),
 		participle.Elide("Comment", "Whitespace"),
 		participle.UseLookahead(3),
 	)
@@ -71,10 +76,8 @@ func ParseFile(filename string) (*ast.File, error) {
 	}
 	file = parsedFile
 
-	// Resolve path expressions
-	if err := ast.ResolvePathExpressions(file); err != nil {
-		return nil, fmt.Errorf("failed to resolve path expressions: %w", err)
-	}
+	// Process predicate blocks to extract expressions
+	postProcessPredicates(file)
 
 	fmt.Printf("Parsed successfully. Rules: %d, Flows: %d\n",
 		len(file.Rules), len(file.Flows))
@@ -86,6 +89,25 @@ func ParseFile(filename string) (*ast.File, error) {
 	}
 
 	return file, nil
+}
+
+// postProcessPredicates processes all predicate blocks in the AST
+func postProcessPredicates(file *ast.File) {
+	// Process rules
+	for _, rule := range file.Rules {
+		for _, block := range rule.Blocks {
+			if block.When != nil {
+				block.When.PostProcess()
+			}
+		}
+	}
+
+	// Process flows
+	for _, flow := range file.Flows {
+		if flow.When != nil {
+			flow.When.PostProcess()
+		}
+	}
 }
 
 // validateFileType ensures the file extension matches its content

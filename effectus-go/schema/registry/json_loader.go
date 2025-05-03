@@ -73,11 +73,7 @@ func (l *JSONSchemaLoader) Load(path string, typeSystem *types.TypeSystem) error
 
 		// Full path with namespace
 		fullPath := fmt.Sprintf("%s.%s", l.Namespace, path)
-		parsedPath, err := pathutil.FromString(fullPath)
-		if err != nil {
-			return fmt.Errorf("parsing fact path %s: %w", fullPath, err)
-		}
-		typeSystem.RegisterFactType(parsedPath, typ)
+		typeSystem.RegisterFactType(fullPath, typ)
 	}
 
 	return nil
@@ -128,8 +124,8 @@ func (l *JSONSchemaLoader) convertTypeInfo(info JSONTypeInfo, ts *types.TypeSyst
 	}
 }
 
-// CreateFactProvider creates a memory provider from a JSON file
-func (l *JSONSchemaLoader) CreateFactProvider(path string) (*pathutil.MemoryProvider, error) {
+// CreateFactProvider creates a fact provider from a JSON file
+func (l *JSONSchemaLoader) CreateFactProvider(path string) (*pathutil.GjsonProvider, error) {
 	// Read the file
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -142,7 +138,7 @@ func (l *JSONSchemaLoader) CreateFactProvider(path string) (*pathutil.MemoryProv
 		return nil, fmt.Errorf("parsing data file: %w", err)
 	}
 
-	// Create memory provider
-	provider := pathutil.NewMemoryProvider(rawData)
+	// Create provider
+	provider := pathutil.NewGjsonProvider(rawData)
 	return provider, nil
 }

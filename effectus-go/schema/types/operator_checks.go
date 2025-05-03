@@ -4,12 +4,11 @@ import (
 	"fmt"
 
 	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/pathutil"
 )
 
 // Facts interface for type checking
 type Facts interface {
-	Get(path pathutil.Path) (interface{}, bool)
+	Get(path string) (interface{}, bool)
 }
 
 // OperatorCompatibility checks if an operator is compatible with a given type
@@ -148,29 +147,9 @@ func GetLiteralValue(lit ast.Literal) interface{} {
 }
 
 // TypeCheckPredicate performs comprehensive type checking on a predicate
-func (ts *TypeSystem) TypeCheckPredicate(pred *ast.Predicate) error {
-	if pred == nil || pred.PathExpr == nil {
-		return fmt.Errorf("invalid predicate: missing path expression")
-	}
-
-	// Get the type of the fact at this path
-	factType, err := ts.GetFactType(pred.PathExpr.Path)
-	if err != nil {
-		return fmt.Errorf("unknown fact path in predicate: %s", pred.PathExpr.Path)
-	}
-
-	// Check if the operator is compatible with this type
-	if err := ts.OperatorCompatibility(pred.Op, factType); err != nil {
-		return err
-	}
-
-	// Check value compatibility with the fact type
-	valueType := InferTypeFromLiteral(&pred.Lit)
-	if err := ts.CheckValueTypeCompatibility(pred.Op, factType, valueType); err != nil {
-		return fmt.Errorf("value type mismatch in predicate: %w", err)
-	}
-
-	return nil
+func (ts *TypeSystem) TypeCheckPredicate(expr string) error {
+	// Type check the string expression directly
+	return ts.TypeCheckPredicateAST(expr)
 }
 
 // CheckValueTypeCompatibility checks if the value type is compatible with the fact type for the given operator

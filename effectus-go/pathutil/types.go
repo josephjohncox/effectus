@@ -1,151 +1,69 @@
-// Package pathutil provides utilities for working with paths
+// Package pathutil provides simplified path-based data access using gjson
 package pathutil
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 )
 
-// PathElement represents a single segment in a path with optional indexing
-type PathElement struct {
-	// Name is the segment name
-	Name string
+// Path is a string using gjson path syntax
+// Examples:
+//   - "user.profile.name"
+//   - "posts[0].title"
+//   - "data.items[2].tags[\"priority\"]"
+type Path string
 
-	// Index is the array index (-1 if not an array access)
-	index int
-
-	// StringKey is the map key (empty if not a map access)
-	stringKey string
-}
-
-// NewElement creates a basic path element with just a name
-func NewElement(name string) PathElement {
-	return PathElement{
-		Name:  name,
-		index: -1,
+// Namespace returns the first segment of the path (before first dot)
+func (p Path) Namespace() string {
+	str := string(p)
+	idx := strings.Index(str, ".")
+	if idx == -1 {
+		return str
 	}
+	return str[:idx]
 }
 
-// WithIndex creates a copy of the element with an index
-func (e PathElement) WithIndex(index int) PathElement {
-	e.index = index
-	e.stringKey = ""
-	return e
-}
-
-// WithStringKey creates a copy of the element with a string key
-func (e PathElement) WithStringKey(key string) PathElement {
-	e.stringKey = key
-	e.index = -1
-	return e
-}
-
-// HasIndex returns true if this element has an index
-func (e PathElement) HasIndex() bool {
-	return e.index >= 0
-}
-
-// HasStringKey returns true if this element has a string key
-func (e PathElement) HasStringKey() bool {
-	return e.stringKey != ""
-}
-
-// GetIndex returns the index and whether it exists
-func (e PathElement) GetIndex() (int, bool) {
-	return e.index, e.index >= 0
-}
-
-// GetStringKey returns the string key and whether it exists
-func (e PathElement) GetStringKey() (string, bool) {
-	return e.stringKey, e.stringKey != ""
-}
-
-// String returns a string representation of the element
-func (e PathElement) String() string {
-	if e.index >= 0 {
-		return fmt.Sprintf("%s[%d]", e.Name, e.index)
+// WithNamespace creates a new path with the specified namespace
+func (p Path) WithNamespace(namespace string) Path {
+	if p == "" {
+		return Path(namespace)
 	}
-	if e.stringKey != "" {
-		return fmt.Sprintf("%s[\"%s\"]", e.Name, e.stringKey)
+
+	// Check if path already has a namespace
+	currentNs := p.Namespace()
+	if currentNs != "" {
+		// Remove the current namespace from the path
+		rest := string(p[len(currentNs):])
+		if len(rest) > 0 && rest[0] == '.' {
+			rest = rest[1:]
+		}
+
+		if rest == "" {
+			return Path(namespace)
+		}
+		return Path(namespace + "." + rest)
 	}
-	return e.Name
+
+	return Path(namespace + "." + string(p))
 }
 
-// Path represents a complete path including namespace and elements
-type Path struct {
-	// Namespace is the top-level namespace
-	Namespace string
-
-	// Elements are the path elements
-	Elements []PathElement
-}
-
-// NewPath creates a new Path with the given namespace and elements
-func NewPath(namespace string, elements []PathElement) Path {
-	return Path{
-		Namespace: namespace,
-		Elements:  elements,
-	}
-}
-
-// String returns a string representation of the entire path
+// String returns the path as a string
 func (p Path) String() string {
-	if len(p.Elements) == 0 {
-		return p.Namespace
-	}
-
-	var sb strings.Builder
-	sb.WriteString(p.Namespace)
-
-	for _, elem := range p.Elements {
-		sb.WriteString(".")
-		sb.WriteString(elem.Name)
-
-		if elem.index >= 0 {
-			sb.WriteString("[")
-			sb.WriteString(strconv.Itoa(elem.index))
-			sb.WriteString("]")
-		} else if elem.stringKey != "" {
-			sb.WriteString("[\"")
-			sb.WriteString(elem.stringKey)
-			sb.WriteString("\"]")
-		}
-	}
-
-	return sb.String()
+	return string(p)
 }
 
-// IsEmpty returns true if the path has no namespace and no elements
-func (p Path) IsEmpty() bool {
-	return p.Namespace == "" && len(p.Elements) == 0
+// Child returns a new path by appending a child segment
+func (p Path) Child(segment string) Path {
+	if p == "" {
+		return Path(segment)
+	}
+	return Path(fmt.Sprintf("%s.%s", p, segment))
 }
 
-// Child returns a new path by appending elements to this path
-func (p Path) Child(elements ...PathElement) Path {
-	newElements := make([]PathElement, len(p.Elements)+len(elements))
-	copy(newElements, p.Elements)
-	copy(newElements[len(p.Elements):], elements)
-
-	return Path{
-		Namespace: p.Namespace,
-		Elements:  newElements,
-	}
-}
-
-// Clone creates a deep copy of the path
-func (p Path) Clone() Path {
-	elements := make([]PathElement, len(p.Elements))
-	for i, elem := range p.Elements {
-		elements[i] = PathElement{
-			Name:      elem.Name,
-			index:     elem.index,
-			stringKey: elem.stringKey,
-		}
-	}
-
-	return Path{
-		Namespace: p.Namespace,
-		Elements:  elements,
-	}
+// ResolutionResult contains details about path resolution
+type ResolutionResult struct {
+	Path   string      // The original path
+	Exists bool        // Whether the path exists
+	Value  interface{} // The resolved value (if exists)
+	Error  error       // Error that occurred during resolution (if any)
 }

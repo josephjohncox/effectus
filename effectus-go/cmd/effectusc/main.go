@@ -12,6 +12,7 @@ import (
 	"github.com/effectus/effectus-go/compiler"
 	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema/types"
+	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/effectus/effectus-go/unified"
 )
 
@@ -393,11 +394,83 @@ func defineCommands() {
 		return nil
 	}
 
+	// Define capabilities command
+	capabilitiesCmd := &Command{
+		Name:        "capabilities",
+		Description: "Analyze verb capabilities in rule files",
+		FlagSet:     flag.NewFlagSet("capabilities", flag.ExitOnError),
+	}
+
+	capOutput := capabilitiesCmd.FlagSet.String("output", "", "Output file for analysis report (defaults to stdout)")
+	capVerbose := capabilitiesCmd.FlagSet.Bool("verbose", false, "Show detailed output")
+
+	capabilitiesCmd.Run = func() error {
+		// Get file arguments
+		files := capabilitiesCmd.FlagSet.Args()
+		if len(files) < 1 {
+			return fmt.Errorf("no input files specified")
+		}
+
+		if *capVerbose {
+			fmt.Printf("Analyzing capabilities in %d file(s)\n", len(files))
+		}
+
+		// Create verb registry and register standard verbs
+		registry := verb.NewVerbRegistry()
+		verb.RegisterStandardVerbs(registry)
+		verb.RegisterTestVerbs(registry)
+
+		// Create analyzer
+		analyzer := verb.NewCapabilityAnalyzer(registry)
+
+		// Combined analysis results for all files
+		combinedReport := strings.Builder{}
+
+		// Process each file
+		for _, filename := range files {
+			if *capVerbose {
+				fmt.Printf("Analyzing capabilities in %s...\n", filename)
+			}
+
+			// Parse the file
+			file, err := effectus.ParseFile(filename)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing file %s: %v\n", filename, err)
+				continue
+			}
+
+			// Analyze capabilities
+			result, err := analyzer.Analyze(file)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error analyzing file %s: %v\n", filename, err)
+				continue
+			}
+
+			// Add file-specific report
+			fileReport := fmt.Sprintf("## Capability Analysis: %s\n\n", filepath.Base(filename))
+			fileReport += verb.FormatAnalysisResult(result)
+			fileReport += "\n\n"
+
+			combinedReport.WriteString(fileReport)
+
+			if *capVerbose {
+				fmt.Printf("Analysis complete for %s\n", filename)
+			}
+		}
+
+		// Output the report
+		report := combinedReport.String()
+		outputReport(report, *capOutput)
+
+		return nil
+	}
+
 	// Register commands
 	commands["typecheck"] = typeCheckCmd
 	commands["compile"] = compileCmd
 	commands["bundle"] = bundleCmd
 	commands["parse"] = parseCmd
+	commands["capabilities"] = capabilitiesCmd
 }
 
 // outputReport outputs the report to file or stdout
@@ -448,8 +521,8 @@ func createEmptyFacts(schemaFiles string, verbose bool) (*testFacts, *types.Type
 		schemaInfo.DebugPrint()
 	}
 
-	// Create a memory provider with empty data
-	provider := pathutil.NewMemoryProvider(map[string]interface{}{})
+	// Create a provider with empty data
+	provider := pathutil.NewGjsonProvider(map[string]interface{}{})
 
 	// Create a registry to manage namespaces
 	registry := pathutil.NewRegistry()
@@ -486,11 +559,8 @@ func loadSchemaFile(typeSystem *types.TypeSystem, filename string, verbose bool)
 			fmt.Printf("Registering schema entry %d: path=%s, type=%v\n",
 				i, entry.Path, entry.Type)
 		}
-		parsedPath, err := pathutil.FromString(entry.Path)
-		if err != nil {
-			return fmt.Errorf("parsing fact path %s: %w", entry.Path, err)
-		}
-		typeSystem.RegisterFactType(parsedPath, &entry.Type)
+		// No need to parse path string anymore, just use it directly
+		typeSystem.RegisterFactType(entry.Path, &entry.Type)
 	}
 
 	// Debug - print all registered fact types
@@ -511,9 +581,9 @@ type testSchema struct {
 	typeSystem *types.TypeSystem
 }
 
-func (s *testSchema) ValidatePath(path pathutil.Path) bool {
+func (s *testSchema) ValidatePath(path string) bool {
 	// Simple validation - in a real implementation, this would use the type system
-	if path.String() == "" {
+	if path == "" {
 		return false
 	}
 
@@ -564,12 +634,12 @@ type testFacts struct {
 }
 
 // Get retrieves a fact by its path
-func (f *testFacts) Get(path pathutil.Path) (interface{}, bool) {
+func (f *testFacts) Get(path string) (interface{}, bool) {
 	return f.factRegistry.Get(path)
 }
 
 // Has checks if a fact exists by its path
-func (f *testFacts) Has(path pathutil.Path) bool {
+func (f *testFacts) Has(path string) bool {
 	_, exists := f.Get(path)
 	return exists
 }
@@ -580,6 +650,6 @@ func (f *testFacts) Schema() effectus.SchemaInfo {
 }
 
 // Type returns the type of a fact (not implemented)
-func (f *testFacts) Type(path pathutil.Path) interface{} {
+func (f *testFacts) Type(path string) interface{} {
 	return nil
 }

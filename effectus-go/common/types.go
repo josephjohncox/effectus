@@ -2,14 +2,13 @@
 package common
 
 import (
-	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema/types"
 )
 
 // ResolutionResult contains the result of path resolution
 type ResolutionResult struct {
 	// Path is the path that was resolved
-	Path pathutil.Path
+	Path string
 
 	// Value is the resolved value
 	Value interface{}
@@ -27,26 +26,26 @@ type ResolutionResult struct {
 // SchemaInfo defines the interface for schema information providers
 type SchemaInfo interface {
 	// ValidatePath validates a path
-	ValidatePath(path pathutil.Path) bool
+	ValidatePath(path string) bool
 
 	// GetPathType gets the type for a path
-	GetPathType(path pathutil.Path) *types.Type
+	GetPathType(path string) *types.Type
 
 	// RegisterPathType registers a type for a path
-	RegisterPathType(path pathutil.Path, typ *types.Type)
+	RegisterPathType(path string, typ *types.Type)
 }
 
 // Facts defines the interface for immutable fact providers
 type Facts interface {
 	// Get gets a value by path
-	Get(path pathutil.Path) (interface{}, bool)
+	Get(path string) (interface{}, bool)
 
 	// GetWithContext gets a value with resolution information
-	GetWithContext(path pathutil.Path) (interface{}, *ResolutionResult)
+	GetWithContext(path string) (interface{}, *ResolutionResult)
 
 	// Schema gets the schema information
 	Schema() SchemaInfo
 
 	// HasPath checks if a path exists
-	HasPath(path pathutil.Path) bool
+	HasPath(path string) bool
 }

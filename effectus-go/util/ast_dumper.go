@@ -9,132 +9,90 @@ import (
 	"github.com/effectus/effectus-go/ast"
 )
 
-// ASTDumper provides functionality to dump AST structures
+// ASTDumper dumps AST structures to a writer
 type ASTDumper struct {
 	writer io.Writer
 	indent string
 }
 
-// NewASTDumper creates a new AST dumper writing to the provided writer
+// NewASTDumper creates a new AST dumper that writes to the given writer
 func NewASTDumper(writer io.Writer) *ASTDumper {
 	return &ASTDumper{
 		writer: writer,
-		indent: "  ",
+		indent: "",
 	}
 }
 
-// NewStdoutASTDumper creates a new AST dumper writing to stdout
+// NewStdoutASTDumper creates a new AST dumper that writes to stdout
 func NewStdoutASTDumper() *ASTDumper {
 	return NewASTDumper(os.Stdout)
 }
 
-// DumpFile dumps the entire file structure including all flows and rules
+// DumpFile dumps an entire AST file
 func (d *ASTDumper) DumpFile(file *ast.File) {
-	if file == nil {
-		fmt.Fprintln(d.writer, "File is nil")
-		return
-	}
+	d.indent = ""
+	fmt.Fprintf(d.writer, "File:\n")
 
+	// Dump flows
 	d.DumpFlows(file.Flows)
+
+	// Dump rules
 	d.DumpRules(file.Rules)
 }
 
-// DumpFlows dumps all flows in the file
+// DumpFlows dumps all flows in a file
 func (d *ASTDumper) DumpFlows(flows []*ast.Flow) {
 	if len(flows) == 0 {
 		return
 	}
 
-	fmt.Fprintf(d.writer, "\nFlows (%d):\n", len(flows))
+	fmt.Fprintf(d.writer, "%sFlows (%d):\n", d.indent, len(flows))
 	for i, flow := range flows {
-		fmt.Fprintf(d.writer, "%sFlow %d: %s\n", d.indent, i+1, flow.Name)
-		fmt.Fprintf(d.writer, "%s  Priority: %d\n", d.indent, flow.Priority)
-		d.dumpPredicates(flow.When, d.indent+"  ")
-		d.dumpSteps(flow.Steps, d.indent+"  ")
+		fmt.Fprintf(d.writer, "%s  Flow %d: %s (Priority: %d)\n", d.indent, i+1, flow.Name, flow.Priority)
+
+		// Dump when predicate
+		if flow.When != nil && flow.When.Expression != "" {
+			fmt.Fprintf(d.writer, "%s    When: %s\n", d.indent, flow.When.Expression)
+		}
+
+		// Dump steps
+		d.dumpSteps(flow.Steps, d.indent+"    ")
 	}
 }
 
-// DumpRules dumps all rules in the file
+// DumpRules dumps all rules in a file
 func (d *ASTDumper) DumpRules(rules []*ast.Rule) {
 	if len(rules) == 0 {
 		return
 	}
 
-	fmt.Fprintf(d.writer, "\nRules (%d):\n", len(rules))
+	fmt.Fprintf(d.writer, "%sRules (%d):\n", d.indent, len(rules))
 	for i, rule := range rules {
-		fmt.Fprintf(d.writer, "%sRule %d: %s\n", d.indent, i+1, rule.Name)
-		fmt.Fprintf(d.writer, "%s  Priority: %d\n", d.indent, rule.Priority)
+		fmt.Fprintf(d.writer, "%s  Rule %d: %s (Priority: %d)\n", d.indent, i+1, rule.Name, rule.Priority)
+
+		// Dump all when-then blocks
 		for j, block := range rule.Blocks {
-			fmt.Fprintf(d.writer, "%s  Block %d:\n", d.indent, j+1)
-			d.dumpLogicalExpression(block.When.Expression, d.indent+"    ")
-			d.dumpEffects(block.Then, d.indent+"    ")
+			fmt.Fprintf(d.writer, "%s    Block %d:\n", d.indent, j+1)
+
+			// Dump when predicate
+			fmt.Printf("block: %v\n", block.When)
+			if block.When != nil && block.When.Expression != "" {
+				fmt.Fprintf(d.writer, "%s      When: %s\n", d.indent, block.When.Expression)
+			}
+
+			// Dump then effects
+			d.dumpEffects(block.Then, d.indent+"      ")
 		}
-	}
-}
-
-// dumpLogicalExpression dumps a logical expression
-func (d *ASTDumper) dumpLogicalExpression(expr *ast.LogicalExpression, indentStr string) {
-	if expr == nil {
-		return
-	}
-
-	fmt.Fprintf(d.writer, "%sLogical Expression:\n", indentStr)
-	if expr.Left != nil {
-		if expr.Left.Predicate != nil {
-			d.dumpPredicate(expr.Left.Predicate, indentStr+"  ")
-		} else if expr.Left.SubExpr != nil {
-			fmt.Fprintf(d.writer, "%s  Sub-expression:\n", indentStr)
-			d.dumpLogicalExpression(expr.Left.SubExpr, indentStr+"    ")
-		}
-	}
-
-	if expr.Op != "" && expr.Right != nil {
-		fmt.Fprintf(d.writer, "%s  Operator: %s\n", indentStr, expr.Op)
-		d.dumpLogicalExpression(expr.Right, indentStr+"  ")
-	}
-}
-
-// dumpPredicate dumps a single predicate
-func (d *ASTDumper) dumpPredicate(pred *ast.Predicate, indentStr string) {
-	if pred == nil {
-		return
-	}
-
-	pathStr := ""
-	if pred.PathExpr != nil {
-		pathStr = pred.PathExpr.GetFullPath()
-		// Add details about the Path if it exists
-		if !pred.PathExpr.Path.IsEmpty() {
-			pathStr = fmt.Sprintf("%s (namespace: %s, elements: %d)",
-				pathStr, pred.PathExpr.Path.Namespace, len(pred.PathExpr.Path.Elements))
-		}
-	}
-	fmt.Fprintf(d.writer, "%sPredicate: %s %s\n", indentStr, pathStr, pred.Op)
-
-	// Continue with the existing literal handling...
-	if pred.Lit.String != nil {
-		fmt.Fprintf(d.writer, "%s  Compare with string: %s\n", indentStr, *pred.Lit.String)
-	} else if pred.Lit.Int != nil {
-		fmt.Fprintf(d.writer, "%s  Compare with int: %d\n", indentStr, *pred.Lit.Int)
-	} else if pred.Lit.Float != nil {
-		fmt.Fprintf(d.writer, "%s  Compare with float: %f\n", indentStr, *pred.Lit.Float)
-	} else if pred.Lit.Bool != nil {
-		fmt.Fprintf(d.writer, "%s  Compare with bool: %t\n", indentStr, *pred.Lit.Bool)
-	} else if pred.Lit.List != nil {
-		fmt.Fprintf(d.writer, "%s  Compare with list: %s\n", indentStr, describeLiteralList(pred.Lit.List))
-	} else if pred.Lit.Map != nil {
-		fmt.Fprintf(d.writer, "%s  Compare with map: %s\n", indentStr, describeLiteralMap(pred.Lit.Map))
 	}
 }
 
 // dumpPredicates dumps the predicate block (for compatibility with older code)
 func (d *ASTDumper) dumpPredicates(when *ast.PredicateBlock, indentStr string) {
-	if when == nil || when.Expression == nil {
+	if when == nil || when.Expression == "" {
 		return
 	}
 
-	fmt.Fprintf(d.writer, "%sPredicates:\n", indentStr)
-	d.dumpLogicalExpression(when.Expression, indentStr+"  ")
+	fmt.Fprintf(d.writer, "%sPredicates: %s\n", indentStr, when.Expression)
 }
 
 // dumpSteps dumps the steps block
@@ -185,9 +143,8 @@ func (d *ASTDumper) dumpNamedArgs(args []*ast.StepArg, indentStr string) {
 			} else if arg.Value.PathExpr != nil {
 				pathInfo := arg.Value.PathExpr.GetFullPath()
 				// Add details about the Path field if it exists
-				if !arg.Value.PathExpr.Path.IsEmpty() {
-					pathInfo = fmt.Sprintf("%s (namespace: %s, elements: %d)",
-						pathInfo, arg.Value.PathExpr.Path.Namespace, len(arg.Value.PathExpr.Path.Elements))
+				if arg.Value.PathExpr.Path != "" {
+					pathInfo = fmt.Sprintf("%s ", arg.Value.PathExpr.Path)
 				}
 				fmt.Fprintf(d.writer, "%s    FactPath: %s\n", indentStr, pathInfo)
 			} else if arg.Value.Literal != nil {
@@ -264,9 +221,8 @@ func (d *ASTDumper) dumpArg(arg *ast.StepArg, indentStr string) {
 		} else if arg.Value.PathExpr != nil {
 			pathInfo := arg.Value.PathExpr.GetFullPath()
 			// Add details about the Path if it exists
-			if !arg.Value.PathExpr.Path.IsEmpty() {
-				pathInfo = fmt.Sprintf("%s (namespace: %s, elements: %d)",
-					pathInfo, arg.Value.PathExpr.Path.Namespace, len(arg.Value.PathExpr.Path.Elements))
+			if arg.Value.PathExpr.Path != "" {
+				pathInfo = fmt.Sprintf("%s ", arg.Value.PathExpr.Path)
 			}
 			fmt.Fprintf(d.writer, "%s    Path: %s\n", indentStr, pathInfo)
 		} else if arg.Value.Literal != nil {

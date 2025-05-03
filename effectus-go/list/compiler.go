@@ -6,8 +6,8 @@ import (
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/eval"
 	"github.com/effectus/effectus-go/common"
+	"github.com/effectus/effectus-go/eval"
 )
 
 // Compiler implements the Compiler interface for list-style rules
@@ -75,7 +75,7 @@ func compileRule(rule *ast.Rule, schema effectus.SchemaInfo) (*CompiledRule, err
 
 		// Go through each block and extract predicates
 		for _, block := range rule.Blocks {
-			if block.When != nil && block.When.Expression != nil {
+			if block.When != nil && block.When.Expression != "" {
 				preds, paths, err := eval.CompileLogicalExpression(block.When.Expression, schema)
 				if err != nil {
 					return nil, err

@@ -6,147 +6,143 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema/types"
 )
 
-// ReflectLoader loads schemas from Go structs
-type ReflectLoader struct{}
-
-// NewReflectLoader creates a new reflection-based loader
-func NewReflectLoader() *ReflectLoader {
-	return &ReflectLoader{}
+// ReflectLoader loads schemas from Go structs using reflection
+type ReflectLoader struct {
+	// Namespace prefix for fact paths
+	namespace string
 }
 
-// CanLoad checks if this loader can handle the given path
-// For struct loaders, this is a no-op since structs are provided directly
+// NewReflectLoader creates a new loader for struct reflection
+func NewReflectLoader(namespace string) *ReflectLoader {
+	return &ReflectLoader{
+		namespace: namespace,
+	}
+}
+
+// CanLoad always returns false for ReflectLoader (it doesn't load from files)
 func (l *ReflectLoader) CanLoad(path string) bool {
 	return false
 }
 
-// Load loads type definitions from a file (not applicable for struct loader)
+// Load is a no-op for ReflectLoader (it doesn't load from files)
 func (l *ReflectLoader) Load(path string, ts *types.TypeSystem) error {
-	return fmt.Errorf("reflect loader doesn't support file loading, use RegisterStruct directly")
+	return fmt.Errorf("ReflectLoader doesn't load from files")
 }
 
-// RegisterStruct registers a Go struct as a schema
-func (l *ReflectLoader) RegisterStruct(ts *types.TypeSystem, structValue interface{}, namespace string) error {
-	t := reflect.TypeOf(structValue)
+// LoadStruct loads type definitions from a struct
+func (l *ReflectLoader) LoadStruct(v interface{}, ts *types.TypeSystem) error {
+	t := reflect.TypeOf(v)
+
+	// Handle pointers
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
 
+	// Make sure it's a struct
 	if t.Kind() != reflect.Struct {
-		return fmt.Errorf("expected struct, got %v", t.Kind())
+		return fmt.Errorf("expected struct, got %s", t.Kind())
 	}
 
-	l.registerStructFields(ts, t, namespace, "")
-	return nil
+	return l.loadStructFields(t, "", ts)
 }
 
-// registerStructFields recursively registers struct fields
-func (l *ReflectLoader) registerStructFields(ts *types.TypeSystem, t reflect.Type, namespace, prefix string) {
+// loadStructFields processes struct fields recursively
+func (l *ReflectLoader) loadStructFields(t reflect.Type, prefix string, ts *types.TypeSystem) error {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 
 		// Skip unexported fields
-		if !field.IsExported() {
+		if field.PkgPath != "" {
 			continue
 		}
 
-		// Get field name from json tag or field name
-		fieldName := field.Tag.Get("json")
-		if fieldName == "" || fieldName == "-" {
-			fieldName = strings.ToLower(field.Name)
-		}
-
-		// Remove json options (like omitempty)
-		if commaIdx := strings.Index(fieldName, ","); commaIdx > 0 {
-			fieldName = fieldName[:commaIdx]
-		}
-
-		// Build path
-		path := namespace
-		if prefix != "" {
-			path += "." + prefix
-		}
-		if path != "" {
-			path += "."
-		}
-		path += fieldName
-
-		// Convert Go type to Effectus type
-		typ := l.goTypeToEffectusType(field.Type)
-		parsedPath, err := pathutil.FromString(path)
-		if err != nil {
-			// Cannot return error from this function, so we'll log it instead
-			// and skip registering this field
-			fmt.Printf("Error parsing fact path %s: %v", path, err)
-			continue
-		}
-		ts.RegisterFactType(parsedPath, typ)
-
-		// For struct fields, recursively register
-		if field.Type.Kind() == reflect.Struct {
-			// Skip certain standard library types
-			pkgPath := field.Type.PkgPath()
-			if pkgPath == "time" && field.Type.Name() == "Time" {
-				// Special handling for time.Time
-				continue
+		// Get field name from JSON tag or field name
+		name := field.Name
+		if jsonTag := field.Tag.Get("json"); jsonTag != "" {
+			parts := strings.Split(jsonTag, ",")
+			if parts[0] != "" && parts[0] != "-" {
+				name = parts[0]
 			}
+		}
 
-			// Recurse for nested structs
-			newPrefix := prefix
-			if newPrefix != "" {
-				newPrefix += "."
+		// Build full path
+		var path string
+		if prefix == "" {
+			path = l.namespace + "." + name
+		} else {
+			path = prefix + "." + name
+		}
+
+		// Process based on field type
+		fieldType := field.Type
+		kind := fieldType.Kind()
+
+		switch kind {
+		case reflect.Bool:
+			ts.RegisterFactType(path, types.NewBoolType())
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			ts.RegisterFactType(path, types.NewIntType())
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			ts.RegisterFactType(path, types.NewIntType())
+		case reflect.Float32, reflect.Float64:
+			ts.RegisterFactType(path, types.NewFloatType())
+		case reflect.String:
+			ts.RegisterFactType(path, types.NewStringType())
+		case reflect.Array, reflect.Slice:
+			// Register array type
+			elemType := l.getTypeForKind(fieldType.Elem().Kind())
+			if elemType != nil {
+				ts.RegisterFactType(path, types.NewListType(elemType))
 			}
-			newPrefix += fieldName
-			l.registerStructFields(ts, field.Type, namespace, newPrefix)
+		case reflect.Map:
+			// Register map type if key is string
+			if fieldType.Key().Kind() == reflect.String {
+				elemType := l.getTypeForKind(fieldType.Elem().Kind())
+				keyType := types.NewStringType()
+				if elemType != nil {
+					ts.RegisterFactType(path, types.NewMapType(keyType, elemType))
+				}
+			}
+		case reflect.Struct:
+			// Process nested struct
+			if err := l.loadStructFields(fieldType, path, ts); err != nil {
+				return err
+			}
+		case reflect.Ptr:
+			// Handle pointer types
+			elemKind := fieldType.Elem().Kind()
+			if elemKind == reflect.Struct {
+				if err := l.loadStructFields(fieldType.Elem(), path, ts); err != nil {
+					return err
+				}
+			} else {
+				elemType := l.getTypeForKind(elemKind)
+				if elemType != nil {
+					ts.RegisterFactType(path, elemType)
+				}
+			}
 		}
 	}
+
+	return nil
 }
 
-// goTypeToEffectusType converts Go types to Effectus types
-func (l *ReflectLoader) goTypeToEffectusType(t reflect.Type) *types.Type {
-	switch t.Kind() {
-	case reflect.String:
-		return &types.Type{PrimType: types.TypeString}
+// getTypeForKind maps reflect.Kind to schema Type
+func (l *ReflectLoader) getTypeForKind(kind reflect.Kind) *types.Type {
+	switch kind {
+	case reflect.Bool:
+		return types.NewBoolType()
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return &types.Type{PrimType: types.TypeInt}
+		return types.NewIntType()
 	case reflect.Float32, reflect.Float64:
-		return &types.Type{PrimType: types.TypeFloat}
-	case reflect.Bool:
-		return &types.Type{PrimType: types.TypeBool}
-	case reflect.Slice, reflect.Array:
-		elemType := l.goTypeToEffectusType(t.Elem())
-		return &types.Type{
-			PrimType:    types.TypeList,
-			ElementType: elemType,
-		}
-	case reflect.Map:
-		keyType := l.goTypeToEffectusType(t.Key())
-		valType := l.goTypeToEffectusType(t.Elem())
-		mapType := &types.Type{
-			PrimType:   types.TypeMap,
-			Properties: make(map[string]*types.Type),
-		}
-		mapType.Properties["__key"] = keyType
-		mapType.Properties["__value"] = valType
-		return mapType
-	case reflect.Struct:
-		// Handle special types
-		if t.PkgPath() == "time" && t.Name() == "Time" {
-			// time.Time is represented as string
-			return &types.Type{PrimType: types.TypeString}
-		}
-		return &types.Type{
-			PrimType: types.TypeUnknown,
-			Name:     t.Name(),
-		}
-	case reflect.Interface:
-		return &types.Type{PrimType: types.TypeUnknown}
+		return types.NewFloatType()
+	case reflect.String:
+		return types.NewStringType()
 	default:
-		return &types.Type{PrimType: types.TypeUnknown}
+		return nil
 	}
 }

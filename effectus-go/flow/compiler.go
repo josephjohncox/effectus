@@ -120,8 +120,8 @@ func compileFlow(flow *ast.Flow, schema effectus.SchemaInfo) (*CompiledFlow, err
 	}
 
 	// Compile predicates
-	if flow.When != nil && flow.When.Expression != nil {
-		predicates, factPaths, err := compileLogicalExpression(flow.When.Expression, schema)
+	if flow.When != nil && flow.When.Expression != "" {
+		predicates, factPaths, err := eval.CompileLogicalExpression(flow.When.Expression, schema)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile predicates: %w", err)
 		}
@@ -153,12 +153,6 @@ func compileFlow(flow *ast.Flow, schema effectus.SchemaInfo) (*CompiledFlow, err
 	}
 
 	return compiledFlow, nil
-}
-
-// compileLogicalExpression compiles a logical expression into predicates
-func compileLogicalExpression(expr *ast.LogicalExpression, schema effectus.SchemaInfo) ([]*eval.Predicate, map[string]struct{}, error) {
-	// Use the exported function from eval package
-	return eval.CompileLogicalExpression(expr, schema)
 }
 
 // compileSteps compiles a sequence of steps into a Program

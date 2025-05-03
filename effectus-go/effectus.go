@@ -2,8 +2,6 @@ package effectus
 
 import (
 	"context"
-
-	"github.com/effectus/effectus-go/pathutil"
 )
 
 // Effect represents a verb and its payload
@@ -34,7 +32,7 @@ type Spec interface {
 // Facts represents the structured input data for rules
 type Facts interface {
 	// Get returns the value at the given path, or nil if not found
-	Get(path pathutil.Path) (interface{}, bool)
+	Get(path string) (interface{}, bool)
 
 	// Schema returns schema information about the facts
 	Schema() SchemaInfo
@@ -43,7 +41,7 @@ type Facts interface {
 // SchemaInfo provides metadata about the fact schema
 type SchemaInfo interface {
 	// ValidatePath checks if a path is valid according to the schema
-	ValidatePath(path pathutil.Path) bool
+	ValidatePath(path string) bool
 }
 
 // Compiler is the interface implemented by both list and flow compilers

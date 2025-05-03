@@ -1,15 +1,46 @@
-// Package common provides shared utilities and data structures
 package common
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/effectus/effectus-go/schema/types"
 	"github.com/tidwall/gjson"
 )
+
+// Path is a type alias for string to maintain backward compatibility
+type Path = string
+
+// ResolutionResult provides information about path resolution
+type ResolutionResult struct {
+	Path   Path
+	Value  interface{}
+	Exists bool
+	Error  error
+	Type   *types.Type
+}
+
+// SchemaInfo provides metadata about the fact schema
+type SchemaInfo interface {
+	// ValidatePath checks if a path is valid according to the schema
+	ValidatePath(path string) bool
+
+	// GetPathType returns the type for a path (optional)
+	GetPathType(path string) *types.Type
+}
+
+// Facts provides a standard interface for accessing data by path
+type Facts interface {
+	// Get retrieves a value by path
+	Get(path string) (interface{}, bool)
+
+	// GetWithContext retrieves a value with resolution info
+	GetWithContext(path string) (interface{}, *ResolutionResult)
+
+	// Schema returns schema information
+	Schema() SchemaInfo
+}
 
 // BasicSchema provides a simple schema implementation
 type BasicSchema struct {
@@ -80,34 +111,30 @@ func NewBasicFacts(data map[string]interface{}, schema SchemaInfo) *BasicFacts {
 
 // Get implements Facts interface
 func (f *BasicFacts) Get(path string) (interface{}, bool) {
-	value, exists := f.get(path)
-	return value, exists
+	result, info := f.GetWithContext(path)
+	return result, info != nil && info.Exists
 }
 
 // GetWithContext implements Facts interface
 func (f *BasicFacts) GetWithContext(path string) (interface{}, *ResolutionResult) {
 	if f.rawJSON == "" {
 		return nil, &ResolutionResult{
-			Path:   path,
 			Exists: false,
 			Error:  errors.New("no data"),
+			Path:   path,
 		}
 	}
 
 	if path == "" {
 		return nil, &ResolutionResult{
-			Path:   path,
 			Exists: false,
 			Error:  errors.New("empty path"),
+			Path:   path,
 		}
 	}
 
-	// Convert array notation [n] to .n for gjson compatibility
-	formattedPath := strings.ReplaceAll(path, "[", ".")
-	formattedPath = strings.ReplaceAll(formattedPath, "]", "")
-
 	// Use gjson to resolve the path
-	result := gjson.Get(f.rawJSON, formattedPath)
+	result := gjson.Get(f.rawJSON, path)
 
 	if !result.Exists() {
 		return nil, &ResolutionResult{
@@ -131,23 +158,9 @@ func (f *BasicFacts) GetWithContext(path string) (interface{}, *ResolutionResult
 	}
 }
 
-// get is an internal helper to simplify the Get implementation
-func (f *BasicFacts) get(path string) (interface{}, bool) {
-	if f.rawJSON == "" || path == "" {
-		return nil, false
-	}
-
-	// Convert array notation [n] to .n for gjson compatibility
-	formattedPath := strings.ReplaceAll(path, "[", ".")
-	formattedPath = strings.ReplaceAll(formattedPath, "]", "")
-
-	result := gjson.Get(f.rawJSON, formattedPath)
-	if !result.Exists() {
-		return nil, false
-	}
-
-	value := gjsonResultToInterface(result)
-	return value, true
+// GetByPath implements FactsExt interface for backward compatibility
+func (f *BasicFacts) GetByPath(path string) (interface{}, bool) {
+	return f.Get(path)
 }
 
 // Schema implements Facts interface

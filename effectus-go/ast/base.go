@@ -1,8 +1,9 @@
 package ast
 
 import (
+	"strings"
+
 	"github.com/alecthomas/participle/v2/lexer"
-	"github.com/effectus/effectus-go/pathutil"
 )
 
 // File represents a parsed rule file, containing either Rules or Flows
@@ -34,62 +35,44 @@ type Flow struct {
 	Name     string          `parser:"'flow' @String"`
 	Priority int             `parser:"'priority' @Int '{'"`
 	When     *PredicateBlock `parser:"'when' '{' @@? '}'"`
-	Steps    *StepBlock      `parser:"'steps' '{' @@? '}' '}'"`
+	Steps    *StepBlock      `parser:"'steps' '{' @@? '}'"`
+	End      string          `parser:"'}'"`
 }
 
-// PredicateBlock represents a block of predicates
+// PredicateBlock represents a block of predicates as a raw expression string
 type PredicateBlock struct {
 	Pos        lexer.Position
-	Expression *LogicalExpression `parser:"@@"`
+	Expression string `parser:"@(Ident | Float | Int | String | Operator | LogicalOp | Punct | VarRef | FactPath)+(?=@Braces)"`
 }
 
-// LogicalExpression represents a logical expression with AND/OR operators
-type LogicalExpression struct {
-	Pos   lexer.Position
-	Left  *PredicateTerm     `parser:"@@"`
-	Op    string             `parser:"(@LogicalOp"`
-	Right *LogicalExpression `parser:"@@)?"`
+// PostProcess processes the raw expression to create a clean expression string
+func (p *PredicateBlock) PostProcess() {
+	if p == nil {
+		return
+	}
+	// Trim whitespace and normalize the raw expression
+	p.Expression = strings.TrimSpace(p.Expression)
 }
 
-type LogicalOperator struct {
-	Pos lexer.Position
-	Op  string `parser:"@LogicalOp"`
+// GetExpression returns the expression string
+func (p *PredicateBlock) GetExpression() string {
+	if p == nil {
+		return ""
+	}
+	return p.Expression
 }
 
-// PredicateTerm represents either a predicate or a parenthesized logical expression
-type PredicateTerm struct {
-	Pos       lexer.Position
-	Predicate *Predicate         `parser:"@@"`
-	SubExpr   *LogicalExpression `parser:"| '(' @@ ')'"`
-}
-
-// Predicate represents a single condition
-type Predicate struct {
-	Pos      lexer.Position
-	PathExpr *PathExpression `parser:"@@"`
-	Op       string          `parser:"@Operator"`
-	Lit      Literal         `parser:"@@"`
-}
-
-// PathExpression represents a parsed path in the AST
+// PathExpression represents a path in the AST
 type PathExpression struct {
-	Raw  string        `parser:"@(FactPath | Ident)"` // The raw path string
-	Path pathutil.Path // The parsed path using pathutil
+	Path string `parser:"@(FactPath | Ident)"` // The path string
 }
 
-// GetFullPath returns the full path string from the pathutil.Path
+// GetFullPath returns the path string
 func (p *PathExpression) GetFullPath() string {
 	if p == nil {
 		return ""
 	}
-
-	// If we have a raw path but Path hasn't been populated yet, return raw
-	if p.Raw != "" && p.Path.IsEmpty() {
-		return p.Raw
-	}
-
-	// Return the string representation of the Path
-	return p.Path.String()
+	return p.Path
 }
 
 // PathSegmentInfo contains information about a segment in a path, including indexing

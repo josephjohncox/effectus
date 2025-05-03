@@ -2,133 +2,112 @@
 package registry
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-	"sync"
-
-	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema/types"
 )
 
-// Registry manages type definitions from multiple sources
+// TypeRegistry provides extended registry functionality for types
+type TypeRegistry interface {
+	RegisterFactType(path string, typ *types.Type)
+	GetFactType(path string) *types.Type
+	GetAllFactPaths() []string
+}
+
+// Registry implements the TypeRegistry interface
 type Registry struct {
-	// typeSystem is the underlying type system
-	typeSystem *types.TypeSystem
+	// Type registry maps paths to types
+	types map[string]*types.Type
 
-	// mu protects concurrent access
-	mu sync.RWMutex
-
-	// loaders is a list of registered schema loaders
-	loaders []Loader
+	// Maintain a list of all registered paths
+	paths []string
 }
 
-// Loader is the interface for schema loaders
-type Loader interface {
-	// CanLoad returns true if this loader can handle the given file
-	CanLoad(path string) bool
-
-	// Load loads type definitions from a file
-	Load(path string, ts *types.TypeSystem) error
-}
-
-// NewRegistry creates a new schema registry
+// NewRegistry creates a new type registry
 func NewRegistry() *Registry {
 	return &Registry{
-		typeSystem: types.NewTypeSystem(),
-		loaders:    make([]Loader, 0),
+		types: make(map[string]*types.Type),
+		paths: make([]string, 0),
 	}
-}
-
-// GetTypeSystem returns the underlying type system
-func (sr *Registry) GetTypeSystem() *types.TypeSystem {
-	return sr.typeSystem
-}
-
-// RegisterLoader adds a schema loader to the registry
-func (sr *Registry) RegisterLoader(loader Loader) {
-	sr.mu.Lock()
-	defer sr.mu.Unlock()
-
-	sr.loaders = append(sr.loaders, loader)
-}
-
-// LoadFile loads a schema file using an appropriate loader
-func (sr *Registry) LoadFile(path string) error {
-	sr.mu.RLock()
-	defer sr.mu.RUnlock()
-
-	// Find a loader that can handle this file
-	for _, loader := range sr.loaders {
-		if loader.CanLoad(path) {
-			return loader.Load(path, sr.typeSystem)
-		}
-	}
-
-	return fmt.Errorf("no loader found for file: %s", path)
-}
-
-// LoadDirectory scans a directory for schema files and loads them
-func (sr *Registry) LoadDirectory(dir string) error {
-	files, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("reading schema directory: %w", err)
-	}
-
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		path := filepath.Join(dir, file.Name())
-
-		// Try each loader
-		loaded := false
-		for _, loader := range sr.loaders {
-			if loader.CanLoad(path) {
-				if err := loader.Load(path, sr.typeSystem); err != nil {
-					return fmt.Errorf("loading schema file %s: %w", file.Name(), err)
-				}
-				loaded = true
-				break
-			}
-		}
-
-		if !loaded {
-			// Skip files that no loader can handle
-			continue
-		}
-	}
-
-	return nil
-}
-
-// RegisterType registers a named type in the system
-func (sr *Registry) RegisterType(name string, typ *types.Type) {
-	sr.typeSystem.RegisterType(name, typ)
-}
-
-// GetType retrieves a type by name
-func (sr *Registry) GetType(name string) (*types.Type, bool) {
-	return sr.typeSystem.GetType(name)
 }
 
 // RegisterFactType registers a type for a fact path
-func (sr *Registry) RegisterFactType(path pathutil.Path, typ *types.Type) {
-	sr.typeSystem.RegisterFactType(path, typ)
+func (r *Registry) RegisterFactType(path string, typ *types.Type) {
+	if r.types == nil {
+		r.types = make(map[string]*types.Type)
+	}
+
+	// Add to types map
+	r.types[path] = typ
+
+	// Add to paths list if not already present
+	alreadyRegistered := false
+	for _, p := range r.paths {
+		if p == path {
+			alreadyRegistered = true
+			break
+		}
+	}
+
+	if !alreadyRegistered {
+		r.paths = append(r.paths, path)
+	}
 }
 
-// GetFactType retrieves the type for a fact path
-func (sr *Registry) GetFactType(path pathutil.Path) (*types.Type, error) {
-	return sr.typeSystem.GetFactType(path)
+// GetFactType gets the type for a fact path
+func (r *Registry) GetFactType(path string) *types.Type {
+	if r.types == nil {
+		return nil
+	}
+	return r.types[path]
 }
 
-// GetAllFactPaths returns all registered fact paths
-func (sr *Registry) GetAllFactPaths() []pathutil.Path {
-	return sr.typeSystem.GetAllFactPaths()
+// GetAllFactPaths gets all registered fact paths
+func (r *Registry) GetAllFactPaths() []string {
+	return r.paths
 }
 
-// GetAllTypes returns all registered named types
-func (sr *Registry) GetAllTypes() map[string]*types.Type {
-	return sr.typeSystem.GetAllTypes()
+// GetFactPrimitiveType gets the primitive type of a fact
+func (r *Registry) GetFactPrimitiveType(path string) types.PrimitiveType {
+	typ := r.GetFactType(path)
+	if typ == nil {
+		return types.TypeUnknown
+	}
+	return typ.PrimType
+}
+
+// ValidatePath checks if a path is valid according to registered types
+// If no types are registered, returns true (permissive mode)
+func (r *Registry) ValidatePath(path string) bool {
+	if len(r.types) == 0 {
+		return true
+	}
+	_, exists := r.types[path]
+	return exists
+}
+
+// ValidatePathAsType checks if a path is valid and of the expected type
+func (r *Registry) ValidatePathAsType(path string, primType types.PrimitiveType) bool {
+	if len(r.types) == 0 {
+		return true
+	}
+	typ, exists := r.types[path]
+	if !exists {
+		return false
+	}
+	return typ.PrimType == primType
+}
+
+// HasBooleanFact checks if a path is a boolean fact
+func (r *Registry) HasBooleanFact(path string) bool {
+	return r.ValidatePathAsType(path, types.TypeBool)
+}
+
+// HasNumericFact checks if a path is a numeric fact
+func (r *Registry) HasNumericFact(path string) bool {
+	return r.ValidatePathAsType(path, types.TypeInt) ||
+		r.ValidatePathAsType(path, types.TypeFloat)
+}
+
+// HasStringFact checks if a path is a string fact
+func (r *Registry) HasStringFact(path string) bool {
+	return r.ValidatePathAsType(path, types.TypeString)
 }

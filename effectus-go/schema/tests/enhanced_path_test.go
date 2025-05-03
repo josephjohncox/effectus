@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/effectus/effectus-go/pathutil"
@@ -14,10 +15,7 @@ func TestPathParsing(t *testing.T) {
 	}
 
 	for _, pathStr := range paths {
-		path, err := pathutil.ParseString(pathStr)
-		if err != nil {
-			t.Fatalf("Failed to parse path %s: %v", pathStr, err)
-		}
+		path := pathutil.Path(pathStr)
 
 		// Check that converting back to string gives a valid path
 		backToString := path.String()
@@ -26,10 +24,7 @@ func TestPathParsing(t *testing.T) {
 		}
 
 		// Parse the string representation again
-		pathAgain, err := pathutil.ParseString(backToString)
-		if err != nil {
-			t.Fatalf("Failed to parse path string %s: %v", backToString, err)
-		}
+		pathAgain := pathutil.Path(backToString)
 
 		// Verify they're equal
 		if path.String() != pathAgain.String() {
@@ -37,34 +32,17 @@ func TestPathParsing(t *testing.T) {
 		}
 	}
 
-	// Test path with complex elements
-	complexPath, err := pathutil.ParseString("customer.orders[0].items[2].attributes")
-	if err != nil {
-		t.Fatalf("Failed to parse complex path: %v", err)
+	// Test path with namespace
+	complexPath := pathutil.Path("customer.orders[0].items[2].attributes")
+
+	if complexPath.Namespace() != "customer" {
+		t.Errorf("Expected namespace 'customer', got '%s'", complexPath.Namespace())
 	}
 
-	if complexPath.Namespace != "customer" {
-		t.Errorf("Expected namespace 'customer', got '%s'", complexPath.Namespace)
-	}
-
-	elements := complexPath.Elements
-	if len(elements) != 3 { // 3 elements: orders[0], items[2], attributes
-		t.Errorf("Expected 3 elements, got %d", len(elements))
-	}
-
-	// Check the first element
-	orderElem := elements[0]
-	if orderElem.Name != "orders" {
-		t.Errorf("Expected element name 'orders', got '%s'", orderElem.Name)
-	}
-
-	if !orderElem.HasIndex() {
-		t.Errorf("Expected orders element to have an index")
-	}
-
-	idx, _ := orderElem.GetIndex()
-	if idx != 0 {
-		t.Errorf("Expected index 0, got %d", idx)
+	// Test path with dots and brackets
+	pathStr := string(complexPath)
+	if !strings.Contains(pathStr, "orders[0]") && !strings.Contains(pathStr, "items[2]") {
+		t.Errorf("Path should contain array indices: %s", pathStr)
 	}
 }
 
@@ -97,11 +75,8 @@ func TestPathResolution(t *testing.T) {
 	registry := pathutil.NewRegistry()
 
 	// Create a memory provider for customer namespace
-	customerProvider := pathutil.NewMemoryProvider(customerData)
+	customerProvider := pathutil.NewGjsonProvider(customerData)
 	registry.Register("customer", customerProvider)
-
-	// Create a resolver
-	resolver := pathutil.NewPathResolver(false)
 
 	tests := []struct {
 		name      string
@@ -155,25 +130,15 @@ func TestPathResolution(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Parse the path
-			path, err := pathutil.ParseString(tt.path)
-			if err != nil {
-				t.Fatalf("Failed to parse path: %v", err)
-			}
+			// Use the registry to resolve the path
+			gotValue, exists := registry.Get(tt.path)
 
-			// Resolve the path
-			gotValue, gotResult := resolver.ResolveWithContext(registry, path)
-			gotOk := gotResult.Exists && gotResult.Error == nil
-
-			if gotOk != tt.wantOk {
-				if gotResult.Error != nil {
-					t.Errorf("Resolution error: %v", gotResult.Error)
-				}
-				t.Errorf("Path exists = %v, want %v", gotOk, tt.wantOk)
+			if exists != tt.wantOk {
+				t.Errorf("Path exists = %v, want %v", exists, tt.wantOk)
 				return
 			}
 
-			if gotOk && gotValue != tt.wantValue {
+			if exists && gotValue != tt.wantValue {
 				t.Errorf("Value = %v, want %v", gotValue, tt.wantValue)
 			}
 		})

@@ -15,7 +15,6 @@ import (
 	"github.com/effectus/effectus-go/compiler"
 	"github.com/effectus/effectus-go/flow"
 	"github.com/effectus/effectus-go/list"
-	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/util"
 )
 
@@ -35,12 +34,7 @@ func (e *SimpleExecutor) Do(effect effectus.Effect) (interface{}, error) {
 			// Check if value is a fact path (string containing dots)
 			if strValue, isStr := value.(string); isStr && strings.Contains(strValue, ".") {
 				// Try to look it up in facts
-				parsedPath, err := pathutil.FromString(strValue)
-				if err != nil {
-					fmt.Printf("Error parsing fact path %s: %v\n", strValue, err)
-					continue
-				}
-				if factValue, exists := e.Facts.Get(parsedPath); exists {
+				if factValue, exists := e.Facts.Get(strValue); exists {
 					// Use the fact value instead
 					fmt.Printf("  %s: %v (resolved from fact %s)\n", key, factValue, strValue)
 					resolvedPayload[key] = factValue
@@ -176,9 +170,9 @@ func NewSimpleFacts(data map[string]interface{}) *SimpleFacts {
 }
 
 // Get implements the effectus.Facts interface
-func (f *SimpleFacts) Get(path pathutil.Path) (interface{}, bool) {
+func (f *SimpleFacts) Get(path string) (interface{}, bool) {
 	// First try direct lookup
-	if value, ok := f.data[path.String()]; ok {
+	if value, ok := f.data[path]; ok {
 		return value, true
 	}
 
@@ -194,7 +188,7 @@ func (f *SimpleFacts) Schema() effectus.SchemaInfo {
 type SimpleSchema struct{}
 
 // ValidatePath implements the SchemaInfo interface
-func (s *SimpleSchema) ValidatePath(path pathutil.Path) bool {
+func (s *SimpleSchema) ValidatePath(path string) bool {
 	// Simple implementation that accepts all paths
 	return true
 }
