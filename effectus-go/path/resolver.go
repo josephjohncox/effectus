@@ -2,21 +2,7 @@ package path
 
 import (
 	"fmt"
-
-	"github.com/effectus/effectus-go/common"
 )
-
-// PathResolver is responsible for resolving paths against data
-type PathResolver struct {
-	cache *PathCache
-}
-
-// NewPathResolver creates a new path resolver
-func NewPathResolver() *PathResolver {
-	return &PathResolver{
-		cache: NewPathCache(),
-	}
-}
 
 // ResolutionResult contains the result of path resolution
 type ResolutionResult struct {
@@ -33,35 +19,49 @@ type ResolutionResult struct {
 	Error error
 }
 
+// PathResolver is responsible for resolving paths against data
+type PathResolver struct {
+	typeSystem interface{} // Interface to the type system
+	debug      bool
+}
+
+// NewPathResolver creates a new path resolver
+func NewPathResolver(typeSystem interface{}, debug bool) *PathResolver {
+	return &PathResolver{
+		typeSystem: typeSystem,
+		debug:      debug,
+	}
+}
+
 // ResolvePath resolves a path against data
-func (r *PathResolver) ResolvePath(pathStr string, data interface{}) *ResolutionResult {
-	// Parse and cache the path
-	path, err := r.cache.Get(pathStr)
+func (r *PathResolver) ResolvePath(pathStr string, data interface{}) (*ResolutionResult, error) {
+	// Parse the path
+	parsedPath, err := ParseString(pathStr)
 	if err != nil {
 		return &ResolutionResult{
 			Path:   Path{},
 			Exists: false,
 			Error:  fmt.Errorf("invalid path: %s: %w", pathStr, err),
-		}
+		}, err
 	}
 
-	return r.ResolvePathObject(path, data)
+	return r.ResolvePathObject(parsedPath, data)
 }
 
 // ResolvePathObject resolves a path object against data
-func (r *PathResolver) ResolvePathObject(path Path, data interface{}) *ResolutionResult {
+func (r *PathResolver) ResolvePathObject(path Path, data interface{}) (*ResolutionResult, error) {
 	if data == nil {
 		return &ResolutionResult{
 			Path:   path,
 			Exists: false,
 			Error:  fmt.Errorf("nil data"),
-		}
+		}, nil
 	}
 
-	// Check if we have namespace data
+	// Try to extract the namespace data
 	var current interface{} = data
 
-	// Try to extract the namespace first
+	// If data is a map, extract the namespace
 	if m, ok := data.(map[string]interface{}); ok {
 		if nsData, ok := m[path.Namespace]; ok {
 			current = nsData
@@ -70,7 +70,7 @@ func (r *PathResolver) ResolvePathObject(path Path, data interface{}) *Resolutio
 				Path:   path,
 				Exists: false,
 				Error:  fmt.Errorf("namespace not found: %s", path.Namespace),
-			}
+			}, nil
 		}
 	}
 
@@ -91,14 +91,14 @@ func (r *PathResolver) ResolvePathObject(path Path, data interface{}) *Resolutio
 								Path:   path,
 								Exists: false,
 								Error:  fmt.Errorf("index out of bounds: %d", idx),
-							}
+							}, nil
 						}
 					} else {
 						return &ResolutionResult{
 							Path:   path,
 							Exists: false,
 							Error:  fmt.Errorf("not an array: %s", elem.Name),
-						}
+						}, nil
 					}
 				} else if elem.HasStringKey() {
 					// Handle map key access
@@ -111,14 +111,14 @@ func (r *PathResolver) ResolvePathObject(path Path, data interface{}) *Resolutio
 								Path:   path,
 								Exists: false,
 								Error:  fmt.Errorf("key not found: %s", key),
-							}
+							}, nil
 						}
 					} else {
 						return &ResolutionResult{
 							Path:   path,
 							Exists: false,
 							Error:  fmt.Errorf("not a map: %s", elem.Name),
-						}
+						}, nil
 					}
 				} else {
 					// Regular field access
@@ -129,7 +129,7 @@ func (r *PathResolver) ResolvePathObject(path Path, data interface{}) *Resolutio
 					Path:   path,
 					Exists: false,
 					Error:  fmt.Errorf("field not found: %s", elem.Name),
-				}
+				}, nil
 			}
 
 		case []interface{}:
@@ -139,7 +139,7 @@ func (r *PathResolver) ResolvePathObject(path Path, data interface{}) *Resolutio
 					Path:   path,
 					Exists: false,
 					Error:  fmt.Errorf("array access without index: %s", elem.Name),
-				}
+				}, nil
 			}
 
 			idx, _ := elem.GetIndex()
@@ -150,7 +150,7 @@ func (r *PathResolver) ResolvePathObject(path Path, data interface{}) *Resolutio
 					Path:   path,
 					Exists: false,
 					Error:  fmt.Errorf("index out of bounds: %d", idx),
-				}
+				}, nil
 			}
 
 		default:
@@ -160,7 +160,7 @@ func (r *PathResolver) ResolvePathObject(path Path, data interface{}) *Resolutio
 					Path:   path,
 					Value:  current,
 					Exists: true,
-				}
+				}, nil
 			}
 
 			// Otherwise, we can't navigate further
@@ -168,7 +168,7 @@ func (r *PathResolver) ResolvePathObject(path Path, data interface{}) *Resolutio
 				Path:   path,
 				Exists: false,
 				Error:  fmt.Errorf("cannot navigate past leaf value at: %s", elem.Name),
-			}
+			}, nil
 		}
 	}
 
@@ -177,73 +177,5 @@ func (r *PathResolver) ResolvePathObject(path Path, data interface{}) *Resolutio
 		Path:   path,
 		Value:  current,
 		Exists: true,
-	}
-}
-
-// Facts represents any data structure that supports facts access
-type Facts interface {
-	// GetPaths returns a list of all the paths in the facts
-	GetPaths() []Path
-
-	// GetValue returns the value at a given path
-	GetValue(path Path) (interface{}, bool)
-
-	// GetValueWithResult returns the value with detailed resolution information
-	GetValueWithResult(path Path) *ResolutionResult
-}
-
-// EnhanceFacts wraps a map-based data structure with a resolver
-func EnhanceFacts(data map[string]interface{}) *EnhancedFacts {
-	return &EnhancedFacts{
-		data:     data,
-		resolver: NewPathResolver(),
-	}
-}
-
-// EnhancedFacts is a facts implementation that uses a resolver
-type EnhancedFacts struct {
-	data     map[string]interface{}
-	resolver *PathResolver
-	types    map[string]*common.Type
-}
-
-// GetPaths returns all available paths
-func (f *EnhancedFacts) GetPaths() []Path {
-	// This would require traversing the data structure
-	// Implementation would depend on specific requirements
-	return []Path{}
-}
-
-// GetValue returns the value at a given path
-func (f *EnhancedFacts) GetValue(path Path) (interface{}, bool) {
-	result := f.resolver.ResolvePathObject(path, f.data)
-	return result.Value, result.Exists
-}
-
-// GetValueWithResult returns detailed resolution information
-func (f *EnhancedFacts) GetValueWithResult(path Path) *ResolutionResult {
-	return f.resolver.ResolvePathObject(path, f.data)
-}
-
-// GetValueByString returns the value at a path string
-func (f *EnhancedFacts) GetValueByString(pathStr string) (interface{}, bool) {
-	result := f.resolver.ResolvePath(pathStr, f.data)
-	return result.Value, result.Exists
-}
-
-// RegisterType registers a type for a path
-func (f *EnhancedFacts) RegisterType(pathStr string, typ *common.Type) error {
-	if f.types == nil {
-		f.types = make(map[string]*common.Type)
-	}
-	f.types[pathStr] = typ
-	return nil
-}
-
-// GetType returns the type for a path
-func (f *EnhancedFacts) GetType(pathStr string) *common.Type {
-	if f.types == nil {
-		return nil
-	}
-	return f.types[pathStr]
+	}, nil
 }

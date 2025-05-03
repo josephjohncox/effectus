@@ -7,23 +7,24 @@ import (
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/path"
+	"github.com/effectus/effectus-go/schema/types"
 )
 
 // Mock implementation of FactPathResolver for testing
 type MockFactPathResolver struct {
-	typeSystem *schema.TypeSystem
+	typeSystem *types.TypeSystem
 }
 
-func (r *MockFactPathResolver) Resolve(facts effectus.Facts, path schema.FactPath) (interface{}, bool) {
+func (r *MockFactPathResolver) Resolve(facts effectus.Facts, path path.FactPath) (interface{}, bool) {
 	// Simple implementation that just uses Facts.Get
 	return facts.Get(path.String())
 }
 
 // ResolveWithContext implements the FactPathResolver interface
-func (r *MockFactPathResolver) ResolveWithContext(facts effectus.Facts, path schema.FactPath) (interface{}, *schema.PathResolutionResult) {
+func (r *MockFactPathResolver) ResolveWithContext(facts effectus.Facts, path path.FactPath) (interface{}, *path.PathResolutionResult) {
 	// Create a basic resolution result
-	result := &schema.PathResolutionResult{
+	result := &path.PathResolutionResult{
 		Path: path.String(),
 	}
 
@@ -45,28 +46,28 @@ func (r *MockFactPathResolver) ResolveWithContext(facts effectus.Facts, path sch
 }
 
 // inferTypeFromGoValue infers a schema.Type from a Go value
-func inferTypeFromGoValue(value interface{}) *schema.Type {
+func inferTypeFromGoValue(value interface{}) *types.Type {
 	switch value.(type) {
 	case string:
-		return &schema.Type{PrimType: schema.TypeString}
+		return &types.Type{PrimType: types.TypeString}
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return &schema.Type{PrimType: schema.TypeInt}
+		return &types.Type{PrimType: types.TypeInt}
 	case float32, float64:
-		return &schema.Type{PrimType: schema.TypeFloat}
+		return &types.Type{PrimType: types.TypeFloat}
 	case bool:
-		return &schema.Type{PrimType: schema.TypeBool}
+		return &types.Type{PrimType: types.TypeBool}
 	default:
-		return &schema.Type{PrimType: schema.TypeUnknown}
+		return &types.Type{PrimType: types.TypeUnknown}
 	}
 }
 
-func (r *MockFactPathResolver) Type(path schema.FactPath) *schema.Type {
+func (r *MockFactPathResolver) Type(path path.FactPath) *types.Type {
 	if r.typeSystem != nil {
 		if typ, exists := r.typeSystem.GetFactType(path.String()); exists {
 			return typ
 		}
 	}
-	return &schema.Type{PrimType: schema.TypeUnknown}
+	return &types.Type{PrimType: types.TypeUnknown}
 }
 
 func TestAstPredicateEvaluator(t *testing.T) {

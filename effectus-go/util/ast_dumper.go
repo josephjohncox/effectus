@@ -168,7 +168,7 @@ func (d *ASTDumper) dumpEffects(effects *ast.EffectBlock, indentStr string) {
 }
 
 // dumpNamedArgs dumps named arguments
-func (d *ASTDumper) dumpNamedArgs(args []*ast.NamedArg, indentStr string) {
+func (d *ASTDumper) dumpNamedArgs(args []*ast.StepArg, indentStr string) {
 	if len(args) == 0 {
 		return
 	}
@@ -194,7 +194,7 @@ func (d *ASTDumper) dumpNamedArgs(args []*ast.NamedArg, indentStr string) {
 }
 
 // For backward compatibility
-func (d *ASTDumper) dumpArgs(args []*ast.NamedArg, indentStr string) {
+func (d *ASTDumper) dumpArgs(args []*ast.StepArg, indentStr string) {
 	d.dumpNamedArgs(args, indentStr)
 }
 

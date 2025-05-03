@@ -113,12 +113,12 @@ func (sr *Registry) GetType(name string) (*types.Type, bool) {
 }
 
 // RegisterFactType registers a type for a fact path
-func (sr *Registry) RegisterFactType(path string, typ *types.Type) {
-	sr.typeSystem.RegisterFactType(path, typ)
+func (sr *Registry) RegisterFactType(path string, typ *types.Type) error {
+	return sr.typeSystem.RegisterFactType(path, typ)
 }
 
 // GetFactType retrieves the type for a fact path
-func (sr *Registry) GetFactType(path string) (*types.Type, bool) {
+func (sr *Registry) GetFactType(path string) (*types.Type, error) {
 	return sr.typeSystem.GetFactType(path)
 }
 

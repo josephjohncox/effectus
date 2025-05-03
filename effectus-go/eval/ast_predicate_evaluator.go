@@ -3,7 +3,7 @@ package eval
 import (
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/path"
 )
 
 // AstPredicateEvaluator evaluates AST predicates against Facts
@@ -15,7 +15,7 @@ func NewPredicateEvaluator() *AstPredicateEvaluator {
 }
 
 // Evaluate checks if a predicate is true for the given facts
-func (e *AstPredicateEvaluator) Evaluate(pred *ast.Predicate, facts effectus.Facts, resolver schema.FactPathResolver) bool {
+func (e *AstPredicateEvaluator) Evaluate(pred *ast.Predicate, facts effectus.Facts, resolver path.FactPathResolver) bool {
 	// Get the path from the PathExpression
 	if pred.PathExpr == nil {
 		return false
@@ -24,7 +24,7 @@ func (e *AstPredicateEvaluator) Evaluate(pred *ast.Predicate, facts effectus.Fac
 	pathStr := pred.PathExpr.GetFullPath()
 
 	// Parse the fact path
-	path, err := schema.ParseFactPath(pathStr)
+	path, err := path.ParseString(pathStr)
 	if err != nil {
 		return false
 	}

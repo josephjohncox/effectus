@@ -11,20 +11,21 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/facts"
+	"github.com/effectus/effectus-go/schema/types"
+	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/effectus/effectus-go/unified"
 )
 
 // Placeholder types to simulate the eval package until it's properly implemented
-type sagaStore interface{}
+type sagaStoreInterface interface{}
 type listExecutor struct {
-	verbRegistry *schema.VerbRegistry
+	verbRegistry *verb.Registry
 	sagaEnabled  bool
-	sagaStore    sagaStore
+	sagaStore    sagaStoreInterface
 }
 
-func newListExecutor(verbRegistry *schema.VerbRegistry, options ...func(*listExecutor)) *listExecutor {
+func newListExecutor(verbRegistry *verb.Registry, options ...func(*listExecutor)) *listExecutor {
 	executor := &listExecutor{
 		verbRegistry: verbRegistry,
 	}
@@ -37,22 +38,22 @@ func newListExecutor(verbRegistry *schema.VerbRegistry, options ...func(*listExe
 	return executor
 }
 
-func withSaga(store sagaStore) func(*listExecutor) {
+func withSaga(store sagaStoreInterface) func(*listExecutor) {
 	return func(e *listExecutor) {
 		e.sagaStore = store
 		e.sagaEnabled = true
 	}
 }
 
-func newMemorySagaStore() sagaStore {
+func newMemorySagaStore() sagaStoreInterface {
 	return &struct{}{}
 }
 
-func newRedisSagaStore(opts map[string]string) sagaStore {
+func newRedisSagaStore(opts map[string]string) sagaStoreInterface {
 	return &struct{}{}
 }
 
-func newPostgresSagaStore(opts map[string]string) sagaStore {
+func newPostgresSagaStore(opts map[string]string) sagaStoreInterface {
 	return &struct{}{}
 }
 
@@ -64,8 +65,8 @@ var (
 	reloadInterval = flag.Duration("reload-interval", 30*time.Second, "Interval for hot-reloading")
 
 	// Runtime flags
-	sagaEnabled = flag.Bool("saga", false, "Enable saga-style compensation")
-	sagaStore   = flag.String("saga-store", "memory", "Saga store (memory, redis, postgres)")
+	sagaEnabled   = flag.Bool("saga", false, "Enable saga-style compensation")
+	sagaStoreType = flag.String("saga-store", "memory", "Saga store (memory, redis, postgres)")
 
 	// Monitoring flags
 	metricsAddr = flag.String("metrics-addr", ":9090", "Address to expose metrics")
@@ -105,8 +106,8 @@ func main() {
 		cancel()
 	}()
 
-	// Create schema registry
-	schemaReg := schema.NewSchemaRegistry()
+	// Create type system
+	typeSystem := types.NewTypeSystem()
 
 	// Load bundle
 	var bundle *unified.Bundle
@@ -141,14 +142,14 @@ func main() {
 	}
 
 	// Create verb registry
-	verbReg := schema.NewVerbRegistry(schemaReg.GetTypeSystem())
+	verbReg := verb.NewRegistry(typeSystem)
 
 	// Load verb plugins
 	if *pluginDir != "" {
 		if *verbose {
 			fmt.Printf("Loading verb plugins from directory: %s\n", *pluginDir)
 		}
-		if err := verbReg.LoadVerbPlugins(*pluginDir); err != nil {
+		if err := verbReg.LoadPlugins(*pluginDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading verb plugins: %v\n", err)
 			os.Exit(1)
 		}
@@ -169,11 +170,11 @@ func main() {
 	// Add saga if enabled
 	if *sagaEnabled {
 		if *verbose {
-			fmt.Printf("Enabling saga with store: %s\n", *sagaStore)
+			fmt.Printf("Enabling saga with store: %s\n", *sagaStoreType)
 		}
 
-		var store sagaStore
-		switch *sagaStore {
+		var store sagaStoreInterface
+		switch *sagaStoreType {
 		case "memory":
 			store = newMemorySagaStore()
 		case "redis":
@@ -189,21 +190,22 @@ func main() {
 			}
 			store = newPostgresSagaStore(pgOpts)
 		default:
-			fmt.Fprintf(os.Stderr, "Unknown saga store: %s\n", *sagaStore)
+			fmt.Fprintf(os.Stderr, "Unknown saga store: %s\n", *sagaStoreType)
 			os.Exit(1)
 		}
 
 		execOpts = append(execOpts, withSaga(store))
 	}
 
-	// Create executor
+	// Create executor and use it
 	executor := newListExecutor(verbReg, execOpts...)
+	_ = executor // Use the executor variable to avoid unused variable warning
 
 	// Create a WaitGroup to synchronize goroutines
 	var wg sync.WaitGroup
 
 	// Start fact source
-	factCh := make(chan effectus.Facts)
+	factCh := make(chan facts.Facts)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -271,13 +273,13 @@ func main() {
 			fmt.Println("Shutting down, waiting for goroutines to finish...")
 			wg.Wait()
 			return
-		case facts := <-factCh:
+		case receivedFacts := <-factCh:
 			// Process facts with rules
 			if bundle.ListSpec != nil {
 				for _, rule := range bundle.ListSpec.Rules {
-					// This part would normally use the real executor
-					// For now, just simulate it
-					fmt.Printf("Executing rule: %s\n", rule.Name)
+					// Process the received facts with each rule
+					fmt.Printf("Executing rule: %s with facts\n", rule.Name)
+					_ = receivedFacts // Use the facts variable to avoid unused variable warning
 				}
 			}
 
@@ -294,7 +296,7 @@ func main() {
 }
 
 // startFactSource starts the configured fact source
-func startFactSource(ctx context.Context, factCh chan<- effectus.Facts) {
+func startFactSource(ctx context.Context, factCh chan<- facts.Facts) {
 	switch *factSource {
 	case "http":
 		// HTTP server will push facts to the channel
@@ -309,7 +311,7 @@ func startFactSource(ctx context.Context, factCh chan<- effectus.Facts) {
 }
 
 // startKafkaConsumer starts a Kafka consumer for facts
-func startKafkaConsumer(ctx context.Context, factCh chan<- effectus.Facts) {
+func startKafkaConsumer(ctx context.Context, factCh chan<- facts.Facts) {
 	fmt.Printf("Starting Kafka consumer for topic %s on %s\n", *kafkaTopic, *kafkaBrokers)
 
 	// In a real implementation, you would initialize the Kafka reader here

@@ -1,7 +1,11 @@
-package schema
+package tests
 
 import (
 	"testing"
+
+	"github.com/effectus/effectus-go/schema/facts"
+	"github.com/effectus/effectus-go/schema/path"
+	"github.com/effectus/effectus-go/schema/types"
 )
 
 func TestEnhancedPathResolution(t *testing.T) {
@@ -52,7 +56,7 @@ func TestEnhancedPathResolution(t *testing.T) {
 	}
 
 	// Create a JSONFacts object
-	facts := NewJSONFacts(data)
+	facts := facts.NewJSONFacts(data)
 
 	// Test different paths
 	tests := []struct {
@@ -132,10 +136,10 @@ func TestEnhancedGetWithContext(t *testing.T) {
 		},
 	}
 
-	facts := NewJSONFacts(data)
+	jsonFacts := facts.NewJSONFacts(data)
 
 	// Test with enhanced context for non-existent path
-	value, exists, info := facts.EnhancedGet("orders.items[0].nonexistent")
+	value, exists, info := jsonFacts.EnhancedGet("orders.items[0].nonexistent")
 
 	if exists {
 		t.Errorf("Expected path to not exist")
@@ -150,7 +154,7 @@ func TestEnhancedGetWithContext(t *testing.T) {
 	}
 
 	// Test successful resolution with type information
-	value, exists, info = facts.EnhancedGet("orders.items[0].status")
+	value, exists, info = jsonFacts.EnhancedGet("orders.items[0].status")
 
 	if !exists {
 		t.Fatalf("Expected path to exist, error: %v", info.Error)
@@ -166,13 +170,13 @@ func TestEnhancedGetWithContext(t *testing.T) {
 
 	if info.ValueType == nil {
 		t.Errorf("Expected ValueType to be set")
-	} else if info.ValueType.PrimType != TypeString {
-		t.Errorf("Expected string type, got %v", info.ValueType.PrimType)
+	} else if valType, ok := info.ValueType.(*types.Type); ok && valType.PrimType != types.TypeString {
+		t.Errorf("Expected string type, got %v", valType.PrimType)
 	}
 }
 
 func TestPathCache(t *testing.T) {
-	cache := NewPathCache()
+	cache := path.NewPathCache()
 
 	// Parse a path and cache it
 	path1, err := cache.Get("customer.orders[0].items")
@@ -209,7 +213,7 @@ func TestPathCache(t *testing.T) {
 
 	// Verify index in segment
 	ordersSeg := complexPath.Segments()[0]
-	if idx, hasIdx := ordersSeg.GetIndex(); !hasIdx || *idx != 0 {
+	if idx, hasIdx := ordersSeg.GetIndex(); !hasIdx || idx != 0 {
 		t.Errorf("Expected orders segment to have index 0")
 	}
 }

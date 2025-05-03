@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/effectus/effectus-go/compiler"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/facts"
 	"github.com/effectus/effectus-go/unified"
 )
 
@@ -540,5 +540,5 @@ func (s *testSchema) DebugPrint() {
 
 // testFacts implements the Facts interface for the CLI tool
 type testFacts struct {
-	*schema.SimpleFacts
+	*facts.SimpleFacts
 }

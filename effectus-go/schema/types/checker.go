@@ -82,8 +82,8 @@ func (tc *TypeChecker) TypesAreCompatible(t1, t2 *Type) bool {
 
 // CheckPathType checks if a path has the expected type
 func (tc *TypeChecker) CheckPathType(path string, expectedType *Type) (bool, error) {
-	actualType, found := tc.typeSystem.GetFactType(path)
-	if !found {
+	actualType, err := tc.typeSystem.GetFactType(path)
+	if err != nil {
 		return false, fmt.Errorf("no type information for path: %s", path)
 	}
 

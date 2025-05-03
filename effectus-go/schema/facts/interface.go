@@ -2,31 +2,19 @@
 package facts
 
 import (
-	"github.com/effectus/effectus-go/schema/path"
+	"github.com/effectus/effectus-go/common"
 )
 
 // SchemaInfo defines the interface for schema information providers
+// It extends common.SchemaInfo interface
 type SchemaInfo interface {
-	// ValidatePath checks if a path is valid according to the schema
-	ValidatePath(path string) bool
-
-	// GetPathType returns the type information for a path
-	GetPathType(path string) interface{}
+	common.SchemaInfo
 }
 
 // Facts defines the interface for fact providers
+// It extends common.Facts interface
 type Facts interface {
-	// Get retrieves a fact value by path
-	Get(path string) (interface{}, bool)
-
-	// GetWithContext retrieves a fact with detailed resolution information
-	GetWithContext(path string) (interface{}, *path.ResolutionResult)
-
-	// Schema returns the schema information for these facts
-	Schema() SchemaInfo
-
-	// HasPath checks if a path exists in the facts
-	HasPath(path string) bool
+	common.Facts
 }
 
 // MutableFacts extends Facts with mutation capabilities

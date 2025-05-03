@@ -9,16 +9,16 @@ import (
 	"github.com/alecthomas/participle/v2"
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
+	"github.com/effectus/effectus-go/eval"
 	"github.com/effectus/effectus-go/flow"
 	"github.com/effectus/effectus-go/list"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/unified"
+	"github.com/effectus/effectus-go/schema/types"
 )
 
 // Compiler handles parsing and type checking of Effectus files
 type Compiler struct {
 	parser       *participle.Parser[ast.File]
-	typeChecker  *schema.TypeChecker
+	typeChecker  *types.TypeChecker
 	flowCompiler *flow.Compiler
 	listCompiler *list.Compiler
 }
@@ -27,14 +27,14 @@ type Compiler struct {
 func NewCompiler() *Compiler {
 	return &Compiler{
 		parser:       effectus.GetParser(),
-		typeChecker:  schema.NewTypeChecker(),
+		typeChecker:  types.NewTypeChecker(),
 		flowCompiler: &flow.Compiler{},
 		listCompiler: &list.Compiler{},
 	}
 }
 
 // GetTypeChecker returns the compiler's internal type checker
-func (c *Compiler) GetTypeChecker() *schema.TypeChecker {
+func (c *Compiler) GetTypeChecker() *types.TypeChecker {
 	return c.typeChecker
 }
 
@@ -142,7 +142,7 @@ func (c *Compiler) compileAllFiles(effFiles, effxFiles []string, schema effectus
 	}
 
 	// Create unified spec that combines both types
-	unifiedSpec := &unified.Spec{
+	unifiedSpec := &eval.Spec{
 		ListSpec: listSpec,
 		FlowSpec: flowSpec,
 		Name:     "unified",
@@ -249,12 +249,12 @@ func (c *Compiler) registerDefaultVerbTypes() error {
 
 	// SendEmail verb - example of a general utility verb that's always available
 	c.typeChecker.RegisterVerbSpec("SendEmail",
-		map[string]*schema.Type{
-			"to":      {PrimType: schema.TypeString},
-			"subject": {PrimType: schema.TypeString},
-			"body":    {PrimType: schema.TypeString},
+		map[string]*types.Type{
+			"to":      {PrimType: types.TypeString},
+			"subject": {PrimType: types.TypeString},
+			"body":    {PrimType: types.TypeString},
 		},
-		&schema.Type{PrimType: schema.TypeBool})
+		&types.Type{PrimType: types.TypeBool})
 
 	return nil
 }

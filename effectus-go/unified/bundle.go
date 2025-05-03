@@ -12,7 +12,9 @@ import (
 	comp "github.com/effectus/effectus-go/compiler"
 	fl "github.com/effectus/effectus-go/flow"
 	"github.com/effectus/effectus-go/list"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/facts"
+	"github.com/effectus/effectus-go/schema/registry"
+	"github.com/effectus/effectus-go/schema/verb"
 )
 
 // Bundle represents a complete effectus bundle
@@ -37,8 +39,8 @@ type BundleBuilder struct {
 	schemaDir      string
 	verbDir        string
 	rulesDir       string
-	schemaRegistry *schema.SchemaRegistry
-	verbRegistry   *schema.VerbRegistry
+	schemaRegistry *registry.Registry
+	verbRegistry   *verb.Registry
 	compiler       *comp.Compiler
 }
 
@@ -55,7 +57,7 @@ func NewBundleBuilder(name, version string) *BundleBuilder {
 			RequiredFacts: []string{},
 			PIIMasks:      []string{},
 		},
-		schemaRegistry: schema.NewSchemaRegistry(),
+		schemaRegistry: registry.NewRegistry(),
 	}
 }
 
@@ -102,7 +104,7 @@ func (bb *BundleBuilder) Build() (*Bundle, error) {
 	typeSystem := bb.schemaRegistry.GetTypeSystem()
 
 	// Create verb registry
-	bb.verbRegistry = schema.NewVerbRegistry(typeSystem)
+	bb.verbRegistry = verb.NewRegistry(typeSystem)
 
 	// Load verbs
 	if bb.verbDir != "" {
@@ -118,7 +120,7 @@ func (bb *BundleBuilder) Build() (*Bundle, error) {
 	bb.compiler = comp.NewCompiler()
 
 	// Use our type system and verb registry
-	if setter, ok := bb.compiler.(interface{ SetTypeSystem(*schema.TypeSystem) }); ok {
+	if setter, ok := bb.compiler.(interface{ SetTypeSystem(*types.TypeSystem) }); ok {
 		setter.SetTypeSystem(typeSystem)
 	}
 
@@ -158,11 +160,11 @@ func (bb *BundleBuilder) loadSchemas() error {
 
 		// Load into registry
 		if ext == ".json" {
-			if err := bb.schemaRegistry.LoadJSONSchema(path); err != nil {
+			if err := bb.schemaRegistry.LoadFile(path); err != nil {
 				return fmt.Errorf("loading JSON schema %s: %w", relPath, err)
 			}
 		} else if ext == ".proto" {
-			if err := bb.schemaRegistry.LoadProtoSchema(path); err != nil {
+			if err := bb.schemaRegistry.LoadFile(path); err != nil {
 				return fmt.Errorf("loading proto schema %s: %w", relPath, err)
 			}
 		}
@@ -196,7 +198,7 @@ func (bb *BundleBuilder) loadVerbs() error {
 		bb.bundle.VerbFiles = append(bb.bundle.VerbFiles, relPath)
 
 		// Load into registry
-		if err := bb.verbRegistry.LoadVerbsFromJSON(path); err != nil {
+		if err := bb.verbRegistry.LoadFromJSON(path); err != nil {
 			return fmt.Errorf("loading verbs from %s: %w", relPath, err)
 		}
 
@@ -266,10 +268,10 @@ func (bb *BundleBuilder) loadRules() error {
 // createEmptyFacts creates an empty facts object for compilation
 func (bb *BundleBuilder) createEmptyFacts() eff.Facts {
 	// Create a simple schema info using SimpleSchema
-	schemaInfo := &schema.SimpleSchema{}
+	schemaInfo := &facts.SimpleSchema{}
 
 	// Create empty facts
-	return schema.NewSimpleFacts(map[string]interface{}{}, schemaInfo)
+	return facts.NewSimpleFacts(map[string]interface{}{}, schemaInfo)
 }
 
 // SaveBundle saves the bundle to disk

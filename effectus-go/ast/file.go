@@ -94,9 +94,9 @@ type EffectBlock struct {
 // Effect represents a verb and its arguments
 type Effect struct {
 	Pos      lexer.Position
-	BindName string      `parser:"(@Ident '=')?"` // Optional variable binding
-	Verb     string      `parser:"@Ident"`
-	Args     []*NamedArg `parser:"'(' @@? (',' @@)* ')'"`
+	BindName string     `parser:"(@Ident '=')?"` // Optional variable binding
+	Verb     string     `parser:"@Ident"`
+	Args     []*StepArg `parser:"'(' @@? (',' @@)* ')'"`
 }
 
 // StepBlock represents a block of steps
@@ -108,14 +108,14 @@ type StepBlock struct {
 // Step represents a single step in a flow
 type Step struct {
 	Pos      lexer.Position
-	BindName string      `parser:"(@Ident '=')?"` // Optional variable binding
-	Verb     string      `parser:"@Ident"`
-	Args     []*NamedArg `parser:"'(' @@? (',' @@)* ')'"`
-	Arrow    string      `parser:"('->' @Ident)?"`
+	BindName string     `parser:"(@Ident '=')?"` // Optional variable binding
+	Verb     string     `parser:"@Ident"`
+	Args     []*StepArg `parser:"'(' @@? (',' @@)* ')'"`
+	Arrow    string     `parser:"('->' @Ident)?"`
 }
 
-// NamedArg represents a named argument to a verb
-type NamedArg struct {
+// StepArg represents an argument to a step or effect
+type StepArg struct {
 	Pos   lexer.Position
 	Name  string    `parser:"@Ident ':'"`
 	Value *ArgValue `parser:"@@"`

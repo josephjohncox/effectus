@@ -14,7 +14,8 @@ import (
 	"github.com/effectus/effectus-go/ast"
 	"github.com/effectus/effectus-go/flow"
 	"github.com/effectus/effectus-go/list"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/facts"
+	"github.com/effectus/effectus-go/schema/registry"
 	"github.com/effectus/effectus-go/unified"
 	"github.com/effectus/effectus-go/util"
 )
@@ -178,7 +179,7 @@ func (f *SimpleFacts) Get(path string) (interface{}, bool) {
 
 // Schema implements the effectus.Facts interface
 func (f *SimpleFacts) Schema() effectus.SchemaInfo {
-	return &schema.SimpleSchema{}
+	return &facts.SimpleSchema{}
 }
 
 func main() {
@@ -272,7 +273,7 @@ func compileFiles(filenames []string, verbose bool, dumpAST bool) {
 	}
 
 	// Create a schema
-	schema := &schema.SimpleSchema{}
+	schema := &facts.SimpleSchema{}
 
 	// Compile all files and merge them
 	mergedSpec, err := compileAllFiles(effFiles, effxFiles, schema)
@@ -442,7 +443,7 @@ func runFiles(filenames []string, verbose bool, execute bool, dumpAST bool) {
 	}
 
 	// Create a schema
-	schema := &schema.SimpleSchema{}
+	schema := &facts.SimpleSchema{}
 
 	// Compile all files and merge them
 	mergedSpec, err := compileAllFiles(effFiles, effxFiles, schema)

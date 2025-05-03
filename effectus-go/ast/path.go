@@ -1,7 +1,7 @@
 package ast
 
 import (
-	"github.com/effectus/effectus-go/unified/pathutil"
+	"github.com/effectus/effectus-go/path"
 )
 
 // ResolvePathExpressions resolves all path expressions in a parsed file
@@ -77,7 +77,7 @@ func resolvePathExpression(pathExpr *PathExpression) error {
 	}
 
 	// Use the shared path parser to parse the path
-	namespace, elements, err := pathutil.ParsePath(pathExpr.Raw)
+	namespace, elements, err := path.ParsePath(pathExpr.Raw)
 	if err != nil {
 		return err
 	}
@@ -96,12 +96,12 @@ func resolvePathExpression(pathExpr *PathExpression) error {
 	for i, elem := range elements {
 		var index *int
 		if elem.HasIndex() {
-			val := elem.Index()
-			index = &val
+			idx, _ := elem.GetIndex()
+			index = &idx
 		}
 
 		pathExpr.IndexedSegments[i] = PathSegmentInfo{
-			Name:  elem.Name(),
+			Name:  elem.Name,
 			Index: index,
 		}
 	}
@@ -121,10 +121,13 @@ func (p *PathExpression) GetFullPath() string {
 	}
 
 	// Otherwise, construct it from namespace and segments
-	elements := make([]pathutil.SimplePathElement, len(p.IndexedSegments))
+	elements := make([]path.PathElement, len(p.IndexedSegments))
 	for i, seg := range p.IndexedSegments {
-		elements[i] = pathutil.NewPathElement(seg.Name, seg.Index)
+		elements[i] = path.NewElement(seg.Name)
+		if seg.Index != nil {
+			elements[i] = elements[i].WithIndex(*seg.Index)
+		}
 	}
 
-	return pathutil.RenderPath(p.Namespace, elements)
+	return path.RenderPath(p.Namespace, elements)
 }

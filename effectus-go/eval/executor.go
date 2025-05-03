@@ -8,7 +8,7 @@ import (
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/list"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/facts"
 )
 
 // ExecutorOption defines an option for configuring the executor
@@ -24,15 +24,31 @@ func WithSaga(store SagaStore) ExecutorOption {
 
 // ListExecutor is the main executor for list rules
 type ListExecutor struct {
-	verbRegistry *schema.VerbRegistry
+	verbRegistry VerbRegistry
 	locks        *LockManager
 	sagaEnabled  bool
 	sagaStore    SagaStore
 	mu           sync.Mutex
 }
 
+// VerbRegistry defines the interface for verb registry access
+type VerbRegistry interface {
+	GetVerb(name string) (VerbSpec, bool)
+}
+
+// VerbSpec defines the interface for verb specifications
+type VerbSpec interface {
+	GetCapability() uint32
+	GetExecutor() VerbExecutor
+}
+
+// VerbExecutor defines the interface for verb execution
+type VerbExecutor interface {
+	Execute(ctx context.Context, args map[string]interface{}) (interface{}, error)
+}
+
 // NewListExecutor creates a new executor for list rules
-func NewListExecutor(verbRegistry *schema.VerbRegistry, options ...ExecutorOption) *ListExecutor {
+func NewListExecutor(verbRegistry VerbRegistry, options ...ExecutorOption) *ListExecutor {
 	executor := &ListExecutor{
 		verbRegistry: verbRegistry,
 		locks:        NewLockManager(),
@@ -47,7 +63,7 @@ func NewListExecutor(verbRegistry *schema.VerbRegistry, options ...ExecutorOptio
 }
 
 // ExecuteRule executes a single rule against facts
-func (le *ListExecutor) ExecuteRule(ctx context.Context, rule *list.CompiledRule, facts effectus.Facts) ([]effectus.Effect, error) {
+func (le *ListExecutor) ExecuteRule(ctx context.Context, rule *list.CompiledRule, facts facts.Facts) ([]effectus.Effect, error) {
 	// Check if rule condition matches
 	if !rule.Matches(facts) {
 		return nil, nil
@@ -81,7 +97,7 @@ func (le *ListExecutor) ExecuteRule(ctx context.Context, rule *list.CompiledRule
 }
 
 // executeEffects executes a list of effects with proper locking
-func (le *ListExecutor) executeEffects(ctx context.Context, txID string, effects []*list.Effect, facts effectus.Facts) ([]effectus.Effect, error) {
+func (le *ListExecutor) executeEffects(ctx context.Context, txID string, effects []*list.Effect, facts facts.Facts) ([]effectus.Effect, error) {
 	var result []effectus.Effect
 
 	// Collect locks needed
@@ -95,7 +111,7 @@ func (le *ListExecutor) executeEffects(ctx context.Context, txID string, effects
 
 		// TODO: Implement effect capability -> key mapping
 		// Use the verb's capability for locking
-		cap := fmt.Sprintf("%d", verbSpec.Capability)
+		cap := fmt.Sprintf("%d", verbSpec.GetCapability())
 
 		// Extract keys from effect
 		// This would be based on arguments that represent resource IDs
@@ -119,7 +135,8 @@ func (le *ListExecutor) executeEffects(ctx context.Context, txID string, effects
 			return nil, fmt.Errorf("unknown verb: %s", effect.Verb)
 		}
 
-		if verbSpec.Executor == nil {
+		executor := verbSpec.GetExecutor()
+		if executor == nil {
 			return nil, fmt.Errorf("verb %s has no executor", effect.Verb)
 		}
 
@@ -141,7 +158,7 @@ func (le *ListExecutor) executeEffects(ctx context.Context, txID string, effects
 		}
 
 		// Execute the verb
-		execResult, err := verbSpec.Executor.Execute(ctx, args)
+		execResult, err := executor.Execute(ctx, args)
 		if err != nil {
 			return nil, fmt.Errorf("executing verb %s: %w", effect.Verb, err)
 		}
@@ -166,7 +183,7 @@ func (le *ListExecutor) executeEffects(ctx context.Context, txID string, effects
 }
 
 // resolveValue resolves a value from facts or literals
-func (le *ListExecutor) resolveValue(value interface{}, facts effectus.Facts) (interface{}, error) {
+func (le *ListExecutor) resolveValue(value interface{}, facts facts.Facts) (interface{}, error) {
 	// Handle different value types
 	switch v := value.(type) {
 	case string:

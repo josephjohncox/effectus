@@ -1,4 +1,4 @@
-package schema
+package tests
 
 import (
 	"fmt"
@@ -7,6 +7,8 @@ import (
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
+	"github.com/effectus/effectus-go/schema/facts"
+	"github.com/effectus/effectus-go/schema/types"
 )
 
 // ExampleExecutor is a simple executor for testing
@@ -93,7 +95,7 @@ func compareValues(factValue interface{}, op string, literalValue interface{}) b
 }
 
 // Evaluate a predicate directly for tests to avoid import cycles
-func evaluatePredicate(pred *ast.Predicate, facts *JSONFacts) bool {
+func evaluatePredicate(pred *ast.Predicate, facts *facts.JSONFacts) bool {
 	if pred.PathExpr == nil {
 		return false
 	}
@@ -158,18 +160,18 @@ func ExampleJSONFacts() {
 	}`
 
 	// Parse the JSON string into JSONFacts
-	facts, err := NewJSONFactsFromString(jsonStr)
+	facts, err := facts.NewJSONFactsFromString(jsonStr)
 	if err != nil {
 		fmt.Printf("Error creating JSONFacts: %v\n", err)
 		return
 	}
 
 	// Create a type system
-	ts := NewTypeSystem()
+	ts := types.NewTypeSystem()
 
 	// Register types from the JSON data
 	for ns := range facts.data {
-		RegisterJSONTypes(facts.data, ts, ns)
+		facts.RegisterJSONTypes(ts, ns)
 	}
 
 	// Define a predicate to evaluate
@@ -245,19 +247,19 @@ func ExampleJSONFacts_typeChecking() {
 	}`
 
 	// Parse the JSON
-	facts, err := NewJSONFactsFromString(jsonStr)
+	facts, err := facts.NewJSONFactsFromString(jsonStr)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
 
 	// Create type system and register types
-	ts := NewTypeSystem()
+	ts := types.NewTypeSystem()
 
 	// For JSON data we need to extract and register each namespace separately
 	for ns, val := range facts.data {
 		if nsMap, ok := val.(map[string]interface{}); ok {
-			RegisterJSONTypes(nsMap, ts, ns)
+			facts.RegisterJSONTypes(nsMap, ts, ns)
 		}
 	}
 
