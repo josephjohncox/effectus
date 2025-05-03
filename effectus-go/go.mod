@@ -4,11 +4,17 @@ go 1.24.2
 
 require (
 	github.com/alecthomas/participle/v2 v2.1.4
+	github.com/stretchr/testify v1.9.0
 	github.com/tidwall/gjson v1.18.0
 	google.golang.org/protobuf v1.36.6
 )
 
-require github.com/expr-lang/expr v1.17.2 // indirect
+require (
+	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/expr-lang/expr v1.17.2
+	github.com/pmezard/go-difflib v1.0.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
+)
 
 require (
 	github.com/containerd/stargz-snapshotter/estargz v0.16.3 // indirect

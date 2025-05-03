@@ -106,13 +106,67 @@ func (ts *TypeSystem) GetAllFactPaths() []string {
 	return paths
 }
 
+// RegisterVerb registers a verb with full control over which arguments are required
+// This is the most flexible registration method
+func (ts *TypeSystem) RegisterVerb(verbName string, argTypes map[string]*Type, returnType *Type, requiredArgs []string) error {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+
+	// Clone all types to avoid external modification
+	clonedArgTypes := make(map[string]*Type, len(argTypes))
+	for name, typ := range argTypes {
+		clonedArgTypes[name] = typ.Clone()
+	}
+
+	clonedReturnType := returnType.Clone()
+
+	// Store verb type information in verbTypes
+	ts.verbTypes[verbName] = &VerbInfo{
+		ArgTypes:   clonedArgTypes,
+		ReturnType: clonedReturnType,
+	}
+
+	// Validate required args are in the argTypes map
+	for _, reqArg := range requiredArgs {
+		if _, exists := clonedArgTypes[reqArg]; !exists {
+			return fmt.Errorf("required argument %s is not defined in argTypes", reqArg)
+		}
+	}
+
+	// Create a corresponding VerbSpec
+	ts.verbSpecs[verbName] = &VerbSpec{
+		Name:         verbName,
+		ArgTypes:     clonedArgTypes,
+		ReturnType:   clonedReturnType,
+		RequiredArgs: requiredArgs,
+		Description:  "Registered with RegisterVerb",
+	}
+
+	return nil
+}
+
 // RegisterVerbSpec registers a verb specification
+// This method is preserved for backward compatibility
+// In new code, prefer using RegisterVerb
 func (ts *TypeSystem) RegisterVerbSpec(spec *VerbSpec) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+
+	// Store the spec in verbSpecs
 	ts.verbSpecs[spec.Name] = spec
+
+	// Also update verbTypes for consistency
+	ts.verbTypes[spec.Name] = &VerbInfo{
+		ArgTypes:   spec.ArgTypes,
+		ReturnType: spec.ReturnType,
+	}
 }
 
 // GetVerbSpec retrieves a verb specification
 func (ts *TypeSystem) GetVerbSpec(verbName string) (*VerbSpec, error) {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+
 	spec, exists := ts.verbSpecs[verbName]
 	if !exists {
 		return nil, fmt.Errorf("no specification for verb: %s", verbName)
@@ -174,26 +228,6 @@ func (ts *TypeSystem) MergeTypeSystem(other *TypeSystem) {
 	for name, spec := range other.verbSpecs {
 		ts.verbSpecs[name] = spec
 	}
-}
-
-// RegisterVerbType registers input and output types for a verb
-func (ts *TypeSystem) RegisterVerbType(verbName string, argTypes map[string]*Type, returnType *Type) error {
-	ts.mu.Lock()
-	defer ts.mu.Unlock()
-
-	// Clone all types to avoid external modification
-	clonedArgTypes := make(map[string]*Type, len(argTypes))
-	for name, typ := range argTypes {
-		clonedArgTypes[name] = typ.Clone()
-	}
-
-	// Store verb type information
-	ts.verbTypes[verbName] = &VerbInfo{
-		ArgTypes:   clonedArgTypes,
-		ReturnType: returnType.Clone(),
-	}
-
-	return nil
 }
 
 // GetVerbTypes returns all verb type information
@@ -668,3 +702,16 @@ func (ts *TypeSystem) typeCheckFlow(flow *ast.Flow, facts effectus.Facts) error 
 
 // typeCheckLogicalExpression type checks a logical expression
 // This function is now replaced by the implementation in expr_adapter.go
+
+// RegisterVerbType registers a verb with its argument types and return type
+// All arguments are considered required by default
+func (ts *TypeSystem) RegisterVerbType(verbName string, argTypes map[string]*Type, returnType *Type) error {
+	// Create a list of all arguments as required
+	requiredArgs := make([]string, 0, len(argTypes))
+	for argName := range argTypes {
+		requiredArgs = append(requiredArgs, argName)
+	}
+
+	// Use the more general RegisterVerb method
+	return ts.RegisterVerb(verbName, argTypes, returnType, requiredArgs)
+}
