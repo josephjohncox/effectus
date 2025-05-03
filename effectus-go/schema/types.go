@@ -192,10 +192,23 @@ func (ts *TypeSystem) TypeCheckPredicate(pred *ast.Predicate) error {
 	}
 
 	factPath := pred.PathExpr.GetFullPath()
+
+	fmt.Printf("DEBUG: TypeCheckPredicate checking path '%s'\n", factPath)
+	fmt.Printf("DEBUG: Current type system has %d fact types: %v\n", len(ts.FactTypes), ts.FactTypes)
+
+	// Print all registered paths
+	fmt.Println("DEBUG: All registered fact paths:")
+	for path := range ts.FactTypes {
+		fmt.Printf("  - '%s'\n", path)
+	}
+
 	factType, exists := ts.GetFactType(factPath)
 	if !exists {
+		fmt.Printf("DEBUG: ERROR - Could not find type for path '%s'\n", factPath)
 		return fmt.Errorf("unknown fact type for path: %s", factPath)
 	}
+
+	fmt.Printf("DEBUG: Found type for path '%s': %v\n", factPath, factType)
 
 	var literalType *Type
 	if pred.Lit.String != nil {

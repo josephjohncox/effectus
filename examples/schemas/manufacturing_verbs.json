@@ -1,0 +1,85 @@
+{
+  "reserve_material": {
+    "arg_types": {
+      "qty": {"PrimType": 2, "Name": "int"},
+      "lot": {"PrimType": 1, "Name": "string"}
+    },
+    "return_type": {"PrimType": 0, "Name": "Material"}
+  },
+  "allocate_machine": {
+    "arg_types": {
+      "group": {"PrimType": 1, "Name": "string"},
+      "input": {"PrimType": 0, "Name": "unknown"}
+    },
+    "return_type": {"PrimType": 0, "Name": "Machine"}
+  },
+  "set_cut_params": {
+    "arg_types": {
+      "machine": {"PrimType": 0, "Name": "unknown"},
+      "sfm": {"PrimType": 2, "Name": "int"}
+    },
+    "return_type": {"PrimType": 0, "Name": "CutParams"}
+  },
+  "generate_setup_sheet": {
+    "arg_types": {
+      "machine": {"PrimType": 0, "Name": "unknown"},
+      "params": {"PrimType": 0, "Name": "unknown"}
+    },
+    "return_type": {"PrimType": 0, "Name": "SetupSheet"}
+  },
+  "require_cert": {
+    "arg_types": {
+      "type": {"PrimType": 1, "Name": "string"},
+      "doc": {"PrimType": 0, "Name": "unknown"}
+    },
+    "return_type": {"PrimType": 4, "Name": "bool"}
+  },
+  "release_job": {
+    "arg_types": {
+      "sheet": {"PrimType": 0, "Name": "unknown"}
+    },
+    "return_type": {"PrimType": 0, "Name": "Job"}
+  },
+  "schedule_inspection": {
+    "arg_types": {
+      "job": {"PrimType": 0, "Name": "unknown"},
+      "stage": {"PrimType": 1, "Name": "string"}
+    },
+    "return_type": {"PrimType": 4, "Name": "bool"}
+  },
+  "analyze_requirements": {
+    "arg_types": {
+      "order_id": {"PrimType": 1, "Name": "string"},
+      "specs": {"PrimType": 0, "Name": "unknown"}
+    },
+    "return_type": {"PrimType": 0, "Name": "Requirements"}
+  },
+  "create_timeline": {
+    "arg_types": {
+      "requirements": {"PrimType": 0, "Name": "unknown"},
+      "milestone": {"PrimType": 1, "Name": "string"}
+    },
+    "return_type": {"PrimType": 0, "Name": "Timeline"}
+  },
+  "notify_engineering": {
+    "arg_types": {
+      "timeline": {"PrimType": 0, "Name": "unknown"},
+      "reason": {"PrimType": 1, "Name": "string"}
+    },
+    "return_type": {"PrimType": 4, "Name": "bool"}
+  },
+  "LogInfo": {
+    "arg_types": {
+      "message": {"PrimType": 1, "Name": "string"},
+      "part": {"PrimType": 1, "Name": "string"}
+    },
+    "return_type": {"PrimType": 4, "Name": "bool"}
+  },
+  "RequestQualityInspection": {
+    "arg_types": {
+      "part": {"PrimType": 1, "Name": "string"},
+      "type": {"PrimType": 1, "Name": "string"}
+    },
+    "return_type": {"PrimType": 4, "Name": "bool"}
+  }
+} 

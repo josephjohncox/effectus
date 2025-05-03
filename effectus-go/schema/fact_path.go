@@ -3,6 +3,7 @@ package schema
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/unified/pathutil"
@@ -20,6 +21,9 @@ type PathSegment struct {
 	// Index is a direct reference to the array index (new method)
 	// Not exported to avoid breaking existing code
 	index *int
+
+	// StringKey is for map key access (e.g., ["key"])
+	stringKey *string
 }
 
 // IndexExpression represents an index or key access in a path
@@ -33,10 +37,13 @@ type IndexExpression struct {
 
 // String returns the string representation of the path segment
 func (s PathSegment) String() string {
-	if s.IndexExpr == nil {
-		return s.Name
+	if s.IndexExpr != nil {
+		return fmt.Sprintf("%s[%d]", s.Name, s.IndexExpr.Value)
 	}
-	return fmt.Sprintf("%s[%d]", s.Name, s.IndexExpr.Value)
+	if s.stringKey != nil {
+		return fmt.Sprintf(`%s["%s"]`, s.Name, *s.stringKey)
+	}
+	return s.Name
 }
 
 // GetIndex returns the index value regardless of which field it's stored in
@@ -46,6 +53,24 @@ func (s PathSegment) GetIndex() (*int, bool) {
 		return &val, true
 	}
 	return s.index, s.index != nil
+}
+
+// HasStringKey returns true if this segment has a string key
+func (s PathSegment) HasStringKey() bool {
+	return s.stringKey != nil
+}
+
+// StringKey returns the string key value, or empty string if none
+func (s PathSegment) StringKey() string {
+	if s.stringKey == nil {
+		return ""
+	}
+	return *s.stringKey
+}
+
+// SetStringKey sets the string key for map access
+func (s *PathSegment) SetStringKey(key string) {
+	s.stringKey = &key
 }
 
 // FactPath represents a strongly-typed path to a fact in the system
@@ -135,16 +160,24 @@ func ParseFactPath(path string) (FactPath, error) {
 	// Convert pathutil.PathElement to schema.PathSegment
 	segments := make([]PathSegment, len(elements))
 	for i, elem := range elements {
-		if elem.HasIndex() {
-			segments[i] = PathSegment{
-				Name: elem.Name(),
-				IndexExpr: &IndexExpression{
-					Value: elem.Index(),
-				},
-			}
-		} else {
-			segments[i] = PathSegment{Name: elem.Name()}
+		segment := PathSegment{
+			Name: elem.Name(),
 		}
+
+		// Handle indexing
+		if elem.HasIndex() {
+			segment.IndexExpr = &IndexExpression{
+				Value: elem.Index(),
+			}
+		}
+
+		// Handle string keys (new feature)
+		if elem.HasStringKey() {
+			key := elem.StringKey()
+			segment.SetStringKey(key)
+		}
+
+		segments[i] = segment
 	}
 
 	return FactPath{
@@ -197,73 +230,53 @@ type FactPathResolver interface {
 	// Resolve returns the value at the given path
 	Resolve(facts effectus.Facts, path FactPath) (interface{}, bool)
 
+	// ResolveWithContext returns the value with detailed resolution information
+	ResolveWithContext(facts effectus.Facts, path FactPath) (interface{}, *PathResolutionResult)
+
 	// Type returns the expected type at a path
 	Type(path FactPath) *Type
 }
 
-// DefaultFactPathResolver is the standard implementation of FactPathResolver
-type DefaultFactPathResolver struct {
-	typeSystem *TypeSystem
+// PathCache provides efficient caching of parsed paths
+type PathCache struct {
+	cache map[string]FactPath
+	mu    sync.RWMutex
 }
 
-// NewFactPathResolver creates a new fact path resolver with the given type system
-func NewFactPathResolver(typeSystem *TypeSystem) *DefaultFactPathResolver {
-	return &DefaultFactPathResolver{
-		typeSystem: typeSystem,
+// NewPathCache creates a new path cache
+func NewPathCache() *PathCache {
+	return &PathCache{
+		cache: make(map[string]FactPath),
 	}
 }
 
-// Resolve returns the value at the given path
-func (r *DefaultFactPathResolver) Resolve(facts effectus.Facts, path FactPath) (interface{}, bool) {
-	// For backward compatibility, convert to string and use the Facts.Get method
-	return facts.Get(path.String())
-}
+// Get retrieves a cached path or parses it if not found
+func (c *PathCache) Get(path string) (FactPath, error) {
+	// First check the cache with a read lock
+	c.mu.RLock()
+	if cached, ok := c.cache[path]; ok {
+		c.mu.RUnlock()
+		return cached, nil
+	}
+	c.mu.RUnlock()
 
-// Type returns the expected type at a path
-func (r *DefaultFactPathResolver) Type(path FactPath) *Type {
-	// If the path has type information, use it
-	if path.Type() != nil {
-		return path.Type()
+	// Not in cache, parse it
+	parsed, err := ParseFactPath(path)
+	if err != nil {
+		return FactPath{}, err
 	}
 
-	// Otherwise, look up the type in the type system
-	typ, exists := r.typeSystem.GetFactType(path.String())
-	if !exists {
-		return &Type{PrimType: TypeUnknown}
-	}
-	return typ
+	// Store in cache with a write lock
+	c.mu.Lock()
+	c.cache[path] = parsed
+	c.mu.Unlock()
+
+	return parsed, nil
 }
 
-// ProtoFactPathResolver is a FactPathResolver for Protocol Buffer messages
-type ProtoFactPathResolver struct {
-	typeSystem *TypeSystem
-}
-
-// NewProtoFactPathResolver creates a new ProtoFactPathResolver
-func NewProtoFactPathResolver(typeSystem *TypeSystem) *ProtoFactPathResolver {
-	return &ProtoFactPathResolver{
-		typeSystem: typeSystem,
-	}
-}
-
-// Resolve returns the value at the given path
-func (r *ProtoFactPathResolver) Resolve(facts effectus.Facts, path FactPath) (interface{}, bool) {
-	// For now, delegate to the facts implementation
-	// This will be optimized in future versions
-	return facts.Get(path.String())
-}
-
-// Type returns the expected type at a path
-func (r *ProtoFactPathResolver) Type(path FactPath) *Type {
-	// If the path has type information, use it
-	if path.Type() != nil {
-		return path.Type()
-	}
-
-	// Otherwise, look up the type in the type system
-	typ, exists := r.typeSystem.GetFactType(path.String())
-	if !exists {
-		return &Type{PrimType: TypeUnknown}
-	}
-	return typ
+// Clear empties the cache
+func (c *PathCache) Clear() {
+	c.mu.Lock()
+	c.cache = make(map[string]FactPath)
+	c.mu.Unlock()
 }

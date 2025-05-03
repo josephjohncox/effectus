@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/effectus/effectus-go"
@@ -187,7 +188,7 @@ func inferTypeFromValue(value interface{}) *Type {
 	}
 }
 
-// UnifiedPathResolver is a resolver that can handle multiple data types
+// UnifiedPathResolver handles path resolution for all data types
 type UnifiedPathResolver struct {
 	typeSystem *TypeSystem
 	debug      bool
@@ -227,6 +228,80 @@ func (r *UnifiedPathResolver) Resolve(facts effectus.Facts, path FactPath) (inte
 	}
 
 	return current, true
+}
+
+// ResolveWithContext resolves a path and returns detailed context information
+func (r *UnifiedPathResolver) ResolveWithContext(facts effectus.Facts, path FactPath) (interface{}, *PathResolutionResult) {
+	result := &PathResolutionResult{
+		Path: path.String(),
+	}
+
+	// Handle JSON facts with enhanced resolution
+	if jsonFacts, ok := facts.(*JSONFacts); ok {
+		return ResolveJSONPathWithContext(jsonFacts.data, path)
+	}
+
+	// Handle other fact types with basic information
+	value, exists := r.Resolve(facts, path)
+	result.Exists = exists
+
+	if exists {
+		result.Value = value
+		result.ValueType = r.inferValueType(value)
+	} else {
+		result.Error = fmt.Errorf("path not found: %s", path.String())
+	}
+
+	return value, result
+}
+
+// inferValueType infers the type of a value
+func (r *UnifiedPathResolver) inferValueType(value interface{}) *Type {
+	switch v := value.(type) {
+	case string:
+		return &Type{PrimType: TypeString}
+	case float64:
+		return &Type{PrimType: TypeFloat}
+	case int:
+		return &Type{PrimType: TypeInt}
+	case bool:
+		return &Type{PrimType: TypeBool}
+	case []interface{}:
+		elemType := &Type{PrimType: TypeUnknown}
+		if len(v) > 0 {
+			elemType = r.inferValueType(v[0])
+		}
+		return &Type{
+			PrimType: TypeList,
+			ListType: elemType,
+		}
+	case map[string]interface{}:
+		return &Type{
+			PrimType:   TypeMap,
+			MapKeyType: &Type{PrimType: TypeString},
+			MapValType: &Type{PrimType: TypeUnknown},
+		}
+	default:
+		return &Type{PrimType: TypeUnknown}
+	}
+}
+
+// Type returns the expected type at a path
+func (r *UnifiedPathResolver) Type(path FactPath) *Type {
+	// If the path has type information, use it
+	if path.Type() != nil {
+		return path.Type()
+	}
+
+	// Otherwise, look up the type in the type system
+	if r.typeSystem != nil {
+		typ, exists := r.typeSystem.GetFactType(path.String())
+		if exists {
+			return typ
+		}
+	}
+
+	return &Type{PrimType: TypeUnknown}
 }
 
 // resolveSegment resolves a single segment based on data type
@@ -356,21 +431,6 @@ func (r *UnifiedPathResolver) resolveProtoSegment(protoMsg proto.Message, segmen
 	}
 
 	return convertProtoValueToGo(fieldValue, field), true
-}
-
-// Type returns the expected type at a path
-func (r *UnifiedPathResolver) Type(path FactPath) *Type {
-	// If the path has type information, use it
-	if path.Type() != nil {
-		return path.Type()
-	}
-
-	// Otherwise, look up the type in the type system
-	typ, exists := r.typeSystem.GetFactType(path.String())
-	if !exists {
-		return &Type{PrimType: TypeUnknown}
-	}
-	return typ
 }
 
 // InferType infers the type of a value

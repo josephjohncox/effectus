@@ -21,11 +21,9 @@ type ProtoFacts struct {
 
 // NewProtoFacts creates a new ProtoFacts from a proto.Message
 func NewProtoFacts(message proto.Message) *ProtoFacts {
-	// Create a resolver
-	resolver := &UnifiedPathResolver{
-		typeSystem: nil,
-		debug:      false,
-	}
+	// Create a unified resolver
+	typeSystem := NewTypeSystem()
+	resolver := NewUnifiedPathResolver(typeSystem, false)
 
 	return &ProtoFacts{
 		message:  message,
@@ -224,36 +222,6 @@ func RegisterProtoMessageFieldTypes(msgDesc protoreflect.MessageDescriptor, ts *
 			RegisterProtoMessageFieldTypes(field.Message(), ts, path)
 		}
 	}
-}
-
-// EnhancedProtoFactPathResolver is a specialized FactPathResolver for Protocol Buffer messages
-type EnhancedProtoFactPathResolver struct {
-	baseResolver *ProtoFactPathResolver
-}
-
-// NewEnhancedProtoFactPathResolver creates a new enhanced resolver for protocol buffers
-func NewEnhancedProtoFactPathResolver(typeSystem *TypeSystem) *EnhancedProtoFactPathResolver {
-	return &EnhancedProtoFactPathResolver{
-		baseResolver: NewProtoFactPathResolver(typeSystem),
-	}
-}
-
-// Resolve returns the value at the given path with enhanced protocol buffer support
-func (r *EnhancedProtoFactPathResolver) Resolve(facts effectus.Facts, path FactPath) (interface{}, bool) {
-	// Extract proto.Message from facts if possible
-	protoFacts, ok := facts.(*ProtoFacts)
-	if !ok {
-		// Fall back to base resolver
-		return r.baseResolver.Resolve(facts, path)
-	}
-
-	// Use the facts implementation directly
-	return protoFacts.Get(path.String())
-}
-
-// Type returns the expected type at a path
-func (r *EnhancedProtoFactPathResolver) Type(path FactPath) *Type {
-	return r.baseResolver.Type(path)
 }
 
 // protoFieldToEffectusType converts a protoreflect.FieldDescriptor to an Effectus Type

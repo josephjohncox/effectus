@@ -33,6 +33,11 @@ func NewCompiler() *Compiler {
 	}
 }
 
+// GetTypeChecker returns the compiler's internal type checker
+func (c *Compiler) GetTypeChecker() *schema.TypeChecker {
+	return c.typeChecker
+}
+
 // ParseFile parses a file into an AST
 func (c *Compiler) ParseFile(filename string) (*ast.File, error) {
 	f, err := os.Open(filename)
@@ -232,9 +237,17 @@ func (c *Compiler) ParseAndCompileFiles(filenames []string, facts effectus.Facts
 	return c.CompileFiles(filenames, facts)
 }
 
-// registerDefaultVerbTypes registers some basic verb types for demonstration purposes
+// LoadVerbSpecs loads verb specifications from a JSON file
+func (c *Compiler) LoadVerbSpecs(filename string) error {
+	return c.typeChecker.LoadVerbSpecs(filename)
+}
+
+// registerDefaultVerbTypes registers basic verb types or loads from file
 func (c *Compiler) registerDefaultVerbTypes() error {
-	// SendEmail verb
+	// This method can be simplified to just register the most basic verbs
+	// More specific domain verbs should be loaded from schema files
+
+	// SendEmail verb - example of a general utility verb that's always available
 	c.typeChecker.RegisterVerbSpec("SendEmail",
 		map[string]*schema.Type{
 			"to":      {PrimType: schema.TypeString},
@@ -242,25 +255,6 @@ func (c *Compiler) registerDefaultVerbTypes() error {
 			"body":    {PrimType: schema.TypeString},
 		},
 		&schema.Type{PrimType: schema.TypeBool})
-
-	// LogOrder verb
-	c.typeChecker.RegisterVerbSpec("LogOrder",
-		map[string]*schema.Type{
-			"order_id": {PrimType: schema.TypeString},
-			"total":    {PrimType: schema.TypeFloat},
-		},
-		&schema.Type{PrimType: schema.TypeBool})
-
-	// CreateOrder verb
-	c.typeChecker.RegisterVerbSpec("CreateOrder",
-		map[string]*schema.Type{
-			"customer_id": {PrimType: schema.TypeString},
-			"items": {
-				PrimType: schema.TypeList,
-				ListType: &schema.Type{Name: "OrderItem", PrimType: schema.TypeUnknown},
-			},
-		},
-		&schema.Type{Name: "Order", PrimType: schema.TypeUnknown})
 
 	return nil
 }

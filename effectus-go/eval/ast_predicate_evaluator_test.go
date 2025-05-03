@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -17,6 +18,46 @@ type MockFactPathResolver struct {
 func (r *MockFactPathResolver) Resolve(facts effectus.Facts, path schema.FactPath) (interface{}, bool) {
 	// Simple implementation that just uses Facts.Get
 	return facts.Get(path.String())
+}
+
+// ResolveWithContext implements the FactPathResolver interface
+func (r *MockFactPathResolver) ResolveWithContext(facts effectus.Facts, path schema.FactPath) (interface{}, *schema.PathResolutionResult) {
+	// Create a basic resolution result
+	result := &schema.PathResolutionResult{
+		Path: path.String(),
+	}
+
+	// Use the Resolve method to get the value
+	value, exists := r.Resolve(facts, path)
+	result.Exists = exists
+
+	if exists {
+		result.Value = value
+		// Set a simple type based on the Go type
+		if value != nil {
+			result.ValueType = inferTypeFromGoValue(value)
+		}
+	} else {
+		result.Error = fmt.Errorf("path not found: %s", path.String())
+	}
+
+	return value, result
+}
+
+// inferTypeFromGoValue infers a schema.Type from a Go value
+func inferTypeFromGoValue(value interface{}) *schema.Type {
+	switch value.(type) {
+	case string:
+		return &schema.Type{PrimType: schema.TypeString}
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return &schema.Type{PrimType: schema.TypeInt}
+	case float32, float64:
+		return &schema.Type{PrimType: schema.TypeFloat}
+	case bool:
+		return &schema.Type{PrimType: schema.TypeBool}
+	default:
+		return &schema.Type{PrimType: schema.TypeUnknown}
+	}
 }
 
 func (r *MockFactPathResolver) Type(path schema.FactPath) *schema.Type {

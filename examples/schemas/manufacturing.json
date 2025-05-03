@@ -1,0 +1,128 @@
+[
+  {
+    "path": "customer.code",
+    "type": {
+      "PrimType": 1,
+      "Name": "string"
+    }
+  },
+  {
+    "path": "customer.name",
+    "type": {
+      "PrimType": 1,
+      "Name": "string"
+    }
+  },
+  {
+    "path": "customer.address",
+    "type": {
+      "PrimType": 1,
+      "Name": "string"
+    }
+  },
+  {
+    "path": "customer.priority",
+    "type": {
+      "PrimType": 2,
+      "Name": "int"
+    }
+  },
+  {
+    "path": "part.number",
+    "type": {
+      "PrimType": 1,
+      "Name": "string"
+    }
+  },
+  {
+    "path": "part.description",
+    "type": {
+      "PrimType": 1,
+      "Name": "string"
+    }
+  },
+  {
+    "path": "part.tolerance",
+    "type": {
+      "PrimType": 3,
+      "Name": "float"
+    }
+  },
+  {
+    "path": "part.material",
+    "type": {
+      "PrimType": 1,
+      "Name": "string"
+    }
+  },
+  {
+    "path": "part.category",
+    "type": {
+      "PrimType": 1,
+      "Name": "string"
+    }
+  },
+  {
+    "path": "part.quality.level",
+    "type": {
+      "PrimType": 2,
+      "Name": "int"
+    }
+  },
+  {
+    "path": "part.id",
+    "type": {
+      "PrimType": 1,
+      "Name": "string"
+    }
+  },
+  {
+    "path": "machine.group",
+    "type": {
+      "PrimType": 1,
+      "Name": "string"
+    }
+  },
+  {
+    "path": "machine.id",
+    "type": {
+      "PrimType": 1,
+      "Name": "string"
+    }
+  },
+  {
+    "path": "job.id",
+    "type": {
+      "PrimType": 1,
+      "Name": "string"
+    }
+  },
+  {
+    "path": "job.status",
+    "type": {
+      "PrimType": 1,
+      "Name": "string"
+    }
+  },
+  {
+    "path": "order.type",
+    "type": {
+      "PrimType": 1,
+      "Name": "string"
+    }
+  },
+  {
+    "path": "order.id",
+    "type": {
+      "PrimType": 1,
+      "Name": "string"
+    }
+  },
+  {
+    "path": "order.specs",
+    "type": {
+      "PrimType": 0,
+      "Name": "Specs"
+    }
+  }
+] 

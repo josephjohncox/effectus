@@ -1,7 +1,9 @@
 package schema
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/effectus/effectus-go"
@@ -64,6 +66,24 @@ func (tc *TypeChecker) MergeTypes(other *TypeChecker) {
 	}
 }
 
+// MergeTypeSystem merges types from a TypeSystem
+func (tc *TypeChecker) MergeTypeSystem(system *TypeSystem) {
+	// Merge fact types
+	for path, typ := range system.FactTypes {
+		tc.typeSystem.FactTypes[path] = typ
+	}
+
+	// Merge verb types
+	for verb, info := range system.VerbTypes {
+		tc.typeSystem.VerbTypes[verb] = info
+	}
+
+	// Merge fact schemas
+	for namespace, schema := range system.FactSchemas {
+		tc.typeSystem.FactSchemas[namespace] = schema
+	}
+}
+
 // GenerateTypeReport generates a human-readable report of inferred types
 func (tc *TypeChecker) GenerateTypeReport() string {
 	var sb strings.Builder
@@ -113,4 +133,44 @@ func (tc *TypeChecker) BuildTypeSchemaFromFacts(facts effectus.Facts) {
 			}
 		}
 	}
+}
+
+// VerbSpec represents the type specification for a verb
+type VerbSpec struct {
+	ArgTypes   map[string]Type `json:"arg_types"`
+	ReturnType Type            `json:"return_type"`
+}
+
+// LoadVerbSpecs loads verb specifications from a JSON file
+func (tc *TypeChecker) LoadVerbSpecs(filename string) error {
+	// Read the file
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		return fmt.Errorf("reading verb spec file: %w", err)
+	}
+
+	// Parse the verb specs
+	var verbSpecs map[string]VerbSpec
+	if err := json.Unmarshal(content, &verbSpecs); err != nil {
+		return fmt.Errorf("parsing verb spec file: %w", err)
+	}
+
+	// Register each verb
+	for verb, spec := range verbSpecs {
+		// Convert arg types to proper map
+		argTypes := make(map[string]*Type)
+		for name, typ := range spec.ArgTypes {
+			// Make a copy since we'll be storing pointers
+			typCopy := typ
+			argTypes[name] = &typCopy
+		}
+
+		// Make a copy of the return type
+		returnType := spec.ReturnType
+
+		// Register the verb
+		tc.RegisterVerbSpec(verb, argTypes, &returnType)
+	}
+
+	return nil
 }

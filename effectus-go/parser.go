@@ -19,8 +19,13 @@ var (
 		{"Float", `[-+]?\d*\.\d+([eE][-+]?\d+)?`},
 		{"Int", `[-+]?\d+`},
 		{"String", `"[^"]*"`},
-		{"VarRef", `\$[a-zA-Z_]\w*`},                 // Variable references like $result
-		{"FactPath", `[a-zA-Z_]\w*\.[a-zA-Z_0-9.]+`}, // Fact paths like customer.email
+		{"VarRef", `\$[a-zA-Z_]\w*`}, // Variable references like $result
+		// Enhanced FactPath pattern that supports:
+		// - Regular paths (customer.email)
+		// - Array indexing (customer.orders[0].id)
+		// - Map keys (customer.attributes["name"])
+		// - Mixed access (inventory.items[0].tags["color"])
+		{"FactPath", `[a-zA-Z_]\w*(\.[a-zA-Z_]\w*|\.\d+|\[[0-9]+\]|\["[^"]*"\])+`},
 		{"Operator", `==|!=|<=|>=|<|>|\bin\b|\bcontains\b`},
 		// {"Keyword", `\b(rule|flow|when|then|steps|include|priority|true|false)\b`},
 		{"Dollar", `\$`},

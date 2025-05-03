@@ -4,6 +4,7 @@ package pathutil
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -18,6 +19,12 @@ type PathElement interface {
 
 	// Index returns the index value, or -1 if there is no index
 	Index() int
+
+	// HasStringKey returns true if this segment has a string key
+	HasStringKey() bool
+
+	// StringKey returns the string key, or empty string if none
+	StringKey() string
 
 	// String returns the string representation of this segment (e.g., "orders[0]")
 	String() string
@@ -37,9 +44,11 @@ type PathInfo interface {
 
 // SimplePathElement is a basic implementation of PathElement
 type SimplePathElement struct {
-	name     string
-	hasIndex bool
-	indexVal int
+	name      string
+	hasIndex  bool
+	indexVal  int
+	hasStrKey bool
+	stringKey string
 }
 
 // Name returns the segment name
@@ -60,12 +69,28 @@ func (e SimplePathElement) Index() int {
 	return e.indexVal
 }
 
+// HasStringKey returns true if this segment has a string key
+func (e SimplePathElement) HasStringKey() bool {
+	return e.hasStrKey
+}
+
+// StringKey returns the string key, or empty string if none
+func (e SimplePathElement) StringKey() string {
+	if !e.hasStrKey {
+		return ""
+	}
+	return e.stringKey
+}
+
 // String returns the string representation of this segment
 func (e SimplePathElement) String() string {
-	if !e.hasIndex {
-		return e.name
+	if e.hasIndex {
+		return fmt.Sprintf("%s[%d]", e.name, e.indexVal)
 	}
-	return fmt.Sprintf("%s[%d]", e.name, e.indexVal)
+	if e.hasStrKey {
+		return fmt.Sprintf(`%s["%s"]`, e.name, e.stringKey)
+	}
+	return e.name
 }
 
 // NewPathElement creates a new SimplePathElement with the given name and optional index
@@ -84,6 +109,15 @@ func NewPathElement(name string, index *int) SimplePathElement {
 	}
 }
 
+// NewPathElementWithStringKey creates a new SimplePathElement with string key access
+func NewPathElementWithStringKey(name string, key string) SimplePathElement {
+	return SimplePathElement{
+		name:      name,
+		hasStrKey: true,
+		stringKey: key,
+	}
+}
+
 // ParsePath parses a string path into a namespace and path elements
 func ParsePath(path string) (string, []SimplePathElement, error) {
 	// Check for empty path
@@ -91,45 +125,100 @@ func ParsePath(path string) (string, []SimplePathElement, error) {
 		return "", nil, fmt.Errorf("empty path")
 	}
 
-	// Split the path into parts
+	// First check if path contains any indexing brackets
+	if !strings.Contains(path, "[") {
+		// Simple path with just dots, use the simpler parsing
+		return parseSimplePath(path)
+	}
+
+	// Path with indexes requires more complex parsing
+	return parseComplexPath(path)
+}
+
+// parseSimplePath handles dot-separated paths without any indexing
+func parseSimplePath(path string) (string, []SimplePathElement, error) {
 	parts := strings.Split(path, ".")
 	if len(parts) < 1 {
 		return "", nil, fmt.Errorf("invalid path: %s", path)
 	}
 
-	// Extract namespace and initialize segments
 	namespace := parts[0]
 	elements := make([]SimplePathElement, 0, len(parts)-1)
 
-	// Process each segment for potential array indices
 	for i := 1; i < len(parts); i++ {
-		part := parts[i]
+		elements = append(elements, SimplePathElement{
+			name: parts[i],
+		})
+	}
 
-		// Check for array indexing (field[0] syntax)
-		indexStart := strings.Index(part, "[")
-		if indexStart > 0 && strings.HasSuffix(part, "]") {
-			fieldName := part[:indexStart]
-			indexStr := part[indexStart+1 : len(part)-1]
+	return namespace, elements, nil
+}
 
-			// Parse the index
-			index, err := strconv.Atoi(indexStr)
-			if err != nil {
-				return "", nil, fmt.Errorf("invalid array index in path segment '%s': %w", part, err)
-			}
+// parseComplexPath handles paths that may contain array indexing or map keys
+func parseComplexPath(path string) (string, []SimplePathElement, error) {
+	// First get the namespace (everything before the first dot)
+	firstDot := strings.Index(path, ".")
+	if firstDot < 0 {
+		return path, nil, nil
+	}
 
-			// Create a new indexed element
+	namespace := path[:firstDot]
+	remainingPath := path[firstDot+1:]
+
+	// Check for invalid array indices - this will catch syntax like [x] that the regex won't match
+	// but is clearly meant to be an array index
+	invalidIndexPattern := `\[[^0-9"\]]+\]`
+	invalidRe := regexp.MustCompile(invalidIndexPattern)
+	if invalidRe.MatchString(remainingPath) {
+		return "", nil, fmt.Errorf("invalid array index in path: %s", path)
+	}
+
+	// Now parse the rest of the path with a regex pattern
+	elements := make([]SimplePathElement, 0)
+
+	// Match patterns like:
+	// - field
+	// - field[0]
+	// - field["key"]
+	pattern := `([a-zA-Z_]\w*)(?:\[(\d+)\]|\["([^"]+)"\])?`
+	re := regexp.MustCompile(pattern)
+
+	// Split by dots, but handle special case where dots appear in string keys
+	segments := strings.Split(remainingPath, ".")
+
+	for _, segment := range segments {
+		matches := re.FindStringSubmatch(segment)
+		if matches == nil {
+			return "", nil, fmt.Errorf("invalid path segment: %s", segment)
+		}
+
+		fieldName := matches[1]
+
+		// Check for array index
+		if matches[2] != "" {
+			index, _ := strconv.Atoi(matches[2])
 			elements = append(elements, SimplePathElement{
 				name:     fieldName,
 				hasIndex: true,
 				indexVal: index,
 			})
-		} else {
-			// Regular field without indexing
-			elements = append(elements, SimplePathElement{
-				name:     part,
-				hasIndex: false,
-			})
+			continue
 		}
+
+		// Check for string key
+		if matches[3] != "" {
+			elements = append(elements, SimplePathElement{
+				name:      fieldName,
+				hasStrKey: true,
+				stringKey: matches[3],
+			})
+			continue
+		}
+
+		// Just a field name
+		elements = append(elements, SimplePathElement{
+			name: fieldName,
+		})
 	}
 
 	return namespace, elements, nil
