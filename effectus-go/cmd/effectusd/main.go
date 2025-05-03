@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/effectus/effectus-go/schema/facts"
 	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/effectus/effectus-go/unified"
@@ -205,7 +204,7 @@ func main() {
 	var wg sync.WaitGroup
 
 	// Start fact source
-	factCh := make(chan facts.Facts)
+	factCh := make(chan interface{})
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -295,42 +294,27 @@ func main() {
 	}
 }
 
-// startFactSource starts the configured fact source
-func startFactSource(ctx context.Context, factCh chan<- facts.Facts) {
-	switch *factSource {
-	case "http":
-		// HTTP server will push facts to the channel
-		fmt.Println("HTTP fact source will be handled by the HTTP server")
-	case "kafka":
-		// Start Kafka consumer
+// startFactSource starts the appropriate fact source
+func startFactSource(ctx context.Context, factCh chan<- interface{}) {
+	if *factSource == "kafka" {
 		startKafkaConsumer(ctx, factCh)
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown fact source: %s\n", *factSource)
-		os.Exit(1)
+	} else {
+		// Default to HTTP server
+		startHTTPServer(ctx, *httpAddr)
 	}
 }
 
 // startKafkaConsumer starts a Kafka consumer for facts
-func startKafkaConsumer(ctx context.Context, factCh chan<- facts.Facts) {
-	fmt.Printf("Starting Kafka consumer for topic %s on %s\n", *kafkaTopic, *kafkaBrokers)
+func startKafkaConsumer(ctx context.Context, factCh chan<- interface{}) {
+	// Placeholder for Kafka consumer implementation
+	fmt.Println("Starting Kafka consumer...")
+	fmt.Printf("Brokers: %s\n", *kafkaBrokers)
+	fmt.Printf("Topic: %s\n", *kafkaTopic)
 
-	// In a real implementation, you would initialize the Kafka reader here
-	// For now, just a placeholder
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Simulate receiving a fact - in a real implementation, this would
-			// read from Kafka, parse the message, and send to factCh
-			if *verbose {
-				fmt.Println("Kafka consumer tick (not implemented)")
-			}
-		}
-	}
+	// In a real implementation, this would connect to Kafka
+	// and read messages into the factCh
+	<-ctx.Done()
+	fmt.Println("Stopping Kafka consumer...")
 }
 
 // startHTTPServer starts the HTTP API server

@@ -1,9 +1,9 @@
 package eval
 
 import (
-	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/schema/path"
+	"github.com/effectus/effectus-go/common"
+	"github.com/effectus/effectus-go/pathutil"
 )
 
 // AstPredicateEvaluator evaluates AST predicates against Facts
@@ -15,22 +15,15 @@ func NewPredicateEvaluator() *AstPredicateEvaluator {
 }
 
 // Evaluate checks if a predicate is true for the given facts
-func (e *AstPredicateEvaluator) Evaluate(pred *ast.Predicate, facts effectus.Facts, resolver path.FactPathResolver) bool {
-	// Get the path from the PathExpression
+func (e *AstPredicateEvaluator) Evaluate(pred *ast.Predicate, facts common.Facts, resolver *pathutil.PathResolver) bool {
+	// Check if PathExpr is nil
 	if pred.PathExpr == nil {
 		return false
 	}
 
-	pathStr := pred.PathExpr.GetFullPath()
-
-	// Parse the fact path
-	path, err := path.ParseString(pathStr)
-	if err != nil {
-		return false
-	}
-
-	// Resolve the value
-	value, exists := resolver.Resolve(facts, path)
+	// Now we can access the pathutil.Path directly
+	// Use the pathutil.Path object directly with facts
+	value, exists := facts.Get(pred.PathExpr.Path)
 	if !exists {
 		return false
 	}
@@ -38,7 +31,7 @@ func (e *AstPredicateEvaluator) Evaluate(pred *ast.Predicate, facts effectus.Fac
 	// Convert the AST literal to a comparable value
 	literalValue := convertAstLiteral(&pred.Lit)
 
-	// Compare using the operator
+	// Use the existing CompareFact function from predicate.go
 	return CompareFact(value, pred.Op, literalValue)
 }
 

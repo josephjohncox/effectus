@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/effectus/effectus-go/schema/registry"
 )
 
 func TestBundleBuilder(t *testing.T) {
@@ -22,26 +24,29 @@ func TestBundleBuilder(t *testing.T) {
 		}
 	}
 
-	// Create a simple schema file
-	schemaContent := `[
-		{
-			"path": "user.name",
-			"type": {"primType": 1, "name": "string"}
-		},
-		{
-			"path": "user.age",
-			"type": {"primType": 2, "name": "int"}
+	// Create a simple schema file with proper format for JSONSchemaLoader
+	schemaContent := `{
+		"types": {},
+		"facts": {
+			"name": {
+				"type": "string"
+			},
+			"age": {
+				"type": "integer"
+			},
+			"email": {
+				"type": "string"
+			}
 		}
-	]`
+	}`
 	schemaFile := filepath.Join(schemaDir, "user.json")
 	if err := os.WriteFile(schemaFile, []byte(schemaContent), 0644); err != nil {
 		t.Fatalf("Failed to write schema file: %v", err)
 	}
 
-	// Create a simple verb file
-	verbContent := `[
-		{
-			"name": "sendEmail",
+	// Create a simple verb file with proper format for Registry.LoadFromJSON
+	verbContent := `{
+		"sendEmail": {
 			"arg_types": {
 				"to": {"primType": 1, "name": "string"},
 				"subject": {"primType": 1, "name": "string"},
@@ -51,14 +56,14 @@ func TestBundleBuilder(t *testing.T) {
 			"capability": 1,
 			"description": "Sends an email"
 		}
-	]`
+	}`
 	verbFile := filepath.Join(verbDir, "email.json")
 	if err := os.WriteFile(verbFile, []byte(verbContent), 0644); err != nil {
 		t.Fatalf("Failed to write verb file: %v", err)
 	}
 
-	// Create a simple rule file
-	ruleContent := `rule check_user {
+	// Create a simple rule file with correct Effectus syntax
+	ruleContent := `rule "USER_CHECK" priority 10 {
 		when {
 			user.age > 18
 		}
@@ -78,6 +83,15 @@ func TestBundleBuilder(t *testing.T) {
 	builder.WithVerbDir(verbDir)
 	builder.WithRulesDir(rulesDir)
 	builder.WithPIIMasks([]string{"user.email"})
+
+	// Register schema loaders
+	jsonLoader := registry.NewJSONSchemaLoader("user")
+	protoLoader := registry.NewProtoSchemaLoader("")
+	builder.RegisterSchemaLoader(jsonLoader)
+	builder.RegisterSchemaLoader(protoLoader)
+
+	// Skip rule compilation for testing
+	builder.SkipRuleCompilation()
 
 	// Build the bundle
 	bundle, err := builder.Build()

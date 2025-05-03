@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema/types"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
@@ -80,13 +81,14 @@ func (l *ProtoSchemaLoader) registerMessageType(msgDesc *descriptorpb.Descriptor
 
 	// Create a named type for the message
 	msgType := &types.Type{
-		Name:     msgName,
-		PrimType: types.TypeMap,
-		// Maps with string keys
-		MapKeyType: &types.Type{PrimType: types.TypeString},
-		// Map values depend on field types
-		MapValType: &types.Type{PrimType: types.TypeUnknown},
+		Name:       msgName,
+		PrimType:   types.TypeMap,
+		Properties: make(map[string]*types.Type),
 	}
+	// Maps with string keys
+	msgType.Properties["__key"] = &types.Type{PrimType: types.TypeString}
+	// Map values depend on field types
+	msgType.Properties["__value"] = &types.Type{PrimType: types.TypeUnknown}
 
 	// Register the message type
 	ts.RegisterType(msgName, msgType)
@@ -109,7 +111,11 @@ func (l *ProtoSchemaLoader) registerMessageType(msgDesc *descriptorpb.Descriptor
 		}
 
 		// Register the field type
-		ts.RegisterFactType(fieldPath, fieldType)
+		parsedPath, err := pathutil.FromString(fieldPath)
+		if err != nil {
+			return fmt.Errorf("parsing fact path %s: %w", fieldPath, err)
+		}
+		ts.RegisterFactType(parsedPath, fieldType)
 	}
 
 	// Process nested messages
@@ -178,8 +184,8 @@ func (l *ProtoSchemaLoader) protoFieldToType(field *descriptorpb.FieldDescriptor
 	// If field is repeated, wrap in a list type
 	if repeated {
 		return &types.Type{
-			PrimType: types.TypeList,
-			ListType: baseType,
+			PrimType:    types.TypeList,
+			ElementType: baseType,
 		}, nil
 	}
 

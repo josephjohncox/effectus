@@ -1,4 +1,4 @@
-package common
+package pathutil
 
 import (
 	"fmt"
@@ -42,6 +42,14 @@ var parser = participle.MustBuild[PathAST](
 	participle.Lexer(pathDefinition),
 	participle.Elide("whitespace"),
 )
+
+func FromString(pathStr string) (Path, error) {
+	namespace, elements, err := ParsePath(pathStr)
+	if err != nil {
+		return Path{}, err
+	}
+	return NewPath(namespace, elements), nil
+}
 
 // ParsePath parses a string path into a namespace and path elements
 func ParsePath(pathStr string) (string, []PathElement, error) {

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/effectus/effectus-go"
+	"github.com/effectus/effectus-go/pathutil"
 )
 
 // Simple facts implementation for testing
@@ -11,8 +12,8 @@ type TestFacts struct {
 	data map[string]interface{}
 }
 
-func (f *TestFacts) Get(path string) (interface{}, bool) {
-	val, exists := f.data[path]
+func (f *TestFacts) Get(path pathutil.Path) (interface{}, bool) {
+	val, exists := f.data[path.String()]
 	return val, exists
 }
 
@@ -23,7 +24,7 @@ func (f *TestFacts) Schema() effectus.SchemaInfo {
 
 type TestSchema struct{}
 
-func (s *TestSchema) ValidatePath(path string) bool {
+func (s *TestSchema) ValidatePath(path pathutil.Path) bool {
 	return true
 }
 
@@ -230,38 +231,86 @@ func TestEvaluatePredicates(t *testing.T) {
 		{
 			name: "Single predicate - true",
 			predicates: []*Predicate{
-				{Path: "customer.id", Op: "==", Lit: "C123"},
+				{Path: func() pathutil.Path {
+					path, _ := pathutil.ParseString("customer.id")
+					return path
+				}(),
+				Op: "==",
+				Lit: "C123",
+			},
 			},
 			expected: true,
 		},
 		{
 			name: "Single predicate - false",
 			predicates: []*Predicate{
-				{Path: "customer.id", Op: "==", Lit: "C124"},
+				{Path: func() pathutil.Path {
+					path, _ := pathutil.ParseString("customer.id")
+					return path
+				}(),
+				Op: "==",
+				Lit: "C124",
+			},
 			},
 			expected: false,
 		},
 		{
 			name: "Multiple predicates - all true",
 			predicates: []*Predicate{
-				{Path: "customer.id", Op: "==", Lit: "C123"},
-				{Path: "customer.active", Op: "==", Lit: true},
-				{Path: "order.total", Op: ">", Lit: 100.0},
+				{Path: func() pathutil.Path {
+					path, _ := pathutil.ParseString("customer.id")
+					return path
+				}(),
+				Op: "==",
+				Lit: "C123",
+				},
+				{Path: func() pathutil.Path {
+					path, _ := pathutil.ParseString("customer.active")
+					return path
+				}(),
+				Op: "==",
+				Lit: true,
+				},
+				{Path: func() pathutil.Path {
+					path, _ := pathutil.ParseString("order.total")
+					return path
+				}(),
+				Op: ">",
+				Lit: 100.0,
+				},
 			},
 			expected: true,
 		},
 		{
 			name: "Multiple predicates - one false",
 			predicates: []*Predicate{
-				{Path: "customer.id", Op: "==", Lit: "C123"},
-				{Path: "order.total", Op: "<", Lit: 100.0},
+				{Path: func() pathutil.Path {
+					path, _ := pathutil.ParseString("customer.id")
+					return path
+				}(),
+				Op: "==",
+				Lit: "C123",
+				},
+				{Path: func() pathutil.Path {
+					path, _ := pathutil.ParseString("order.total")
+					return path
+				}(),
+				Op: "<",
+				Lit: 100.0,
+				},
 			},
 			expected: false,
 		},
 		{
 			name: "Path doesn't exist",
 			predicates: []*Predicate{
-				{Path: "customer.nonexistent", Op: "==", Lit: "value"},
+				{Path: func() pathutil.Path {
+					path, _ := pathutil.ParseString("customer.nonexistent")
+					return path
+				}(),
+				Op: "==",
+				Lit: "value",
+				},
 			},
 			expected: false,
 		},

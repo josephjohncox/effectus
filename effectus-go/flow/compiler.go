@@ -120,33 +120,10 @@ func compileFlow(flow *ast.Flow, schema effectus.SchemaInfo) (*CompiledFlow, err
 	}
 
 	// Compile predicates
-	if flow.When != nil && flow.When.Predicates != nil {
-		predicates := make([]*eval.Predicate, 0, len(flow.When.Predicates))
-		factPaths := make(map[string]struct{})
-
-		for _, pred := range flow.When.Predicates {
-			// Get the path from the PathExpression
-			if pred.PathExpr == nil {
-				return nil, fmt.Errorf("predicate has no path expression")
-			}
-
-			path := pred.PathExpr.GetFullPath()
-
-			// Validate path against schema
-			if !schema.ValidatePath(path) {
-				return nil, fmt.Errorf("invalid path: %s", path)
-			}
-
-			// Save path for later fact requirements
-			factPaths[path] = struct{}{}
-
-			// Create compiled predicate
-			compiledPred := &eval.Predicate{
-				Path: path,
-				Op:   pred.Op,
-				Lit:  eval.CompileLiteral(&pred.Lit),
-			}
-			predicates = append(predicates, compiledPred)
+	if flow.When != nil && flow.When.Expression != nil {
+		predicates, factPaths, err := compileLogicalExpression(flow.When.Expression, schema)
+		if err != nil {
+			return nil, fmt.Errorf("failed to compile predicates: %w", err)
 		}
 
 		compiledFlow.Predicates = predicates
@@ -176,6 +153,12 @@ func compileFlow(flow *ast.Flow, schema effectus.SchemaInfo) (*CompiledFlow, err
 	}
 
 	return compiledFlow, nil
+}
+
+// compileLogicalExpression compiles a logical expression into predicates
+func compileLogicalExpression(expr *ast.LogicalExpression, schema effectus.SchemaInfo) ([]*eval.Predicate, map[string]struct{}, error) {
+	// Use the exported function from eval package
+	return eval.CompileLogicalExpression(expr, schema)
 }
 
 // compileSteps compiles a sequence of steps into a Program

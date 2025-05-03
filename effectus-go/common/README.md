@@ -1,42 +1,72 @@
 # Effectus Common Package
 
-This package provides shared type definitions and interfaces used across the Effectus codebase. 
+This package provides the core types, interfaces, and implementations used across the Effectus codebase.
 
-## Architecture Overview
+## Architecture
 
-The Effectus path and type system has been unified to reduce redundancy and improve consistency. The key components are:
+The Effectus path and type system follows a simple, unified architecture:
 
 ### Types
 
-The `common.Type` structure represents types in the Effectus type system. These types can be:
+The `Type` structure represents types in the Effectus type system:
 
 - Primitive types (bool, int, float, string, etc.)
 - Container types (lists and maps)
 - Named types (user-defined types)
 - Reference types (types defined elsewhere)
 
-### Path Resolution
+### Paths
 
-Paths in Effectus are used to navigate structured data. The path system consists of:
+Paths in Effectus navigate structured data:
 
-1. A common `Path` structure in the `path` package that contains type information
-2. Path elements that can include array indices and map keys
-3. A unified path resolver that can resolve paths against data structures
+- `Path` contains a namespace and elements with built-in type information
+- `PathElement` supports named access, array indices, and map keys
+- Parsing and resolution are handled through a single consistent API
 
-### Interfaces
+### Facts
 
-Several interfaces are defined to enable consistent interaction with different implementations:
+Facts are immutable typed data structures:
 
-- `SchemaInfo` - For type information about paths
-- `Facts` - For accessing data via paths
-- `ResolutionResult` - For detailed results of path resolution
+- `Facts` interface provides path-based access to data
+- `BasicFacts` implementation ensures immutability through deep copying
+- `WithData` creates a new Facts instance with modified data
+- Resolution integrates seamlessly with type information
 
-## Design Principles
+## Immutability
 
-1. **Centralized Type Definitions**: Define common types once to avoid duplication
-2. **Embedded Type Information**: Attach type information directly to paths
-3. **Consistent Resolution**: Use a single resolution mechanism throughout the system
-4. **Interface-Based Design**: Allow different implementations to work together
+All components in this package embrace immutability:
+
+- Path operations return new Path instances
+- Facts are not modifiable after creation
+- Type definitions are immutable
+
+## Core APIs
+
+```go
+// Parse a path string
+path, err := common.ParseString("app.users[0].name")
+
+// Access data with paths
+facts := common.NewBasicFacts(data, schema)
+value, exists := facts.Get("app.users[0].name")
+
+// Get detailed resolution results
+value, result := facts.GetWithContext("app.users[0]")
+if result.Exists && result.Type != nil {
+    // Work with typed result
+}
+
+// Create a modified copy with new data
+updatedData := prepareNewData()
+newFacts := originalFacts.WithData(updatedData)
+```
+
+## Design Philosophy
+
+1. **Simplicity**: Single implementations with no redundancy
+2. **Immutability**: Values are never modified in place
+3. **Type Safety**: Type information travels with paths
+4. **Functional Style**: Operations return new values
 
 ## Implementation Details
 

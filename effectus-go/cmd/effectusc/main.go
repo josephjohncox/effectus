@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/compiler"
-	"github.com/effectus/effectus-go/schema/facts"
+	"github.com/effectus/effectus-go/pathutil"
+	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/unified"
 )
 
@@ -116,7 +118,7 @@ func defineCommands() {
 		facts, typeSystem := createEmptyFacts(*tcSchemaFiles, *tcVerbose)
 
 		// Get the compiler's type checker and merge our type system with it
-		typeChecker := comp.GetTypeChecker()
+		typeChecker := comp.GetTypeSystem()
 		typeChecker.MergeTypeSystem(typeSystem)
 
 		// Process all files
@@ -203,7 +205,7 @@ func defineCommands() {
 		facts, typeSystem := createEmptyFacts(*cSchemaFiles, *cVerbose)
 
 		// Get the compiler's type checker and merge our type system with it
-		typeChecker := comp.GetTypeChecker()
+		typeChecker := comp.GetTypeSystem()
 		typeChecker.MergeTypeSystem(typeSystem)
 
 		// Compile all files into a unified spec
@@ -413,9 +415,9 @@ func outputReport(report string, output string) {
 }
 
 // createEmptyFacts creates an empty set of facts for type checking
-func createEmptyFacts(schemaFiles string, verbose bool) (*testFacts, *schema.TypeSystem) {
-	// Create a new type system for the schema
-	typeSystem := schema.NewTypeSystem()
+func createEmptyFacts(schemaFiles string, verbose bool) (*testFacts, *types.TypeSystem) {
+	// Create a new type system
+	typeSystem := types.NewTypeSystem()
 
 	// Load schema files if provided
 	if schemaFiles != "" {
@@ -424,7 +426,7 @@ func createEmptyFacts(schemaFiles string, verbose bool) (*testFacts, *schema.Typ
 			if verbose {
 				fmt.Printf("Loading schema from %s...\n", file)
 			}
-			err := loadSchemaFile(typeSystem, file, verbose)
+			err := typeSystem.LoadSchemaFile(file)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error loading schema file %s: %v\n", file, err)
 				continue
@@ -433,7 +435,8 @@ func createEmptyFacts(schemaFiles string, verbose bool) (*testFacts, *schema.Typ
 
 		// Debug - verify the schema was loaded correctly
 		if verbose {
-			fmt.Printf("After loading schemas, type system has %d fact types\n", len(typeSystem.FactTypes))
+			paths := typeSystem.GetAllFactPaths()
+			fmt.Printf("After loading schemas, type system has %d fact types\n", len(paths))
 		}
 	}
 
@@ -445,12 +448,18 @@ func createEmptyFacts(schemaFiles string, verbose bool) (*testFacts, *schema.Typ
 		schemaInfo.DebugPrint()
 	}
 
-	simpleFacts := schema.NewSimpleFacts(map[string]interface{}{}, schemaInfo)
-	return &testFacts{SimpleFacts: simpleFacts}, typeSystem
+	// Create a memory provider with empty data
+	provider := pathutil.NewMemoryProvider(map[string]interface{}{})
+
+	// Create a registry to manage namespaces
+	registry := pathutil.NewRegistry()
+	registry.Register("", provider) // Register at root
+
+	return &testFacts{factRegistry: registry, schema: schemaInfo}, typeSystem
 }
 
 // loadSchemaFile loads a schema file into the provided type system
-func loadSchemaFile(typeSystem *schema.TypeSystem, filename string, verbose bool) error {
+func loadSchemaFile(typeSystem *types.TypeSystem, filename string, verbose bool) error {
 	// Read the file
 	content, err := os.ReadFile(filename)
 	if err != nil {
@@ -459,8 +468,8 @@ func loadSchemaFile(typeSystem *schema.TypeSystem, filename string, verbose bool
 
 	// Parse the schema file
 	var schemaEntries []struct {
-		Path string      `json:"path"`
-		Type schema.Type `json:"type"`
+		Path string     `json:"path"`
+		Type types.Type `json:"type"`
 	}
 
 	if err := json.Unmarshal(content, &schemaEntries); err != nil {
@@ -477,13 +486,19 @@ func loadSchemaFile(typeSystem *schema.TypeSystem, filename string, verbose bool
 			fmt.Printf("Registering schema entry %d: path=%s, type=%v\n",
 				i, entry.Path, entry.Type)
 		}
-		typeSystem.RegisterFactType(entry.Path, &entry.Type)
+		parsedPath, err := pathutil.FromString(entry.Path)
+		if err != nil {
+			return fmt.Errorf("parsing fact path %s: %w", entry.Path, err)
+		}
+		typeSystem.RegisterFactType(parsedPath, &entry.Type)
 	}
 
 	// Debug - print all registered fact types
 	if verbose {
 		fmt.Println("Registered fact types:")
-		for path, typ := range typeSystem.FactTypes {
+		paths := typeSystem.GetAllFactPaths()
+		for _, path := range paths {
+			typ, _ := typeSystem.GetFactType(path)
 			fmt.Printf("  %s: %v\n", path, typ)
 		}
 	}
@@ -493,12 +508,12 @@ func loadSchemaFile(typeSystem *schema.TypeSystem, filename string, verbose bool
 
 // testSchema implements the SchemaInfo interface using a TypeSystem
 type testSchema struct {
-	typeSystem *schema.TypeSystem
+	typeSystem *types.TypeSystem
 }
 
-func (s *testSchema) ValidatePath(path string) bool {
+func (s *testSchema) ValidatePath(path pathutil.Path) bool {
 	// Simple validation - in a real implementation, this would use the type system
-	if path == "" {
+	if path.String() == "" {
 		return false
 	}
 
@@ -506,13 +521,15 @@ func (s *testSchema) ValidatePath(path string) bool {
 		fmt.Printf("SCHEMA VALIDATION: Checking path '%s'\n", path)
 		// Print all registered paths for comparison
 		fmt.Println("  All registered paths:")
-		for registeredPath := range s.typeSystem.FactTypes {
+		paths := s.typeSystem.GetAllFactPaths()
+		for _, registeredPath := range paths {
 			fmt.Printf("    - '%s'\n", registeredPath)
 		}
 	}
 
 	// Check if the path exists in the type system
-	typ, exists := s.typeSystem.GetFactType(path)
+	typ, err := s.typeSystem.GetFactType(path)
+	exists := err == nil
 
 	if *verbose {
 		fmt.Printf("SCHEMA VALIDATION RESULT: Path '%s' exists: %v", path, exists)
@@ -532,13 +549,37 @@ func (s *testSchema) DebugPrint() {
 		return
 	}
 
-	fmt.Printf("testSchema: %d fact types registered\n", len(s.typeSystem.FactTypes))
-	for path, typ := range s.typeSystem.FactTypes {
+	paths := s.typeSystem.GetAllFactPaths()
+	fmt.Printf("testSchema: %d fact types registered\n", len(paths))
+	for _, path := range paths {
+		typ, _ := s.typeSystem.GetFactType(path)
 		fmt.Printf("  %s: %v\n", path, typ)
 	}
 }
 
 // testFacts implements the Facts interface for the CLI tool
 type testFacts struct {
-	*facts.SimpleFacts
+	factRegistry *pathutil.Registry
+	schema       *testSchema
+}
+
+// Get retrieves a fact by its path
+func (f *testFacts) Get(path pathutil.Path) (interface{}, bool) {
+	return f.factRegistry.Get(path)
+}
+
+// Has checks if a fact exists by its path
+func (f *testFacts) Has(path pathutil.Path) bool {
+	_, exists := f.Get(path)
+	return exists
+}
+
+// Schema returns the schema information
+func (f *testFacts) Schema() effectus.SchemaInfo {
+	return f.schema
+}
+
+// Type returns the type of a fact (not implemented)
+func (f *testFacts) Type(path pathutil.Path) interface{} {
+	return nil
 }

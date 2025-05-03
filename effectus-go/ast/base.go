@@ -2,6 +2,7 @@ package ast
 
 import (
 	"github.com/alecthomas/participle/v2/lexer"
+	"github.com/effectus/effectus-go/pathutil"
 )
 
 // File represents a parsed rule file, containing either Rules or Flows
@@ -50,6 +51,11 @@ type LogicalExpression struct {
 	Right *LogicalExpression `parser:"@@)?"`
 }
 
+type LogicalOperator struct {
+	Pos lexer.Position
+	Op  string `parser:"@LogicalOp"`
+}
+
 // PredicateTerm represents either a predicate or a parenthesized logical expression
 type PredicateTerm struct {
 	Pos       lexer.Position
@@ -67,16 +73,23 @@ type Predicate struct {
 
 // PathExpression represents a parsed path in the AST
 type PathExpression struct {
-	Raw string `parser:"@(FactPath | Ident)"` // The raw path string
+	Raw  string        `parser:"@(FactPath | Ident)"` // The raw path string
+	Path pathutil.Path // The parsed path using pathutil
+}
 
-	// Resolved will be filled during post-processing
-	Namespace string
-	Segments  []string
+// GetFullPath returns the full path string from the pathutil.Path
+func (p *PathExpression) GetFullPath() string {
+	if p == nil {
+		return ""
+	}
 
-	// For array indexing and more complex paths
-	// The indexed path segments stores path segments with index information
-	// (segment name and index, if any). This is filled during resolution.
-	IndexedSegments []PathSegmentInfo
+	// If we have a raw path but Path hasn't been populated yet, return raw
+	if p.Raw != "" && p.Path.IsEmpty() {
+		return p.Raw
+	}
+
+	// Return the string representation of the Path
+	return p.Path.String()
 }
 
 // PathSegmentInfo contains information about a segment in a path, including indexing

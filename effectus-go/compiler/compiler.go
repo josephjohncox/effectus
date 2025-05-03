@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -9,7 +10,6 @@ import (
 	"github.com/alecthomas/participle/v2"
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/eval"
 	"github.com/effectus/effectus-go/flow"
 	"github.com/effectus/effectus-go/list"
 	"github.com/effectus/effectus-go/schema/types"
@@ -18,7 +18,7 @@ import (
 // Compiler handles parsing and type checking of Effectus files
 type Compiler struct {
 	parser       *participle.Parser[ast.File]
-	typeChecker  *types.TypeChecker
+	typeSystem   *types.TypeSystem
 	flowCompiler *flow.Compiler
 	listCompiler *list.Compiler
 }
@@ -27,15 +27,15 @@ type Compiler struct {
 func NewCompiler() *Compiler {
 	return &Compiler{
 		parser:       effectus.GetParser(),
-		typeChecker:  types.NewTypeChecker(),
+		typeSystem:   types.NewTypeSystem(),
 		flowCompiler: &flow.Compiler{},
 		listCompiler: &list.Compiler{},
 	}
 }
 
-// GetTypeChecker returns the compiler's internal type checker
-func (c *Compiler) GetTypeChecker() *types.TypeChecker {
-	return c.typeChecker
+// GetTypeSystem returns the compiler's internal type system
+func (c *Compiler) GetTypeSystem() *types.TypeSystem {
+	return c.typeSystem
 }
 
 // ParseFile parses a file into an AST
@@ -73,7 +73,7 @@ func (c *Compiler) ParseAndTypeCheck(filename string, facts effectus.Facts) (*as
 	}
 
 	// Perform type checking
-	if err := c.typeChecker.TypeCheckFile(file, facts); err != nil {
+	if err := c.typeSystem.TypeCheckFile(file, facts); err != nil {
 		return nil, fmt.Errorf("type check error: %w", err)
 	}
 
@@ -141,14 +141,88 @@ func (c *Compiler) compileAllFiles(effFiles, effxFiles []string, schema effectus
 		flowSpec = c.mergeFlowSpecs(specs)
 	}
 
-	// Create unified spec that combines both types
-	unifiedSpec := &eval.Spec{
+	// Create a combined spec structure
+	combinedSpec := struct {
+		ListSpec *list.Spec
+		FlowSpec *flow.Spec
+		Name     string
+	}{
 		ListSpec: listSpec,
 		FlowSpec: flowSpec,
 		Name:     "unified",
 	}
 
-	return unifiedSpec, nil
+	// Wrap it as an effectus.Spec
+	return &unifiedSpecWrapper{spec: combinedSpec}, nil
+}
+
+// NewUnifiedSpec creates a new unified spec
+func NewUnifiedSpec(listSpec *list.Spec, flowSpec *flow.Spec, name string) effectus.Spec {
+	return &unifiedSpecWrapper{spec: struct {
+		ListSpec *list.Spec
+		FlowSpec *flow.Spec
+		Name     string
+	}{ListSpec: listSpec, FlowSpec: flowSpec, Name: name}}
+}
+
+// unifiedSpecWrapper wraps our combined spec to implement effectus.Spec
+type unifiedSpecWrapper struct {
+	spec struct {
+		ListSpec *list.Spec
+		FlowSpec *flow.Spec
+		Name     string
+	}
+}
+
+// RequiredFacts implements effectus.Spec
+func (s *unifiedSpecWrapper) RequiredFacts() []string {
+	factPathSet := make(map[string]struct{})
+
+	// Add list spec fact paths
+	if s.spec.ListSpec != nil {
+		for _, path := range s.spec.ListSpec.FactPaths {
+			factPathSet[path] = struct{}{}
+		}
+	}
+
+	// Add flow spec fact paths
+	if s.spec.FlowSpec != nil {
+		for _, path := range s.spec.FlowSpec.FactPaths {
+			factPathSet[path] = struct{}{}
+		}
+	}
+
+	// Extract unique fact paths
+	factPaths := make([]string, 0, len(factPathSet))
+	for path := range factPathSet {
+		factPaths = append(factPaths, path)
+	}
+
+	return factPaths
+}
+
+// GetName implements effectus.Spec
+func (s *unifiedSpecWrapper) GetName() string {
+	return s.spec.Name
+}
+
+// Execute implements effectus.Spec
+func (s *unifiedSpecWrapper) Execute(ctx context.Context, facts effectus.Facts, ex effectus.Executor) error {
+	// Execute list spec if available
+	if s.spec.ListSpec != nil {
+		if err := s.spec.ListSpec.Execute(ctx, facts, ex); err != nil {
+			return fmt.Errorf("list spec execution error: %w", err)
+		}
+	}
+
+	// Execute flow spec if available
+	if s.spec.FlowSpec != nil {
+		if err := s.spec.FlowSpec.Execute(ctx, facts, ex); err != nil {
+			return fmt.Errorf("flow spec execution error: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // mergeListSpecs merges multiple list specs into a single one
@@ -239,7 +313,7 @@ func (c *Compiler) ParseAndCompileFiles(filenames []string, facts effectus.Facts
 
 // LoadVerbSpecs loads verb specifications from a JSON file
 func (c *Compiler) LoadVerbSpecs(filename string) error {
-	return c.typeChecker.LoadVerbSpecs(filename)
+	return c.typeSystem.LoadVerbSpecs(filename)
 }
 
 // registerDefaultVerbTypes registers basic verb types or loads from file
@@ -248,7 +322,7 @@ func (c *Compiler) registerDefaultVerbTypes() error {
 	// More specific domain verbs should be loaded from schema files
 
 	// SendEmail verb - example of a general utility verb that's always available
-	c.typeChecker.RegisterVerbSpec("SendEmail",
+	c.typeSystem.RegisterVerbType("SendEmail",
 		map[string]*types.Type{
 			"to":      {PrimType: types.TypeString},
 			"subject": {PrimType: types.TypeString},
@@ -261,10 +335,10 @@ func (c *Compiler) registerDefaultVerbTypes() error {
 
 // RegisterProtoTypes registers types from protobuf files
 func (c *Compiler) RegisterProtoTypes(protoFile string) error {
-	return c.typeChecker.RegisterProtoTypes(protoFile)
+	return c.typeSystem.RegisterProtoTypes(protoFile)
 }
 
 // GenerateTypeReport generates a human-readable report of inferred types
 func (c *Compiler) GenerateTypeReport() string {
-	return c.typeChecker.GenerateTypeReport()
+	return c.typeSystem.GenerateTypeReport()
 }

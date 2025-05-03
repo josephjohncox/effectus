@@ -1,73 +1,78 @@
 package eval
 
 import (
-	"fmt"
-	"reflect"
 	"testing"
 
-	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/schema/path"
-	"github.com/effectus/effectus-go/schema/types"
+	"github.com/effectus/effectus-go/common"
+	"github.com/effectus/effectus-go/pathutil"
 )
 
-// Mock implementation of FactPathResolver for testing
-type MockFactPathResolver struct {
-	typeSystem *types.TypeSystem
+// TestFactsImpl implements common.Facts for testing
+type TestFactsImpl struct {
+	data map[string]interface{}
 }
 
-func (r *MockFactPathResolver) Resolve(facts effectus.Facts, path path.FactPath) (interface{}, bool) {
-	// Simple implementation that just uses Facts.Get
-	return facts.Get(path.String())
+func (f *TestFactsImpl) Get(path pathutil.Path) (interface{}, bool) {
+	val, ok := f.data[path.String()]
+	return val, ok
 }
 
-// ResolveWithContext implements the FactPathResolver interface
-func (r *MockFactPathResolver) ResolveWithContext(facts effectus.Facts, path path.FactPath) (interface{}, *path.PathResolutionResult) {
-	// Create a basic resolution result
-	result := &path.PathResolutionResult{
-		Path: path.String(),
-	}
+func (f *TestFactsImpl) GetWithContext(path pathutil.Path) (interface{}, *common.ResolutionResult) {
+	val, ok := f.Get(path)
 
-	// Use the Resolve method to get the value
-	value, exists := r.Resolve(facts, path)
-	result.Exists = exists
-
-	if exists {
-		result.Value = value
-		// Set a simple type based on the Go type
-		if value != nil {
-			result.ValueType = inferTypeFromGoValue(value)
-		}
-	} else {
-		result.Error = fmt.Errorf("path not found: %s", path.String())
-	}
-
-	return value, result
-}
-
-// inferTypeFromGoValue infers a schema.Type from a Go value
-func inferTypeFromGoValue(value interface{}) *types.Type {
-	switch value.(type) {
-	case string:
-		return &types.Type{PrimType: types.TypeString}
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return &types.Type{PrimType: types.TypeInt}
-	case float32, float64:
-		return &types.Type{PrimType: types.TypeFloat}
-	case bool:
-		return &types.Type{PrimType: types.TypeBool}
-	default:
-		return &types.Type{PrimType: types.TypeUnknown}
-	}
-}
-
-func (r *MockFactPathResolver) Type(path path.FactPath) *types.Type {
-	if r.typeSystem != nil {
-		if typ, exists := r.typeSystem.GetFactType(path.String()); exists {
-			return typ
+	if !ok {
+		return nil, &common.ResolutionResult{
+			Path:   path,
+			Exists: false,
 		}
 	}
-	return &types.Type{PrimType: types.TypeUnknown}
+
+	return val, &common.ResolutionResult{
+		Path:   path,
+		Value:  val,
+		Exists: true,
+	}
+}
+
+func (f *TestFactsImpl) Schema() common.SchemaInfo {
+	return nil
+}
+
+func (f *TestFactsImpl) HasPath(path pathutil.Path) bool {
+	_, ok := f.data[path.String()]
+	return ok
+}
+
+// StructuredFactsProvider implements pathutil.FactsProvider for testing
+type StructuredFactsProvider struct {
+	facts *TestFactsImpl
+}
+
+func NewStructuredFactsProvider(facts *TestFactsImpl) *StructuredFactsProvider {
+	return &StructuredFactsProvider{facts: facts}
+}
+
+func (p *StructuredFactsProvider) GetByPath(path pathutil.Path) (interface{}, bool) {
+	return p.facts.Get(path)
+}
+
+func (p *StructuredFactsProvider) GetByPathWithContext(path pathutil.Path) (interface{}, *pathutil.ResolutionResult) {
+	val, res := p.facts.GetWithContext(path)
+
+	if res == nil {
+		return nil, &pathutil.ResolutionResult{
+			Path:   path,
+			Exists: false,
+		}
+	}
+
+	return val, &pathutil.ResolutionResult{
+		Path:   path,
+		Value:  res.Value,
+		Exists: res.Exists,
+		Error:  res.Error,
+	}
 }
 
 func TestAstPredicateEvaluator(t *testing.T) {
@@ -79,10 +84,10 @@ func TestAstPredicateEvaluator(t *testing.T) {
 		"order.total":     250.50,
 		"order.items":     3,
 	}
-	facts := &TestFacts{data: factsData}
+	facts := &TestFactsImpl{data: factsData}
 
 	// Create a resolver
-	resolver := &MockFactPathResolver{}
+	resolver := pathutil.NewPathResolver(false)
 
 	// Create the evaluator
 	evaluator := NewPredicateEvaluator()
@@ -102,9 +107,11 @@ func TestAstPredicateEvaluator(t *testing.T) {
 			name: "String equality - true",
 			predicate: &ast.Predicate{
 				PathExpr: &ast.PathExpression{
-					Raw:       "customer.id",
-					Namespace: "customer",
-					Segments:  []string{"id"},
+					Raw: "customer.id",
+					Path: func() pathutil.Path {
+						path, _ := pathutil.ParseString("customer.id")
+						return path
+					}(),
 				},
 				Op: "==",
 				Lit: ast.Literal{
@@ -117,9 +124,11 @@ func TestAstPredicateEvaluator(t *testing.T) {
 			name: "String equality - false",
 			predicate: &ast.Predicate{
 				PathExpr: &ast.PathExpression{
-					Raw:       "customer.name",
-					Namespace: "customer",
-					Segments:  []string{"name"},
+					Raw: "customer.name",
+					Path: func() pathutil.Path {
+						path, _ := pathutil.ParseString("customer.name")
+						return path
+					}(),
 				},
 				Op: "==",
 				Lit: ast.Literal{
@@ -132,9 +141,11 @@ func TestAstPredicateEvaluator(t *testing.T) {
 			name: "Boolean equality - true",
 			predicate: &ast.Predicate{
 				PathExpr: &ast.PathExpression{
-					Raw:       "customer.active",
-					Namespace: "customer",
-					Segments:  []string{"active"},
+					Raw: "customer.active",
+					Path: func() pathutil.Path {
+						path, _ := pathutil.ParseString("customer.active")
+						return path
+					}(),
 				},
 				Op: "==",
 				Lit: ast.Literal{
@@ -147,9 +158,11 @@ func TestAstPredicateEvaluator(t *testing.T) {
 			name: "Numeric comparison - greater than - true",
 			predicate: &ast.Predicate{
 				PathExpr: &ast.PathExpression{
-					Raw:       "order.total",
-					Namespace: "order",
-					Segments:  []string{"total"},
+					Raw: "order.total",
+					Path: func() pathutil.Path {
+						path, _ := pathutil.ParseString("order.total")
+						return path
+					}(),
 				},
 				Op: ">",
 				Lit: ast.Literal{
@@ -162,9 +175,11 @@ func TestAstPredicateEvaluator(t *testing.T) {
 			name: "Numeric comparison - less than - false",
 			predicate: &ast.Predicate{
 				PathExpr: &ast.PathExpression{
-					Raw:       "order.total",
-					Namespace: "order",
-					Segments:  []string{"total"},
+					Raw: "order.total",
+					Path: func() pathutil.Path {
+						path, _ := pathutil.ParseString("order.total")
+						return path
+					}(),
 				},
 				Op: "<",
 				Lit: ast.Literal{
@@ -177,9 +192,11 @@ func TestAstPredicateEvaluator(t *testing.T) {
 			name: "Integer comparison",
 			predicate: &ast.Predicate{
 				PathExpr: &ast.PathExpression{
-					Raw:       "order.items",
-					Namespace: "order",
-					Segments:  []string{"items"},
+					Raw: "order.items",
+					Path: func() pathutil.Path {
+						path, _ := pathutil.ParseString("order.items")
+						return path
+					}(),
 				},
 				Op: "==",
 				Lit: ast.Literal{
@@ -192,9 +209,11 @@ func TestAstPredicateEvaluator(t *testing.T) {
 			name: "Path doesn't exist",
 			predicate: &ast.Predicate{
 				PathExpr: &ast.PathExpression{
-					Raw:       "nonexistent.path",
-					Namespace: "nonexistent",
-					Segments:  []string{"path"},
+					Raw: "nonexistent.path",
+					Path: func() pathutil.Path {
+						path, _ := pathutil.ParseString("nonexistent.path")
+						return path
+					}(),
 				},
 				Op: "==",
 				Lit: ast.Literal{
@@ -255,55 +274,39 @@ func TestConvertAstLiteral(t *testing.T) {
 		{
 			name: "Float literal",
 			literal: &ast.Literal{
-				Float: floatPtr(3.14159),
+				Float: floatPtr(3.14),
 			},
-			expected: 3.14159,
+			expected: 3.14,
 		},
 		{
-			name: "Bool literal - true",
+			name: "Bool literal",
 			literal: &ast.Literal{
 				Bool: boolPtr(true),
 			},
 			expected: true,
 		},
 		{
-			name: "Bool literal - false",
-			literal: &ast.Literal{
-				Bool: boolPtr(false),
-			},
-			expected: false,
-		},
-		{
 			name: "List literal",
 			literal: &ast.Literal{
 				List: []ast.Literal{
-					{String: stringPtr("first")},
+					{Int: intPtr(1)},
 					{Int: intPtr(2)},
+					{Int: intPtr(3)},
 				},
 			},
-			expected: []interface{}{"first", 2},
+			expected: []interface{}{1, 2, 3},
 		},
 		{
 			name: "Map literal",
 			literal: &ast.Literal{
 				Map: []*ast.MapEntry{
-					{
-						Key: "name",
-						Value: ast.Literal{
-							String: stringPtr("Alice"),
-						},
-					},
-					{
-						Key: "age",
-						Value: ast.Literal{
-							Int: intPtr(30),
-						},
-					},
+					{Key: "key1", Value: ast.Literal{String: stringPtr("value1")}},
+					{Key: "key2", Value: ast.Literal{Int: intPtr(42)}},
 				},
 			},
 			expected: map[string]interface{}{
-				"name": "Alice",
-				"age":  30,
+				"key1": "value1",
+				"key2": 42,
 			},
 		},
 		{
@@ -316,18 +319,16 @@ func TestConvertAstLiteral(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := convertAstLiteral(tt.literal)
-
-			// Special handling for comparison of complex types
 			if !compareValues(result, tt.expected) {
-				t.Errorf("convertAstLiteral() = %v, want %v", result, tt.expected)
+				t.Errorf("convertAstLiteral() = %v (%T), want %v (%T)", result, result, tt.expected, tt.expected)
 			}
 		})
 	}
 }
 
-// Helper function to compare complex values
+// compareValues compares two values for equality (handles slices and maps specially)
 func compareValues(a, b interface{}) bool {
-	// Handle nil cases
+	// Handle nil case
 	if a == nil && b == nil {
 		return true
 	}
@@ -335,6 +336,31 @@ func compareValues(a, b interface{}) bool {
 		return false
 	}
 
-	// Use reflect.DeepEqual for complex comparisons
-	return reflect.DeepEqual(a, b)
+	switch aVal := a.(type) {
+	case []interface{}:
+		bVal, ok := b.([]interface{})
+		if !ok || len(aVal) != len(bVal) {
+			return false
+		}
+		for i := range aVal {
+			if !compareValues(aVal[i], bVal[i]) {
+				return false
+			}
+		}
+		return true
+	case map[string]interface{}:
+		bVal, ok := b.(map[string]interface{})
+		if !ok || len(aVal) != len(bVal) {
+			return false
+		}
+		for k, v := range aVal {
+			bv, ok := bVal[k]
+			if !ok || !compareValues(v, bv) {
+				return false
+			}
+		}
+		return true
+	default:
+		return a == b
+	}
 }

@@ -12,11 +12,10 @@ import (
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
+	"github.com/effectus/effectus-go/compiler"
 	"github.com/effectus/effectus-go/flow"
 	"github.com/effectus/effectus-go/list"
-	"github.com/effectus/effectus-go/schema/facts"
-	"github.com/effectus/effectus-go/schema/registry"
-	"github.com/effectus/effectus-go/unified"
+	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/util"
 )
 
@@ -36,7 +35,12 @@ func (e *SimpleExecutor) Do(effect effectus.Effect) (interface{}, error) {
 			// Check if value is a fact path (string containing dots)
 			if strValue, isStr := value.(string); isStr && strings.Contains(strValue, ".") {
 				// Try to look it up in facts
-				if factValue, exists := e.Facts.Get(strValue); exists {
+				parsedPath, err := pathutil.FromString(strValue)
+				if err != nil {
+					fmt.Printf("Error parsing fact path %s: %v\n", strValue, err)
+					continue
+				}
+				if factValue, exists := e.Facts.Get(parsedPath); exists {
 					// Use the fact value instead
 					fmt.Printf("  %s: %v (resolved from fact %s)\n", key, factValue, strValue)
 					resolvedPayload[key] = factValue
@@ -54,6 +58,13 @@ func (e *SimpleExecutor) Do(effect effectus.Effect) (interface{}, error) {
 	// Return a mock result based on the verb
 	switch effect.Verb {
 	case "validateOrder":
+		param1 := ""
+		if val, ok := resolvedPayload["param1"]; ok {
+			if s, ok := val.(string); ok {
+				param1 = s
+			}
+		}
+		fmt.Printf("validateOrder called with param1: %s\n", param1)
 		return true, nil
 	case "processPayment":
 		// Extract amount for the result
@@ -136,42 +147,39 @@ func (e *SimpleExecutor) Do(effect effectus.Effect) (interface{}, error) {
 	case "logActivity":
 		return "activity_logged", nil
 	case "DoSomething":
-		return "DoSomething", nil
+		msg := "default_message"
+		if val, ok := resolvedPayload["msg"]; ok {
+			if s, ok := val.(string); ok {
+				msg = s
+			}
+		}
+		fmt.Printf("DoSomething called with message: %s\n", msg)
+		return msg, nil
 	default:
+		fmt.Printf("Unknown verb: %s, with payload: %v\n", effect.Verb, resolvedPayload)
 		return nil, nil
 	}
 }
 
 // SimpleFacts is a basic implementation of effectus.Facts
 type SimpleFacts struct {
-	Data map[string]interface{}
+	data       map[string]interface{}
+	schemaInfo effectus.SchemaInfo
+}
+
+// NewSimpleFacts creates a new SimpleFacts instance
+func NewSimpleFacts(data map[string]interface{}) *SimpleFacts {
+	return &SimpleFacts{
+		data:       data,
+		schemaInfo: &SimpleSchema{},
+	}
 }
 
 // Get implements the effectus.Facts interface
-func (f *SimpleFacts) Get(path string) (interface{}, bool) {
+func (f *SimpleFacts) Get(path pathutil.Path) (interface{}, bool) {
 	// First try direct lookup
-	if value, ok := f.Data[path]; ok {
+	if value, ok := f.data[path.String()]; ok {
 		return value, true
-	}
-
-	// If not found, handle dotted path navigation
-	parts := strings.Split(path, ".")
-	if len(parts) < 2 {
-		return nil, false
-	}
-
-	// For dotted paths, try to reconstruct the path with dots
-	// This handles both formats: "customer.name" and "customername"
-	current := ""
-	for i, part := range parts {
-		if i > 0 {
-			current += "."
-		}
-		current += part
-
-		if value, ok := f.Data[current]; ok {
-			return value, true
-		}
 	}
 
 	return nil, false
@@ -179,7 +187,16 @@ func (f *SimpleFacts) Get(path string) (interface{}, bool) {
 
 // Schema implements the effectus.Facts interface
 func (f *SimpleFacts) Schema() effectus.SchemaInfo {
-	return &facts.SimpleSchema{}
+	return f.schemaInfo
+}
+
+// SimpleSchema is a basic implementation of SchemaInfo
+type SimpleSchema struct{}
+
+// ValidatePath implements the SchemaInfo interface
+func (s *SimpleSchema) ValidatePath(path pathutil.Path) bool {
+	// Simple implementation that accepts all paths
+	return true
 }
 
 func main() {
@@ -273,7 +290,7 @@ func compileFiles(filenames []string, verbose bool, dumpAST bool) {
 	}
 
 	// Create a schema
-	schema := &facts.SimpleSchema{}
+	schema := &SimpleSchema{}
 
 	// Compile all files and merge them
 	mergedSpec, err := compileAllFiles(effFiles, effxFiles, schema)
@@ -336,14 +353,9 @@ func compileAllFiles(effFiles, effxFiles []string, schema effectus.SchemaInfo) (
 		flowSpec = mergeFlowSpecs(specs)
 	}
 
-	// Create unified spec that combines both types
-	unifiedSpec := &unified.Spec{
-		ListSpec: listSpec,
-		FlowSpec: flowSpec,
-		Name:     "unified",
-	}
+	combinedSpec := compiler.NewUnifiedSpec(listSpec, flowSpec, "unified")
 
-	return unifiedSpec, nil
+	return combinedSpec, nil
 }
 
 // mergeListSpecs merges multiple list specs into a single one
@@ -443,7 +455,7 @@ func runFiles(filenames []string, verbose bool, execute bool, dumpAST bool) {
 	}
 
 	// Create a schema
-	schema := &facts.SimpleSchema{}
+	schema := &SimpleSchema{}
 
 	// Compile all files and merge them
 	mergedSpec, err := compileAllFiles(effFiles, effxFiles, schema)
@@ -471,22 +483,20 @@ func runFiles(filenames []string, verbose bool, execute bool, dumpAST bool) {
 	}
 
 	// Create sample facts
-	facts := &SimpleFacts{
-		Data: map[string]interface{}{
-			// Dotted paths - these directly match the FactPath lexer token
-			"customer.name":   "Example Customer",
-			"customer.email":  "customer@example.com",
-			"customer.id":     "CUST-12345",
-			"customer.region": "US-CA",
-			"order.id":        "ORD-54321",
-			"order.total":     100.50,
-			"order.items":     3,
-			"test.value":      "test",
-		},
-	}
+	facts := NewSimpleFacts(map[string]interface{}{
+		// Dotted paths - these directly match the FactPath lexer token
+		"customer.name":   "Example Customer",
+		"customer.email":  "customer@example.com",
+		"customer.id":     "CUST-12345",
+		"customer.region": "US-CA",
+		"order.id":        "ORD-54321",
+		"order.total":     100.50,
+		"order.items":     3,
+		"test.value":      "test",
+	})
 
 	if verbose {
-		fmt.Println("Facts:", facts.Data)
+		fmt.Println("Facts:", facts.data)
 	}
 
 	// Create an executor

@@ -149,3 +149,20 @@ func NewPostgresSagaStore(opts PostgresOptions) SagaStore {
 	// For now, just return a memory store
 	return NewMemorySagaStore()
 }
+
+// SagaStore defines the interface for saga transaction storage
+type SagaStore interface {
+	StartTransaction(ruleName string) (string, error)
+	RecordEffect(txID, verb string, args map[string]interface{}) error
+	MarkSuccess(txID, verb string) error
+	MarkCompensated(txID, verb string) error
+	GetTransactionEffects(txID string) ([]TransactionEffect, error)
+}
+
+// TransactionEffect represents an effect executed as part of a transaction
+type TransactionEffect struct {
+	TxID   string
+	Verb   string
+	Args   map[string]interface{}
+	Status string // "pending", "success", "failed", "compensated"
+}

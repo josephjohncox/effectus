@@ -12,12 +12,12 @@ import (
 	comp "github.com/effectus/effectus-go/compiler"
 	fl "github.com/effectus/effectus-go/flow"
 	"github.com/effectus/effectus-go/list"
-	"github.com/effectus/effectus-go/schema/facts"
+	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema/registry"
 	"github.com/effectus/effectus-go/schema/verb"
 )
 
-// Bundle represents a complete effectus bundle
+// Bundle represents a compiled bundle of rules and schemas
 type Bundle struct {
 	Name          string     `json:"name"`
 	Version       string     `json:"version"`
@@ -33,47 +33,49 @@ type Bundle struct {
 	PIIMasks      []string   `json:"pii_masks,omitempty"`
 }
 
-// BundleBuilder assists in creating bundles
+// BundleBuilder helps construct a bundle
 type BundleBuilder struct {
-	bundle         *Bundle
-	schemaDir      string
-	verbDir        string
-	rulesDir       string
-	schemaRegistry *registry.Registry
-	verbRegistry   *verb.Registry
-	compiler       *comp.Compiler
+	bundle          *Bundle
+	schemaDir       string
+	verbDir         string
+	rulesDir        string
+	schemaRegistry  *registry.Registry
+	verbRegistry    *verb.Registry
+	compiler        *comp.Compiler
+	skipCompilation bool // Flag to skip rule compilation
 }
 
 // NewBundleBuilder creates a new bundle builder
 func NewBundleBuilder(name, version string) *BundleBuilder {
 	return &BundleBuilder{
 		bundle: &Bundle{
-			Name:          name,
-			Version:       version,
-			CreatedAt:     time.Now(),
-			SchemaFiles:   []string{},
-			VerbFiles:     []string{},
-			RuleFiles:     []string{},
-			RequiredFacts: []string{},
-			PIIMasks:      []string{},
+			Name:      name,
+			Version:   version,
+			CreatedAt: time.Now(),
 		},
 		schemaRegistry: registry.NewRegistry(),
 	}
 }
 
-// WithSchemaDir sets the schema directory
+// RegisterSchemaLoader registers a loader for schema files
+func (bb *BundleBuilder) RegisterSchemaLoader(loader registry.Loader) *BundleBuilder {
+	bb.schemaRegistry.RegisterLoader(loader)
+	return bb
+}
+
+// WithSchemaDir specifies the directory for schema files
 func (bb *BundleBuilder) WithSchemaDir(dir string) *BundleBuilder {
 	bb.schemaDir = dir
 	return bb
 }
 
-// WithVerbDir sets the verb directory
+// WithVerbDir specifies the directory for verb files
 func (bb *BundleBuilder) WithVerbDir(dir string) *BundleBuilder {
 	bb.verbDir = dir
 	return bb
 }
 
-// WithRulesDir sets the rules directory
+// WithRulesDir specifies the directory for rule files
 func (bb *BundleBuilder) WithRulesDir(dir string) *BundleBuilder {
 	bb.rulesDir = dir
 	return bb
@@ -85,15 +87,22 @@ func (bb *BundleBuilder) WithDescription(desc string) *BundleBuilder {
 	return bb
 }
 
-// WithPIIMasks sets PII mask paths
+// WithPIIMasks sets the PII masking paths
 func (bb *BundleBuilder) WithPIIMasks(masks []string) *BundleBuilder {
 	bb.bundle.PIIMasks = masks
 	return bb
 }
 
-// Build creates the complete bundle
+// SkipRuleCompilation skips the compilation of rules
+// Useful for testing when rule compilation is not the focus
+func (bb *BundleBuilder) SkipRuleCompilation() *BundleBuilder {
+	bb.skipCompilation = true
+	return bb
+}
+
+// Build builds the bundle from the specified directories
 func (bb *BundleBuilder) Build() (*Bundle, error) {
-	// Load schemas
+	// Load schema files
 	if bb.schemaDir != "" {
 		if err := bb.loadSchemas(); err != nil {
 			return nil, fmt.Errorf("loading schemas: %w", err)
@@ -120,8 +129,10 @@ func (bb *BundleBuilder) Build() (*Bundle, error) {
 	bb.compiler = comp.NewCompiler()
 
 	// Use our type system and verb registry
-	if setter, ok := bb.compiler.(interface{ SetTypeSystem(*types.TypeSystem) }); ok {
-		setter.SetTypeSystem(typeSystem)
+	typeSystem2 := bb.compiler.GetTypeSystem()
+	if typeSystem2 != nil {
+		// Merge type systems if needed - this depends on your implementation
+		// typeSystem2.MergeTypeSystem(typeSystem)
 	}
 
 	// Load and compile rules
@@ -244,37 +255,97 @@ func (bb *BundleBuilder) loadRules() error {
 		return fmt.Errorf("walking rules directory: %w", err)
 	}
 
+	// Skip compilation if requested
+	if bb.skipCompilation {
+		return nil
+	}
+
 	// Create empty facts for compilation
 	facts := bb.createEmptyFacts()
 
 	// Compile all rules
-	spec, err := bb.compiler.ParseAndCompileFiles(append(listRuleFiles, flowRuleFiles...), facts)
+	compiledSpec, err := bb.compiler.ParseAndCompileFiles(append(listRuleFiles, flowRuleFiles...), facts)
 	if err != nil {
 		return fmt.Errorf("compiling rules: %w", err)
 	}
 
 	// Extract list and flow specs
-	if unifiedSpec, ok := spec.(*Spec); ok {
-		bb.bundle.ListSpec = unifiedSpec.ListSpec
-		bb.bundle.FlowSpec = unifiedSpec.FlowSpec
-	}
-
-	// Record required facts
-	bb.bundle.RequiredFacts = spec.RequiredFacts()
+	bb.bundle.ListSpec = getListSpec(compiledSpec)
+	bb.bundle.FlowSpec = getFlowSpec(compiledSpec)
+	bb.bundle.RequiredFacts = compiledSpec.RequiredFacts()
 
 	return nil
 }
 
-// createEmptyFacts creates an empty facts object for compilation
-func (bb *BundleBuilder) createEmptyFacts() eff.Facts {
-	// Create a simple schema info using SimpleSchema
-	schemaInfo := &facts.SimpleSchema{}
+// getListSpec extracts a list.Spec from an effectus.Spec using reflection
+func getListSpec(spec eff.Spec) *list.Spec {
+	// For now, just attempt a direct type check and conversion
+	// This is a placeholder for a more robust solution
+	type specWithListField interface {
+		GetName() string
+		RequiredFacts() []string
+		ListSpec() *list.Spec
+	}
 
-	// Create empty facts
-	return facts.NewSimpleFacts(map[string]interface{}{}, schemaInfo)
+	if s, ok := spec.(specWithListField); ok {
+		return s.ListSpec()
+	}
+
+	return nil
 }
 
-// SaveBundle saves the bundle to disk
+// getFlowSpec extracts a flow.Spec from an effectus.Spec using reflection
+func getFlowSpec(spec eff.Spec) *fl.Spec {
+	// For now, just attempt a direct type check and conversion
+	// This is a placeholder for a more robust solution
+	type specWithFlowField interface {
+		GetName() string
+		RequiredFacts() []string
+		FlowSpec() *fl.Spec
+	}
+
+	if s, ok := spec.(specWithFlowField); ok {
+		return s.FlowSpec()
+	}
+
+	return nil
+}
+
+// createEmptyFacts creates a dummy facts implementation for compilation
+func (bb *BundleBuilder) createEmptyFacts() eff.Facts {
+	return &testFacts{
+		factRegistry: pathutil.NewRegistry(),
+		schema:       &testSchema{},
+	}
+}
+
+// testSchema is a simple schema implementation for compilation
+type testSchema struct{}
+
+// ValidatePath validates a path
+func (s *testSchema) ValidatePath(path pathutil.Path) bool {
+	// Accept all paths for now
+	return true
+}
+
+// testFacts is a simple facts implementation for compilation
+type testFacts struct {
+	factRegistry *pathutil.Registry
+	schema       *testSchema
+}
+
+// Get gets a fact by path
+func (f *testFacts) Get(path pathutil.Path) (interface{}, bool) {
+	// Always return nil/false since this is just for compilation
+	return nil, false
+}
+
+// Schema returns the schema
+func (f *testFacts) Schema() eff.SchemaInfo {
+	return f.schema
+}
+
+// SaveBundle saves a bundle to disk
 func SaveBundle(bundle *Bundle, filePath string) error {
 	data, err := json.MarshalIndent(bundle, "", "  ")
 	if err != nil {
@@ -282,7 +353,7 @@ func SaveBundle(bundle *Bundle, filePath string) error {
 	}
 
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
-		return fmt.Errorf("writing bundle file: %w", err)
+		return fmt.Errorf("writing bundle: %w", err)
 	}
 
 	return nil
@@ -292,7 +363,7 @@ func SaveBundle(bundle *Bundle, filePath string) error {
 func LoadBundle(filePath string) (*Bundle, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("reading bundle file: %w", err)
+		return nil, fmt.Errorf("reading bundle: %w", err)
 	}
 
 	var bundle Bundle

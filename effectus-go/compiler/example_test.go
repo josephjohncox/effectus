@@ -6,31 +6,39 @@ import (
 	"testing"
 
 	"github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/schema/facts"
+	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema/types"
 )
 
 // SimpleFacts adapter for testing
 type typedTestFacts struct {
-	*schema.SimpleFacts
+	factRegistry *pathutil.Registry
+	schema       effectus.SchemaInfo
 }
 
 func (f *typedTestFacts) Schema() effectus.SchemaInfo {
-	return f.SimpleFacts.Schema()
+	return f.schema
 }
 
-func (f *typedTestFacts) Get(path string) (interface{}, bool) {
-	return f.SimpleFacts.Get(path)
+func (f *typedTestFacts) Get(path pathutil.Path) (interface{}, bool) {
+	return f.factRegistry.Get(path)
 }
 
 // Create test facts with proper interface implementation and register types
 func createTypedTestFacts(compiler *Compiler, data map[string]interface{}) effectus.Facts {
-	schemaInfo := &facts.SimpleSchema{}
-	simpleFacts := facts.NewSimpleFacts(data, schemaInfo)
+	// Create a schema info implementation
+	schemaInfo := &testSchema{}
+
+	// Create a memory provider with the data
+	provider := pathutil.NewMemoryProvider(data)
+
+	// Create a registry and register the provider
+	registry := pathutil.NewRegistry()
+	registry.Register("", provider)
 
 	// Register fact types indirectly through verb registration
 	// This will cause the type checker to recognize customer.email as a string
-	compiler.typeChecker.RegisterVerbSpec("SendEmail",
+	compiler.typeSystem.RegisterVerbType("SendEmail",
 		map[string]*types.Type{
 			"to":      {PrimType: types.TypeString},
 			"subject": {PrimType: types.TypeString},
@@ -39,7 +47,7 @@ func createTypedTestFacts(compiler *Compiler, data map[string]interface{}) effec
 		&types.Type{PrimType: types.TypeBool})
 
 	// Register another verb that uses order.id
-	compiler.typeChecker.RegisterVerbSpec("LogOrder",
+	compiler.typeSystem.RegisterVerbType("LogOrder",
 		map[string]*types.Type{
 			"order_id": {PrimType: types.TypeString},
 			"total":    {PrimType: types.TypeFloat},
@@ -47,35 +55,52 @@ func createTypedTestFacts(compiler *Compiler, data map[string]interface{}) effec
 		&types.Type{PrimType: types.TypeBool})
 
 	// Register a verb for CreateOrder
-	compiler.typeChecker.RegisterVerbSpec("CreateOrder",
+	compiler.typeSystem.RegisterVerbType("CreateOrder",
 		map[string]*types.Type{
 			"customer_id": {PrimType: types.TypeString},
-			"items":       {PrimType: types.TypeList, ListType: &types.Type{Name: "OrderItem"}},
+			"items":       {PrimType: types.TypeList, ElementType: &types.Type{Name: "OrderItem"}},
 		},
 		&types.Type{Name: "Order"})
 
-	return &typedTestFacts{SimpleFacts: simpleFacts}
+	return &typedTestFacts{factRegistry: registry, schema: schemaInfo}
 }
 
 // We need to ensure SimpleFacts properly implements the Facts interface
 // This type adapter ensures the interface compatibility
 type testFacts struct {
-	*facts.SimpleFacts
+	factRegistry *pathutil.Registry
+	schema       effectus.SchemaInfo
 }
 
 func (f *testFacts) Schema() effectus.SchemaInfo {
-	return f.SimpleFacts.Schema()
+	return f.schema
 }
 
-func (f *testFacts) Get(path string) (interface{}, bool) {
-	return f.SimpleFacts.Get(path)
+func (f *testFacts) Get(path pathutil.Path) (interface{}, bool) {
+	return f.factRegistry.Get(path)
+}
+
+// Simple schema implementation for testing
+type testSchema struct{}
+
+func (s *testSchema) ValidatePath(path pathutil.Path) bool {
+	// Simple implementation that accepts all paths for testing
+	return true
 }
 
 // Create test facts with proper interface implementation
 func createTestFacts(data map[string]interface{}) effectus.Facts {
-	schemaInfo := &facts.SimpleSchema{}
-	simpleFacts := facts.NewSimpleFacts(data, schemaInfo)
-	return &testFacts{SimpleFacts: simpleFacts}
+	// Create a schema info implementation
+	schemaInfo := &testSchema{}
+
+	// Create a memory provider with the data
+	provider := pathutil.NewMemoryProvider(data)
+
+	// Create a registry and register the provider
+	registry := pathutil.NewRegistry()
+	registry.Register("", provider)
+
+	return &testFacts{factRegistry: registry, schema: schemaInfo}
 }
 
 func TestCompilerWithTypeChecking(t *testing.T) {
@@ -132,12 +157,10 @@ flow "NewCustomerFlow" priority 5 {
 		"customer.cart":  []interface{}{},
 	}
 
-	schemaInfo := &facts.SimpleSchema{}
-	simpleFacts := facts.NewSimpleFacts(factMap, schemaInfo)
-	facts := &testFacts{SimpleFacts: simpleFacts}
+	facts := createTestFacts(factMap)
 
 	// Build types from facts
-	compiler.typeChecker.BuildTypeSchemaFromFacts(facts)
+	compiler.typeSystem.BuildTypeSchemaFromFacts(facts)
 
 	// Use pre-registered verb types to ensure paths like customer.email are handled correctly
 	compiler.registerDefaultVerbTypes()
@@ -193,10 +216,9 @@ flow "NewCustomerFlow" priority 5 {
 	}
 
 	// Verify some inferred types
-	checker := compiler.typeChecker
-	orderTotal, exists := checker.GetFactType("order.total")
-	if !exists || orderTotal.PrimType != schema.TypeFloat {
-		t.Errorf("Expected order.total to be a float, got %v", orderTotal)
+	orderTotalType, err := compiler.typeSystem.GetFactType(pathutil.NewPath("order", []pathutil.PathElement{pathutil.NewElement("total")}))
+	if err != nil || orderTotalType.PrimType != types.TypeFloat {
+		t.Errorf("Expected order.total to be a float, got %v", orderTotalType)
 	}
 }
 
@@ -205,7 +227,7 @@ func ExampleCompiler_ParseAndTypeCheck() {
 	compiler := NewCompiler()
 
 	// Register multiple verb types for demonstration
-	compiler.typeChecker.RegisterVerbSpec("SendEmail",
+	compiler.typeSystem.RegisterVerbType("SendEmail",
 		map[string]*types.Type{
 			"to":      {PrimType: types.TypeString},
 			"subject": {PrimType: types.TypeString},
@@ -213,7 +235,7 @@ func ExampleCompiler_ParseAndTypeCheck() {
 		},
 		&types.Type{PrimType: types.TypeBool})
 
-	compiler.typeChecker.RegisterVerbSpec("LogOrder",
+	compiler.typeSystem.RegisterVerbType("LogOrder",
 		map[string]*types.Type{
 			"order_id": {PrimType: types.TypeString},
 			"total":    {PrimType: types.TypeFloat},
@@ -221,11 +243,9 @@ func ExampleCompiler_ParseAndTypeCheck() {
 		&types.Type{PrimType: types.TypeBool})
 
 	// Test fact type registration directly
-	compiler.typeChecker.BuildTypeSchemaFromFacts(&testFacts{
-		SimpleFacts: facts.NewSimpleFacts(map[string]interface{}{
-			"customer.id": "cust-123",
-			"order.total": 99.99,
-		}, &facts.SimpleSchema{}),
+	compiler.typeSystem.BuildTypeSchemaFromFacts(&testFacts{
+		factRegistry: pathutil.NewRegistry(),
+		schema:       &testSchema{},
 	})
 
 	// Generate a type report but don't output it directly to avoid format inconsistencies

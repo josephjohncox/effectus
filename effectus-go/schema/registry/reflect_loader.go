@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema/types"
 )
 
@@ -76,7 +77,14 @@ func (l *ReflectLoader) registerStructFields(ts *types.TypeSystem, t reflect.Typ
 
 		// Convert Go type to Effectus type
 		typ := l.goTypeToEffectusType(field.Type)
-		ts.RegisterFactType(path, typ)
+		parsedPath, err := pathutil.FromString(path)
+		if err != nil {
+			// Cannot return error from this function, so we'll log it instead
+			// and skip registering this field
+			fmt.Printf("Error parsing fact path %s: %v", path, err)
+			continue
+		}
+		ts.RegisterFactType(parsedPath, typ)
 
 		// For struct fields, recursively register
 		if field.Type.Kind() == reflect.Struct {
@@ -113,17 +121,19 @@ func (l *ReflectLoader) goTypeToEffectusType(t reflect.Type) *types.Type {
 	case reflect.Slice, reflect.Array:
 		elemType := l.goTypeToEffectusType(t.Elem())
 		return &types.Type{
-			PrimType: types.TypeList,
-			ListType: elemType,
+			PrimType:    types.TypeList,
+			ElementType: elemType,
 		}
 	case reflect.Map:
 		keyType := l.goTypeToEffectusType(t.Key())
 		valType := l.goTypeToEffectusType(t.Elem())
-		return &types.Type{
+		mapType := &types.Type{
 			PrimType:   types.TypeMap,
-			MapKeyType: keyType,
-			MapValType: valType,
+			Properties: make(map[string]*types.Type),
 		}
+		mapType.Properties["__key"] = keyType
+		mapType.Properties["__value"] = valType
+		return mapType
 	case reflect.Struct:
 		// Handle special types
 		if t.PkgPath() == "time" && t.Name() == "Time" {

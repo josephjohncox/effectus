@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema/types"
 )
 
@@ -113,17 +114,17 @@ func (sr *Registry) GetType(name string) (*types.Type, bool) {
 }
 
 // RegisterFactType registers a type for a fact path
-func (sr *Registry) RegisterFactType(path string, typ *types.Type) error {
-	return sr.typeSystem.RegisterFactType(path, typ)
+func (sr *Registry) RegisterFactType(path pathutil.Path, typ *types.Type) {
+	sr.typeSystem.RegisterFactType(path, typ)
 }
 
 // GetFactType retrieves the type for a fact path
-func (sr *Registry) GetFactType(path string) (*types.Type, error) {
+func (sr *Registry) GetFactType(path pathutil.Path) (*types.Type, error) {
 	return sr.typeSystem.GetFactType(path)
 }
 
 // GetAllFactPaths returns all registered fact paths
-func (sr *Registry) GetAllFactPaths() []string {
+func (sr *Registry) GetAllFactPaths() []pathutil.Path {
 	return sr.typeSystem.GetAllFactPaths()
 }
 

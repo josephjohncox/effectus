@@ -1,33 +1,34 @@
-// eval/executor.go
-package eval
+// list/executor.go
+package list
 
 import (
 	"context"
 	"fmt"
 	"sync"
 
-	"github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/list"
-	"github.com/effectus/effectus-go/schema/facts"
+	eff "github.com/effectus/effectus-go"
+	"github.com/effectus/effectus-go/common"
+	"github.com/effectus/effectus-go/eval"
+	"github.com/effectus/effectus-go/pathutil"
 )
 
 // ExecutorOption defines an option for configuring the executor
-type ExecutorOption func(*ListExecutor)
+type ExecutorOption func(*Executor)
 
 // WithSaga enables saga-style compensation for failed executions
-func WithSaga(store SagaStore) ExecutorOption {
-	return func(e *ListExecutor) {
+func WithSaga(store eval.SagaStore) ExecutorOption {
+	return func(e *Executor) {
 		e.sagaStore = store
 		e.sagaEnabled = true
 	}
 }
 
-// ListExecutor is the main executor for list rules
-type ListExecutor struct {
+// Executor is the main executor for list rules
+type Executor struct {
 	verbRegistry VerbRegistry
 	locks        *LockManager
 	sagaEnabled  bool
-	sagaStore    SagaStore
+	sagaStore    eval.SagaStore
 	mu           sync.Mutex
 }
 
@@ -40,6 +41,7 @@ type VerbRegistry interface {
 type VerbSpec interface {
 	GetCapability() uint32
 	GetExecutor() VerbExecutor
+	GetInverse() string // Method to get inverse verb name
 }
 
 // VerbExecutor defines the interface for verb execution
@@ -47,9 +49,9 @@ type VerbExecutor interface {
 	Execute(ctx context.Context, args map[string]interface{}) (interface{}, error)
 }
 
-// NewListExecutor creates a new executor for list rules
-func NewListExecutor(verbRegistry VerbRegistry, options ...ExecutorOption) *ListExecutor {
-	executor := &ListExecutor{
+// NewExecutor creates a new executor for list rules
+func NewExecutor(verbRegistry VerbRegistry, options ...ExecutorOption) *Executor {
+	executor := &Executor{
 		verbRegistry: verbRegistry,
 		locks:        NewLockManager(),
 	}
@@ -62,16 +64,55 @@ func NewListExecutor(verbRegistry VerbRegistry, options ...ExecutorOption) *List
 	return executor
 }
 
+// effectusFactsAdapter adapts common.Facts to eff.Facts
+type effectusFactsAdapter struct {
+	facts common.Facts
+}
+
+func (f *effectusFactsAdapter) Get(path pathutil.Path) (interface{}, bool) {
+	return f.facts.Get(path)
+}
+
+func (f *effectusFactsAdapter) Schema() eff.SchemaInfo {
+	// Simply implement the required interface
+	return &effectusSchemaAdapter{f.facts.Schema()}
+}
+
+// effectusSchemaAdapter adapts common.SchemaInfo to eff.SchemaInfo
+type effectusSchemaAdapter struct {
+	schema common.SchemaInfo
+}
+
+func (s *effectusSchemaAdapter) ValidatePath(path pathutil.Path) bool {
+	return s.schema.ValidatePath(path)
+}
+
 // ExecuteRule executes a single rule against facts
-func (le *ListExecutor) ExecuteRule(ctx context.Context, rule *list.CompiledRule, facts facts.Facts) ([]effectus.Effect, error) {
-	// Check if rule condition matches
-	if !rule.Matches(facts) {
+func (le *Executor) ExecuteRule(ctx context.Context, rule *CompiledRule, facts common.Facts) ([]eff.Effect, error) {
+	// Check if rule predicates match
+	matched := true
+	for _, pred := range rule.Predicates {
+		// Get fact value
+		value, exists := facts.Get(pred.Path)
+		if !exists {
+			matched = false
+			break
+		}
+
+		// Compare based on operator
+		if !eval.CompareFact(value, pred.Op, pred.Lit) {
+			matched = false
+			break
+		}
+	}
+
+	if !matched {
 		return nil, nil
 	}
 
 	// Start a transaction if saga is enabled
 	var txID string
-	var effects []effectus.Effect
+	var effects []eff.Effect
 	var err error
 
 	if le.sagaEnabled {
@@ -97,8 +138,8 @@ func (le *ListExecutor) ExecuteRule(ctx context.Context, rule *list.CompiledRule
 }
 
 // executeEffects executes a list of effects with proper locking
-func (le *ListExecutor) executeEffects(ctx context.Context, txID string, effects []*list.Effect, facts facts.Facts) ([]effectus.Effect, error) {
-	var result []effectus.Effect
+func (le *Executor) executeEffects(ctx context.Context, txID string, effects []*Effect, facts common.Facts) ([]eff.Effect, error) {
+	var result []eff.Effect
 
 	// Collect locks needed
 	locks := make(map[string][]string) // capability -> []keys
@@ -183,16 +224,23 @@ func (le *ListExecutor) executeEffects(ctx context.Context, txID string, effects
 }
 
 // resolveValue resolves a value from facts or literals
-func (le *ListExecutor) resolveValue(value interface{}, facts facts.Facts) (interface{}, error) {
+func (le *Executor) resolveValue(value interface{}, facts common.Facts) (interface{}, error) {
 	// Handle different value types
 	switch v := value.(type) {
 	case string:
 		// Check if it's a fact path reference
 		if len(v) > 0 && v[0] == '$' {
-			path := v[1:] // Remove $ prefix
+			pathStr := v[1:] // Remove $ prefix
+
+			// Convert string path to pathutil.Path
+			path, err := pathutil.ParseString(pathStr)
+			if err != nil {
+				return nil, fmt.Errorf("invalid path: %s: %w", pathStr, err)
+			}
+
 			factVal, exists := facts.Get(path)
 			if !exists {
-				return nil, fmt.Errorf("fact not found: %s", path)
+				return nil, fmt.Errorf("fact not found: %s", pathStr)
 			}
 			return factVal, nil
 		}
@@ -203,7 +251,7 @@ func (le *ListExecutor) resolveValue(value interface{}, facts facts.Facts) (inte
 }
 
 // compensate performs compensation for a failed transaction
-func (le *ListExecutor) compensate(ctx context.Context, txID string) error {
+func (le *Executor) compensate(ctx context.Context, txID string) error {
 	// Get executed effects in reverse order
 	effects, err := le.sagaStore.GetTransactionEffects(txID)
 	if err != nil {
@@ -226,24 +274,26 @@ func (le *ListExecutor) compensate(ctx context.Context, txID string) error {
 		}
 
 		// Check if inverse exists
-		if verbSpec.Inverse == "" {
+		inverseName := verbSpec.GetInverse()
+		if inverseName == "" {
 			return fmt.Errorf("verb %s has no inverse for compensation", effect.Verb)
 		}
 
 		// Get inverse verb spec
-		inverseSpec, exists := le.verbRegistry.GetVerb(verbSpec.Inverse)
+		inverseSpec, exists := le.verbRegistry.GetVerb(inverseName)
 		if !exists {
-			return fmt.Errorf("inverse verb %s not found", verbSpec.Inverse)
+			return fmt.Errorf("inverse verb %s not found", inverseName)
 		}
 
-		if inverseSpec.Executor == nil {
-			return fmt.Errorf("inverse verb %s has no executor", verbSpec.Inverse)
+		inverseExecutor := inverseSpec.GetExecutor()
+		if inverseExecutor == nil {
+			return fmt.Errorf("inverse verb %s has no executor", inverseName)
 		}
 
 		// Execute inverse verb
-		_, err := inverseSpec.Executor.Execute(ctx, effect.Args)
+		_, err := inverseExecutor.Execute(ctx, effect.Args)
 		if err != nil {
-			return fmt.Errorf("executing inverse verb %s: %w", verbSpec.Inverse, err)
+			return fmt.Errorf("executing inverse verb %s: %w", inverseName, err)
 		}
 
 		// Mark as compensated
@@ -278,8 +328,8 @@ func (e *ExecutedEffect) GetResult() interface{} {
 }
 
 // Ensure ExecutedEffect implements the effectus.Effect interface by converting it
-func (e *ExecutedEffect) AsEffect() effectus.Effect {
-	return effectus.Effect{
+func (e *ExecutedEffect) AsEffect() eff.Effect {
+	return eff.Effect{
 		Verb:    e.Verb,
 		Payload: e.Args,
 	}
@@ -339,19 +389,3 @@ func (lm *LockManager) AcquireLocks(locks map[string][]string) (func(), error) {
 	}, nil
 }
 
-// SagaStore defines the interface for saga transaction storage
-type SagaStore interface {
-	StartTransaction(ruleName string) (string, error)
-	RecordEffect(txID, verb string, args map[string]interface{}) error
-	MarkSuccess(txID, verb string) error
-	MarkCompensated(txID, verb string) error
-	GetTransactionEffects(txID string) ([]TransactionEffect, error)
-}
-
-// TransactionEffect represents an effect executed as part of a transaction
-type TransactionEffect struct {
-	TxID   string
-	Verb   string
-	Args   map[string]interface{}
-	Status string // "pending", "success", "failed", "compensated"
-}

@@ -102,13 +102,16 @@ func (d *ASTDumper) dumpPredicate(pred *ast.Predicate, indentStr string) {
 
 	pathStr := ""
 	if pred.PathExpr != nil {
-		pathStr = pred.PathExpr.Raw
-		if pred.PathExpr.Namespace != "" {
-			pathStr = fmt.Sprintf("%s (namespace: %s, segments: %v)",
-				pred.PathExpr.Raw, pred.PathExpr.Namespace, pred.PathExpr.Segments)
+		pathStr = pred.PathExpr.GetFullPath()
+		// Add details about the Path if it exists
+		if !pred.PathExpr.Path.IsEmpty() {
+			pathStr = fmt.Sprintf("%s (namespace: %s, elements: %d)",
+				pathStr, pred.PathExpr.Path.Namespace, len(pred.PathExpr.Path.Elements))
 		}
 	}
 	fmt.Fprintf(d.writer, "%sPredicate: %s %s\n", indentStr, pathStr, pred.Op)
+
+	// Continue with the existing literal handling...
 	if pred.Lit.String != nil {
 		fmt.Fprintf(d.writer, "%s  Compare with string: %s\n", indentStr, *pred.Lit.String)
 	} else if pred.Lit.Int != nil {
@@ -180,10 +183,11 @@ func (d *ASTDumper) dumpNamedArgs(args []*ast.StepArg, indentStr string) {
 			if arg.Value.VarRef != "" {
 				fmt.Fprintf(d.writer, "%s    VarRef: %s\n", indentStr, arg.Value.VarRef)
 			} else if arg.Value.PathExpr != nil {
-				pathInfo := arg.Value.PathExpr.Raw
-				if arg.Value.PathExpr.Namespace != "" {
-					pathInfo = fmt.Sprintf("%s (namespace: %s, segments: %v)",
-						arg.Value.PathExpr.Raw, arg.Value.PathExpr.Namespace, arg.Value.PathExpr.Segments)
+				pathInfo := arg.Value.PathExpr.GetFullPath()
+				// Add details about the Path field if it exists
+				if !arg.Value.PathExpr.Path.IsEmpty() {
+					pathInfo = fmt.Sprintf("%s (namespace: %s, elements: %d)",
+						pathInfo, arg.Value.PathExpr.Path.Namespace, len(arg.Value.PathExpr.Path.Elements))
 				}
 				fmt.Fprintf(d.writer, "%s    FactPath: %s\n", indentStr, pathInfo)
 			} else if arg.Value.Literal != nil {
@@ -245,4 +249,28 @@ func describeLiteralMap(entries []*ast.MapEntry) string {
 		elements[i] = fmt.Sprintf("%s: %s", entry.Key, describeLiteral(&entry.Value))
 	}
 	return "{" + strings.Join(elements, ", ") + "}"
+}
+
+// dumpArg dumps a single argument
+func (d *ASTDumper) dumpArg(arg *ast.StepArg, indentStr string) {
+	if arg == nil {
+		return
+	}
+
+	fmt.Fprintf(d.writer, "%sArg %s:\n", indentStr, arg.Name)
+	if arg.Value != nil {
+		if arg.Value.VarRef != "" {
+			fmt.Fprintf(d.writer, "%s    VarRef: %s\n", indentStr, arg.Value.VarRef)
+		} else if arg.Value.PathExpr != nil {
+			pathInfo := arg.Value.PathExpr.GetFullPath()
+			// Add details about the Path if it exists
+			if !arg.Value.PathExpr.Path.IsEmpty() {
+				pathInfo = fmt.Sprintf("%s (namespace: %s, elements: %d)",
+					pathInfo, arg.Value.PathExpr.Path.Namespace, len(arg.Value.PathExpr.Path.Elements))
+			}
+			fmt.Fprintf(d.writer, "%s    Path: %s\n", indentStr, pathInfo)
+		} else if arg.Value.Literal != nil {
+			fmt.Fprintf(d.writer, "%s    Literal: %s\n", indentStr, describeLiteral(arg.Value.Literal))
+		}
+	}
 }

@@ -4,13 +4,14 @@ import (
 	"fmt"
 
 	"github.com/effectus/effectus-go"
+	"github.com/effectus/effectus-go/pathutil"
 )
 
 // Predicate represents a condition to be evaluated against facts
 type Predicate struct {
-	Path string      // The fact path to get the value from
-	Op   string      // The comparison operator (==, !=, <, >, etc.)
-	Lit  interface{} // The literal value to compare against
+	Path pathutil.Path // The fact path to get the value from
+	Op   string        // The comparison operator (==, !=, <, >, etc.)
+	Lit  interface{}   // The literal value to compare against
 }
 
 // EvaluatePredicates evaluates a slice of predicates against facts

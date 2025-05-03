@@ -71,6 +71,11 @@ func ParseFile(filename string) (*ast.File, error) {
 	}
 	file = parsedFile
 
+	// Resolve path expressions
+	if err := ast.ResolvePathExpressions(file); err != nil {
+		return nil, fmt.Errorf("failed to resolve path expressions: %w", err)
+	}
+
 	fmt.Printf("Parsed successfully. Rules: %d, Flows: %d\n",
 		len(file.Rules), len(file.Flows))
 

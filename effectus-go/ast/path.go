@@ -1,7 +1,7 @@
 package ast
 
 import (
-	"github.com/effectus/effectus-go/path"
+	"github.com/effectus/effectus-go/pathutil"
 )
 
 // ResolvePathExpressions resolves all path expressions in a parsed file
@@ -76,58 +76,14 @@ func resolvePathExpression(pathExpr *PathExpression) error {
 		return nil
 	}
 
-	// Use the shared path parser to parse the path
-	namespace, elements, err := path.ParsePath(pathExpr.Raw)
+	// Use the pathutil package to parse the path
+	parsedPath, err := pathutil.ParseString(pathExpr.Raw)
 	if err != nil {
 		return err
 	}
 
-	// Set the namespace and segments
-	pathExpr.Namespace = namespace
-
-	// Initialize segments slice
-	pathExpr.Segments = make([]string, len(elements))
-	for i, elem := range elements {
-		pathExpr.Segments[i] = elem.String()
-	}
-
-	// Initialize indexed segments
-	pathExpr.IndexedSegments = make([]PathSegmentInfo, len(elements))
-	for i, elem := range elements {
-		var index *int
-		if elem.HasIndex() {
-			idx, _ := elem.GetIndex()
-			index = &idx
-		}
-
-		pathExpr.IndexedSegments[i] = PathSegmentInfo{
-			Name:  elem.Name,
-			Index: index,
-		}
-	}
+	// Set the Path field directly with the parsed path
+	pathExpr.Path = parsedPath
 
 	return nil
-}
-
-// GetFullPath returns the full path string, reconstructed from namespace and segments
-func (p *PathExpression) GetFullPath() string {
-	if p == nil {
-		return ""
-	}
-
-	// If we already have the raw path, return it
-	if p.Raw != "" {
-		return p.Raw
-	}
-
-	// Otherwise, construct it from namespace and segments
-	elements := make([]path.PathElement, len(p.IndexedSegments))
-	for i, seg := range p.IndexedSegments {
-		elements[i] = path.NewElement(seg.Name)
-		if seg.Index != nil {
-			elements[i] = elements[i].WithIndex(*seg.Index)
-		}
-	}
-
-	return path.RenderPath(p.Namespace, elements)
 }

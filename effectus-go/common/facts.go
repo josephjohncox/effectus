@@ -3,41 +3,55 @@ package common
 import (
 	"errors"
 	"fmt"
+
+	"github.com/effectus/effectus-go/pathutil"
+	"github.com/effectus/effectus-go/schema/types"
 )
 
 // BasicSchema provides a simple schema implementation
 type BasicSchema struct {
 	// Type mapping for paths
-	typeInfo map[string]*Type
+	typeInfo map[string]*types.Type
 }
 
 // NewBasicSchema creates a new basic schema
 func NewBasicSchema() *BasicSchema {
 	return &BasicSchema{
-		typeInfo: make(map[string]*Type),
+		typeInfo: make(map[string]*types.Type),
 	}
 }
 
 // ValidatePath validates a path
-func (s *BasicSchema) ValidatePath(path string) bool {
+func (s *BasicSchema) ValidatePath(path pathutil.Path) bool {
 	// Basic schema validates all non-empty paths
-	return path != ""
+	return !path.IsEmpty()
 }
 
 // GetPathType implements SchemaInfo interface
-func (s *BasicSchema) GetPathType(path string) *Type {
+func (s *BasicSchema) GetPathType(path pathutil.Path) *types.Type {
 	if s.typeInfo == nil {
 		return nil
 	}
-	return s.typeInfo[path]
+	return s.typeInfo[path.String()]
 }
 
 // RegisterPathType implements SchemaInfo interface
-func (s *BasicSchema) RegisterPathType(path string, typ *Type) {
+func (s *BasicSchema) RegisterPathType(path pathutil.Path, typ *types.Type) {
 	if s.typeInfo == nil {
-		s.typeInfo = make(map[string]*Type)
+		s.typeInfo = make(map[string]*types.Type)
 	}
-	s.typeInfo[path] = typ
+	s.typeInfo[path.String()] = typ
+}
+
+// FactsExt extends the Facts interface with structured path methods
+type FactsExt interface {
+	Facts
+
+	// GetByPath gets a value by structured path
+	GetByPath(path pathutil.Path) (interface{}, bool)
+
+	// GetByPathWithContext gets a value with resolution information
+	GetByPathWithContext(path pathutil.Path) (interface{}, *ResolutionResult)
 }
 
 // BasicFacts provides an immutable facts implementation
@@ -62,40 +76,42 @@ func NewBasicFacts(data map[string]interface{}, schema SchemaInfo) *BasicFacts {
 }
 
 // Get implements Facts interface
-func (f *BasicFacts) Get(path string) (interface{}, bool) {
+func (f *BasicFacts) Get(path pathutil.Path) (interface{}, bool) {
 	result, info := f.GetWithContext(path)
 	return result, info != nil && info.Exists
 }
 
 // GetWithContext implements Facts interface
-func (f *BasicFacts) GetWithContext(path string) (interface{}, *ResolutionResult) {
+func (f *BasicFacts) GetWithContext(path pathutil.Path) (interface{}, *ResolutionResult) {
 	if f.data == nil {
 		return nil, &ResolutionResult{
 			Exists: false,
 			Error:  errors.New("no data"),
-			Path:   Path{},
+			Path:   pathutil.Path{},
 		}
 	}
 
-	if path == "" {
+	if path.IsEmpty() {
 		return nil, &ResolutionResult{
 			Exists: false,
 			Error:  errors.New("empty path"),
-			Path:   Path{},
-		}
-	}
-
-	parsedPath, err := ParseString(path)
-	if err != nil {
-		return nil, &ResolutionResult{
-			Exists: false,
-			Error:  fmt.Errorf("invalid path: %w", err),
-			Path:   Path{},
+			Path:   path,
 		}
 	}
 
 	// Resolve the path
-	return f.resolvePath(parsedPath)
+	return f.GetByPathWithContext(path)
+}
+
+// GetByPath implements FactsExt interface
+func (f *BasicFacts) GetByPath(path pathutil.Path) (interface{}, bool) {
+	result, info := f.GetByPathWithContext(path)
+	return result, info != nil && info.Exists
+}
+
+// GetByPathWithContext implements FactsExt interface
+func (f *BasicFacts) GetByPathWithContext(path pathutil.Path) (interface{}, *ResolutionResult) {
+	return f.resolvePath(path)
 }
 
 // Schema implements Facts interface
@@ -104,7 +120,7 @@ func (f *BasicFacts) Schema() SchemaInfo {
 }
 
 // HasPath implements Facts interface
-func (f *BasicFacts) HasPath(path string) bool {
+func (f *BasicFacts) HasPath(path pathutil.Path) bool {
 	_, exists := f.Get(path)
 	return exists
 }
@@ -115,7 +131,7 @@ func (f *BasicFacts) WithData(updatedData map[string]interface{}) *BasicFacts {
 }
 
 // resolvePath resolves a parsed path against the facts data
-func (f *BasicFacts) resolvePath(path Path) (interface{}, *ResolutionResult) {
+func (f *BasicFacts) resolvePath(path pathutil.Path) (interface{}, *ResolutionResult) {
 	// Extract the namespace
 	var current interface{} = f.data
 
@@ -231,7 +247,7 @@ func (f *BasicFacts) resolvePath(path Path) (interface{}, *ResolutionResult) {
 	}
 
 	// Get the type for this path
-	pathType := f.schema.GetPathType(path.String())
+	pathType := f.schema.GetPathType(path)
 
 	// If we get here, we've successfully navigated the path
 	return current, &ResolutionResult{

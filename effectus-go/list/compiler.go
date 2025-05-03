@@ -6,6 +6,7 @@ import (
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
+	"github.com/effectus/effectus-go/eval"
 	"github.com/effectus/effectus-go/common"
 )
 
@@ -69,13 +70,13 @@ func compileRule(rule *ast.Rule, schema effectus.SchemaInfo) (*CompiledRule, err
 
 	// Compile logical expressions from the rule blocks
 	if len(rule.Blocks) > 0 {
-		predicates := []*common.Predicate{}
+		predicates := []*eval.Predicate{}
 		factPaths := make(map[string]struct{})
 
 		// Go through each block and extract predicates
 		for _, block := range rule.Blocks {
 			if block.When != nil && block.When.Expression != nil {
-				preds, paths, err := compileLogicalExpression(block.When.Expression, schema)
+				preds, paths, err := eval.CompileLogicalExpression(block.When.Expression, schema)
 				if err != nil {
 					return nil, err
 				}
@@ -116,70 +117,5 @@ func compileRule(rule *ast.Rule, schema effectus.SchemaInfo) (*CompiledRule, err
 	return compiledRule, nil
 }
 
-// compileLogicalExpression compiles a logical expression into predicates
-func compileLogicalExpression(expr *ast.LogicalExpression, schema effectus.SchemaInfo) ([]*common.Predicate, map[string]struct{}, error) {
-	predicates := []*common.Predicate{}
-	factPaths := make(map[string]struct{})
-
-	if expr == nil {
-		return predicates, factPaths, nil
-	}
-
-	// Process left side
-	if expr.Left != nil {
-		if expr.Left.Predicate != nil {
-			pred := expr.Left.Predicate
-			if pred.PathExpr == nil {
-				return nil, nil, fmt.Errorf("predicate has no path expression")
-			}
-
-			path := pred.PathExpr.GetFullPath()
-
-			// Validate path against schema
-			if !schema.ValidatePath(path) {
-				return nil, nil, fmt.Errorf("invalid path: %s", path)
-			}
-
-			// Save path for later fact requirements
-			factPaths[path] = struct{}{}
-
-			// Create compiled predicate
-			compiledPred := &common.Predicate{
-				Path: path,
-				Op:   pred.Op,
-				Lit:  common.CompileLiteral(&pred.Lit),
-			}
-			predicates = append(predicates, compiledPred)
-		} else if expr.Left.SubExpr != nil {
-			// Recursive call for sub-expression
-			subPredicates, subPaths, err := compileLogicalExpression(expr.Left.SubExpr, schema)
-			if err != nil {
-				return nil, nil, err
-			}
-
-			predicates = append(predicates, subPredicates...)
-
-			// Merge fact paths
-			for path := range subPaths {
-				factPaths[path] = struct{}{}
-			}
-		}
-	}
-
-	// Process right side if it exists
-	if expr.Right != nil {
-		rightPredicates, rightPaths, err := compileLogicalExpression(expr.Right, schema)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		predicates = append(predicates, rightPredicates...)
-
-		// Merge fact paths
-		for path := range rightPaths {
-			factPaths[path] = struct{}{}
-		}
-	}
-
-	return predicates, factPaths, nil
-}
+// Convert string paths to pathutil.Path objects
+// For path validation and Predicate creation, use pathutil.ParseString to create Path objects

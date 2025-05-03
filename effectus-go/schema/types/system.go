@@ -1,0 +1,784 @@
+package types
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"sync"
+
+	"github.com/effectus/effectus-go"
+	"github.com/effectus/effectus-go/ast"
+	"github.com/effectus/effectus-go/pathutil"
+)
+
+// TypeSystem is the central type management system for Effectus
+type TypeSystem struct {
+	// Facts type registry - maps paths to types
+	factTypes map[string]*Type
+	factPaths map[string]pathutil.Path
+
+	// Verb specifications
+	verbSpecs map[string]*VerbSpec
+
+	// types is a map from type name to type
+	types map[string]*Type
+
+	// verbTypes maps verb names to their type information
+	verbTypes map[string]*VerbInfo
+
+	// mutex for thread safety
+	mu sync.RWMutex
+}
+
+// VerbSpec defines type requirements for a verb
+type VerbSpec struct {
+	Name         string           // Verb name
+	ArgTypes     map[string]*Type // Types for each argument
+	ReturnType   *Type            // Return type of the verb
+	InverseVerb  string           // Optional inverse verb name for compensations
+	RequiredArgs []string         // List of required arguments
+	Capability   Capability       // Capability ID for locking
+	Description  string           // Human-readable description
+}
+
+// VerbInfo contains type information for a verb
+type VerbInfo struct {
+	// ArgTypes maps argument names to their types
+	ArgTypes map[string]*Type
+
+	// ReturnType is the verb's return type
+	ReturnType *Type
+}
+
+// NewTypeSystem creates a new type system
+func NewTypeSystem() *TypeSystem {
+	return &TypeSystem{
+		factTypes: make(map[string]*Type),
+		factPaths: make(map[string]pathutil.Path),
+		verbSpecs: make(map[string]*VerbSpec),
+		types:     make(map[string]*Type),
+		verbTypes: make(map[string]*VerbInfo),
+	}
+}
+
+// RegisterType registers a named type in the system
+func (ts *TypeSystem) RegisterType(name string, typ *Type) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+
+	// Ensure the name is set and clone the type to avoid external modification
+	cloned := typ.Clone()
+	cloned.Name = name
+	ts.types[name] = cloned
+}
+
+// GetType retrieves a type by name
+func (ts *TypeSystem) GetType(name string) (*Type, bool) {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+
+	typ, found := ts.types[name]
+	if !found {
+		return nil, false
+	}
+
+	// Return a clone to prevent external modification
+	return typ.Clone(), true
+}
+
+// RegisterFactType registers a type for a fact path
+func (ts *TypeSystem) RegisterFactType(path pathutil.Path, typ *Type) {
+	ts.factTypes[path.String()] = typ
+	ts.factPaths[path.String()] = path
+}
+
+// GetFactType retrieves the type for a fact path
+func (ts *TypeSystem) GetFactType(path pathutil.Path) (*Type, error) {
+	typ, exists := ts.factTypes[path.String()]
+	if !exists {
+		return nil, fmt.Errorf("no type registered for path: %s", path.String())
+	}
+	return typ, nil
+}
+
+// GetAllFactPaths returns all registered fact paths
+func (ts *TypeSystem) GetAllFactPaths() []pathutil.Path {
+	paths := make([]pathutil.Path, 0, len(ts.factTypes))
+	for _, path := range ts.factPaths {
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+// RegisterVerbSpec registers a verb specification
+func (ts *TypeSystem) RegisterVerbSpec(spec *VerbSpec) {
+	ts.verbSpecs[spec.Name] = spec
+}
+
+// GetVerbSpec retrieves a verb specification
+func (ts *TypeSystem) GetVerbSpec(verbName string) (*VerbSpec, error) {
+	spec, exists := ts.verbSpecs[verbName]
+	if !exists {
+		return nil, fmt.Errorf("no specification for verb: %s", verbName)
+	}
+	return spec, nil
+}
+
+// LoadVerbSpecs loads verb specifications from a JSON file
+func (ts *TypeSystem) LoadVerbSpecs(filename string) error {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return fmt.Errorf("failed to read verb spec file: %w", err)
+	}
+
+	var specs map[string]*VerbSpec
+	if err := json.Unmarshal(data, &specs); err != nil {
+		return fmt.Errorf("failed to parse verb specs: %w", err)
+	}
+
+	// Merge with existing specs
+	for name, spec := range specs {
+		ts.verbSpecs[name] = spec
+	}
+
+	return nil
+}
+
+// LoadSchemaFile loads fact types from a schema file
+func (ts *TypeSystem) LoadSchemaFile(filename string) error {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return fmt.Errorf("reading schema file: %w", err)
+	}
+
+	var schemaEntries []struct {
+		Path string `json:"path"`
+		Type Type   `json:"type"`
+	}
+
+	if err := json.Unmarshal(data, &schemaEntries); err != nil {
+		return fmt.Errorf("parsing schema file: %w", err)
+	}
+
+	for _, entry := range schemaEntries {
+		parsedPath, err := pathutil.ParseString(entry.Path)
+		if err != nil {
+			return fmt.Errorf("invalid path: %w", err)
+		}
+		ts.RegisterFactType(parsedPath, &entry.Type)
+	}
+
+	return nil
+}
+
+// MergeTypeSystem merges another type system into this one
+func (ts *TypeSystem) MergeTypeSystem(other *TypeSystem) {
+	// Merge fact types
+	for path, typ := range other.factTypes {
+		ts.factTypes[path] = typ
+	}
+
+	// Merge verb specs
+	for name, spec := range other.verbSpecs {
+		ts.verbSpecs[name] = spec
+	}
+}
+
+// RegisterVerbType registers input and output types for a verb
+func (ts *TypeSystem) RegisterVerbType(verbName string, argTypes map[string]*Type, returnType *Type) error {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+
+	// Clone all types to avoid external modification
+	clonedArgTypes := make(map[string]*Type, len(argTypes))
+	for name, typ := range argTypes {
+		clonedArgTypes[name] = typ.Clone()
+	}
+
+	// Store verb type information
+	ts.verbTypes[verbName] = &VerbInfo{
+		ArgTypes:   clonedArgTypes,
+		ReturnType: returnType.Clone(),
+	}
+
+	return nil
+}
+
+// GetVerbTypes returns all verb type information
+func (ts *TypeSystem) GetVerbTypes() map[string]*VerbInfo {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+
+	// Return a copy to prevent external modification
+	result := make(map[string]*VerbInfo, len(ts.verbTypes))
+	for name, info := range ts.verbTypes {
+		clonedInfo := &VerbInfo{
+			ArgTypes:   make(map[string]*Type, len(info.ArgTypes)),
+			ReturnType: info.ReturnType.Clone(),
+		}
+
+		for argName, argType := range info.ArgTypes {
+			clonedInfo.ArgTypes[argName] = argType.Clone()
+		}
+
+		result[name] = clonedInfo
+	}
+
+	return result
+}
+
+// GetVerbType returns type information for a specific verb
+func (ts *TypeSystem) GetVerbType(verbName string) (*VerbInfo, bool) {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+
+	info, found := ts.verbTypes[verbName]
+	if !found {
+		return nil, false
+	}
+
+	// Return a copy to prevent external modification
+	clonedInfo := &VerbInfo{
+		ArgTypes:   make(map[string]*Type, len(info.ArgTypes)),
+		ReturnType: info.ReturnType.Clone(),
+	}
+
+	for argName, argType := range info.ArgTypes {
+		clonedInfo.ArgTypes[argName] = argType.Clone()
+	}
+
+	return clonedInfo, true
+}
+
+// TypeCheckPredicateAST checks a predicate in the AST
+func (ts *TypeSystem) TypeCheckPredicateAST(pred *ast.Predicate) error {
+	if pred == nil || pred.PathExpr == nil {
+		return fmt.Errorf("invalid predicate: missing path expression")
+	}
+
+	// Get the type of the fact at this path
+	factType, err := ts.GetFactType(pred.PathExpr.Path)
+	if err != nil {
+		return fmt.Errorf("unknown fact path in predicate: %s", pred.PathExpr.Path)
+	}
+
+	// We need to adapt to the actual field name used in the AST
+	// Check if the operator is compatible with this type
+	if err := ts.OperatorCompatibility(pred.Op, factType); err != nil {
+		return err
+	}
+
+	// We need to adapt to the actual field name used in the AST
+	// For a literal, check its compatibility with the fact type
+	valueType := InferTypeFromLiteral(&pred.Lit)
+	if err := ts.CheckValueTypeCompatibility(pred.Op, factType, valueType); err != nil {
+		return fmt.Errorf("value type mismatch in predicate: %w", err)
+	}
+
+	return nil
+}
+
+// GetAllTypes returns all registered named types
+func (ts *TypeSystem) GetAllTypes() map[string]*Type {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+
+	// Return a copy to prevent external modification
+	result := make(map[string]*Type, len(ts.types))
+	for name, typ := range ts.types {
+		result[name] = typ.Clone()
+	}
+	return result
+}
+
+// TypeCheckPayload validates a payload against an expected type
+func (ts *TypeSystem) TypeCheckPayload(payload interface{}, expectedType *Type) error {
+	// Infer the actual type of the payload
+	actualType := InferTypeFromValue(payload)
+
+	// Check compatibility
+	if !AreTypesCompatible(actualType, expectedType) {
+		return fmt.Errorf("incompatible payload type: expected %s, got %s",
+			expectedType.String(), actualType.String())
+	}
+
+	return nil
+}
+
+// typeCheckPredicate uses TypeCheckPredicateAST but adds fact checking
+func (ts *TypeSystem) typeCheckPredicate(pred *ast.Predicate, facts effectus.Facts) error {
+	if pred.PathExpr == nil {
+		return fmt.Errorf("predicate missing path expression")
+	}
+
+	// Validate that the path exists in facts
+	path := pred.PathExpr.Path
+	_, exists := facts.Get(path)
+	if !exists {
+		return fmt.Errorf("fact path does not exist: %s", path)
+	}
+
+	return ts.TypeCheckPredicateAST(pred)
+}
+
+// typeCheckEffect checks an effect for type correctness
+func (ts *TypeSystem) typeCheckEffect(effect *ast.Effect, facts effectus.Facts) error {
+	// This is a helper function we define here that uses operator_checks.go's functions
+	verbSpec, err := ts.GetVerbSpec(effect.Verb)
+	if err != nil {
+		return fmt.Errorf("unknown verb: %s", effect.Verb)
+	}
+
+	// Check arguments
+	for _, arg := range effect.Args {
+		requiredType, exists := verbSpec.ArgTypes[arg.Name]
+		if !exists {
+			return fmt.Errorf("verb %s does not accept argument: %s", effect.Verb, arg.Name)
+		}
+
+		// Use TypeCheckArgValue from operator_checks.go
+		if err := ts.TypeCheckArgValue(arg.Value, requiredType, facts); err != nil {
+			return fmt.Errorf("argument %s: %w", arg.Name, err)
+		}
+	}
+
+	// Check required arguments
+	for _, requiredArg := range verbSpec.RequiredArgs {
+		found := false
+		for _, arg := range effect.Args {
+			if arg.Name == requiredArg {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			return fmt.Errorf("missing required argument %s for verb %s", requiredArg, effect.Verb)
+		}
+	}
+
+	return nil
+}
+
+// typeCheckStep checks a flow step for type correctness
+func (ts *TypeSystem) typeCheckStep(step *ast.Step, facts effectus.Facts) error {
+	// Similar to typeCheckEffect but for flow steps
+	verbInfo, found := ts.GetVerbType(step.Verb)
+	if !found {
+		return fmt.Errorf("undefined verb: %s", step.Verb)
+	}
+
+	// Check each argument
+	for _, arg := range step.Args {
+		if arg.Value == nil {
+			return fmt.Errorf("missing value for argument %s", arg.Name)
+		}
+
+		// Check if argument is expected for this verb
+		expectedType, exists := verbInfo.ArgTypes[arg.Name]
+		if !exists {
+			return fmt.Errorf("verb %s does not accept argument %s", step.Verb, arg.Name)
+		}
+
+		// Type check the argument value
+		if err := ts.typeCheckArgValue(arg.Value, expectedType, facts); err != nil {
+			return fmt.Errorf("invalid type for argument %s: %w", arg.Name, err)
+		}
+	}
+
+	// Check for required arguments (simplified)
+	for argName := range verbInfo.ArgTypes {
+		found := false
+		for _, arg := range step.Args {
+			if arg.Name == argName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			// This is simplified - in reality, not all arguments may be required
+			return fmt.Errorf("missing required argument %s for verb %s", argName, step.Verb)
+		}
+	}
+
+	return nil
+}
+
+// typeCheckArgValue checks if an argument value has compatible type with expected type
+func (ts *TypeSystem) typeCheckArgValue(arg *ast.ArgValue, expectedType *Type, facts effectus.Facts) error {
+	// Use the existing TypeCheckArgValue instead of duplicating
+	return ts.TypeCheckArgValue(arg, expectedType, facts)
+}
+
+// BuildTypeSchemaFromFacts builds a type schema from facts
+func (ts *TypeSystem) BuildTypeSchemaFromFacts(facts effectus.Facts) {
+	// Get schema info
+	schema := facts.Schema()
+	_ = schema // Suppress unused variable warning
+
+	// Simple implementation - real implementation would try to extract more info
+	// from the facts and schema structure
+}
+
+// RegisterProtoTypes registers types from protobuf files
+func (ts *TypeSystem) RegisterProtoTypes(protoFile string) error {
+	// This is a simplified implementation
+	// In a real implementation, it would parse proto files and register types
+	return nil
+}
+
+// GenerateTypeReport generates a human-readable report of types
+func (ts *TypeSystem) GenerateTypeReport() string {
+	report := "# Type System Report\n\n"
+
+	// Fact types
+	report += "## Registered Fact Types\n\n"
+	paths := ts.GetAllFactPaths()
+	for _, path := range paths {
+		typ, _ := ts.GetFactType(path)
+		report += fmt.Sprintf("- `%s`: %s\n", path, typ)
+	}
+
+	// Verb specs
+	report += "\n## Registered Verbs\n\n"
+	for name, spec := range ts.verbSpecs {
+		report += fmt.Sprintf("### %s\n", name)
+		report += fmt.Sprintf("- Capability: %s\n", capabilityToString(spec.Capability))
+		if spec.InverseVerb != "" {
+			report += fmt.Sprintf("- Inverse: %s\n", spec.InverseVerb)
+		}
+		report += "- Arguments:\n"
+		for argName, argType := range spec.ArgTypes {
+			required := " "
+			for _, req := range spec.RequiredArgs {
+				if req == argName {
+					required = "*"
+					break
+				}
+			}
+			report += fmt.Sprintf("  - %s%s: %s\n", required, argName, argType)
+		}
+		report += fmt.Sprintf("- Return: %s\n", spec.ReturnType)
+	}
+
+	return report
+}
+
+// Helper function to convert Capability to string
+func capabilityToString(c Capability) string {
+	switch c {
+	case CapabilityNone:
+		return "none"
+	case CapabilityRead:
+		return "read"
+	case CapabilityModify:
+		return "modify"
+	case CapabilityCreate:
+		return "create"
+	case CapabilityDelete:
+		return "delete"
+	default:
+		return "unknown"
+	}
+}
+
+// TypeCheckValue checks if a value matches the expected type
+func (ts *TypeSystem) TypeCheckValue(value interface{}, expectedType *Type) error {
+	actualType := InferTypeFromInterface(value)
+	if !AreTypesCompatible(actualType, expectedType) {
+		return fmt.Errorf("type mismatch: value %v of type %s is not compatible with expected type %s",
+			value, actualType.String(), expectedType.String())
+	}
+	return nil
+}
+
+// TypeCheckFact checks if a fact at the given path has the expected type
+func (ts *TypeSystem) TypeCheckFact(facts effectus.Facts, path pathutil.Path, expectedType *Type) error {
+	value, exists := facts.Get(path)
+	if !exists {
+		return fmt.Errorf("fact path does not exist: %s", path)
+	}
+
+	return ts.TypeCheckValue(value, expectedType)
+}
+
+// InferTypeFromFactPath tries to infer a type from a fact if no type is registered
+func (ts *TypeSystem) InferTypeFromFactPath(facts effectus.Facts, path pathutil.Path) (*Type, error) {
+	// First, check if a type is already registered
+	existingType, err := ts.GetFactType(path)
+	if err == nil && existingType != nil {
+		return existingType, nil
+	}
+
+	// Try to infer from actual value
+	value, exists := facts.Get(path)
+	if !exists {
+		return nil, fmt.Errorf("fact path does not exist: %s", path)
+	}
+
+	inferredType := InferTypeFromInterface(value)
+	// Register the inferred type
+	ts.RegisterFactType(path, inferredType)
+
+	return inferredType, nil
+}
+
+// AutoRegisterTypes automatically registers types for all facts
+func (ts *TypeSystem) AutoRegisterTypes(facts effectus.Facts) {
+	// This would need to iterate over all available facts
+	// For now, we'll just log that it's not fully implemented
+	fmt.Println("Warning: AutoRegisterTypes is not fully implemented")
+}
+
+// TypeCheckLogicalExpressionAST checks a logical expression in AST
+func (ts *TypeSystem) TypeCheckLogicalExpressionAST(expr *ast.LogicalExpression) error {
+	if expr == nil {
+		return nil
+	}
+
+	// Check left side
+	if expr.Left != nil {
+		if expr.Left.Predicate != nil {
+			if err := ts.TypeCheckPredicateAST(expr.Left.Predicate); err != nil {
+				return fmt.Errorf("in left predicate: %w", err)
+			}
+		} else if expr.Left.SubExpr != nil {
+			if err := ts.TypeCheckLogicalExpressionAST(expr.Left.SubExpr); err != nil {
+				return fmt.Errorf("in left sub-expression: %w", err)
+			}
+		} else {
+			return fmt.Errorf("left expression is empty")
+		}
+	} else {
+		return fmt.Errorf("missing left side of logical expression")
+	}
+
+	// For unary operators, we're done
+	if expr.Op == "" && expr.Right == nil {
+		return nil
+	}
+
+	// For binary operators, check right side
+	if expr.Right == nil {
+		return fmt.Errorf("binary operator %s missing right expression", expr.Op)
+	}
+
+	if err := ts.TypeCheckLogicalExpressionAST(expr.Right); err != nil {
+		return fmt.Errorf("in right expression: %w", err)
+	}
+
+	return nil
+}
+
+// TypeCheckArgumentValue type checks an argument value against the required type
+func (ts *TypeSystem) TypeCheckArgumentValue(arg *ast.ArgValue, requiredType *Type, facts Facts) error {
+	if arg == nil {
+		return fmt.Errorf("argument value is nil")
+	}
+
+	// Handle different value sources
+	if arg.Literal != nil {
+		// For literals, directly check against required type
+		valueType := InferTypeFromInterface(arg.Literal)
+		if !AreTypesCompatible(valueType, requiredType) {
+			return fmt.Errorf("literal value type %s not compatible with required type %s",
+				valueType.String(), requiredType.String())
+		}
+		return nil
+	}
+
+	if arg.PathExpr != nil {
+		// For path expressions, first get the fact type, then check compatibility
+		factType, err := ts.GetFactType(arg.PathExpr.Path)
+		if err != nil {
+			return fmt.Errorf("unknown fact path: %s", arg.PathExpr.Path)
+		}
+
+		if !AreTypesCompatible(factType, requiredType) {
+			return fmt.Errorf("fact path %s has type %s which is not compatible with required type %s",
+				arg.PathExpr.Path, factType.String(), requiredType.String())
+		}
+		return nil
+	}
+
+	if arg.VarRef != "" {
+		// Variable references would be checked against a symbol table
+		// For now we'll just show a placeholder implementation
+		return fmt.Errorf("variable reference type checking not fully implemented")
+	}
+
+	return fmt.Errorf("invalid argument value: neither literal, path, nor variable reference")
+}
+
+// CanAssign checks if a value of sourceType can be assigned to a variable of targetType
+func CanAssign(sourceType, targetType *Type) bool {
+	// Direct compatibility
+	if AreTypesCompatible(sourceType, targetType) {
+		return true
+	}
+
+	// Special cases for numeric conversions with potential narrowing
+	if sourceType.PrimType == TypeInt && targetType.PrimType == TypeFloat {
+		// Int can always be converted to float without loss
+		return true
+	}
+
+	if sourceType.PrimType == TypeFloat && targetType.PrimType == TypeInt {
+		// Float to int is possible with potential truncation
+		// In strict mode this might return false
+		return true
+	}
+
+	// Special case for lists
+	if sourceType.PrimType == TypeList && targetType.PrimType == TypeList {
+		// Empty source list can be assigned to any list type
+		if sourceType.ElementType == nil || sourceType.ElementType.PrimType == TypeUnknown {
+			return true
+		}
+
+		// Otherwise elements must be compatible
+		return CanAssign(sourceType.ElementType, targetType.ElementType)
+	}
+
+	// Special case for maps
+	if sourceType.PrimType == TypeMap && targetType.PrimType == TypeMap {
+		// Empty source map can be assigned to any map type
+		if sourceType.MapKeyType() == nil || sourceType.MapValueType() == nil {
+			return true
+		}
+
+		// Otherwise both key and value types must be compatible
+		return CanAssign(sourceType.MapKeyType(), targetType.MapKeyType()) &&
+			CanAssign(sourceType.MapValueType(), targetType.MapValueType())
+	}
+
+	return false
+}
+
+// IsCoercibleTo checks if a value can be coerced to another type
+func IsCoercibleTo(sourceType, targetType *Type) bool {
+	// Direct assignment always works
+	if CanAssign(sourceType, targetType) {
+		return true
+	}
+
+	// String coercions
+	if targetType.PrimType == TypeString {
+		// Almost anything can be converted to string
+		return sourceType.PrimType != TypeUnknown
+	}
+
+	if sourceType.PrimType == TypeString {
+		// String to number conversions
+		if targetType.PrimType == TypeInt || targetType.PrimType == TypeFloat {
+			return true // With proper validation at runtime
+		}
+
+		// String to boolean conversion
+		if targetType.PrimType == TypeBool {
+			return true // With proper validation at runtime
+		}
+
+		// String to time conversions
+		if targetType.PrimType == TypeTime || targetType.PrimType == TypeDate {
+			return true // With proper validation at runtime
+		}
+	}
+
+	return false
+}
+
+// TypeCheckFile performs type checking on a parsed file
+func (ts *TypeSystem) TypeCheckFile(file *ast.File, facts effectus.Facts) error {
+	// Ensure paths are resolved
+	if err := ast.ResolvePathExpressions(file); err != nil {
+		return fmt.Errorf("path resolution error: %w", err)
+	}
+
+	// Type check rules
+	for _, rule := range file.Rules {
+		if err := ts.typeCheckRule(rule, facts); err != nil {
+			return fmt.Errorf("type error in rule %s: %w", rule.Name, err)
+		}
+	}
+
+	// Type check flows
+	for _, flow := range file.Flows {
+		if err := ts.typeCheckFlow(flow, facts); err != nil {
+			return fmt.Errorf("type error in flow %s: %w", flow.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// typeCheckRule performs type checking on a rule
+func (ts *TypeSystem) typeCheckRule(rule *ast.Rule, facts effectus.Facts) error {
+	// Type check predicates in each when-then block
+	for _, block := range rule.Blocks {
+		if block.When != nil && block.When.Expression != nil {
+			if err := ts.typeCheckLogicalExpression(block.When.Expression, facts); err != nil {
+				return fmt.Errorf("predicate error: %w", err)
+			}
+		}
+
+		// Type check effects
+		if block.Then != nil {
+			for _, effect := range block.Then.Effects {
+				if err := ts.typeCheckEffect(effect, facts); err != nil {
+					return fmt.Errorf("effect error (%s): %w", effect.Verb, err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// typeCheckFlow performs type checking on a flow
+func (ts *TypeSystem) typeCheckFlow(flow *ast.Flow, facts effectus.Facts) error {
+	// Type check predicates
+	if flow.When != nil && flow.When.Expression != nil {
+		if err := ts.typeCheckLogicalExpression(flow.When.Expression, facts); err != nil {
+			return fmt.Errorf("predicate error: %w", err)
+		}
+	}
+
+	// Type check steps
+	if flow.Steps != nil {
+		for _, step := range flow.Steps.Steps {
+			if err := ts.typeCheckStep(step, facts); err != nil {
+				return fmt.Errorf("step error (%s): %w", step.Verb, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// typeCheckLogicalExpression type checks a logical expression
+func (ts *TypeSystem) typeCheckLogicalExpression(expr *ast.LogicalExpression, facts effectus.Facts) error {
+	if expr == nil {
+		return nil
+	}
+
+	// Check left side
+	if expr.Left.Predicate != nil {
+		if err := ts.typeCheckPredicate(expr.Left.Predicate, facts); err != nil {
+			return err
+		}
+	} else if expr.Left.SubExpr != nil {
+		if err := ts.typeCheckLogicalExpression(expr.Left.SubExpr, facts); err != nil {
+			return err
+		}
+	}
+
+	// Check right side if exists
+	if expr.Right != nil {
+		if err := ts.typeCheckLogicalExpression(expr.Right, facts); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
