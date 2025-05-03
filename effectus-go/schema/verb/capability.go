@@ -95,6 +95,21 @@ func (c Capability) IsCommutativeWith(other Capability) bool {
 	return false
 }
 
+// IsIdempotent returns whether the capability is idempotent
+func (c Capability) IsIdempotent() bool {
+	return c&CapIdempotent != 0
+}
+
+// IsCommutative returns whether the capability is commutative
+func (c Capability) IsCommutative() bool {
+	return c&CapCommutative != 0
+}
+
+// IsExclusive returns whether the capability requires exclusive access
+func (c Capability) IsExclusive() bool {
+	return c&CapExclusive != 0
+}
+
 // ResourceConflict checks if two resource capabilities conflict
 func ResourceConflict(a, b ResourceCapability) bool {
 	// If they target different resources, no conflict
@@ -119,7 +134,7 @@ func ResourceConflict(a, b ResourceCapability) bool {
 // ResourceSet represents multiple resources with capabilities
 type ResourceSet []ResourceCapability
 
-// Conflicts checks if two resource sets have conflicts
+// ConflictsWith checks if two resource sets have conflicts
 func (rs ResourceSet) ConflictsWith(other ResourceSet) bool {
 	for _, r1 := range rs {
 		for _, r2 := range other {
@@ -139,7 +154,7 @@ func (rs ResourceSet) String() string {
 
 	var parts []string
 	for _, rc := range rs {
-		parts = append(parts, fmt.Sprintf("%s:%s", rc.Resource, rc.Cap))
+		parts = append(parts, fmt.Sprintf("%s:%s", rc.Resource, rc.Cap.String()))
 	}
 
 	return fmt.Sprintf("[%s]", strings.Join(parts, ", "))

@@ -101,7 +101,7 @@ func (r *Registry) RegisterDefaults() error {
 	// SendEmail - a general utility verb
 	if err := r.RegisterVerb(NewSpec(
 		"SendEmail",
-		CapabilityModify,
+		CapWrite,
 		map[string]interface{}{
 			"to":      "string",
 			"subject": "string",
@@ -115,7 +115,7 @@ func (r *Registry) RegisterDefaults() error {
 	// LogMessage - a logging verb
 	if err := r.RegisterVerb(NewSpec(
 		"LogMessage",
-		CapabilityNone,
+		CapNone,
 		map[string]interface{}{
 			"level":   "string",
 			"message": "string",

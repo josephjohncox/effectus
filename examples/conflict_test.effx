@@ -1,0 +1,21 @@
+// Test file for capability conflicts
+flow "ConflictingSameResource" priority 10 {
+  when {
+    "order.total > 100"
+  }
+
+  steps {
+    // Multiple steps that modify the same resource
+    updateOrder(id: order.id, status: "processing")
+    
+    // Process payment also reads the order
+    payment = processPayment(method: "credit", amount: order.total, orderId: order.id)
+    
+    // Updating the order again - potential conflict
+    updateOrder(id: order.id, status: "paid")
+    
+    // Send notification is commutative so no conflict
+    sendNotification(recipient: customer.email, message: "Order processed")
+    sendNotification(recipient: customer.phone, message: "Order status updated")
+  }
+} 

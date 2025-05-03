@@ -59,9 +59,21 @@ func RegisterStandardVerbs(registry *VerbRegistry) {
 		ExecutorImpl: &StandardVerbExecutor{Name: "CreateOrder"},
 	})
 
-	// Process payment verb (read-write, exclusive - must only run once)
+	// UpdateOrder verb (read-write, idempotent)
 	registry.Register(&StandardVerbSpec{
-		Name:        "ProcessPayment",
+		Name:         "updateOrder",
+		Description:  "Updates an order",
+		Cap:          CapReadWrite,
+		Resources:    ResourceSet{{Resource: "order", Cap: CapReadWrite}},
+		ArgTypes:     map[string]string{"id": "string", "status": "string"},
+		RequiredArgs: []string{"id", "status"},
+		ReturnType:   "bool",
+		ExecutorImpl: &StandardVerbExecutor{Name: "updateOrder"},
+	})
+
+	// ProcessPayment verb (read-write, exclusive - must only run once)
+	registry.Register(&StandardVerbSpec{
+		Name:        "processPayment",
 		Description: "Processes a payment for an order",
 		Cap:         CapReadWrite | CapExclusive,
 		Resources: ResourceSet{
@@ -72,7 +84,7 @@ func RegisterStandardVerbs(registry *VerbRegistry) {
 		RequiredArgs: []string{"orderId", "amount", "method"},
 		ReturnType:   "PaymentResult",
 		InverseVerb:  "RefundPayment",
-		ExecutorImpl: &StandardVerbExecutor{Name: "ProcessPayment"},
+		ExecutorImpl: &StandardVerbExecutor{Name: "processPayment"},
 	})
 
 	// Send notification verb (write, idempotent, commutative)

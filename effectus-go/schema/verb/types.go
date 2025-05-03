@@ -5,44 +5,6 @@ import (
 	"context"
 )
 
-// Capability represents the capability required by a verb
-type Capability uint32
-
-const (
-	// CapabilityNone represents no capability
-	CapabilityNone Capability = iota
-
-	// CapabilityRead represents read-only access
-	CapabilityRead
-
-	// CapabilityModify represents modification access
-	CapabilityModify
-
-	// CapabilityCreate represents creation access
-	CapabilityCreate
-
-	// CapabilityDelete represents deletion access
-	CapabilityDelete
-)
-
-// String returns a string representation of the capability
-func (c Capability) String() string {
-	switch c {
-	case CapabilityNone:
-		return "none"
-	case CapabilityRead:
-		return "read"
-	case CapabilityModify:
-		return "modify"
-	case CapabilityCreate:
-		return "create"
-	case CapabilityDelete:
-		return "delete"
-	default:
-		return "unknown"
-	}
-}
-
 // Executor defines the interface for verb implementations
 type Executor interface {
 	// Execute executes the verb with the given arguments
