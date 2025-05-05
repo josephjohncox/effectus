@@ -3,11 +3,13 @@ package pathutil
 import (
 	"fmt"
 	"reflect"
+	"sync"
 
 	"github.com/expr-lang/expr"
 )
 
 // TypedExprFacts extends ExprFacts with type information
+// It provides type metadata for paths and expressions
 type TypedExprFacts struct {
 	// The base ExprFacts provider
 	facts *ExprFacts
@@ -20,6 +22,9 @@ type TypedExprFacts struct {
 
 	// Cache for evaluated expression types
 	exprTypeCache map[string]reflect.Type
+
+	// Mutex for thread safety
+	mu sync.RWMutex
 }
 
 // NewTypedExprFacts creates a new TypedExprFacts instance
@@ -280,4 +285,9 @@ func NewExprFactsFromData(data interface{}) *ExprFacts {
 	}
 
 	return NewExprFacts(flatMap)
+}
+
+// GetUnderlyingFacts returns the underlying ExprFacts instance
+func (t *TypedExprFacts) GetUnderlyingFacts() *ExprFacts {
+	return t.facts
 }
