@@ -9,7 +9,7 @@ import (
 	"github.com/effectus/effectus-go/schema/types"
 )
 
-// ExprFactsAdapter adapts the new expr-based fact system for use with the existing schema registry
+// ExprFactsAdapter provides adapters between schema types and expr types
 type ExprFactsAdapter struct {
 	// The associated type system
 	typeSystem *types.TypeSystem
@@ -22,84 +22,34 @@ func NewExprFactsAdapter(typeSystem *types.TypeSystem) *ExprFactsAdapter {
 	}
 }
 
-// CanLoad checks if this loader can handle the given file
-func (a *ExprFactsAdapter) CanLoad(path string) bool {
-	ext := filepath.Ext(path)
-	// Support several formats through our unified loaders
-	return ext == ".json" || ext == ".proto" || ext == ".yml" || ext == ".yaml"
-}
-
-// Load loads type definitions from a file
-func (a *ExprFactsAdapter) Load(path string, typeSystem *types.TypeSystem) error {
-	// Choose the appropriate loader based on file extension
-	ext := filepath.Ext(path)
-
-	var loader pathutil.FactLoader
-	switch ext {
-	case ".json":
-		// Read file and create JSON loader
-		data, err := readFile(path)
-		if err != nil {
-			return fmt.Errorf("reading JSON file: %w", err)
-		}
-		loader = pathutil.NewJSONLoader(data)
-	case ".proto":
-		// For proto files, we need special handling
-		// This is a simplified example, real implementation would parse the proto
-		return fmt.Errorf("proto loading requires additional setup")
-	default:
-		return fmt.Errorf("unsupported file extension: %s", ext)
-	}
-
-	// Load using our new system
-	typedFacts, err := loader.LoadIntoTypedFacts()
-	if err != nil {
-		return fmt.Errorf("loading into typed facts: %w", err)
-	}
-
-	// Register the discovered types with the type system
-	// Note: This is a simplified mapping between systems
-	// A real implementation would need to map between type representations
-	registerTypesFromFacts(typedFacts, typeSystem)
-
-	return nil
-}
-
 // CreateFactProvider creates a fact provider from a file
 func (a *ExprFactsAdapter) CreateFactProvider(path string) (pathutil.FactProvider, error) {
+	// Read the file
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading file: %w", err)
+	}
+
 	// Choose the appropriate loader based on file extension
 	ext := filepath.Ext(path)
-
-	var loader pathutil.FactLoader
 	switch ext {
 	case ".json":
-		// Read file and create JSON loader
-		data, err := readFile(path)
+		// Create a loader for JSON data
+		loader := pathutil.NewJSONLoader(data)
+		typedFacts, err := loader.LoadIntoTypedFacts()
 		if err != nil {
-			return nil, fmt.Errorf("reading JSON file: %w", err)
+			return nil, fmt.Errorf("loading into typed facts: %w", err)
 		}
-		loader = pathutil.NewJSONLoader(data)
-	case ".proto":
-		// For proto files, we need special handling
-		return nil, fmt.Errorf("proto loading requires additional setup")
+
+		// Register discovered types if needed
+		if a.typeSystem != nil {
+			registerTypesFromFacts(typedFacts, a.typeSystem)
+		}
+
+		return typedFacts, nil
 	default:
 		return nil, fmt.Errorf("unsupported file extension: %s", ext)
 	}
-
-	// Load into typed facts
-	typedFacts, err := loader.LoadIntoTypedFacts()
-	if err != nil {
-		return nil, fmt.Errorf("loading into typed facts: %w", err)
-	}
-
-	return typedFacts, nil
-}
-
-// Helper functions
-
-// readFile reads a file into a byte slice
-func readFile(path string) ([]byte, error) {
-	return os.ReadFile(path)
 }
 
 // registerTypesFromFacts registers types discovered in facts with the type system
@@ -125,21 +75,21 @@ func registerTypesFromFacts(facts *pathutil.TypedExprFacts, typeSystem *types.Ty
 			typ = types.NewStringType()
 		case "array":
 			// For arrays, we need the element type
-			// This is a simplified approach - in a real implementation
-			// you would recursively determine the element type
-			elemType := types.NewAnyType()
-
-			// Try to get the type of the first element if available
+			// Check the first element if available
 			value, ok := facts.Get(path)
 			if ok {
 				if arr, ok := value.([]interface{}); ok && len(arr) > 0 {
 					elemPath := fmt.Sprintf("%s[0]", path)
 					elemTypeInfo := facts.GetTypeInfo(elemPath)
-					elemType = convertTypeNameToType(elemTypeInfo)
+					elemType := convertTypeNameToType(elemTypeInfo)
+					typ = types.NewListType(elemType)
+				} else {
+					// Empty array or not an array
+					typ = types.NewListType(types.NewAnyType())
 				}
+			} else {
+				typ = types.NewListType(types.NewAnyType())
 			}
-
-			typ = types.NewListType(elemType)
 		case "map", "object":
 			// For objects, create an object type
 			objType := types.NewObjectType()

@@ -1,139 +1,98 @@
 package registry
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-
+	"github.com/effectus/effectus-go/pathutil"
+	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/schema/types"
-	"github.com/tidwall/gjson"
 )
 
-// SchemaRegistry provides centralized management of schemas
-type SchemaRegistry struct {
+// ExprRegistry provides centralized management of schemas using the expr-based implementation
+type ExprRegistry struct {
 	// typeSystem manages type definitions
 	typeSystem *types.TypeSystem
 
-	// factData is the raw JSON data for facts
-	factData string
-
-	// loaders for different schema formats
-	loaders []SchemaLoader
+	// schema is the expr-based schema implementation
+	schema *schema.ExprSchema
 }
 
-// SchemaLoader defines an interface for loading schemas from files
-type SchemaLoader interface {
-	// CanLoad checks if this loader can handle the given file
-	CanLoad(path string) bool
-
-	// Load loads type definitions from a file
-	Load(path string, typeSystem *types.TypeSystem) error
-}
-
-// NewSchemaRegistry creates a new schema registry
-func NewSchemaRegistry(typeSystem *types.TypeSystem) *SchemaRegistry {
+// NewExprRegistry creates a new schema registry
+func NewExprRegistry(typeSystem *types.TypeSystem) *ExprRegistry {
 	if typeSystem == nil {
 		typeSystem = types.NewTypeSystem()
 	}
 
-	return &SchemaRegistry{
+	// Create a default namespace
+	return &ExprRegistry{
 		typeSystem: typeSystem,
-		loaders:    make([]SchemaLoader, 0),
+		schema:     schema.NewExprSchema(""),
 	}
-}
-
-// RegisterLoader adds a schema loader to the registry
-func (sr *SchemaRegistry) RegisterLoader(loader SchemaLoader) {
-	sr.loaders = append(sr.loaders, loader)
-}
-
-// RegisterFactData sets the raw JSON data for facts
-func (sr *SchemaRegistry) RegisterFactData(jsonData string) {
-	sr.factData = jsonData
-}
-
-// GetFactValue gets a fact value from the registered fact data
-func (sr *SchemaRegistry) GetFactValue(path string) (interface{}, bool) {
-	if sr.factData == "" {
-		return nil, false
-	}
-
-	result := gjson.Get(sr.factData, path)
-	if !result.Exists() {
-		return nil, false
-	}
-
-	// Convert to proper Go type
-	var value interface{}
-	switch result.Type {
-	case gjson.True:
-		value = true
-	case gjson.False:
-		value = false
-	case gjson.Number:
-		value = result.Num
-	case gjson.String:
-		value = result.Str
-	case gjson.JSON:
-		// Handle arrays and objects
-		if result.IsArray() {
-			value = result.Array()
-		} else {
-			value = result.Map()
-		}
-	default:
-		value = nil
-	}
-
-	return value, true
 }
 
 // GetTypeSystem returns the underlying type system
-func (sr *SchemaRegistry) GetTypeSystem() *types.TypeSystem {
-	return sr.typeSystem
+func (r *ExprRegistry) GetTypeSystem() *types.TypeSystem {
+	return r.typeSystem
+}
+
+// GetSchema returns the underlying ExprSchema
+func (r *ExprRegistry) GetSchema() *schema.ExprSchema {
+	return r.schema
 }
 
 // LoadSchema loads a schema from a file
-func (sr *SchemaRegistry) LoadSchema(path string) error {
-	for _, loader := range sr.loaders {
-		if loader.CanLoad(path) {
-			return loader.Load(path, sr.typeSystem)
-		}
-	}
-	return fmt.Errorf("no loader available for %s", path)
+func (r *ExprRegistry) LoadSchema(path string) error {
+	return r.schema.LoadFromFile(path)
 }
 
 // LoadDirectory loads all schema files from a directory
-func (sr *SchemaRegistry) LoadDirectory(dir string) error {
-	files, err := filepath.Glob(filepath.Join(dir, "*"))
-	if err != nil {
-		return fmt.Errorf("reading schema directory: %w", err)
+func (r *ExprRegistry) LoadDirectory(dir string) error {
+	return r.schema.LoadFromDirectory(dir)
+}
+
+// Get retrieves a value from the facts
+func (r *ExprRegistry) Get(path string) (interface{}, bool) {
+	return r.schema.Get(path)
+}
+
+// GetWithType retrieves a value and its type information
+func (r *ExprRegistry) GetWithType(path string) (interface{}, string, bool) {
+	return r.schema.GetWithType(path)
+}
+
+// EvaluateExpr evaluates an expression using the facts
+func (r *ExprRegistry) EvaluateExpr(expr string) (interface{}, error) {
+	return r.schema.EvaluateExpr(expr)
+}
+
+// EvaluateExprBool evaluates an expression that returns a boolean
+func (r *ExprRegistry) EvaluateExprBool(expr string) (bool, error) {
+	return r.schema.EvaluateExprBool(expr)
+}
+
+// TypeCheckExpr type-checks an expression
+func (r *ExprRegistry) TypeCheckExpr(expr string) error {
+	return r.schema.TypeCheckExpr(expr)
+}
+
+// GetFactProvider returns the schema as a FactProvider
+func (r *ExprRegistry) GetFactProvider() pathutil.FactProvider {
+	return r.schema.AsFactProvider()
+}
+
+// RegisterType registers a type for a path
+func (r *ExprRegistry) RegisterType(path string, typeName string) {
+	r.schema.RegisterType(path, typeName)
+}
+
+// Backwards compatibility functions for transitional purposes
+
+// SchemaRegistry is maintained for backward compatibility
+type SchemaRegistry struct {
+	*ExprRegistry
+}
+
+// NewSchemaRegistry creates a compatibility wrapper around ExprRegistry
+func NewSchemaRegistry(typeSystem *types.TypeSystem) *SchemaRegistry {
+	return &SchemaRegistry{
+		ExprRegistry: NewExprRegistry(typeSystem),
 	}
-
-	for _, path := range files {
-		// Skip directories
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
-			continue
-		}
-
-		// Try to load with each registered loader
-		loaded := false
-		for _, loader := range sr.loaders {
-			if loader.CanLoad(path) {
-				if err := loader.Load(path, sr.typeSystem); err != nil {
-					return fmt.Errorf("loading schema file %s: %w", path, err)
-				}
-				loaded = true
-				break
-			}
-		}
-
-		if !loaded {
-			// Skip files that no loader can handle
-			continue
-		}
-	}
-
-	return nil
 }
