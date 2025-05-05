@@ -2,6 +2,7 @@ package pathutil
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/expr-lang/expr"
@@ -268,4 +269,102 @@ func CreateStructFromJSON(jsonData []byte) (interface{}, error) {
 func CreateStructFromProto(protoMsg interface{}) (interface{}, error) {
 	// In a real implementation, you would convert the proto message to a Go struct
 	return nil, fmt.Errorf("not implemented")
+}
+
+// GetData returns a copy of the internal data map
+func (f *ExprFacts) GetData() map[string]interface{} {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	// Create a copy to avoid direct modification
+	dataCopy := make(map[string]interface{})
+	for k, v := range f.data {
+		dataCopy[k] = v
+	}
+
+	return dataCopy
+}
+
+// MergeFacts merges data from another ExprFacts instance
+func (f *ExprFacts) MergeFacts(other *ExprFacts) {
+	if other == nil {
+		return
+	}
+
+	other.mu.RLock()
+	otherData := other.GetData()
+	other.mu.RUnlock()
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Merge data
+	for k, v := range otherData {
+		f.data[k] = v
+	}
+
+	// Clear cache since data structure changed
+	f.exprCache = make(map[string]*vm.Program)
+}
+
+// EvaluateExprWithEnv evaluates an expression with a custom environment
+func (f *ExprFacts) EvaluateExprWithEnv(expression string, env map[string]interface{}) (interface{}, error) {
+	// Compile with the provided environment
+	program, err := expr.Compile(expression, expr.Env(env))
+	if err != nil {
+		return nil, fmt.Errorf("compiling expression with env: %w", err)
+	}
+
+	// Run the expression with the environment
+	result, err := expr.Run(program, env)
+	if err != nil {
+		return nil, fmt.Errorf("running expression with env: %w", err)
+	}
+
+	return result, nil
+}
+
+// EvaluateWithFilters evaluates an expression with additional filter functions
+func (f *ExprFacts) EvaluateWithFilters(expression string, filters map[string]interface{}) (interface{}, error) {
+	// Combine data with filters
+	env := make(map[string]interface{})
+
+	f.mu.RLock()
+	for k, v := range f.data {
+		env[k] = v
+	}
+	f.mu.RUnlock()
+
+	// Add filters
+	for k, v := range filters {
+		env[k] = v
+	}
+
+	// Compile and run
+	program, err := expr.Compile(expression, expr.Env(env))
+	if err != nil {
+		return nil, fmt.Errorf("compiling expression with filters: %w", err)
+	}
+
+	result, err := expr.Run(program, env)
+	if err != nil {
+		return nil, fmt.Errorf("running expression with filters: %w", err)
+	}
+
+	return result, nil
+}
+
+// HasPathWithPrefix checks if any paths exist with the given prefix
+func (f *ExprFacts) HasPathWithPrefix(prefix string) bool {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	// Look for any keys that start with the prefix
+	for key := range f.data {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+
+	return false
 }

@@ -142,6 +142,13 @@ func NewObjectType() *Type {
 	}
 }
 
+// NewAnyType creates a type that can hold any value
+func NewAnyType() *Type {
+	return &Type{
+		PrimType: TypeUnknown,
+	}
+}
+
 // MapKeyType returns the key type of a map
 func (t *Type) MapKeyType() *Type {
 	if t.PrimType != TypeMap || t.Properties == nil {

@@ -1,6 +1,10 @@
-# Effectus Rules Engine
+# Effectus — Typed, Deterministic Rule Engine
 
-Effectus is a strongly-typed, mathematically-sound rules engine with two dialects:
+*Production-grade effects without production-size headaches*
+
+## ✨ What is Effectus?
+
+Effectus is a strongly-typed, mathematically-sound rules engine that turns live data (Facts) into safe, idempotent side-effects (Effects). It offers two dialects:
 
 - **List Rules** (.eff) - Simple, parallelizable rule sets for most use cases
 - **Flow Rules** (.effx) - More powerful, sequential rules with variable binding
@@ -19,18 +23,19 @@ Effectus is built on solid mathematical foundations:
 - Flow rules are based on **free monads**
 - See the [docs/theory](docs/theory) directory for details
 
-## Project Structure
+## Key Features
 
-```
-effectus-go/
-├── ast/            ← combined grammar (rule | flow)
-├── list/           ← list rule compiler
-├── flow/           ← flow rule compiler
-├── schema/         ← protobuf descriptors
-└── cmd/            ← CLI tools
-    ├── effectusc/  ← compiler
-    └── effectusd/  ← daemon
-```
+| Feature |
+|---------|
+| Strongly-typed Facts & Verbs (Protobuf) |
+| Two DSLs – `*.eff` (simple lists) • `*.effx` (data-flow) |
+| Temporal guards – `within 5m`, `since "2025-05-01"` |
+| Capability × Property grid → auto-locking & idempotency |
+| Plug-in verbs (Go / Rust / WASM) |
+| Hot-reload bundles from **OCI**, **ConfigMap**, **Postgres** or **FS** |
+| Saga rollback with inverse verbs |
+| Multi-tenant isolation & PII redaction |
+| CLI, VS-Code extension, WASM linter, Prometheus metrics |
 
 ## Example Rules
 
@@ -70,138 +75,12 @@ flow "MATERIAL_RESERVATION" priority 5 {
 }
 ```
 
-## CLI Usage
+### Named Parameter Syntax
 
-```bash
-# Compile a list rule
-effectusc list path/to/rule.eff
-
-# Compile a flow rule
-effectusc flow path/to/rule.effx
-
-# Lint rules
-effectusc lint path/to/rules/
-
-# Run rules against facts
-effectusc run --mode=list path/to/rule.eff < facts.json
-effectusc run --mode=flow path/to/rule.effx < facts.json
-```
-
-## Getting Started
-
-1. Clone the repository
-2. Build the CLI tool: `go build -o effectusc ./cmd/effectusc`
-3. Create your first rule file
-4. Compile it: `./effectusc list your_rule.eff`
-
-## Documentation
-
-- [Basic Theory](docs/theory/basic.md) - Core concepts and type-theoretic foundation
-- [Appendix](docs/theory/appendix.md) - Formal mathematical proofs
-- [Simplified Appendix](docs/theory/appendix_simple.md) - More accessible explanation
-
-# Effectus — Typed, Deterministic Rule Engine  
-
-*Production-grade effects without production-size headaches*
-
----
-
-## ✨ What is it?  
-
-Effectus lets you write **small, readable rule files** that turn live data (Facts) into **safe, idempotent side-effects** (Effects).
-
-| ✅ | Feature |
-|----|---------|
-| | Strongly-typed Facts & Verbs (Protobuf) |
-| | Two DSLs – `*.eff` (simple lists) • `*.effx` (data-flow) |
-| | Temporal guards – `within 5m`, `since "2025-05-01"` |
-| | Capability × Property grid → auto-locking & idempotency |
-| | Plug-in verbs (Go / Rust / WASM) |
-| | Hot-reload bundles from **OCI**, **ConfigMap**, **Postgres** or **FS** |
-| | Saga rollback with inverse verbs |
-| | Multi-tenant isolation & PII redaction |
-| | CLI, VS-Code extension, WASM linter, Prometheus metrics |
-
----
-
-## 🗺️ Repo layout
-
-```
-effectus/              ← core engine + CLI
-factory-rules/         ← your domain repo
-├─ proto/              ← Facts & extra Verb rows
-├─ rules/              ← .eff / .effx files
-├─ tests/              ← golden fixtures
-├─ effectus.yaml       ← feature toggles (temporal, saga, …)
-└─ Makefile            ← buf · lint · test · bundle
-```
-
----
-
-## 🚀 Quick start
-
-```bash
-# 1. add a fact schema
-protoc --buf_out=. proto/facts/task/v1/task.proto
-
-# 2. write a rule
-cat > rules/task/late.eff <<'EOF'
-rule "Late Task" {
-  when { task.slack_min < 0 within 10m }
-  then { escalate_late_job task_id:$task.id }
-}
-EOF
-
-# 3. lint & compile
-effectusc list rules/**/*.eff -o build/task.elist.json
-
-# 4. run locally
-cat examples/fact.json | effectus run --spec build/task.elist.json
-```
-
----
-
-## 🔌 Extending
-
-I want to… | Do this
---- | ---
-Add fact field | edit `proto/facts/*.proto` → `buf generate` → `effectusc lint`
-Add new verb | add row in `proto/verbs/*.proto` → implement handler (Go / Rust / WASM)
-Write rule | create `.eff` / `.effx` file, PR; CI lints & tests
-Ship bundle | `effectus-bundle push ghcr.io/acme/task:v1.2`
-Pull bundle | `set loader yaml kind=oci & ref=ghcr.io/acme`
-
-
----
-
-## 📈 Project timeline
-
-| Milestone | Target tag | Deliverables |
-|-----------|------------|--------------|
-| M-0 Core lists | v0.1 | .eff parser, List engine, Go CLI |
-| M-1 Flows | v0.2 | .effx with -> binds |
-| M-2 Temporal mix-in | v0.3 | within / since / not before |
-| M-3 Runtime operator | v0.5 | Redis locks, idempotency, saga |
-| M-4 Adapters | v0.6 | OCI + ConfigMap + Postgres + FS |
-| M-5 Observability | v0.7 | Prometheus metrics, struct logs |
-| M-6 Multi-tenant + PII | v0.8 | tenant_id, redaction masks |
-| M-7 WASM & UI | v1.0 | WASM linter, VS-Code ext, React UI |
-
-(Every minor bump is backwards-compatible for old rules.)
-
----
-
-## 📨 Need help?
-	•	Slack #effectus-help
-	•	Docs https://docs.effectus.io
-	•	Issues https://github.com/effectus/effectus
-
-## New Named Parameter Syntax
-
-Effectus now supports a cleaner step syntax with named parameters and variable references:
+Effectus supports a cleaner step syntax with named parameters and variable references:
 
 ```effx
-flow "STANDARD MILL" priority 5 {
+flow "STANDARD_MILL" priority 5 {
     when {
         customer.code   == "ABC"
         part.tolerance  <= 0.0005
@@ -219,7 +98,110 @@ flow "STANDARD MILL" priority 5 {
 }
 ```
 
-## Overview
+## Project Structure
 
-Effectus is a declarative rule engine...
+```
+effectus-go/
+├── ast/            ← combined grammar (rule | flow)
+├── list/           ← list rule compiler
+├── flow/           ← flow rule compiler
+├── schema/         ← protobuf descriptors
+└── cmd/            ← CLI tools
+    ├── effectusc/  ← compiler
+    └── effectusd/  ← daemon
+```
+
+## Repository Layout
+
+```
+effectus/              ← core engine + CLI
+factory-rules/         ← your domain repo
+├─ proto/              ← Facts & extra Verb rows
+├─ rules/              ← .eff / .effx files
+├─ tests/              ← golden fixtures
+├─ effectus.yaml       ← feature toggles (temporal, saga, …)
+└─ Makefile            ← buf · lint · test · bundle
+```
+
+## CLI Usage
+
+```bash
+# Compile a list rule
+effectusc list path/to/rule.eff
+
+# Compile a flow rule
+effectusc flow path/to/rule.effx
+
+# Lint rules
+effectusc lint path/to/rules/
+
+# Run rules against facts
+effectusc run --mode=list path/to/rule.eff < facts.json
+effectusc run --mode=flow path/to/rule.effx < facts.json
+```
+
+## Quick Start
+
+```bash
+# 1. Add a fact schema
+protoc --buf_out=. proto/facts/task/v1/task.proto
+
+# 2. Write a rule
+cat > rules/task/late.eff <<'EOF'
+rule "Late Task" {
+  when { task.slack_min < 0 within 10m }
+  then { escalate_late_job task_id:$task.id }
+}
+EOF
+
+# 3. Lint & compile
+effectusc list rules/**/*.eff -o build/task.elist.json
+
+# 4. Run locally
+cat examples/fact.json | effectus run --spec build/task.elist.json
+```
+
+## Extending Effectus
+
+| I want to… | Do this |
+|------------|---------|
+| Add fact field | edit `proto/facts/*.proto` → `buf generate` → `effectusc lint` |
+| Add new verb | add row in `proto/verbs/*.proto` → implement handler (Go / Rust / WASM) |
+| Write rule | create `.eff` / `.effx` file, PR; CI lints & tests |
+| Ship bundle | `effectus-bundle push ghcr.io/acme/task:v1.2` |
+| Pull bundle | `set loader yaml kind=oci & ref=ghcr.io/acme` |
+
+## Project Timeline
+
+| Milestone | Target tag | Deliverables |
+|-----------|------------|--------------|
+| M-0 Core lists | v0.1 | .eff parser, List engine, Go CLI |
+| M-1 Flows | v0.2 | .effx with -> binds |
+| M-2 Temporal mix-in | v0.3 | within / since / not before |
+| M-3 Runtime operator | v0.5 | Redis locks, idempotency, saga |
+| M-4 Adapters | v0.6 | OCI + ConfigMap + Postgres + FS |
+| M-5 Observability | v0.7 | Prometheus metrics, struct logs |
+| M-6 Multi-tenant + PII | v0.8 | tenant_id, redaction masks |
+| M-7 WASM & UI | v1.0 | WASM linter, VS-Code ext, React UI |
+
+(Every minor bump is backwards-compatible for old rules.)
+
+## Documentation
+
+- [Basic Theory](docs/theory/basic.md) - Core concepts and type-theoretic foundation
+- [Appendix](docs/theory/appendix.md) - Formal mathematical proofs
+- [Simplified Appendix](docs/theory/appendix_simple.md) - More accessible explanation
+
+## Getting Started
+
+1. Clone the repository
+2. Build the CLI tool: `go build -o effectusc ./cmd/effectusc`
+3. Create your first rule file
+4. Compile it: `./effectusc list your_rule.eff`
+
+## Need Help?
+
+- Slack: #effectus-help
+- Docs: https://docs.effectus.io
+- Issues: https://github.com/effectus/effectus
 

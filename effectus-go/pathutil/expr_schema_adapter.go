@@ -3,6 +3,7 @@ package pathutil
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 
 	"github.com/expr-lang/expr"
@@ -290,4 +291,163 @@ func NewExprFactsFromData(data interface{}) *ExprFacts {
 // GetUnderlyingFacts returns the underlying ExprFacts instance
 func (t *TypedExprFacts) GetUnderlyingFacts() *ExprFacts {
 	return t.facts
+}
+
+// MergeTypedFacts merges data from another TypedExprFacts instance
+func (t *TypedExprFacts) MergeTypedFacts(other *TypedExprFacts) {
+	if other == nil {
+		return
+	}
+
+	// Merge the underlying facts
+	t.facts.MergeFacts(other.facts)
+
+	// Merge type information
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	for path, typeName := range other.typeInfo {
+		t.typeInfo[path] = typeName
+	}
+
+	// Rebuild environment
+	t.environment = createTypeEnv(t.facts.GetData())
+
+	// Clear cache
+	t.exprTypeCache = make(map[string]reflect.Type)
+}
+
+// Validate checks if a value matches the expected type for a path
+func (t *TypedExprFacts) Validate(path string, value interface{}) (bool, error) {
+	// Get the expected type
+	expectedType := t.GetPathType(path)
+	if expectedType == nil {
+		// No type information available, can't validate
+		return true, nil
+	}
+
+	// Check if value is nil
+	if value == nil {
+		// Nil is only valid for certain types
+		return expectedType.Kind() == reflect.Ptr || expectedType.Kind() == reflect.Interface || expectedType.Kind() == reflect.Map || expectedType.Kind() == reflect.Slice, nil
+	}
+
+	// Get actual type
+	actualType := reflect.TypeOf(value)
+
+	// Special case for numeric types (Go is strict about number types)
+	if isNumeric(expectedType) && isNumeric(actualType) {
+		return true, nil
+	}
+
+	// Check assignability
+	if !actualType.AssignableTo(expectedType) {
+		return false, fmt.Errorf("type mismatch for path %s: expected %s, got %s", path, expectedType, actualType)
+	}
+
+	return true, nil
+}
+
+// isNumeric checks if a type is a numeric type
+func isNumeric(t reflect.Type) bool {
+	if t == nil {
+		return false
+	}
+
+	switch t.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	default:
+		return false
+	}
+}
+
+// GetPathsByPrefix returns all paths that start with the given prefix
+func (t *TypedExprFacts) GetPathsByPrefix(prefix string) []string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	var paths []string
+	for path := range t.typeInfo {
+		if strings.HasPrefix(path, prefix) {
+			paths = append(paths, path)
+		}
+	}
+
+	return paths
+}
+
+// InferType infers the type of an expression result
+func (t *TypedExprFacts) InferType(expression string) (reflect.Type, error) {
+	// Check the cache first
+	t.mu.RLock()
+	cachedType, hasCached := t.exprTypeCache[expression]
+	t.mu.RUnlock()
+
+	if hasCached {
+		return cachedType, nil
+	}
+
+	// Evaluate the expression
+	value, err := t.facts.EvaluateExpr(expression)
+	if err != nil {
+		return nil, fmt.Errorf("evaluating expression for type inference: %w", err)
+	}
+
+	var resultType reflect.Type
+	if value != nil {
+		resultType = reflect.TypeOf(value)
+
+		// Cache the type
+		t.mu.Lock()
+		t.exprTypeCache[expression] = resultType
+		t.mu.Unlock()
+	}
+
+	return resultType, nil
+}
+
+// ValidateExpression checks if an expression is valid and returns a specific type
+func (t *TypedExprFacts) ValidateExpression(expression string, expectedType reflect.Type) (bool, error) {
+	// Infer the expression type
+	exprType, err := t.InferType(expression)
+	if err != nil {
+		return false, err
+	}
+
+	// If we couldn't infer a type (e.g., expression returns nil)
+	if exprType == nil {
+		return expectedType == nil || expectedType.Kind() == reflect.Interface, nil
+	}
+
+	// Special case for numeric types
+	if isNumeric(exprType) && isNumeric(expectedType) {
+		return true, nil
+	}
+
+	// Check if types are compatible
+	if !exprType.AssignableTo(expectedType) {
+		return false, fmt.Errorf("expression type mismatch: expected %s, got %s", expectedType, exprType)
+	}
+
+	return true, nil
+}
+
+// Update updates the fact data and refreshes type information
+func (t *TypedExprFacts) Update(data map[string]interface{}) {
+	// Update the underlying facts
+	t.facts.UpdateData(data)
+
+	// Rebuild environment and type info
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.environment = createTypeEnv(data)
+	t.typeInfo = make(map[string]string)
+	t.exprTypeCache = make(map[string]reflect.Type)
+
+	// Register types
+	t.RegisterNestedTypes()
 }
