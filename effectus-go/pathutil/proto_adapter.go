@@ -1,6 +1,7 @@
 package pathutil
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -9,7 +10,7 @@ import (
 
 // ProtoAdapter is an adapter for protocol buffer messages
 type ProtoAdapter struct {
-	provider *GjsonProvider
+	provider FactProvider
 }
 
 // NewProtoAdapter creates a new adapter for a protocol buffer message
@@ -25,8 +26,14 @@ func NewProtoAdapter(message proto.Message) (*ProtoAdapter, error) {
 		return nil, fmt.Errorf("failed to marshal protobuf message: %w", err)
 	}
 
-	// Create gjson provider
-	provider := NewGjsonProviderFromJSON(string(jsonBytes))
+	// Parse JSON into a map
+	var data map[string]interface{}
+	if err := json.Unmarshal(jsonBytes, &data); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON to map: %w", err)
+	}
+
+	// Create facts provider
+	provider := NewExprFacts(data)
 
 	return &ProtoAdapter{provider: provider}, nil
 }

@@ -1,4 +1,3 @@
-// Package pathutil provides simplified path-based data access using gjson
 package pathutil
 
 // FactProvider is an interface for accessing data through paths
