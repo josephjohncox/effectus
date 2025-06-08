@@ -1,207 +1,271 @@
 # Effectus — Typed, Deterministic Rule Engine
 
-*Production-grade effects without production-size headaches*
+*Production-grade rule execution with mathematical foundations*
 
 ## ✨ What is Effectus?
 
-Effectus is a strongly-typed, mathematically-sound rules engine that turns live data (Facts) into safe, idempotent side-effects (Effects). It offers two dialects:
+Effectus is a strongly-typed rule engine that transforms live data (Facts) into safe, deterministic actions (Effects). Built on category theory foundations, it provides **static validation** and **coherent execution flow** from extension loading through compilation to runtime.
 
-- **List Rules** (.eff) - Simple, parallelizable rule sets for most use cases
-- **Flow Rules** (.effx) - More powerful, sequential rules with variable binding
+### Key Features
 
-## Core Principles
+- **🔒 Static Validation**: All rules validated at compile-time, not runtime
+- **📊 Strongly Typed**: Facts and verbs defined with Protocol Buffers
+- **🏗️ Coherent Flow**: Load Extensions → Compile & Validate → Execute
+- **⚡ Multiple Executors**: Local, HTTP, gRPC, message queue execution
+- **🔄 Hot Reload**: Update rules without restarting services
+- **🔐 Capability System**: Fine-grained security and resource control
+- **📦 Bundle System**: Package and distribute via OCI registries
 
-1. **One syntax, one AST** — shared front-end code for both dialects
-2. **Two back-ends** — `list` (ordered slice of `Effect`) and `flow` (free-monad `Program[A]`)
-3. **Hard wall** — rule files compile to exactly one IR; no runtime branching
-4. **Opt-in mix-ins** — common snippets can be included in either dialect
-
-## Theoretical Foundation
-
-Effectus is built on solid mathematical foundations:
-- List rules are based on **free monoids**
-- Flow rules are based on **free monads**
-- See the [docs/theory](docs/theory) directory for details
-
-## Key Features
-
-| Feature |
-|---------|
-| Strongly-typed Facts & Verbs (Protobuf) |
-| Two DSLs – `*.eff` (simple lists) • `*.effx` (data-flow) |
-| Temporal guards – `within 5m`, `since "2025-05-01"` |
-| Capability × Property grid → auto-locking & idempotency |
-| Plug-in verbs (Go / Rust / WASM) |
-| Hot-reload bundles from **OCI**, **ConfigMap**, **Postgres** or **FS** |
-| Saga rollback with inverse verbs |
-| Multi-tenant isolation & PII redaction |
-| CLI, VS-Code extension, WASM linter, Prometheus metrics |
-
-## Example Rules
-
-### List Rule (.eff)
+## Core Architecture
 
 ```
-rule "BASIC_QUALITY_CHECK" priority 10 {
+Load Extensions → Compile & Validate → Execute
+     ↓                    ↓               ↓
+   Static            Type Checking    Executors
+   Dynamic           Dependencies     (Local/HTTP/gRPC)
+   OCI Bundles       Capabilities     Message Queues
+```
+
+## Quick Start
+
+### 1. Install Effectus
+
+```bash
+go install github.com/effectus/effectus-go/cmd/effectusc@latest
+go install github.com/effectus/effectus-go/cmd/effectusd@latest
+```
+
+### 2. Define Facts (Protocol Buffers)
+
+```protobuf
+// facts/customer/v1/customer.proto
+message Customer {
+  string code = 1;
+  string email = 2;
+  bool is_new = 3;
+}
+```
+
+### 3. Write Rules
+
+```go
+// Simple business rule example
+rule "welcome_new_customer" {
     when {
-        product.quality < 95
-        product.type == "critical"
+        customer.is_new == true
+        customer.email != ""
     }
     then {
-        Reject("Quality below threshold for critical part")
-        LogWarning("Quality check failed", { "quality": product.quality })
+        SendEmail(
+            to: customer.email,
+            subject: "Welcome!",
+            template: "welcome"
+        )
     }
 }
 ```
 
-### Flow Rule (.effx)
+### 4. Create Runtime
 
-```
-flow "MATERIAL_RESERVATION" priority 5 {
-    when {
-        order.status == "new"
-        order.type == "standard"
+```go
+package main
+
+import (
+    "github.com/effectus/effectus-go/runtime"
+    "github.com/effectus/effectus-go/loader"
+)
+
+func main() {
+    // Create runtime with coherent flow
+    rt := runtime.NewExecutionRuntime()
+    
+    // Register extensions (static or dynamic)
+    rt.RegisterExtensionLoader(staticLoader)
+    rt.RegisterExtensionLoader(dynamicLoader)
+    
+    // Compile and validate BEFORE starting daemon
+    if err := rt.CompileAndValidate(ctx); err != nil {
+        log.Fatal("Compilation failed:", err)
     }
-    steps {
-        reserveResult = ReserveMaterial(order.items) -> result
-        
-        // Use the result from previous step
-        if (result.success) {
-            UpdateOrderStatus(order.id, "materials_reserved")
-        } else {
-            Reject("Cannot reserve materials", { "reason": result.reason })
-        }
-    }
+    
+    // Execute rules
+    result, err := rt.ExecuteVerb(ctx, "SendEmail", args)
 }
 ```
 
-### Named Parameter Syntax
+## Architecture Overview
 
-Effectus supports a cleaner step syntax with named parameters and variable references:
+### Extension System
 
-```effx
-flow "STANDARD_MILL" priority 5 {
-    when {
-        customer.code   == "ABC"
-        part.tolerance  <= 0.0005
-    }
+**Multiple Loading Patterns**:
+- **Static**: Compile-time registration for Go code
+- **Dynamic**: Runtime loading from JSON, Protocol Buffers
+- **OCI Bundles**: Distributed packages with versioning
 
-    steps {
-        reserve_material qty:1 lot:"A1"                -> mat
-        allocate_machine group:"5AXIS" input:$mat      -> m
-        set_cut_params   machine:$m sfm:7000           -> p
-        generate_setup_sheet machine:$m params:$p      -> sheet
-        require_cert     type:"FAI"  doc:$sheet   
-        release_job      sheet:$sheet               -> job
-        schedule_inspection job:$job stage:"IP"
-    }
+### Compilation System
+
+**Static Validation Before Runtime**:
+- Type checking for all verbs and arguments
+- Dependency resolution and validation  
+- Capability verification and security checks
+- Execution plan optimization
+
+### Execution System
+
+**Coherent Executor Interface**:
+- **Local**: In-process execution
+- **HTTP**: Remote API calls with retry policies
+- **gRPC**: Typed remote procedure calls
+- **Message**: Queue-based async execution
+- **Mock**: Testing and development
+
+## Extension Examples
+
+### Static Extension
+
+```go
+// Register verbs at compile-time
+verbs := []loader.VerbDefinition{
+    {
+        Spec: &VerbSpec{
+            Name: "SendEmail",
+            ArgTypes: map[string]string{
+                "to": "string",
+                "subject": "string",
+            },
+            ReturnType: "bool",
+        },
+        Executor: &EmailExecutor{},
+    },
 }
+
+loader := loader.NewStaticVerbLoader("business", verbs)
+runtime.RegisterExtensionLoader(loader)
 ```
 
-## Project Structure
+### Dynamic Extension
 
-```
-effectus-go/
-├── ast/            ← combined grammar (rule | flow)
-├── list/           ← list rule compiler
-├── flow/           ← flow rule compiler
-├── schema/         ← protobuf descriptors
-└── cmd/            ← CLI tools
-    ├── effectusc/  ← compiler
-    └── effectusd/  ← daemon
-```
-
-## Repository Layout
-
-```
-effectus/              ← core engine + CLI
-factory-rules/         ← your domain repo
-├─ proto/              ← Facts & extra Verb rows
-├─ rules/              ← .eff / .effx files
-├─ tests/              ← golden fixtures
-├─ effectus.yaml       ← feature toggles (temporal, saga, …)
-└─ Makefile            ← buf · lint · test · bundle
+```json
+{
+  "name": "ExternalAPI",
+  "verbs": [
+    {
+      "name": "ValidateAccount", 
+      "argTypes": {"accountId": "string"},
+      "returnType": "ValidationResult",
+      "executorType": "http",
+      "executorConfig": {
+        "url": "https://api.validation.com/check",
+        "method": "POST",
+        "timeout": "5s"
+      }
+    }
+  ]
+}
 ```
 
 ## CLI Usage
 
 ```bash
-# Compile a list rule
-effectusc list path/to/rule.eff
+# Compile and validate rules
+effectusc compile rules/ --output compiled.json
 
-# Compile a flow rule
-effectusc flow path/to/rule.effx
+# Run with local bundle
+effectusd --bundle compiled.json
 
-# Lint rules
-effectusc lint path/to/rules/
+# Run with OCI registry
+effectusd --oci-ref ghcr.io/myorg/rules:v1.0.0
 
-# Run rules against facts
-effectusc run --mode=list path/to/rule.eff < facts.json
-effectusc run --mode=flow path/to/rule.effx < facts.json
+# Hot reload from registry
+effectusd --oci-ref ghcr.io/myorg/rules:latest --reload-interval 60s
 ```
 
-## Quick Start
+## Mathematical Foundations
 
-```bash
-# 1. Add a fact schema
-protoc --buf_out=. proto/facts/task/v1/task.proto
+Effectus is built on solid mathematical principles:
 
-# 2. Write a rule
-cat > rules/task/late.eff <<'EOF'
-rule "Late Task" {
-  when { task.slack_min < 0 within 10m }
-  then { escalate_late_job task_id:$task.id }
-}
-EOF
+- **List Rules**: Modeled as free monoids (sequential effects)
+- **Flow Rules**: Modeled as free monads (composable effects with branching)
+- **Type System**: Category-theoretic approach to type safety
+- **Capability System**: Lattice-based security model
 
-# 3. Lint & compile
-effectusc list rules/**/*.eff -o build/task.elist.json
+See [docs/theory/](docs/theory/) for detailed mathematical foundations.
 
-# 4. Run locally
-cat examples/fact.json | effectus run --spec build/task.elist.json
+## Project Structure
+
 ```
-
-## Extending Effectus
-
-| I want to… | Do this |
-|------------|---------|
-| Add fact field | edit `proto/facts/*.proto` → `buf generate` → `effectusc lint` |
-| Add new verb | add row in `proto/verbs/*.proto` → implement handler (Go / Rust / WASM) |
-| Write rule | create `.eff` / `.effx` file, PR; CI lints & tests |
-| Ship bundle | `effectus-bundle push ghcr.io/acme/task:v1.2` |
-| Pull bundle | `set loader yaml kind=oci & ref=ghcr.io/acme` |
-
-## Project Timeline
-
-| Milestone | Target tag | Deliverables |
-|-----------|------------|--------------|
-| M-0 Core lists | v0.1 | .eff parser, List engine, Go CLI |
-| M-1 Flows | v0.2 | .effx with -> binds |
-| M-2 Temporal mix-in | v0.3 | within / since / not before |
-| M-3 Runtime operator | v0.5 | Redis locks, idempotency, saga |
-| M-4 Adapters | v0.6 | OCI + ConfigMap + Postgres + FS |
-| M-5 Observability | v0.7 | Prometheus metrics, struct logs |
-| M-6 Multi-tenant + PII | v0.8 | tenant_id, redaction masks |
-| M-7 WASM & UI | v1.0 | WASM linter, VS-Code ext, React UI |
-
-(Every minor bump is backwards-compatible for old rules.)
+effectus-go/
+├── compiler/       ← Extension compilation & validation
+├── runtime/        ← Execution runtime with coherent flow  
+├── loader/         ← Extension loading (static/dynamic/OCI)
+├── schema/         ← Type system & registries
+├── cmd/
+│   ├── effectusc/  ← Compiler CLI
+│   └── effectusd/  ← Runtime daemon
+└── examples/       ← Usage examples
+```
 
 ## Documentation
 
-- [Basic Theory](docs/theory/basic.md) - Core concepts and type-theoretic foundation
-- [Appendix](docs/theory/appendix.md) - Formal mathematical proofs
-- [Simplified Appendix](docs/theory/appendix_simple.md) - More accessible explanation
+| Document | Purpose |
+|----------|---------|
+| [Architecture](docs/ARCHITECTURE.md) | High-level system design |
+| [Coherent Flow](docs/coherent_flow.md) | Extension → Compilation → Execution flow |
+| [Basics](docs/BASICS.md) | Core concepts: Facts, Verbs, Effects |
+| [Verb System](docs/VERB_SYSTEM.md) | Verb specifications and executors |
+| [Bundle System](docs/BUNDLE_SYSTEM.md) | Packaging and distribution |
+| [Commands](docs/COMMANDS.md) | CLI reference |
+| [Design](docs/design.md) | Comprehensive technical design |
+
+## Key Benefits
+
+### 🚫 **Fail-Fast Validation**
+- All errors caught before daemon starts
+- No runtime surprises from configuration issues
+- Clear error messages with suggestions
+
+### 🔧 **Flexible Execution**  
+- Same verb can run locally or remotely
+- Easy testing with mock executors
+- Support for distributed systems
+
+### ⚡ **Performance**
+- Optimized execution plans
+- Parallel execution support
+- Efficient dependency resolution
+
+### 🔐 **Security**
+- Capability-based access control
+- Static verification of permissions
+- Resource isolation and protection
 
 ## Getting Started
 
-1. Clone the repository
-2. Build the CLI tool: `go build -o effectusc ./cmd/effectusc`
-3. Create your first rule file
-4. Compile it: `./effectusc list your_rule.eff`
+1. **[Install Effectus](#1-install-effectus)**
+2. **Define your fact schemas** using Protocol Buffers
+3. **Write rules** expressing your business logic
+4. **Register extensions** (static or dynamic)
+5. **Compile and validate** before deployment
+6. **Run the daemon** to execute rules against live facts
 
-## Need Help?
+Check out [examples/coherent_flow/](examples/coherent_flow/) for a complete working example.
 
-- Slack: #effectus-help
-- Docs: https://docs.effectus.io
-- Issues: https://github.com/effectus/effectus
+## Development Status
+
+Effectus is under active development. Current focus areas:
+
+- ✅ Core execution engine and type system
+- ✅ Extension loading and compilation system  
+- ✅ Basic CLI tools and runtime daemon
+- 🚧 OCI bundle distribution system
+- 🚧 Advanced execution policies and saga compensation
+- 📋 Production monitoring and observability
+
+## Contributing
+
+We welcome contributions! Please see our contributing guidelines and feel free to open issues or pull requests.
+
+## License
+
+[MIT License](LICENSE) - see LICENSE file for details.
 

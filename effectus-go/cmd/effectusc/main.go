@@ -415,9 +415,8 @@ func defineCommands() {
 			fmt.Printf("Analyzing capabilities in %d file(s)\n", len(files))
 		}
 
-		// Create verb registry and register standard verbs
+		// Create verb registry (no standard verbs - users register their own)
 		registry := verb.NewVerbRegistry()
-		verb.RegisterStandardVerbs(registry)
 		verb.RegisterTestVerbs(registry)
 
 		// Create analyzer

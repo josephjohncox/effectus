@@ -1,8 +1,0 @@
-rule "TEST" priority 40 {
-    when {
-        test.value == "test"
-    }
-    then {
-        DoSomething(msg: test.value)
-    }
-} 

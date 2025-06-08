@@ -1,0 +1,52 @@
+version: v1
+managed:
+  enabled: true
+  go_package_prefix:
+    default: github.com/effectus/effectus-go/gen
+    except:
+      - buf.build/googleapis/googleapis
+      - buf.build/protocolbuffers/wellknowntypes
+plugins:
+  # Go generation
+  - plugin: buf.build/protocolbuffers/go
+    out: effectus-go/gen
+    opt:
+      - paths=source_relative
+  - plugin: buf.build/grpc/go
+    out: effectus-go/gen
+    opt:
+      - paths=source_relative
+
+  # Python generation
+  - plugin: buf.build/protocolbuffers/python
+    out: clients/python
+  - plugin: buf.build/grpc/python
+    out: clients/python
+
+  # TypeScript generation
+  - plugin: buf.build/bufbuild/es
+    out: clients/typescript
+    opt:
+      - target=ts
+  - plugin: buf.build/connectrpc/es
+    out: clients/typescript
+    opt:
+      - target=ts
+
+  # Java generation
+  - plugin: buf.build/protocolbuffers/java
+    out: clients/java
+  - plugin: buf.build/grpc/java
+    out: clients/java
+
+  # Rust generation (for future use)
+  - plugin: buf.build/community/neoeinstein-prost
+    out: clients/rust
+  - plugin: buf.build/community/neoeinstein-tonic
+    out: clients/rust
+
+  # Documentation generation
+  - plugin: buf.build/bufbuild/doc
+    out: docs/proto
+    opt:
+      - html,index.html

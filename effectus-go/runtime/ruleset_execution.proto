@@ -1,0 +1,206 @@
+syntax = "proto3";
+
+package effectus.runtime;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/effectus/effectus-go/runtime";
+
+// RulesetExecutionService provides gRPC interface for executing rulesets
+service RulesetExecutionService {
+  // ExecuteRuleset executes a ruleset with provided facts
+  rpc ExecuteRuleset(ExecutionRequest) returns (ExecutionResponse);
+  
+  // GetRulesetInfo returns information about a registered ruleset
+  rpc GetRulesetInfo(RulesetInfoRequest) returns (RulesetInfo);
+  
+  // ListRulesets returns all registered rulesets
+  rpc ListRulesets(ListRulesetsRequest) returns (ListRulesetsResponse);
+  
+  // RegisterRuleset dynamically registers a new ruleset
+  rpc RegisterRuleset(RegisterRulesetRequest) returns (RegisterRulesetResponse);
+  
+  // UnregisterRuleset removes a registered ruleset
+  rpc UnregisterRuleset(UnregisterRulesetRequest) returns (UnregisterRulesetResponse);
+  
+  // StreamExecution provides streaming execution for long-running rules
+  rpc StreamExecution(ExecutionRequest) returns (stream ExecutionUpdate);
+}
+
+// ExecutionRequest represents a request to execute rules
+message ExecutionRequest {
+  string ruleset_name = 1;
+  string version = 2;
+  google.protobuf.Any facts = 3;
+  ExecutionOptions options = 4;
+  string trace_id = 5;
+}
+
+// ExecutionOptions provides options for rule execution
+message ExecutionOptions {
+  bool dry_run = 1;
+  int32 max_effects = 2;
+  int32 timeout_seconds = 3;
+  bool enable_tracing = 4;
+  repeated string capability_filter = 5;
+}
+
+// ExecutionResponse represents the response from rule execution
+message ExecutionResponse {
+  bool success = 1;
+  repeated TypedEffect effects = 2;
+  string execution_id = 3;
+  google.protobuf.Timestamp duration = 4;
+  map<string, string> metadata = 5;
+  repeated string errors = 6;
+  repeated string warnings = 7;
+}
+
+// TypedEffect represents an effect with type information
+message TypedEffect {
+  string verb_name = 1;
+  google.protobuf.Any args = 2;
+  google.protobuf.Any result = 3;
+  google.protobuf.Timestamp timestamp = 4;
+  EffectStatus status = 5;
+}
+
+// EffectStatus represents the execution status of an effect
+enum EffectStatus {
+  EFFECT_STATUS_UNSPECIFIED = 0;
+  EFFECT_STATUS_PENDING = 1;
+  EFFECT_STATUS_EXECUTED = 2;
+  EFFECT_STATUS_FAILED = 3;
+  EFFECT_STATUS_SKIPPED = 4;
+  EFFECT_STATUS_RETRYING = 5;
+}
+
+// RulesetInfoRequest requests information about a ruleset
+message RulesetInfoRequest {
+  string ruleset_name = 1;
+}
+
+// RulesetInfo provides metadata about a ruleset
+message RulesetInfo {
+  string name = 1;
+  string version = 2;
+  string description = 3;
+  int32 rule_count = 4;
+  int32 verb_count = 5;
+  repeated string dependencies = 6;
+  repeated string capabilities = 7;
+  Schema fact_schema = 8;
+  map<string, string> metadata = 9;
+}
+
+// Schema represents type information for facts or effects
+message Schema {
+  string name = 1;
+  map<string, FieldType> fields = 2;
+  repeated string required = 3;
+  string description = 4;
+}
+
+// FieldType represents a field type in a schema
+message FieldType {
+  string type = 1; // "string", "int32", "float64", "bool", "message", "repeated"
+  string message_type = 2; // For message types
+  bool required = 3;
+  string description = 4;
+}
+
+// ListRulesetsRequest requests all registered rulesets
+message ListRulesetsRequest {
+  // Empty for now, could add filtering options later
+}
+
+// ListRulesetsResponse returns all registered rulesets
+message ListRulesetsResponse {
+  repeated RulesetInfo rulesets = 1;
+}
+
+// RegisterRulesetRequest registers a new ruleset
+message RegisterRulesetRequest {
+  CompiledRuleset ruleset = 1;
+}
+
+// RegisterRulesetResponse confirms ruleset registration
+message RegisterRulesetResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// UnregisterRulesetRequest removes a ruleset
+message UnregisterRulesetRequest {
+  string ruleset_name = 1;
+}
+
+// UnregisterRulesetResponse confirms ruleset removal
+message UnregisterRulesetResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// CompiledRuleset represents a compiled and validated ruleset
+message CompiledRuleset {
+  string name = 1;
+  string version = 2;
+  string description = 3;
+  Schema fact_schema = 4;
+  map<string, Schema> effect_schemas = 5;
+  repeated CompiledRule rules = 6;
+  repeated string dependencies = 7;
+  repeated string capabilities = 8;
+  map<string, string> metadata = 9;
+}
+
+// CompiledRule represents a compiled rule within a ruleset
+message CompiledRule {
+  string name = 1;
+  RuleType type = 2;
+  repeated CompiledPredicate predicates = 3;
+  repeated CompiledEffect effects = 4;
+  int32 priority = 5;
+  string description = 6;
+}
+
+// RuleType defines the type of rule
+enum RuleType {
+  RULE_TYPE_UNSPECIFIED = 0;
+  RULE_TYPE_LIST = 1;
+  RULE_TYPE_FLOW = 2;
+}
+
+// CompiledPredicate represents a compiled predicate
+message CompiledPredicate {
+  string path = 1;
+  string operator = 2;
+  google.protobuf.Any value = 3;
+}
+
+// CompiledEffect represents a compiled effect
+message CompiledEffect {
+  string verb_name = 1;
+  map<string, google.protobuf.Any> args = 2;
+}
+
+// ExecutionUpdate provides streaming updates during execution
+message ExecutionUpdate {
+  string execution_id = 1;
+  ExecutionPhase phase = 2;
+  TypedEffect current_effect = 3;
+  int32 progress_percent = 4;
+  string message = 5;
+  google.protobuf.Timestamp timestamp = 6;
+}
+
+// ExecutionPhase represents the current phase of execution
+enum ExecutionPhase {
+  EXECUTION_PHASE_UNSPECIFIED = 0;
+  EXECUTION_PHASE_VALIDATION = 1;
+  EXECUTION_PHASE_COMPILATION = 2;
+  EXECUTION_PHASE_EXECUTION = 3;
+  EXECUTION_PHASE_COMPLETION = 4;
+  EXECUTION_PHASE_ERROR = 5;
+} 

@@ -1,0 +1,345 @@
+syntax = "proto3";
+
+package effectus.v1;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1";
+
+// RulesetExecutionService provides the core gRPC interface for rule execution
+service RulesetExecutionService {
+  // ExecuteRuleset executes a ruleset with provided facts
+  rpc ExecuteRuleset(ExecutionRequest) returns (ExecutionResponse);
+  
+  // GetRulesetInfo returns information about a registered ruleset
+  rpc GetRulesetInfo(RulesetInfoRequest) returns (RulesetInfo);
+  
+  // ListRulesets returns all registered rulesets
+  rpc ListRulesets(ListRulesetsRequest) returns (ListRulesetsResponse);
+  
+  // RegisterRuleset dynamically registers a new ruleset
+  rpc RegisterRuleset(RegisterRulesetRequest) returns (RegisterRulesetResponse);
+  
+  // UnregisterRuleset removes a registered ruleset
+  rpc UnregisterRuleset(UnregisterRulesetRequest) returns (UnregisterRulesetResponse);
+  
+  // StreamExecution provides streaming execution for long-running rules
+  rpc StreamExecution(ExecutionRequest) returns (stream ExecutionUpdate);
+  
+  // ValidateSchema validates fact or effect schemas
+  rpc ValidateSchema(ValidateSchemaRequest) returns (ValidateSchemaResponse);
+  
+  // GetSchemaVersion returns version information for schemas
+  rpc GetSchemaVersion(SchemaVersionRequest) returns (SchemaVersionResponse);
+}
+
+// ExecutionRequest represents a request to execute rules
+message ExecutionRequest {
+  string ruleset_name = 1;
+  string version = 2;
+  google.protobuf.Any facts = 3;
+  ExecutionOptions options = 4;
+  string trace_id = 5;
+  // Schema validation options
+  SchemaValidation schema_validation = 6;
+}
+
+// ExecutionOptions provides options for rule execution
+message ExecutionOptions {
+  bool dry_run = 1;
+  int32 max_effects = 2;
+  int32 timeout_seconds = 3;
+  bool enable_tracing = 4;
+  repeated string capability_filter = 5;
+  // Buf-managed schema version constraints
+  string min_schema_version = 6;
+  string max_schema_version = 7;
+}
+
+// SchemaValidation controls schema validation behavior
+message SchemaValidation {
+  bool strict_mode = 1;
+  bool allow_unknown_fields = 2;
+  bool validate_required_fields = 3;
+  repeated string ignored_fields = 4;
+}
+
+// ExecutionResponse represents the response from rule execution
+message ExecutionResponse {
+  bool success = 1;
+  repeated TypedEffect effects = 2;
+  string execution_id = 3;
+  google.protobuf.Timestamp start_time = 4;
+  google.protobuf.Timestamp end_time = 5;
+  map<string, string> metadata = 6;
+  repeated string errors = 7;
+  repeated string warnings = 8;
+  // Schema information used in execution
+  SchemaInfo schema_info = 9;
+}
+
+// TypedEffect represents an effect with full type information
+message TypedEffect {
+  string verb_name = 1;
+  google.protobuf.Any args = 2;
+  google.protobuf.Any result = 3;
+  google.protobuf.Timestamp timestamp = 4;
+  EffectStatus status = 5;
+  // Schema version used for this effect
+  string schema_version = 6;
+  // Capability required for this effect
+  string capability = 7;
+}
+
+// EffectStatus represents the execution status of an effect
+enum EffectStatus {
+  EFFECT_STATUS_UNSPECIFIED = 0;
+  EFFECT_STATUS_PENDING = 1;
+  EFFECT_STATUS_EXECUTED = 2;
+  EFFECT_STATUS_FAILED = 3;
+  EFFECT_STATUS_SKIPPED = 4;
+  EFFECT_STATUS_RETRYING = 5;
+  EFFECT_STATUS_COMPENSATING = 6;
+}
+
+// SchemaInfo provides information about schemas used
+message SchemaInfo {
+  string fact_schema_version = 1;
+  map<string, string> effect_schema_versions = 2;
+  string verb_interface_version = 3;
+  repeated string breaking_changes = 4;
+}
+
+// RulesetInfoRequest requests information about a ruleset
+message RulesetInfoRequest {
+  string ruleset_name = 1;
+  string version = 2; // Optional: specific version
+}
+
+// RulesetInfo provides comprehensive metadata about a ruleset
+message RulesetInfo {
+  string name = 1;
+  string version = 2;
+  string description = 3;
+  int32 rule_count = 4;
+  int32 verb_count = 5;
+  repeated string dependencies = 6;
+  repeated string capabilities = 7;
+  Schema fact_schema = 8;
+  map<string, Schema> effect_schemas = 9;
+  map<string, string> metadata = 10;
+  // Buf-managed schema versions
+  SchemaVersionInfo schema_versions = 11;
+}
+
+// Schema represents type information managed by Buf
+message Schema {
+  string name = 1;
+  string version = 2; // Buf schema version
+  map<string, FieldType> fields = 3;
+  repeated string required = 4;
+  string description = 5;
+  // Buf schema registry information
+  string buf_module = 6;
+  string buf_commit = 7;
+}
+
+// FieldType represents a field type in a schema
+message FieldType {
+  string type = 1; // "string", "int32", "float64", "bool", "message", "repeated"
+  string message_type = 2; // For message types
+  bool required = 3;
+  string description = 4;
+  // Validation rules
+  repeated ValidationRule validation_rules = 5;
+}
+
+// ValidationRule defines validation constraints
+message ValidationRule {
+  string rule_type = 1; // "range", "pattern", "enum", "length"
+  repeated string values = 2;
+  string error_message = 3;
+}
+
+// SchemaVersionInfo tracks Buf-managed schema versions
+message SchemaVersionInfo {
+  string fact_schema_version = 1;
+  string verb_interface_version = 2;
+  map<string, string> effect_schema_versions = 3;
+  string ruleset_schema_version = 4;
+  // Compatibility information
+  repeated string compatible_versions = 5;
+  repeated string breaking_changes_since = 6;
+}
+
+// ListRulesetsRequest requests all registered rulesets
+message ListRulesetsRequest {
+  // Filtering options
+  string name_filter = 1;
+  string version_filter = 2;
+  repeated string capability_filter = 3;
+  // Schema version constraints
+  string min_schema_version = 4;
+  string max_schema_version = 5;
+}
+
+// ListRulesetsResponse returns all registered rulesets
+message ListRulesetsResponse {
+  repeated RulesetInfo rulesets = 1;
+  // Schema registry information
+  SchemaRegistryInfo schema_registry = 2;
+}
+
+// SchemaRegistryInfo provides information about the Buf schema registry
+message SchemaRegistryInfo {
+  string registry_url = 1;
+  string module_name = 2;
+  string current_commit = 3;
+  repeated string available_versions = 4;
+}
+
+// RegisterRulesetRequest registers a new ruleset
+message RegisterRulesetRequest {
+  CompiledRuleset ruleset = 1;
+  // Schema validation options
+  bool validate_schema_compatibility = 2;
+  bool force_schema_update = 3;
+}
+
+// RegisterRulesetResponse confirms ruleset registration
+message RegisterRulesetResponse {
+  bool success = 1;
+  string message = 2;
+  // Schema validation results
+  repeated string schema_warnings = 3;
+  string assigned_version = 4;
+}
+
+// UnregisterRulesetRequest removes a ruleset
+message UnregisterRulesetRequest {
+  string ruleset_name = 1;
+  string version = 2;
+  bool force = 3; // Force removal even if dependencies exist
+}
+
+// UnregisterRulesetResponse confirms ruleset removal
+message UnregisterRulesetResponse {
+  bool success = 1;
+  string message = 2;
+  repeated string affected_rulesets = 3;
+}
+
+// CompiledRuleset represents a compiled and validated ruleset
+message CompiledRuleset {
+  string name = 1;
+  string version = 2;
+  string description = 3;
+  Schema fact_schema = 4;
+  map<string, Schema> effect_schemas = 5;
+  repeated CompiledRule rules = 6;
+  repeated string dependencies = 7;
+  repeated string capabilities = 8;
+  map<string, string> metadata = 9;
+  // Schema versioning information
+  SchemaVersionInfo schema_versions = 10;
+}
+
+// CompiledRule represents a compiled rule within a ruleset
+message CompiledRule {
+  string name = 1;
+  RuleType type = 2;
+  repeated CompiledPredicate predicates = 3;
+  repeated CompiledEffect effects = 4;
+  int32 priority = 5;
+  string description = 6;
+  // Schema compatibility requirements
+  string min_schema_version = 7;
+}
+
+// RuleType defines the type of rule
+enum RuleType {
+  RULE_TYPE_UNSPECIFIED = 0;
+  RULE_TYPE_LIST = 1;
+  RULE_TYPE_FLOW = 2;
+}
+
+// CompiledPredicate represents a compiled predicate
+message CompiledPredicate {
+  string path = 1;
+  string operator = 2;
+  google.protobuf.Any value = 3;
+  // Schema validation for the predicate
+  string field_schema_version = 4;
+}
+
+// CompiledEffect represents a compiled effect
+message CompiledEffect {
+  string verb_name = 1;
+  map<string, google.protobuf.Any> args = 2;
+  // Schema information
+  string effect_schema_version = 3;
+  string verb_interface_version = 4;
+}
+
+// ExecutionUpdate provides streaming updates during execution
+message ExecutionUpdate {
+  string execution_id = 1;
+  ExecutionPhase phase = 2;
+  TypedEffect current_effect = 3;
+  int32 progress_percent = 4;
+  string message = 5;
+  google.protobuf.Timestamp timestamp = 6;
+  // Schema compatibility status
+  SchemaCompatibilityStatus schema_status = 7;
+}
+
+// ExecutionPhase represents the current phase of execution
+enum ExecutionPhase {
+  EXECUTION_PHASE_UNSPECIFIED = 0;
+  EXECUTION_PHASE_VALIDATION = 1;
+  EXECUTION_PHASE_SCHEMA_CHECK = 2;
+  EXECUTION_PHASE_COMPILATION = 3;
+  EXECUTION_PHASE_EXECUTION = 4;
+  EXECUTION_PHASE_COMPLETION = 5;
+  EXECUTION_PHASE_ERROR = 6;
+}
+
+// SchemaCompatibilityStatus tracks schema compatibility during execution
+message SchemaCompatibilityStatus {
+  bool compatible = 1;
+  repeated string warnings = 2;
+  repeated string errors = 3;
+  string recommended_action = 4;
+}
+
+// ValidateSchemaRequest validates schemas against the registry
+message ValidateSchemaRequest {
+  string schema_name = 1;
+  string schema_version = 2;
+  google.protobuf.Any schema_definition = 3;
+  bool check_breaking_changes = 4;
+}
+
+// ValidateSchemaResponse returns schema validation results
+message ValidateSchemaResponse {
+  bool valid = 1;
+  repeated string errors = 2;
+  repeated string warnings = 3;
+  repeated string breaking_changes = 4;
+  string recommended_version = 5;
+}
+
+// SchemaVersionRequest requests schema version information
+message SchemaVersionRequest {
+  string schema_name = 1;
+  string module_name = 2;
+}
+
+// SchemaVersionResponse returns schema version information
+message SchemaVersionResponse {
+  string current_version = 1;
+  repeated string available_versions = 2;
+  string latest_stable_version = 3;
+  map<string, string> version_metadata = 4;
+} 

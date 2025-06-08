@@ -1,103 +1,301 @@
-# Basics
+# Effectus Basics
 
-* **Verbs** are *codata*: the interpreter for each verb lives in code, so the *set* of verbs is intentionally closed and versioned (you add one rarely and ship a new binary).  
-* **Effects** are output from the verb interpreters; they are *idempotent* and *atomic*.
-* **Facts** describe domain reality; every new data source, event stream, or external system can add them. Trying to "freeze" that set would strangle the system's ability to model the evolving domain.  
-Hence we need a **strongly-typed but *extensible*** facts model that can adapt to arbitrary domains.
+This document explains the fundamental concepts of Effectus: Facts, Verbs, Effects, and the coherent flow architecture.
 
-# Facts
+## Core Concepts
 
-Canonical schema = “fact registry”  
+### Facts
+**Facts** represent the current state of your domain - customer data, inventory levels, machine status, etc. They are:
+- **Strongly typed** using Protocol Buffers
+- **Immutable** once created
+- **Extensible** without breaking existing rules
+- **Versioned** for schema evolution
 
-* Author every fact field once in **protobuf (proto3)**, each in its own **namespace** (package).  
-* Store descriptors in a **schema registry** (git repo or Buf registry).  
-* Rule compiler loads *all* linked descriptors at build time and treats them as one giant symbol table.
+### Verbs  
+**Verbs** define *what actions can be taken*. They are:
+- **Specifications** that declare argument types, return types, and capabilities
+- **Statically defined** and versioned as a closed set
+- **Capability-protected** for security and resource control
+- **Executable** through multiple execution strategies (local, HTTP, gRPC, message queues)
 
-```proto
-// shopfloor.facts.customer.v1/customer.proto
+### Effects
+**Effects** are the *actual execution* of verbs with specific arguments. They are:
+- **Idempotent** where possible for safe retry
+- **Atomic** operations that either succeed or fail completely
+- **Ordered** based on dependencies and capabilities
+- **Compensatable** for saga-style transaction rollback
+
+## Coherent Flow Architecture
+
+Effectus follows a coherent flow from extension loading through compilation to execution:
+
+```
+Extension Loading → Compilation & Validation → Execution
+       ↓                     ↓                    ↓
+  Static/Dynamic        Type Checking        Multiple Executors
+  JSON/Proto/OCI       Dependencies         (Local/HTTP/gRPC)
+  Directory Scanning   Capabilities         Message Queues
+```
+
+### 1. Extension Loading
+- **Static Registration**: Compile-time verb definitions in Go
+- **Dynamic Loading**: Runtime loading from JSON/Protocol Buffer files
+- **OCI Bundles**: Distributed packages with versioning
+- **Directory Scanning**: Automatic discovery of extension files
+
+### 2. Compilation & Validation
+- **Type Checking**: Validate all verb arguments and return types
+- **Dependency Resolution**: Ensure all required verbs are available
+- **Capability Verification**: Check security constraints
+- **Execution Planning**: Create optimized execution strategies
+
+### 3. Runtime Execution
+- **Executor Selection**: Choose appropriate execution strategy
+- **State Management**: Track runtime state with hot-reload capability
+- **Error Handling**: Compensation and retry policies
+- **Observability**: Metrics, tracing, and structured logging
+
+## Fact System
+
+Facts use Protocol Buffers for strong typing and extensibility:
+
+```protobuf
+// customer/v1/customer.proto
 message Customer {
-  string code    = 1;   
-  string program = 2;   
+  string code = 1;
+  string email = 2;
+  bool is_new = 3;
+  string tier = 4;
 }
 
-// shopfloor.facts.part.v1/part.proto
-message Part {
-  string  material   = 1;
-  double  tolerance  = 2;  
-  double  thickness  = 3;
-  bool    itar       = 4;
-}
-
-// shopfloor.facts.sensors.v1/temp.proto (added later)
-message Temperature {
-  double spindle_c   = 1;
-  double ambient_c   = 2;
+// inventory/v1/item.proto  
+message InventoryItem {
+  string sku = 1;
+  int32 quantity = 2;
+  double unit_cost = 3;
+  bool low_stock = 4;
 }
 ```
 
-Each package is versioned (`.v1`, `.v2`) **independently**.  
-Adding new facts never breaks older rule files; they just ignore them.
+### Schema Composition
 
-## “Extensible” without `Any` abuse  
-We still want *compile-time* type safety, so avoid untyped `map<string, Value>` or `google.protobuf.Any`.  
-Instead:
+Facts are composed from multiple modules:
 
-* **Composition** – top-level `Facts` message is just a bag of *pointers* to module messages.
-
-```proto
+```protobuf
 message Facts {
-  shopfloor.facts.customer.v1.Customer customer  = 1;
-  shopfloor.facts.part.v1.Part         part      = 2;
-  shopfloor.facts.operation.v1.Op      operation = 3;
-  shopfloor.facts.machine.v1.Machine   machine   = 4;
-  shopfloor.facts.sensors.v1.Temperature temperature = 5;
-  // …fields keep being added
+  customer.v1.Customer customer = 1;
+  inventory.v1.InventoryItem inventory = 2;
+  // Add new modules without breaking existing rules
+  sensors.v1.Temperature temperature = 3;
 }
 ```
 
-*Unpopulated modules are simply `nil` at runtime.*
+### Path Resolution
 
+Rules reference facts using dot notation:
+- `customer.email` → string
+- `inventory.quantity` → int32  
+- `temperature.ambient_c` → double
 
-## Rule compiler: path resolution via descriptors  
+The compiler validates all paths at compilation time.
 
-```text
-part.material      ✅  (string)
-temperature.spindle_c > 50.0   ✅  (double)
-foo.bar            ❌  unknown
-```
+## Verb System
 
-1. Split the path (`temperature.spindle_c`).  
-2. Start at `Facts` descriptor, walk through field names.  
-3. Fail fast if a segment is unknown or type–operator mismatch (`part.tolerance in "7075"` ⇒ error).  
-4. Emit a **required-fact manifest** for each rule set – CI fails if a service forgets to fill one.
+### Verb Specifications
 
-
-## Client libraries auto-generated  
-Every language that needs to publish facts imports the same protos:
+Verbs are defined as specifications that declare their contract:
 
 ```go
-import factsv1 "github.com/yourorg/facts/go/v1"
-
-facts := &factsv1.Facts{
-    Customer: &factsv1.Customer{Code: "BOE"},
-    Part:     &factsv1.Part{Material: "INCONEL", Thickness: 0.100},
-    Temperature: &factsv1.Temperature{SpindleC: 58.3},
+type VerbSpec interface {
+    GetName() string
+    GetCapabilities() []string
+    GetArgTypes() map[string]string
+    GetReturnType() string
+    GetResources() []ResourceSpec
 }
 ```
 
-*JSON-only environments* use the canonical JSON schema auto-generated from the proto descriptors (`buf build --template jsonschema`).
+### Static Registration
 
-## Source-of-truth data → facts (dbt style)  
-*In dbt* you create one model per proto module:
+```go
+verbs := []loader.VerbDefinition{
+    {
+        Spec: &VerbSpec{
+            Name: "SendEmail",
+            ArgTypes: map[string]string{
+                "to": "string",
+                "subject": "string", 
+                "body": "string",
+            },
+            ReturnType: "bool",
+            Capabilities: []string{"write", "idempotent"},
+        },
+        Executor: &EmailExecutor{},
+    },
+}
 
-```sql
--- models/fact_part.sql
-select
-  material,
-  tolerance,
-  thickness,
-  itar_flag as itar
-from erp_parts
+loader := loader.NewStaticVerbLoader("communication", verbs)
+runtime.RegisterExtensionLoader(loader)
 ```
 
-A lightweight adapter turns each row into `part.v1.Part` and assembles the big `Facts` envelope.
+### Dynamic Registration
+
+```json
+{
+  "name": "BusinessVerbs",
+  "verbs": [
+    {
+      "name": "ValidateAccount",
+      "argTypes": {
+        "accountId": "string",
+        "accountType": "string"
+      },
+      "returnType": "ValidationResult",
+      "capabilities": ["read", "idempotent"],
+      "executorType": "http",
+      "executorConfig": {
+        "url": "https://api.validation.com/check",
+        "method": "POST",
+        "timeout": "5s"
+      }
+    }
+  ]
+}
+```
+
+## Capability System
+
+Verbs declare required capabilities for security and resource control:
+
+### Capability Levels
+```go
+const (
+    CapRead   Capability = 1 << iota  // Read-only operations
+    CapWrite                          // Modify existing resources  
+    CapCreate                         // Create new resources
+    CapDelete                         // Delete resources
+)
+```
+
+### Capability Lattice
+Capabilities form a lattice: `Read ≤ Write ≤ Create ≤ Delete`
+
+### Resource Protection
+```go
+type ResourceSpec interface {
+    GetResource() string      // e.g., "customer", "inventory"
+    GetCapabilities() []string // e.g., ["read", "write"]
+}
+```
+
+Resources are protected by capability and key:
+- **Capability**: What level of access is required
+- **Key**: Which specific resource instance (e.g., customer ID)
+
+## Execution Models
+
+### Local Execution
+Verbs execute directly in the Effectus process:
+```go
+type LocalExecutor struct {
+    impl VerbExecutor
+}
+
+func (e *LocalExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+    return e.impl.Execute(ctx, args)
+}
+```
+
+### Remote Execution
+Verbs execute via external systems:
+```go
+type HTTPExecutor struct {
+    config *HTTPExecutorConfig
+}
+
+func (e *HTTPExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+    // Make HTTP request to external API
+    return httpCall(e.config.URL, args)
+}
+```
+
+### Executor Selection
+The compilation process determines the appropriate executor based on:
+- **Verb specification**: What execution type is configured
+- **Runtime environment**: What executors are available
+- **Policy configuration**: Security and performance constraints
+
+## Rule Structure
+
+Rules define when effects should be triggered:
+
+```go
+rule "low_inventory_alert" {
+    when {
+        inventory.quantity < 10
+        inventory.low_stock == false
+    }
+    then {
+        SendEmail(
+            to: "warehouse@company.com",
+            subject: "Low Inventory Alert",
+            body: "Item " + inventory.sku + " is running low"
+        )
+        UpdateInventoryFlag(
+            sku: inventory.sku,
+            low_stock: true
+        )
+    }
+}
+```
+
+## Type Safety
+
+### Compile-Time Validation
+- All fact paths validated against schemas
+- Verb arguments checked against specifications
+- Return types verified for consistency
+- Dependencies resolved and validated
+
+### Runtime Safety  
+- Argument types validated before execution
+- Resource access checked against capabilities
+- Error handling with compensation support
+- Execution traced for observability
+
+## Extensibility
+
+### Schema Evolution
+Add new fact types without breaking existing rules:
+```protobuf
+// Add new fields to existing types
+message Customer {
+  string code = 1;
+  string email = 2;
+  bool is_new = 3;
+  string tier = 4;
+  // New field - doesn't break existing rules
+  google.protobuf.Timestamp last_login = 5;
+}
+
+// Add entirely new fact types
+message SensorData {
+  double temperature = 1;
+  double humidity = 2;
+  google.protobuf.Timestamp reading_time = 3;
+}
+```
+
+### Verb Extension
+Add new verbs through the extension system:
+- **Development**: Register statically during development
+- **Configuration**: Load dynamically from JSON/Proto files
+- **Distribution**: Package in OCI bundles for deployment
+
+### Multiple Deployment Patterns
+- **Embedded**: Include Effectus as a library in Go applications
+- **Sidecar**: Run as separate process alongside applications  
+- **Service**: Deploy as standalone rule execution service
+- **Multi-language**: Connect from any language via Protocol Buffers
+
+This foundation provides a robust, extensible system for rule-based automation while maintaining mathematical rigor and practical usability.

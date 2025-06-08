@@ -1,178 +1,272 @@
 # Effectus Architecture
 
-Effectus is a sophisticated rule engine that combines the power of category theory and functional programming with the practicality of business rules. This document outlines the overall architecture of Effectus.
+This document provides a high-level architectural overview of Effectus, focusing on the coherent flow from extension loading through compilation to execution.
 
-## Core Concepts
+## Architectural Philosophy
 
-Effectus is built on three fundamental mathematical structures:
+Effectus implements a **coherent flow architecture** that ensures:
+- **Static validation** catches all errors before runtime
+- **Clear separation** between specifications and implementations
+- **Flexible execution** supports multiple deployment patterns
+- **Mathematical rigor** provides formal correctness guarantees
 
-1. **Initial Algebras (Lists)**: Sequential rule execution as a free monoid
-2. **Free Monads (Flows)**: Composable, effectful computations with branching
-3. **Category Theory**: Providing a unified foundation for both
+## Core Flow
 
-## System Components
-
-The Effectus system consists of these main components:
-
+```mermaid
+graph TD
+    A[Extension Loading] --> B[Compilation & Validation]
+    B --> C[Execution Planning] 
+    C --> D[Runtime Execution]
+    
+    A1[Static Registration] --> A
+    A2[Dynamic Loading] --> A
+    A3[OCI Bundles] --> A
+    
+    B1[Type Checking] --> B
+    B2[Dependency Resolution] --> B
+    B3[Capability Validation] --> B
+    
+    C1[Execution Phases] --> C
+    C2[Dependency Graph] --> C
+    C3[Executor Selection] --> C
+    
+    D1[Local Execution] --> D
+    D2[HTTP/gRPC] --> D
+    D3[Message Queues] --> D
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Effectus System                          │
-├───────────┬───────────┬────────────┬───────────┬────────────────┤
-│           │           │            │           │                │
-│  Schema   │   Verb    │   Rules    │   Flow    │    Unified     │
-│  System   │  System   │  (Lists)   │  System   │    Bundle      │
-│           │           │            │           │    System      │
-└───────────┴───────────┴────────────┴───────────┴────────────────┘
-       │           │           │           │            │
-       └───────────┴───────────┴───────────┴────────────┘
-                              │
-                     ┌────────┴─────────┐
-                     │                  │
-           ┌─────────┴──────┐   ┌───────┴───────┐
-           │                │   │               │
-           │ CLI Tools      │   │ Runtime       │
-           │ (effectusc)    │   │ (effectusd)   │
-           │                │   │               │
-           └────────────────┘   └───────────────┘
+
+## System Layers
+
+### 1. Extension Layer
+**Purpose**: Load verbs and schemas from multiple sources
+
+**Components**:
+- `ExtensionManager`: Coordinates all extension loading
+- `StaticLoader`: Compile-time registration
+- `JSONLoader`: Runtime configuration files
+- `ProtoLoader`: Protocol Buffer definitions
+- `OCILoader`: Distributed bundle packages
+
+**Key Interfaces**:
+```go
+type Loader interface {
+    Name() string
+    Load(target LoadTarget) error
+}
+
+type VerbSpec interface {
+    GetName() string
+    GetCapabilities() []string
+    GetArgTypes() map[string]string
+}
 ```
 
-### Schema System
+### 2. Compilation Layer
+**Purpose**: Validate and optimize extensions before execution
 
-The Schema System manages type definitions and validation for facts. It includes:
+**Components**:
+- `ExtensionCompiler`: Orchestrates compilation process
+- `TypeSystem`: Manages type definitions and validation
+- `DependencyValidator`: Checks verb dependencies
+- `CapabilityValidator`: Verifies security constraints
+- `ExecutionPlanOptimizer`: Creates optimized execution strategies
 
-- **TypeSystem**: Core type definitions and type checking
-- **SchemaRegistry**: Loads and manages schemas from multiple sources
-- **PathResolvers**: Handles resolution of paths within fact structures
-- **Validators**: Validates facts against schemas
+**Key Outputs**:
+```go
+type CompiledUnit struct {
+    VerbSpecs     map[string]*CompiledVerbSpec
+    Functions     map[string]*CompiledFunction
+    TypeSystem    *TypeSystem
+    ExecutionPlan *ExecutionPlan
+    Dependencies  []string
+    Capabilities  []string
+}
+```
 
-### Verb System
+### 3. Execution Layer  
+**Purpose**: Execute compiled verbs with appropriate executors
 
-The Verb System defines operations that can be performed by rules:
+**Components**:
+- `ExecutionRuntime`: Manages complete execution lifecycle
+- `ExecutorFactory`: Creates appropriate executors for verbs
+- `LocalExecutor`: In-process execution
+- `HTTPExecutor`: Remote HTTP API calls
+- `MessageExecutor`: Queue-based execution
 
-- **VerbRegistry**: Manages verb specifications and implementations
-- **VerbSpecs**: Defines verb signatures (arguments, return types, capabilities)
-- **VerbExecutors**: Implements verb functionality
-- **PluginSystem**: Loads verbs from dynamic plugins
+**Key Features**:
+- State management with hot-reload
+- Argument validation and type checking
+- Error handling and compensation
+- Parallel and sequential execution phases
 
-### Rule System (Lists)
+## Mathematical Foundations
 
-The List Rule System implements rules as a free monoid (initial algebra):
+### Category Theory Basis
+- **Functors**: Map between type categories
+- **Natural Transformations**: Preserve structural relationships
+- **Monads**: Compose effectful computations
+- **Initial Algebras**: Define recursive data structures
 
-- **Parser**: Parses rule definitions into AST
-- **TypeChecker**: Validates rule semantics and types
-- **Compiler**: Compiles rules into executable form
-- **Interpreter/Executor**: Executes rules against facts
+### Type System
+```go
+type TypeSignature struct {
+    InputTypes  map[string]string
+    OutputType  string
+    Constraints []TypeConstraint
+}
+```
 
-### Flow System
+### Capability System
+```go
+const (
+    CapRead   Capability = 1 << iota
+    CapWrite
+    CapCreate  
+    CapDelete
+)
+```
 
-The Flow System implements composable flows as a free monad:
+Capabilities form a lattice: `Read ≤ Write ≤ Create ≤ Delete`
 
-- **Parser**: Parses flow definitions into AST
-- **TypeChecker**: Validates flow semantics and types
-- **Compiler**: Compiles flows into executable form
-- **Interpreter/Executor**: Executes flows with effects and control flow
+## Execution Models
 
-### Unified Bundle System
+### Local Execution
+- **Direct**: Verb implemented as Go function
+- **Plugin**: Loaded from shared library
+- **WASM**: WebAssembly module execution
 
-The Bundle System packages all components for distribution:
+### Remote Execution
+- **HTTP**: RESTful API calls with retry policies
+- **gRPC**: Typed remote procedure calls
+- **Message**: Async execution via queues (Kafka, RabbitMQ)
 
-- **BundleBuilder**: Creates bundles from schemas, verbs, and rules
-- **OCIIntegration**: Pushes/pulls bundles to/from OCI registries
-- **Bundle**: Self-contained package of schemas, verbs, and rules
+### Hybrid Execution
+- **Fallback**: Try local, fall back to remote
+- **Load Balancing**: Distribute across multiple endpoints
+- **Circuit Breaker**: Fail fast on repeated errors
 
 ## Data Flow
 
 ```
-┌──────────┐    ┌──────────┐    ┌──────────┐    ┌─────────┐    ┌──────────┐
-│          │    │          │    │          │    │         │    │          │
-│  Schema  │───▶│  Parser  │───▶│   AST    │───▶│  Type   │───▶│ Compiler │
-│  Files   │    │          │    │          │    │ Checker │    │          │
-│          │    │          │    │          │    │         │    │          │
-└──────────┘    └──────────┘    └──────────┘    └─────────┘    └────┬─────┘
-                                                                     │
-                                                                     ▼
-┌──────────┐                                                    ┌──────────┐
-│          │                                                    │          │
-│  Facts   │───────────────────────────────────────────────────▶│ Executor │
-│          │                                                    │          │
-└──────────┘                                                    └────┬─────┘
-                                                                     │
-                                                                     ▼
-                                                                ┌──────────┐
-                                                                │          │
-                                                                │ Effects  │
-                                                                │          │
-                                                                └──────────┘
+Facts (Input) → Rule Evaluation → Effects (Output)
+     ↓               ↓                ↓
+  Typed Data    Boolean Logic    Typed Actions
+  (Protocol     (Predicates)     (Verb Calls)
+   Buffers)
 ```
 
-## Mathematical Foundations
+### Fact System
+- **Schema Registry**: Manages type definitions
+- **Path Resolution**: Navigate complex data structures  
+- **Version Compatibility**: Handle schema evolution
+- **Validation**: Ensure data integrity
 
-### List Rules as Initial Algebras
+### Effect System
+- **Capability Protection**: Security and resource control
+- **Idempotency**: Safe retry and recovery
+- **Compensation**: Saga-style transaction rollback
+- **Ordering**: Dependency-aware execution
 
-List rules can be understood as an initial algebra for the functor `F X = 1 + E × X`, where:
-- `1` represents termination
-- `E` represents effects
-- `×` represents sequencing
-- `+` represents choice
+## Deployment Patterns
 
-In this representation, a rule is a sequence of effects that can optionally terminate at any point.
+### Embedded Library
+```go
+import "github.com/effectus/effectus-go/runtime"
 
-### Flow Rules as Free Monads
-
-Flow rules are implemented as a free monad, which allows for branching, looping, and other control flow constructs. The free monad for our effect functor `F` is:
-
+runtime := runtime.NewExecutionRuntime()
+// Use directly in Go applications
 ```
-data Free F A = Pure A | Impure (F (Free F A))
+
+### Standalone Service
+```bash
+effectusd --oci-ref ghcr.io/myorg/rules:v1.0.0
+# HTTP/gRPC service for any language
 ```
 
-This structure allows us to compose effectful computations while maintaining purity at the language level.
+### Sidecar Pattern
+```yaml
+# Kubernetes deployment
+containers:
+- name: app
+  image: myapp:latest
+- name: effectus
+  image: effectusd:latest
+```
 
-## Implementation Details
+## Integration Points
 
-### Compiler
+### Data Sources
+- **HTTP APIs**: REST endpoints for fact ingestion
+- **Message Queues**: Kafka, RabbitMQ for event streams
+- **Databases**: Direct queries for fact extraction
+- **File Systems**: Batch processing from files
 
-The compiler transforms rule and flow definitions into executable forms. For list rules, it produces a sequence of effects to be executed. For flow rules, it produces a tree of effects and control flow.
+### Effect Sinks
+- **APIs**: Call external services
+- **Databases**: Update records and state
+- **Message Queues**: Publish events and notifications
+- **File Systems**: Generate reports and logs
 
-### Executor
+## Security Model
 
-The executor evaluates compiled rules against facts. For list rules, this is a simple iteration over the effects. For flow rules, it's a more complex evaluation of the free monad structure.
+### Capability-Based Access
+- **Principle of Least Privilege**: Verbs request minimal capabilities
+- **Static Verification**: Capabilities checked at compile time
+- **Resource Isolation**: Prevent unauthorized access
+- **Audit Trail**: Track all capability usage
 
-### Type System
+### Deployment Security
+- **OCI Signatures**: Verify bundle authenticity
+- **RBAC Integration**: Kubernetes/cloud role bindings
+- **Network Policies**: Restrict communication
+- **Secret Management**: Secure credential handling
 
-The type system validates rules against schemas, ensuring that:
-- Fact paths are valid according to the schema
-- Operations on facts are type-compatible
-- Verb arguments and return types are correct
+## Observability
 
-### Bundle System
+### Metrics
+- **Execution Counts**: Rules fired, verbs executed
+- **Performance**: Latency, throughput, resource usage
+- **Errors**: Failure rates, error types
+- **Capacity**: Queue depth, resource utilization
 
-The bundle system packages all the components needed to run rules:
-- Schema definitions
-- Verb specifications and implementations
-- Compiled rules and flows
+### Tracing
+- **Distributed Tracing**: OpenTelemetry integration
+- **Execution Flow**: Track rule and verb execution
+- **Dependencies**: Visualize inter-verb relationships
+- **Performance**: Identify bottlenecks
 
-Bundles can be distributed via OCI registries, allowing for versioning and distribution.
+### Logging
+- **Structured Logs**: JSON format for machine processing
+- **Correlation IDs**: Track requests across services
+- **PII Redaction**: Automatic sensitive data masking
+- **Audit Logs**: Security and compliance tracking
 
-## Runtime Components
+## Scalability
 
-### effectusc (CLI)
+### Horizontal Scaling
+- **Stateless Design**: Multiple runtime instances
+- **Load Balancing**: Distribute fact processing
+- **Shared State**: External stores for coordination
+- **Auto-scaling**: Based on queue depth and latency
 
-The `effectusc` command-line tool provides utilities for working with Effectus:
-- Parsing and type-checking rules and flows
-- Compiling rules and flows
-- Building bundles
-- Testing rules against sample facts
-- Linting rules for best practices
+### Performance Optimization
+- **Parallel Execution**: Concurrent verb execution
+- **Dependency Optimization**: Minimize sequential dependencies
+- **Caching**: Cache compiled units and results
+- **Batching**: Process multiple facts together
 
-### effectusd (Runtime)
+## Future Directions
 
-The `effectusd` runtime executes bundled rules against facts:
-- Loads bundles from local files or OCI registries
-- Receives facts from various sources (HTTP, Kafka, etc.)
-- Executes rules and produces effects
-- Handles saga compensation for failed executions
-- Provides observability via metrics and logs
+### Advanced Features
+- **Multi-tenant Isolation**: Namespace separation
+- **A/B Testing**: Gradual rule deployment
+- **Machine Learning**: Predictive rule optimization
+- **Formal Verification**: Mathematical correctness proofs
 
-## Conclusion
+### Language Support
+- **Rust Implementation**: High-performance runtime
+- **Python Bindings**: Data science integration
+- **JavaScript/WASM**: Browser and edge deployment
+- **SQL Integration**: Database-native execution
 
-Effectus combines the rigor of category theory with practical business rule execution. Its architecture separates concerns while maintaining a unified mathematical foundation, providing both formal correctness and operational flexibility. 
+This architecture provides a solid foundation for building reliable, scalable, and maintainable rule-based systems while maintaining mathematical rigor and practical usability. 

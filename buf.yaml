@@ -1,0 +1,18 @@
+version: v1
+name: buf.build/effectus/effectus
+deps:
+  - buf.build/googleapis/googleapis
+  - buf.build/protocolbuffers/wellknowntypes
+breaking:
+  use:
+    - FILE
+lint:
+  use:
+    - DEFAULT
+  except:
+    - UNARY_RPC
+  allow_comment_ignores: true
+build:
+  excludes:
+    - examples/
+    - tests/

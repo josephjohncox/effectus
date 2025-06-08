@@ -1,0 +1,312 @@
+syntax = "proto3";
+
+package effectus.v1;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/descriptor.proto";
+
+option go_package = "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1";
+
+// VerbInterfaceService manages verb interface definitions and versioning
+service VerbInterfaceService {
+  // RegisterVerbInterface registers a new verb interface version
+  rpc RegisterVerbInterface(RegisterVerbInterfaceRequest) returns (RegisterVerbInterfaceResponse);
+  
+  // GetVerbInterface retrieves a specific verb interface version
+  rpc GetVerbInterface(GetVerbInterfaceRequest) returns (GetVerbInterfaceResponse);
+  
+  // ListVerbInterfaces lists all available verb interfaces
+  rpc ListVerbInterfaces(ListVerbInterfacesRequest) returns (ListVerbInterfacesResponse);
+  
+  // ValidateVerbCompatibility checks verb interface compatibility
+  rpc ValidateVerbCompatibility(ValidateVerbCompatibilityRequest) returns (ValidateVerbCompatibilityResponse);
+}
+
+// VerbInterface defines a versioned interface for a verb
+message VerbInterface {
+  string name = 1;
+  string version = 2; // Buf-managed semantic version
+  string description = 3;
+  
+  // Input and output schemas
+  Schema input_schema = 4;
+  Schema output_schema = 5;
+  
+  // Capability requirements
+  repeated string required_capabilities = 6;
+  
+  // Execution characteristics
+  ExecutionCharacteristics execution = 7;
+  
+  // Compensation information
+  CompensationInfo compensation = 8;
+  
+  // Metadata and annotations
+  map<string, string> metadata = 9;
+  
+  // Buf schema registry information
+  string buf_module = 10;
+  string buf_commit = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+// Schema represents a Buf-managed protobuf schema
+message Schema {
+  string name = 1;
+  string version = 2;
+  string package = 3;
+  repeated FieldDescriptor fields = 4;
+  repeated string required_fields = 5;
+  string description = 6;
+  
+  // Validation rules
+  repeated ValidationConstraint validation_constraints = 7;
+  
+  // Buf registry information
+  string buf_module = 8;
+  string buf_commit = 9;
+  
+  // JSON Schema equivalent (for non-protobuf systems)
+  string json_schema = 10;
+}
+
+// FieldDescriptor describes a field in a schema
+message FieldDescriptor {
+  string name = 1;
+  int32 number = 2;
+  FieldType type = 3;
+  string type_name = 4; // For message types
+  bool required = 5;
+  bool repeated = 6;
+  string description = 7;
+  
+  // Field-level validation
+  repeated ValidationConstraint constraints = 8;
+  
+  // Default value
+  google.protobuf.Any default_value = 9;
+}
+
+// FieldType represents protobuf field types
+enum FieldType {
+  FIELD_TYPE_UNSPECIFIED = 0;
+  FIELD_TYPE_DOUBLE = 1;
+  FIELD_TYPE_FLOAT = 2;
+  FIELD_TYPE_INT64 = 3;
+  FIELD_TYPE_UINT64 = 4;
+  FIELD_TYPE_INT32 = 5;
+  FIELD_TYPE_FIXED64 = 6;
+  FIELD_TYPE_FIXED32 = 7;
+  FIELD_TYPE_BOOL = 8;
+  FIELD_TYPE_STRING = 9;
+  FIELD_TYPE_GROUP = 10;
+  FIELD_TYPE_MESSAGE = 11;
+  FIELD_TYPE_BYTES = 12;
+  FIELD_TYPE_UINT32 = 13;
+  FIELD_TYPE_ENUM = 14;
+  FIELD_TYPE_SFIXED32 = 15;
+  FIELD_TYPE_SFIXED64 = 16;
+  FIELD_TYPE_SINT32 = 17;
+  FIELD_TYPE_SINT64 = 18;
+}
+
+// ValidationConstraint defines validation rules for fields
+message ValidationConstraint {
+  string constraint_type = 1; // "range", "pattern", "enum", "length", "custom"
+  repeated string values = 2;
+  string error_message = 3;
+  bool required = 4;
+}
+
+// ExecutionCharacteristics defines how a verb executes
+message ExecutionCharacteristics {
+  bool idempotent = 1;
+  bool deterministic = 2;
+  ExecutionType execution_type = 3;
+  int32 timeout_seconds = 4;
+  RetryPolicy retry_policy = 5;
+  
+  // Resource requirements
+  ResourceRequirements resources = 6;
+  
+  // Side effects
+  repeated SideEffect side_effects = 7;
+}
+
+// ExecutionType defines how a verb is executed
+enum ExecutionType {
+  EXECUTION_TYPE_UNSPECIFIED = 0;
+  EXECUTION_TYPE_LOCAL = 1;     // Execute in-process
+  EXECUTION_TYPE_HTTP = 2;      // Execute via HTTP
+  EXECUTION_TYPE_GRPC = 3;      // Execute via gRPC
+  EXECUTION_TYPE_MESSAGE = 4;   // Execute via message queue
+  EXECUTION_TYPE_EXTERNAL = 5;  // Execute in external system
+}
+
+// RetryPolicy defines retry behavior
+message RetryPolicy {
+  int32 max_retries = 1;
+  string initial_delay = 2;  // Duration string (e.g., "1s", "100ms")
+  string max_delay = 3;
+  double backoff_factor = 4;
+  repeated string retryable_errors = 5;
+}
+
+// ResourceRequirements defines resource needs
+message ResourceRequirements {
+  string cpu = 1;     // CPU requirements (e.g., "100m", "1")
+  string memory = 2;  // Memory requirements (e.g., "128Mi", "1Gi")
+  string disk = 3;    // Disk requirements
+  map<string, string> custom = 4; // Custom resource requirements
+}
+
+// SideEffect describes a side effect of verb execution
+message SideEffect {
+  string type = 1;        // "database", "file", "network", "external_api"
+  string description = 2;
+  bool reversible = 3;    // Can this side effect be undone?
+  string impact_level = 4; // "low", "medium", "high"
+}
+
+// CompensationInfo defines how to compensate for a verb
+message CompensationInfo {
+  bool compensatable = 1;
+  string compensation_verb = 2; // Name of the compensating verb
+  Schema compensation_input_schema = 3;
+  
+  // Compensation strategy
+  CompensationStrategy strategy = 4;
+  
+  // Timeout for compensation
+  int32 compensation_timeout_seconds = 5;
+}
+
+// CompensationStrategy defines compensation approach
+enum CompensationStrategy {
+  COMPENSATION_STRATEGY_UNSPECIFIED = 0;
+  COMPENSATION_STRATEGY_INVERSE = 1;      // Execute inverse operation
+  COMPENSATION_STRATEGY_ROLLBACK = 2;     // Rollback to previous state
+  COMPENSATION_STRATEGY_MANUAL = 3;       // Requires manual intervention
+  COMPENSATION_STRATEGY_IGNORE = 4;       // No compensation needed
+}
+
+// RegisterVerbInterfaceRequest registers a new verb interface
+message RegisterVerbInterfaceRequest {
+  VerbInterface verb_interface = 1;
+  bool validate_compatibility = 2;
+  bool force_update = 3;
+}
+
+// RegisterVerbInterfaceResponse confirms verb interface registration
+message RegisterVerbInterfaceResponse {
+  bool success = 1;
+  string message = 2;
+  string assigned_version = 3;
+  repeated string compatibility_warnings = 4;
+  repeated string breaking_changes = 5;
+}
+
+// GetVerbInterfaceRequest requests a specific verb interface
+message GetVerbInterfaceRequest {
+  string name = 1;
+  string version = 2; // Optional: latest if not specified
+}
+
+// GetVerbInterfaceResponse returns a verb interface
+message GetVerbInterfaceResponse {
+  VerbInterface verb_interface = 1;
+  repeated string compatible_versions = 2;
+  repeated string breaking_changes_since = 3;
+}
+
+// ListVerbInterfacesRequest lists verb interfaces
+message ListVerbInterfacesRequest {
+  string name_filter = 1;
+  string version_filter = 2;
+  repeated string capability_filter = 3;
+  bool include_deprecated = 4;
+}
+
+// ListVerbInterfacesResponse returns available verb interfaces
+message ListVerbInterfacesResponse {
+  repeated VerbInterface verb_interfaces = 1;
+  map<string, string> latest_versions = 2;
+  repeated string deprecated_versions = 3;
+}
+
+// ValidateVerbCompatibilityRequest checks compatibility
+message ValidateVerbCompatibilityRequest {
+  string verb_name = 1;
+  string current_version = 2;
+  string target_version = 3;
+  bool check_breaking_changes = 4;
+}
+
+// ValidateVerbCompatibilityResponse returns compatibility results
+message ValidateVerbCompatibilityResponse {
+  bool compatible = 1;
+  repeated string breaking_changes = 2;
+  repeated string warnings = 3;
+  string migration_guide = 4;
+  string recommended_action = 5;
+}
+
+// Predefined standard verb interfaces that come with Effectus
+// These are examples of how verb interfaces should be defined
+
+// StandardVerbInterfaces contains commonly used verb interfaces
+message StandardVerbInterfaces {
+  // Notification verbs
+  VerbInterface send_email = 1;
+  VerbInterface send_sms = 2;
+  VerbInterface send_push_notification = 3;
+  
+  // Data manipulation verbs
+  VerbInterface create_record = 4;
+  VerbInterface update_record = 5;
+  VerbInterface delete_record = 6;
+  
+  // External API verbs
+  VerbInterface http_request = 7;
+  VerbInterface webhook_call = 8;
+  
+  // Workflow verbs
+  VerbInterface start_workflow = 9;
+  VerbInterface approve_request = 10;
+  VerbInterface reject_request = 11;
+  
+  // Audit and logging verbs
+  VerbInterface log_event = 12;
+  VerbInterface audit_action = 13;
+}
+
+// VerbRegistry manages the registry of all verb interfaces
+message VerbRegistry {
+  map<string, VerbInterface> verbs = 1;
+  string registry_version = 2;
+  google.protobuf.Timestamp last_updated = 3;
+  
+  // Buf registry integration
+  string buf_module = 4;
+  string buf_commit = 5;
+  
+  // Compatibility matrix
+  map<string, CompatibilityMatrix> compatibility_matrices = 6;
+}
+
+// CompatibilityMatrix tracks compatibility between versions
+message CompatibilityMatrix {
+  string verb_name = 1;
+  map<string, VersionCompatibility> version_compatibility = 2;
+}
+
+// VersionCompatibility describes compatibility between two versions
+message VersionCompatibility {
+  string from_version = 1;
+  string to_version = 2;
+  bool compatible = 3;
+  repeated string breaking_changes = 4;
+  string migration_path = 5;
+} 

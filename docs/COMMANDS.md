@@ -1,45 +1,28 @@
-| Area                |  **Effectus** naming               | Purpose (one-liner)                                    |
-| ------------------- |  --------------------------------- | ------------------------------------------------------ |
-| Compiler CLI        |  **`effectusc`**                   | Parse + type-check rules, emit IR/JSON, fail on errors |
-| Linter              |  **`effectus lint`**               | Stylistic checks, dead predicates, unreachable rules   |
-| Executor daemon     |  **`effectusd`**                   | gRPC/HTTP service that ingests Facts ⟶ Effects         |
-| Local runner        |  **`effectus run`**                | CLI harness for dev / CI, pipes JSON Facts ⟶ stdout    |
-| Hot-reload side-car |  **`effectus-watch`**              | Watches rule directory, sends SIGHUP to `effectusd`    |
-| VS Code ext         |  **`effectus-vscode`**             | Syntax highlight + autocompletion from schema registry |
-| Go SDK module       |  `github.com/yourorg/effectus-go`  | Pure library: parser, compiler, executor stubs         |
-| Docker image        |  `ghcr.io/yourorg/effectusd:<ver>` | Container for prod deploys                             |
-| Env var prefix      |  **`EFFECTUS_…`**                  | e.g. `EFFECTUS_RULE_PATH=/etc/effectus`                |
+# Effectus CLI Commands
 
-### Quick examples
+This document describes the command-line tools available in Effectus.
+
+## Overview
+
+Effectus provides two main CLI tools:
+- **`effectusc`**: Compiler and development utilities
+- **`effectusd`**: Runtime daemon for executing rules
+
+## effectusc - Compiler & Development Tools
+
+The `effectusc` command provides development and compilation utilities for Effectus rules.
+
+### Usage
 
 ```bash
-# 1. Compile & lint
-effectusc compile rules/base.eff          # exit 0 or 1
-effectus lint    rules/base.eff --fix     # auto-format
-
-# 2. Run locally
-cat facts/batch123.json | effectus run rules/  \
-    --executor=log | jq .
-
-# 3. Prod daemon (hot reload)
-docker run -d \
-  -v /etc/effectus:/rules \
-  -e EFFECTUS_RULE_PATH=/rules \
-  ghcr.io/yourorg/effectusd:v0.8.2
-effectus-watch /rules --signal --pid=$(pgrep effectusd)
+effectusc <command> [options] [files...]
 ```
 
-# Effectus Commands
+### Available Commands
 
-Effectus comes with several command-line tools for working with rule files and bundles.
+#### parse
 
-## effectusc
-
-The `effectusc` command is the main compiler and utility for working with Effectus rules. It provides several subcommands for different operations.
-
-### parse
-
-Parses rule files without type checking them:
+Parses rule files without type checking them.
 
 ```bash
 effectusc parse [options] file1.eff [file2.eff ...]
@@ -48,9 +31,14 @@ Options:
   --verbose      Show detailed output
 ```
 
-### typecheck
+**Example:**
+```bash
+effectusc parse rules/customer.eff rules/payment.eff --verbose
+```
 
-Parses and type checks rule files against schemas:
+#### typecheck
+
+Parses and type checks rule files against schemas.
 
 ```bash
 effectusc typecheck [options] file1.eff [file2.eff ...]
@@ -63,9 +51,18 @@ Options:
   --verbose      Show detailed output
 ```
 
-### compile
+**Example:**
+```bash
+effectusc typecheck \
+  --schema schemas/customer.json,schemas/payment.json \
+  --verbschema verbs/email.json \
+  --report \
+  rules/customer.eff
+```
 
-Compiles rule files into a unified specification:
+#### compile
+
+Compiles rule files into a unified specification.
 
 ```bash
 effectusc compile [options] file1.eff [file2.eff ...]
@@ -77,9 +74,18 @@ Options:
   --verbose      Show detailed output
 ```
 
-### bundle
+**Example:**
+```bash
+effectusc compile \
+  --schema schemas/ \
+  --verbschema verbs/ \
+  --output customer-rules.json \
+  rules/*.eff
+```
 
-Creates a bundle from schemas, verbs, and rules:
+#### bundle
+
+Creates a bundle from schemas, verbs, and rules for distribution.
 
 ```bash
 effectusc bundle [options]
@@ -97,10 +103,10 @@ Options:
   --verbose      Show detailed output
 ```
 
-#### Example: Creating and Pushing a Bundle
+**Examples:**
 
+Create local bundle:
 ```bash
-# Create a bundle and save it locally
 effectusc bundle \
   --name customer-rules \
   --version 1.2.0 \
@@ -108,9 +114,12 @@ effectusc bundle \
   --schema-dir ./schemas \
   --verb-dir ./verbs \
   --rules-dir ./rules \
+  --pii-masks customer.ssn,payment.cardNumber \
   --output bundle.json
+```
 
-# Create a bundle and push it to an OCI registry
+Create and push to OCI registry:
+```bash
 effectusc bundle \
   --name customer-rules \
   --version 1.2.0 \
@@ -120,55 +129,232 @@ effectusc bundle \
   --oci-ref ghcr.io/myorg/customer-rules:v1.2.0
 ```
 
-## effectusd
+#### capabilities
+
+Analyzes verb capabilities in rule files.
+
+```bash
+effectusc capabilities [options] file1.eff [file2.eff ...]
+
+Options:
+  --output       Output file for analysis report (defaults to stdout)
+  --verbose      Show detailed output
+```
+
+**Example:**
+```bash
+effectusc capabilities \
+  --output capability-report.md \
+  rules/*.eff
+```
+
+## effectusd - Runtime Daemon
 
 The `effectusd` command is the runtime server that executes bundled rules against facts.
 
+### Usage
+
 ```bash
 effectusd [options]
+```
 
-Options:
-  # Configuration flags
-  --bundle           Path to bundle file
-  --oci-ref          OCI reference for bundle (e.g., ghcr.io/user/bundle:v1)
-  --plugin-dir       Directory containing verb plugins
-  --reload-interval  Interval for hot-reloading (default: 30s)
+### Options
 
-  # Runtime flags
-  --saga             Enable saga-style compensation
-  --saga-store       Saga store (memory, redis, postgres) (default: memory)
+#### Bundle Configuration
+```bash
+--bundle           Path to bundle file
+--oci-ref          OCI reference for bundle (e.g., ghcr.io/user/bundle:v1)
+--plugin-dir       Directory containing verb plugins
+--reload-interval  Interval for hot-reloading (default: 30s)
+```
 
-  # Monitoring flags
-  --metrics-addr     Address to expose metrics (default: :9090)
-  --pprof-addr       Address to expose pprof (default: :6060)
+#### Runtime Configuration
+```bash
+--saga             Enable saga-style compensation
+--saga-store       Saga store (memory, redis, postgres) (default: memory)
+```
 
-  # Fact source flags
-  --fact-source      Fact source (http, kafka) (default: http)
-  --kafka-brokers    Kafka brokers (default: localhost:9092)
-  --kafka-topic      Kafka topic (default: facts)
+#### Fact Sources
+```bash
+--fact-source      Fact source (http, kafka) (default: http)
+--kafka-brokers    Kafka brokers (default: localhost:9092)
+--kafka-topic      Kafka topic (default: facts)
+```
 
-  # HTTP server flags
-  --http-addr        HTTP server address (default: :8080)
+#### Server Configuration
+```bash
+--http-addr        HTTP server address (default: :8080)
+--metrics-addr     Address to expose metrics (default: :9090)
+--pprof-addr       Address to expose pprof (default: :6060)
+```
 
-  # Debug flags
-  --verbose          Enable verbose logging
+#### Debug Options
+```bash
+--verbose          Enable verbose logging
 ```
 
 ### Examples
 
+#### Run with Local Bundle
+
 ```bash
-# Run with a local bundle file
 effectusd --bundle ./bundle.json --verbose
-
-# Run with a bundle from an OCI registry
-effectusd --oci-ref ghcr.io/myorg/customer-rules:v1.2.0
-
-# Run with saga compensation enabled
-effectusd --bundle ./bundle.json --saga --saga-store postgres
-
-# Run with hot-reloading from OCI registry
-effectusd --oci-ref ghcr.io/myorg/customer-rules:latest --reload-interval 60s
-
-# Run with Kafka as the fact source
-effectusd --bundle ./bundle.json --fact-source kafka --kafka-topic customer-events
 ```
+
+#### Run with OCI Registry Bundle
+
+```bash
+effectusd --oci-ref ghcr.io/myorg/customer-rules:v1.2.0
+```
+
+#### Enable Saga Compensation
+
+```bash
+effectusd \
+  --bundle ./bundle.json \
+  --saga \
+  --saga-store postgres
+```
+
+#### Hot Reload from OCI Registry
+
+```bash
+effectusd \
+  --oci-ref ghcr.io/myorg/customer-rules:latest \
+  --reload-interval 60s \
+  --verbose
+```
+
+#### Use Kafka as Fact Source
+
+```bash
+effectusd \
+  --bundle ./bundle.json \
+  --fact-source kafka \
+  --kafka-brokers kafka1:9092,kafka2:9092 \
+  --kafka-topic customer-events
+```
+
+#### Full Production Configuration
+
+```bash
+effectusd \
+  --oci-ref ghcr.io/myorg/customer-rules:v1.0.0 \
+  --saga \
+  --saga-store postgres \
+  --fact-source kafka \
+  --kafka-brokers kafka-cluster:9092 \
+  --kafka-topic events \
+  --http-addr :8080 \
+  --metrics-addr :9090 \
+  --reload-interval 300s \
+  --verbose
+```
+
+## Development Workflow
+
+### 1. Development Phase
+
+```bash
+# Parse rules during development
+effectusc parse rules/*.eff
+
+# Type check with schemas
+effectusc typecheck \
+  --schema schemas/ \
+  --verbschema verbs/ \
+  rules/*.eff
+```
+
+### 2. Compilation Phase
+
+```bash
+# Compile rules into a spec
+effectusc compile \
+  --schema schemas/ \
+  --verbschema verbs/ \
+  --output compiled-rules.json \
+  rules/*.eff
+
+# Analyze capabilities
+effectusc capabilities rules/*.eff
+```
+
+### 3. Bundle Creation
+
+```bash
+# Create distributable bundle
+effectusc bundle \
+  --name my-rules \
+  --version 1.0.0 \
+  --schema-dir schemas/ \
+  --verb-dir verbs/ \
+  --rules-dir rules/ \
+  --oci-ref ghcr.io/myorg/my-rules:v1.0.0
+```
+
+### 4. Runtime Deployment
+
+```bash
+# Run in production
+effectusd \
+  --oci-ref ghcr.io/myorg/my-rules:v1.0.0 \
+  --saga \
+  --saga-store postgres \
+  --fact-source kafka
+```
+
+## Error Handling
+
+All commands return appropriate exit codes:
+- **0**: Success
+- **1**: Error (compilation failure, invalid arguments, etc.)
+
+Error messages are written to stderr, while normal output goes to stdout.
+
+## Configuration Files
+
+Currently, all configuration is done via command-line flags. Future versions may support configuration files for complex deployments.
+
+## Environment Variables
+
+The following environment variables are respected:
+
+- `EFFECTUS_VERBOSE`: Set to "true" to enable verbose output globally
+- `EFFECTUS_BUNDLE_CACHE`: Directory for caching OCI bundles
+- `EFFECTUS_PLUGIN_PATH`: Additional directories to search for verb plugins
+
+## Integration Examples
+
+### CI/CD Pipeline
+
+```bash
+#!/bin/bash
+set -e
+
+# Validate rules
+effectusc typecheck --schema schemas/ --verbschema verbs/ rules/*.eff
+
+# Create bundle
+effectusc bundle \
+  --name "app-rules" \
+  --version "$BUILD_VERSION" \
+  --schema-dir schemas/ \
+  --verb-dir verbs/ \
+  --rules-dir rules/ \
+  --oci-ref "ghcr.io/myorg/app-rules:$BUILD_VERSION"
+
+echo "Bundle created and pushed successfully"
+```
+
+### Docker Deployment
+
+```dockerfile
+FROM alpine:latest
+RUN apk add --no-cache ca-certificates
+COPY effectusd /usr/local/bin/
+EXPOSE 8080 9090
+CMD ["effectusd", "--oci-ref", "ghcr.io/myorg/rules:latest"]
+```
+
+This documentation reflects the current implementation and capabilities of the Effectus CLI tools.
