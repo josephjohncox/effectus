@@ -1,0 +1,130 @@
+syntax = "proto3";
+
+package acme.v1.verbs;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+option go_package = "acme.com/gen/go/acme/v1/verbs;verbsv1";
+
+// SendNotificationInput defines input for sending notifications to users
+message SendNotificationInput {
+  // Target user ID (required)
+  string user_id = 1;
+  
+  // Notification message content (required)
+  string message = 2;
+  
+  // Type of notification to send (required)
+  NotificationType type = 3;
+  
+  // Optional priority level (defaults to NORMAL)
+  optional Priority priority = 4;
+  
+  // Optional template ID for templated messages
+  optional string template_id = 5;
+  
+  // Template variables for substitution
+  map<string, string> template_vars = 6;
+  
+  // Optional scheduling for future delivery
+  optional google.protobuf.Timestamp send_at = 7;
+  
+  // Retry configuration
+  optional RetryConfig retry_config = 8;
+  
+  // Additional metadata
+  map<string, string> metadata = 9;
+  
+  // Optional tracking/analytics tags
+  repeated string tags = 10;
+}
+
+// SendNotificationOutput provides delivery confirmation
+message SendNotificationOutput {
+  // Unique notification ID for tracking
+  string notification_id = 1;
+  
+  // Current delivery status
+  DeliveryStatus status = 2;
+  
+  // Timestamp when notification was accepted/queued
+  google.protobuf.Timestamp sent_at = 3;
+  
+  // Estimated delivery time (if available)
+  optional google.protobuf.Timestamp estimated_delivery = 4;
+  
+  // Provider-specific details
+  optional ProviderDetails provider_details = 5;
+  
+  // Whether notification was successfully queued
+  bool success = 6;
+  
+  // Error message if delivery failed
+  optional string error_message = 7;
+}
+
+// NotificationType defines available notification channels
+enum NotificationType {
+  NOTIFICATION_TYPE_UNSPECIFIED = 0;
+  NOTIFICATION_TYPE_EMAIL = 1;       // Email notification
+  NOTIFICATION_TYPE_SMS = 2;         // SMS text message
+  NOTIFICATION_TYPE_PUSH = 3;        // Mobile push notification
+  NOTIFICATION_TYPE_SLACK = 4;       // Slack message
+  NOTIFICATION_TYPE_WEBHOOK = 5;     // HTTP webhook
+  NOTIFICATION_TYPE_IN_APP = 6;      // In-app notification
+}
+
+// Priority levels for notification delivery
+enum Priority {
+  PRIORITY_UNSPECIFIED = 0;
+  PRIORITY_LOW = 1;          // Best effort delivery
+  PRIORITY_NORMAL = 2;       // Standard delivery
+  PRIORITY_HIGH = 3;         // Priority delivery
+  PRIORITY_URGENT = 4;       // Immediate delivery
+}
+
+// DeliveryStatus tracks notification state
+enum DeliveryStatus {
+  DELIVERY_STATUS_UNSPECIFIED = 0;
+  DELIVERY_STATUS_QUEUED = 1;        // Queued for delivery
+  DELIVERY_STATUS_SENT = 2;          // Sent to provider
+  DELIVERY_STATUS_DELIVERED = 3;     // Delivered to recipient
+  DELIVERY_STATUS_FAILED = 4;        // Delivery failed
+  DELIVERY_STATUS_BOUNCED = 5;       // Message bounced
+  DELIVERY_STATUS_REJECTED = 6;      // Rejected by provider
+  DELIVERY_STATUS_SCHEDULED = 7;     // Scheduled for future delivery
+}
+
+// RetryConfig controls retry behavior for failed deliveries
+message RetryConfig {
+  // Maximum number of retry attempts
+  int32 max_retries = 1;
+  
+  // Initial delay before first retry
+  google.protobuf.Duration initial_delay = 2;
+  
+  // Maximum delay between retries
+  google.protobuf.Duration max_delay = 3;
+  
+  // Backoff multiplier (default: 2.0)
+  optional double backoff_factor = 4;
+  
+  // Whether to retry on provider errors
+  optional bool retry_on_provider_error = 5;
+}
+
+// ProviderDetails contains provider-specific information
+message ProviderDetails {
+  // Provider name (e.g., "sendgrid", "twilio", "firebase")
+  string provider = 1;
+  
+  // Provider's message ID
+  optional string provider_message_id = 2;
+  
+  // Provider's response status
+  optional string provider_status = 3;
+  
+  // Additional provider metadata
+  map<string, string> provider_metadata = 4;
+} 

@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package effectus.v1;
+
+import "google/protobuf/any.proto";
+
+option go_package = "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1";
+
+// Schema represents a Buf-managed protobuf schema
+message Schema {
+  string name = 1;
+  string version = 2;
+  string package = 3;
+  repeated FieldDescriptor fields = 4;
+  repeated string required_fields = 5;
+  string description = 6;
+  
+  // Validation rules
+  repeated ValidationConstraint validation_constraints = 7;
+  
+  // Buf registry information
+  string buf_module = 8;
+  string buf_commit = 9;
+  
+  // JSON Schema equivalent (for non-protobuf systems)
+  string json_schema = 10;
+}
+
+// FieldDescriptor describes a field in a schema
+message FieldDescriptor {
+  string name = 1;
+  int32 number = 2;
+  FieldType type = 3;
+  string type_name = 4; // For message types
+  bool required = 5;
+  bool repeated = 6;
+  string description = 7;
+  
+  // Field-level validation
+  repeated ValidationConstraint constraints = 8;
+  
+  // Default value
+  google.protobuf.Any default_value = 9;
+}
+
+// FieldType represents protobuf field types
+enum FieldType {
+  FIELD_TYPE_UNSPECIFIED = 0;
+  FIELD_TYPE_DOUBLE = 1;
+  FIELD_TYPE_FLOAT = 2;
+  FIELD_TYPE_INT64 = 3;
+  FIELD_TYPE_UINT64 = 4;
+  FIELD_TYPE_INT32 = 5;
+  FIELD_TYPE_FIXED64 = 6;
+  FIELD_TYPE_FIXED32 = 7;
+  FIELD_TYPE_BOOL = 8;
+  FIELD_TYPE_STRING = 9;
+  FIELD_TYPE_GROUP = 10;
+  FIELD_TYPE_MESSAGE = 11;
+  FIELD_TYPE_BYTES = 12;
+  FIELD_TYPE_UINT32 = 13;
+  FIELD_TYPE_ENUM = 14;
+  FIELD_TYPE_SFIXED32 = 15;
+  FIELD_TYPE_SFIXED64 = 16;
+  FIELD_TYPE_SINT32 = 17;
+  FIELD_TYPE_SINT64 = 18;
+}
+
+// ValidationConstraint defines validation rules for fields
+message ValidationConstraint {
+  string constraint_type = 1; // "range", "pattern", "enum", "length", "custom"
+  repeated string values = 2;
+  string error_message = 3;
+  bool required = 4;
+} 

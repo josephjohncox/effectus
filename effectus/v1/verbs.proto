@@ -1,0 +1,383 @@
+syntax = "proto3";
+
+package effectus.v1;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+import "effectus/v1/common.proto";
+
+option go_package = "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1";
+
+// VerbRegistryService manages verb interface definitions and evolution
+service VerbRegistryService {
+  // RegisterVerbInterface registers a new verb interface
+  rpc RegisterVerbInterface(RegisterVerbInterfaceRequest) returns (RegisterVerbInterfaceResponse);
+  
+  // GetVerbInterface retrieves a verb interface by name and version
+  rpc GetVerbInterface(GetVerbInterfaceRequest) returns (GetVerbInterfaceResponse);
+  
+  // ListVerbInterfaces lists all registered verb interfaces
+  rpc ListVerbInterfaces(ListVerbInterfacesRequest) returns (ListVerbInterfacesResponse);
+  
+  // ValidateVerbCall validates a verb call against its interface
+  rpc ValidateVerbCall(ValidateVerbCallRequest) returns (ValidateVerbCallResponse);
+  
+  // CheckInterfaceCompatibility checks if interface changes are backward compatible
+  rpc CheckInterfaceCompatibility(CheckInterfaceCompatibilityRequest) returns (CheckInterfaceCompatibilityResponse);
+  
+  // GenerateVerbCode generates implementation stubs for verb interfaces
+  rpc GenerateVerbCode(GenerateVerbCodeRequest) returns (GenerateVerbCodeResponse);
+}
+
+// VerbInterface defines the interface contract for a verb
+message VerbInterface {
+  string name = 1;
+  string version = 2; // Buf-managed semantic version
+  string description = 3;
+  
+  // Input and output schemas
+  Schema input_schema = 4;
+  Schema output_schema = 5;
+  
+  // Capability required to execute this verb
+  string required_capability = 6;
+  
+  // Execution constraints
+  VerbConstraints constraints = 7;
+  
+  // Error definitions
+  repeated ErrorDefinition error_definitions = 8;
+  
+  // Documentation and examples
+  string documentation = 9;
+  repeated VerbExample examples = 10;
+  
+  // Buf schema registry information
+  string buf_module = 11;
+  string buf_commit = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+  
+  // Compatibility information
+  CompatibilityInfo compatibility = 15;
+  
+  // Tags for categorization and discovery
+  repeated string tags = 16;
+  
+  // Metadata
+  map<string, string> metadata = 17;
+}
+
+// VerbConstraints define execution constraints for a verb
+message VerbConstraints {
+  // Maximum execution time
+  int32 max_execution_time_seconds = 1;
+  
+  // Resource limits
+  ResourceLimits resource_limits = 2;
+  
+  // Retry policy
+  RetryPolicy retry_policy = 3;
+  
+  // Idempotency settings
+  bool idempotent = 4;
+  
+  // Rate limiting
+  RateLimits rate_limits = 5;
+  
+  // Security constraints
+  SecurityConstraints security = 6;
+}
+
+// ResourceLimits define resource consumption limits
+message ResourceLimits {
+  int64 max_memory_bytes = 1;
+  int32 max_cpu_cores = 2;
+  int64 max_disk_bytes = 3;
+  int32 max_network_connections = 4;
+}
+
+// RetryPolicy defines how failed verb executions should be retried
+message RetryPolicy {
+  int32 max_attempts = 1;
+  string initial_delay = 2; // Duration string
+  string max_delay = 3; // Duration string
+  double backoff_multiplier = 4;
+  repeated int32 retryable_error_codes = 5;
+}
+
+// RateLimits define rate limiting constraints
+message RateLimits {
+  int32 calls_per_second = 1;
+  int32 calls_per_minute = 2;
+  int32 calls_per_hour = 3;
+  int32 calls_per_day = 4;
+  
+  // Burst limits
+  int32 burst_capacity = 5;
+}
+
+// SecurityConstraints define security requirements
+message SecurityConstraints {
+  // Authentication requirements
+  repeated string required_auth_methods = 1;
+  
+  // Authorization requirements
+  repeated string required_permissions = 2;
+  
+  // Audit requirements
+  bool audit_all_calls = 3;
+  bool audit_failures_only = 4;
+  
+  // Data sensitivity level
+  DataSensitivityLevel data_sensitivity = 5;
+  
+  // Encryption requirements
+  bool require_encryption = 6;
+}
+
+// DataSensitivityLevel defines data sensitivity levels
+enum DataSensitivityLevel {
+  DATA_SENSITIVITY_LEVEL_UNSPECIFIED = 0;
+  DATA_SENSITIVITY_LEVEL_PUBLIC = 1;
+  DATA_SENSITIVITY_LEVEL_INTERNAL = 2;
+  DATA_SENSITIVITY_LEVEL_CONFIDENTIAL = 3;
+  DATA_SENSITIVITY_LEVEL_RESTRICTED = 4;
+}
+
+// ErrorDefinition defines possible errors a verb can return
+message ErrorDefinition {
+  int32 error_code = 1;
+  string error_name = 2;
+  string description = 3;
+  Schema error_schema = 4; // Schema for error details
+  bool retryable = 5;
+  string mitigation_guidance = 6;
+}
+
+// VerbExample provides examples of verb usage
+message VerbExample {
+  string name = 1;
+  string description = 2;
+  google.protobuf.Any input_example = 3;
+  google.protobuf.Any output_example = 4;
+  repeated google.protobuf.Any error_examples = 5;
+  string scenario = 6;
+}
+
+// CompatibilityInfo tracks compatibility between versions
+message CompatibilityInfo {
+  repeated string compatible_versions = 1;
+  repeated string breaking_changes_since = 2;
+  string migration_guide = 3;
+  string deprecation_notice = 4;
+  google.protobuf.Timestamp deprecation_date = 5;
+}
+
+// VerbCall represents a call to a verb with type information
+message VerbCall {
+  string verb_name = 1;
+  string interface_version = 2;
+  google.protobuf.Any input = 3;
+  google.protobuf.Timestamp requested_at = 4;
+  
+  // Execution context
+  ExecutionContext context = 5;
+  
+  // Tracing information
+  string trace_id = 6;
+  string span_id = 7;
+}
+
+// ExecutionContext provides context for verb execution
+message ExecutionContext {
+  string caller_id = 1;
+  string session_id = 2;
+  string request_id = 3;
+  map<string, string> headers = 4;
+  repeated string capabilities = 5;
+  
+  // Security context
+  SecurityContext security = 6;
+}
+
+// SecurityContext provides security information
+message SecurityContext {
+  string principal_id = 1;
+  repeated string roles = 2;
+  repeated string permissions = 3;
+  string authentication_method = 4;
+  google.protobuf.Timestamp authenticated_at = 5;
+}
+
+// VerbResult represents the result of a verb execution
+message VerbResult {
+  string verb_name = 1;
+  string interface_version = 2;
+  google.protobuf.Any output = 3;
+  VerbExecutionStatus status = 4;
+  
+  // Timing information
+  google.protobuf.Timestamp started_at = 5;
+  google.protobuf.Timestamp completed_at = 6;
+  int64 execution_duration_ms = 7;
+  
+  // Error information (if status is ERROR)
+  VerbError error = 8;
+  
+  // Resource usage
+  ResourceUsage resource_usage = 9;
+  
+  // Tracing information
+  string trace_id = 10;
+  string span_id = 11;
+}
+
+// VerbExecutionStatus represents the status of verb execution
+enum VerbExecutionStatus {
+  VERB_EXECUTION_STATUS_UNSPECIFIED = 0;
+  VERB_EXECUTION_STATUS_SUCCESS = 1;
+  VERB_EXECUTION_STATUS_ERROR = 2;
+  VERB_EXECUTION_STATUS_TIMEOUT = 3;
+  VERB_EXECUTION_STATUS_CANCELLED = 4;
+  VERB_EXECUTION_STATUS_RATE_LIMITED = 5;
+  VERB_EXECUTION_STATUS_CAPABILITY_DENIED = 6;
+}
+
+// VerbError represents an error from verb execution
+message VerbError {
+  int32 error_code = 1;
+  string error_name = 2;
+  string message = 3;
+  google.protobuf.Any details = 4;
+  bool retryable = 5;
+  string stack_trace = 6;
+  repeated VerbError caused_by = 7;
+}
+
+// ResourceUsage tracks resource consumption during execution
+message ResourceUsage {
+  int64 memory_bytes_peak = 1;
+  int64 cpu_time_ms = 2;
+  int64 disk_bytes_read = 3;
+  int64 disk_bytes_written = 4;
+  int32 network_connections_used = 5;
+  int64 network_bytes_sent = 6;
+  int64 network_bytes_received = 7;
+}
+
+// Request/Response messages for verb registry service
+
+message RegisterVerbInterfaceRequest {
+  VerbInterface verb_interface = 1;
+  bool validate_compatibility = 2;
+  bool force_update = 3;
+}
+
+message RegisterVerbInterfaceResponse {
+  bool success = 1;
+  string message = 2;
+  string assigned_version = 3;
+  repeated string compatibility_warnings = 4;
+  repeated string breaking_changes = 5;
+}
+
+message GetVerbInterfaceRequest {
+  string name = 1;
+  string version = 2; // Optional: latest if not specified
+}
+
+message GetVerbInterfaceResponse {
+  VerbInterface verb_interface = 1;
+  repeated string compatible_versions = 2;
+  repeated string breaking_changes_since = 3;
+}
+
+message ListVerbInterfacesRequest {
+  string name_filter = 1;
+  string version_filter = 2;
+  repeated string capability_filter = 3;
+  repeated string tag_filter = 4;
+  bool include_deprecated = 5;
+}
+
+message ListVerbInterfacesResponse {
+  repeated VerbInterface verb_interfaces = 1;
+  map<string, string> latest_versions = 2;
+  repeated string deprecated_versions = 3;
+}
+
+message ValidateVerbCallRequest {
+  string verb_name = 1;
+  string interface_version = 2;
+  google.protobuf.Any input_data = 3;
+  bool strict_validation = 4;
+}
+
+message ValidateVerbCallResponse {
+  bool valid = 1;
+  repeated string errors = 2;
+  repeated string warnings = 3;
+  repeated string suggestions = 4;
+}
+
+message CheckInterfaceCompatibilityRequest {
+  string verb_name = 1;
+  string current_version = 2;
+  string target_version = 3;
+}
+
+message CheckInterfaceCompatibilityResponse {
+  bool compatible = 1;
+  repeated string breaking_changes = 2;
+  repeated string warnings = 3;
+  string compatibility_level = 4; // "full", "backward", "forward", "none"
+}
+
+message GenerateVerbCodeRequest {
+  string verb_name = 1;
+  string interface_version = 2;
+  CodeGenerationTarget target = 3;
+  map<string, string> options = 4;
+}
+
+message GenerateVerbCodeResponse {
+  bool success = 1;
+  map<string, string> generated_files = 2; // filename -> content
+  repeated string errors = 3;
+  repeated string warnings = 4;
+}
+
+// CodeGenerationTarget defines the target language/framework for code generation
+enum CodeGenerationTarget {
+  CODE_GENERATION_TARGET_UNSPECIFIED = 0;
+  CODE_GENERATION_TARGET_GO = 1;
+  CODE_GENERATION_TARGET_PYTHON = 2;
+  CODE_GENERATION_TARGET_TYPESCRIPT = 3;
+  CODE_GENERATION_TARGET_JAVA = 4;
+  CODE_GENERATION_TARGET_RUST = 5;
+  CODE_GENERATION_TARGET_CSHARP = 6;
+}
+
+// VerbRegistry manages the registry of all verb interfaces
+message VerbRegistry {
+  map<string, VerbInterface> interfaces = 1;
+  string registry_version = 2;
+  google.protobuf.Timestamp last_updated = 3;
+  
+  // Buf registry integration
+  string buf_module = 4;
+  string buf_commit = 5;
+  
+  // Interface evolution tracking
+  map<string, InterfaceEvolution> interface_evolution = 6;
+}
+
+// InterfaceEvolution tracks the evolution of a verb interface over time
+message InterfaceEvolution {
+  string interface_name = 1;
+  repeated string versions = 2;
+  map<string, CompatibilityInfo> version_compatibility = 3;
+  repeated string deprecated_versions = 4;
+  string recommended_version = 5;
+} 

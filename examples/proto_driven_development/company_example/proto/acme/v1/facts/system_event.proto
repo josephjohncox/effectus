@@ -1,0 +1,251 @@
+syntax = "proto3";
+
+package acme.v1.facts;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/any.proto";
+
+option go_package = "acme.com/gen/go/acme/v1/facts;factsv1";
+
+// SystemEvent represents a system event or audit log entry
+message SystemEvent {
+  // Unique event identifier
+  string event_id = 1;
+  
+  // Event type/category
+  EventType event_type = 2;
+  
+  // Event severity level
+  SeverityLevel severity = 3;
+  
+  // Human-readable event message
+  string message = 4;
+  
+  // Source component or service that generated the event
+  string source = 5;
+  
+  // Optional user ID associated with the event
+  optional string user_id = 6;
+  
+  // Optional session ID
+  optional string session_id = 7;
+  
+  // Request ID for tracing
+  optional string request_id = 8;
+  
+  // Trace ID for distributed tracing
+  optional string trace_id = 9;
+  
+  // Timestamp when the event occurred
+  google.protobuf.Timestamp timestamp = 10;
+  
+  // Event payload/context data
+  EventPayload payload = 11;
+  
+  // Resource that was acted upon (optional)
+  optional Resource resource = 12;
+  
+  // Actor who performed the action (optional)
+  optional Actor actor = 13;
+  
+  // Tags for categorization and filtering
+  repeated string tags = 14;
+  
+  // Custom metadata
+  map<string, string> metadata = 15;
+  
+  // Event correlation ID (for related events)
+  optional string correlation_id = 16;
+  
+  // Duration of the operation (if applicable)
+  optional int64 duration_ms = 17;
+  
+  // Whether this event represents an error
+  bool is_error = 18;
+  
+  // Error details (if is_error is true)
+  optional ErrorDetails error = 19;
+}
+
+// Event type enumeration
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  EVENT_TYPE_AUTHENTICATION = 1;   // Login, logout, auth failures
+  EVENT_TYPE_AUTHORIZATION = 2;    // Permission checks, access denied
+  EVENT_TYPE_CRUD = 3;            // Create, read, update, delete operations
+  EVENT_TYPE_SYSTEM = 4;          // System startup, shutdown, health checks
+  EVENT_TYPE_NETWORK = 5;         // Network requests, responses
+  EVENT_TYPE_DATABASE = 6;        // Database operations
+  EVENT_TYPE_SECURITY = 7;        // Security-related events
+  EVENT_TYPE_PERFORMANCE = 8;     // Performance metrics, alerts
+  EVENT_TYPE_BUSINESS = 9;        // Business logic events
+  EVENT_TYPE_INTEGRATION = 10;    // External service integrations
+  EVENT_TYPE_CONFIGURATION = 11;  // Configuration changes
+  EVENT_TYPE_DEPLOYMENT = 12;     // Deployment events
+}
+
+// Severity level enumeration
+enum SeverityLevel {
+  SEVERITY_LEVEL_UNSPECIFIED = 0;
+  SEVERITY_LEVEL_DEBUG = 1;      // Debug information
+  SEVERITY_LEVEL_INFO = 2;       // Informational messages
+  SEVERITY_LEVEL_NOTICE = 3;     // Normal but significant condition
+  SEVERITY_LEVEL_WARNING = 4;    // Warning conditions
+  SEVERITY_LEVEL_ERROR = 5;      // Error conditions
+  SEVERITY_LEVEL_CRITICAL = 6;   // Critical conditions
+  SEVERITY_LEVEL_ALERT = 7;      // Action must be taken immediately
+  SEVERITY_LEVEL_EMERGENCY = 8;  // System is unusable
+}
+
+// Event payload containing structured event data
+message EventPayload {
+  oneof payload_type {
+    AuthEvent auth_event = 1;
+    CrudEvent crud_event = 2;
+    SystemEventDetails system_event = 3;
+    NetworkEvent network_event = 4;
+    PerformanceEvent performance_event = 5;
+    SecurityEvent security_event = 6;
+    google.protobuf.Any custom_event = 7;
+  }
+}
+
+// Authentication event details
+message AuthEvent {
+  string action = 1;           // login, logout, refresh, etc.
+  string user_agent = 2;
+  string ip_address = 3;
+  optional string location = 4;
+  bool success = 5;
+  optional string failure_reason = 6;
+}
+
+// CRUD operation event details
+message CrudEvent {
+  CrudOperation operation = 1;
+  string resource_type = 2;
+  string resource_id = 3;
+  repeated string fields_modified = 4;
+  map<string, string> old_values = 5;
+  map<string, string> new_values = 6;
+}
+
+// System operation event details
+message SystemEventDetails {
+  string component = 1;
+  string operation = 2;
+  SystemStatus status = 3;
+  map<string, string> metrics = 4;
+}
+
+// Network request/response event details
+message NetworkEvent {
+  string method = 1;
+  string url = 2;
+  int32 status_code = 3;
+  int64 request_size = 4;
+  int64 response_size = 5;
+  int64 duration_ms = 6;
+  string user_agent = 7;
+  string client_ip = 8;
+}
+
+// Performance metric event details
+message PerformanceEvent {
+  string metric_name = 1;
+  double value = 2;
+  string unit = 3;
+  map<string, string> dimensions = 4;
+  optional double threshold = 5;
+  optional bool threshold_exceeded = 6;
+}
+
+// Security event details
+message SecurityEvent {
+  SecurityEventType security_type = 1;
+  string description = 2;
+  string source_ip = 3;
+  optional string target_resource = 4;
+  ThreatLevel threat_level = 5;
+  bool blocked = 6;
+  repeated string indicators = 7;
+}
+
+// CRUD operation enumeration
+enum CrudOperation {
+  CRUD_OPERATION_UNSPECIFIED = 0;
+  CRUD_OPERATION_CREATE = 1;
+  CRUD_OPERATION_READ = 2;
+  CRUD_OPERATION_UPDATE = 3;
+  CRUD_OPERATION_DELETE = 4;
+  CRUD_OPERATION_LIST = 5;
+  CRUD_OPERATION_BULK_CREATE = 6;
+  CRUD_OPERATION_BULK_UPDATE = 7;
+  CRUD_OPERATION_BULK_DELETE = 8;
+}
+
+// System status enumeration
+enum SystemStatus {
+  SYSTEM_STATUS_UNSPECIFIED = 0;
+  SYSTEM_STATUS_HEALTHY = 1;
+  SYSTEM_STATUS_DEGRADED = 2;
+  SYSTEM_STATUS_UNHEALTHY = 3;
+  SYSTEM_STATUS_STARTING = 4;
+  SYSTEM_STATUS_STOPPING = 5;
+  SYSTEM_STATUS_STOPPED = 6;
+}
+
+// Security event type enumeration
+enum SecurityEventType {
+  SECURITY_EVENT_TYPE_UNSPECIFIED = 0;
+  SECURITY_EVENT_TYPE_INTRUSION_ATTEMPT = 1;
+  SECURITY_EVENT_TYPE_MALWARE_DETECTED = 2;
+  SECURITY_EVENT_TYPE_SUSPICIOUS_ACTIVITY = 3;
+  SECURITY_EVENT_TYPE_POLICY_VIOLATION = 4;
+  SECURITY_EVENT_TYPE_DATA_BREACH = 5;
+  SECURITY_EVENT_TYPE_PRIVILEGE_ESCALATION = 6;
+}
+
+// Threat level enumeration
+enum ThreatLevel {
+  THREAT_LEVEL_UNSPECIFIED = 0;
+  THREAT_LEVEL_LOW = 1;
+  THREAT_LEVEL_MEDIUM = 2;
+  THREAT_LEVEL_HIGH = 3;
+  THREAT_LEVEL_CRITICAL = 4;
+}
+
+// Resource that was acted upon
+message Resource {
+  string resource_type = 1;    // user, order, product, etc.
+  string resource_id = 2;      // Unique identifier
+  optional string resource_name = 3; // Human-readable name
+  map<string, string> attributes = 4; // Key attributes
+}
+
+// Actor who performed the action
+message Actor {
+  ActorType actor_type = 1;
+  string actor_id = 2;
+  optional string actor_name = 3;
+  map<string, string> attributes = 4;
+}
+
+// Actor type enumeration
+enum ActorType {
+  ACTOR_TYPE_UNSPECIFIED = 0;
+  ACTOR_TYPE_USER = 1;         // Human user
+  ACTOR_TYPE_SERVICE = 2;      // Service account
+  ACTOR_TYPE_SYSTEM = 3;       // System process
+  ACTOR_TYPE_API_KEY = 4;      // API key
+  ACTOR_TYPE_ANONYMOUS = 5;    // Anonymous user
+}
+
+// Error details for failed operations
+message ErrorDetails {
+  string error_code = 1;       // Application-specific error code
+  string error_message = 2;    // Human-readable error message
+  optional string stack_trace = 3; // Stack trace (if available)
+  map<string, string> context = 4; // Additional error context
+  repeated ErrorDetails caused_by = 5; // Chain of errors
+} 

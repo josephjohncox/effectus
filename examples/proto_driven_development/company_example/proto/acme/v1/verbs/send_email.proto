@@ -1,0 +1,133 @@
+syntax = "proto3";
+
+package acme.v1.verbs;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "acme.com/gen/go/acme/v1/verbs;verbsv1";
+
+// SendEmailInput defines the input for the send_email verb
+message SendEmailInput {
+  // Recipient email address
+  string to = 1;
+  
+  // Email subject line
+  string subject = 2;
+  
+  // Email body content (can be HTML or plain text)
+  string body = 3;
+  
+  // Sender email address (optional, uses default if not provided)
+  optional string from = 4;
+  
+  // CC recipients (optional)
+  repeated string cc = 5;
+  
+  // BCC recipients (optional)
+  repeated string bcc = 6;
+  
+  // Email priority (1=high, 3=normal, 5=low)
+  optional int32 priority = 7;
+  
+  // Whether the email body is HTML
+  optional bool is_html = 8;
+  
+  // Attachments (optional)
+  repeated Attachment attachments = 9;
+}
+
+// SendEmailOutput defines the output for the send_email verb
+message SendEmailOutput {
+  // Unique message identifier from email provider
+  string message_id = 1;
+  
+  // Delivery status
+  DeliveryStatus status = 2;
+  
+  // Timestamp when email was queued/sent
+  google.protobuf.Timestamp sent_at = 3;
+  
+  // Provider-specific response data
+  optional string provider_response = 4;
+  
+  // Estimated delivery time (if available)
+  optional google.protobuf.Timestamp estimated_delivery = 5;
+}
+
+// Email attachment
+message Attachment {
+  // Filename
+  string filename = 1;
+  
+  // MIME content type
+  string content_type = 2;
+  
+  // Base64-encoded content or reference to storage
+  oneof content {
+    bytes data = 3;
+    string storage_url = 4;
+  }
+  
+  // Size in bytes
+  optional int64 size = 5;
+}
+
+// Email delivery status
+enum DeliveryStatus {
+  DELIVERY_STATUS_UNSPECIFIED = 0;
+  DELIVERY_STATUS_QUEUED = 1;      // Queued for delivery
+  DELIVERY_STATUS_SENT = 2;        // Sent to provider
+  DELIVERY_STATUS_DELIVERED = 3;   // Delivered to recipient
+  DELIVERY_STATUS_FAILED = 4;      // Delivery failed
+  DELIVERY_STATUS_BOUNCED = 5;     // Email bounced
+  DELIVERY_STATUS_REJECTED = 6;    // Rejected by provider
+}
+
+// SendEmailService provides the send_email verb implementation
+service SendEmailService {
+  // Execute the send_email verb
+  rpc Execute(SendEmailInput) returns (SendEmailOutput);
+  
+  // Get delivery status for a message
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+  
+  // Validate email addresses before sending
+  rpc ValidateAddresses(ValidateAddressesRequest) returns (ValidateAddressesResponse);
+}
+
+// GetStatusRequest for checking email delivery status
+message GetStatusRequest {
+  string message_id = 1;
+}
+
+// GetStatusResponse with current delivery status
+message GetStatusResponse {
+  string message_id = 1;
+  DeliveryStatus status = 2;
+  google.protobuf.Timestamp last_updated = 3;
+  repeated StatusEvent events = 4;
+}
+
+// StatusEvent represents a delivery event
+message StatusEvent {
+  google.protobuf.Timestamp timestamp = 1;
+  DeliveryStatus status = 2;
+  optional string details = 3;
+}
+
+// ValidateAddressesRequest for email validation
+message ValidateAddressesRequest {
+  repeated string email_addresses = 1;
+}
+
+// ValidateAddressesResponse with validation results
+message ValidateAddressesResponse {
+  repeated EmailValidation validations = 1;
+}
+
+// EmailValidation result for a single address
+message EmailValidation {
+  string email_address = 1;
+  bool is_valid = 2;
+  optional string error_message = 3;
+} 

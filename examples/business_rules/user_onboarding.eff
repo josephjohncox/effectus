@@ -1,0 +1,223 @@
+// User Onboarding Rules
+// Business-friendly rules using proper Effectus syntax with expr
+
+// Welcome new high-value users with personalized onboarding
+rule "welcome_high_value_user" {
+    when {
+        user.activity_score > 85.0 && 
+        user.created_at.After(time.Now().Add(-7*24*time.Hour)) &&
+        user.preferences.email_marketing == true &&
+        user.tier in ["premium", "enterprise"]
+    }
+    then {
+        send_email(
+            to: user.email,
+            template: "high_value_welcome",
+            personalization: {
+                name: user.profile.first_name,
+                activity_score: user.activity_score,
+                join_date: user.created_at,
+                special_offer: true
+            },
+            send_after: "30m"
+        )
+        
+        update_database(
+            table: "user_journey",
+            operation: "insert",
+            data: {
+                user_id: user.user_id,
+                stage: "welcome_sent",
+                timestamp: time.Now(),
+                rule_name: "welcome_high_value_user"
+            }
+        )
+    }
+}
+
+// Follow up with users who haven't completed profile setup
+rule "incomplete_profile_reminder" {
+    when {
+        user.created_at.After(time.Now().Add(-3*24*time.Hour)) &&
+        user.profile.completion_percentage < 60.0 &&
+        user.last_login_at.After(time.Now().Add(-24*time.Hour))
+    }
+    then {
+        send_email(
+            to: user.email,
+            template: "complete_profile_reminder",
+            personalization: {
+                completion_percentage: user.profile.completion_percentage,
+                missing_fields: user.profile.missing_required_fields
+            }
+        )
+    }
+}
+
+// Celebrate first purchase milestone  
+rule "first_purchase_celebration" {
+    when {
+        order.event_type == "order_completed" &&
+        order.order_number == 1 &&
+        order.total_amount > 50.0 &&
+        user.user_id == order.user_id &&
+        user.created_at.After(time.Now().Add(-30*24*time.Hour))
+    }
+    then {
+        send_email(
+            to: user.email,
+            template: "first_purchase_celebration",
+            personalization: {
+                order_total: order.total_amount,
+                items_purchased: len(order.items),
+                loyalty_points_earned: order.total_amount * 10
+            }
+        )
+        
+        update_database(
+            table: "loyalty_points",
+            operation: "increment",
+            where: {user_id: user.user_id},
+            data: {
+                points: order.total_amount * 5,
+                reason: "first_purchase_bonus"
+            }
+        )
+    }
+}
+
+// Detect and nurture at-risk users
+rule "at_risk_user_intervention" {
+    when {
+        user.activity_score < 20.0 &&
+        user.last_login_at.Before(time.Now().Add(-14*24*time.Hour)) &&
+        user.total_orders > 0 &&
+        user.preferences.retention_emails == true
+    }
+    then {
+        send_email(
+            to: user.email,
+            template: "win_back_offer",
+            personalization: {
+                last_login: user.last_login_at,
+                favorite_category: user.preferences.favorite_product_category,
+                discount_percentage: 15
+            }
+        )
+        
+        update_database(
+            table: "customer_flags",
+            operation: "upsert",
+            data: {
+                user_id: user.user_id,
+                flag_type: "at_risk",
+                priority: "high",
+                created_by: "rule_engine",
+                notes: "User inactive for 14+ days, needs intervention"
+            }
+        )
+    }
+}
+
+// Smart re-engagement based on user behavior patterns  
+rule "behavioral_reengagement" {
+    when {
+        user.activity_score >= 40.0 && user.activity_score <= 70.0 &&
+        user.last_purchase_at.Before(time.Now().Add(-60*24*time.Hour)) &&
+        user.browsing_sessions.last_7_days > 2 &&
+        cart != nil &&
+        cart.user_id == user.user_id &&
+        cart.event_type == "cart_abandoned" &&
+        cart.created_at.After(time.Now().Add(-30*24*time.Hour)) &&
+        cart.total_value > 100.0
+    }
+    then {
+        send_email(
+            to: user.email,
+            template: "personalized_comeback",
+            personalization: {
+                browsing_category: user.recent_browse_categories[0],
+                abandoned_cart_value: cart.total_value,
+                recommended_products: user.recommendations.top_3,
+                incentive_percentage: 10
+            },
+            send_after: "2h"
+        )
+    }
+}
+
+// Seasonal campaign targeting
+rule "seasonal_product_promotion" {
+    when {
+        user.preferences.seasonal_promotions == true &&
+        "outdoor_gear" in user.purchase_history.categories &&
+        user.location.climate in ["temperate", "continental"] &&
+        time.Now().Month() in [3, 4, 5]
+    }
+    then {
+        send_email(
+            to: user.email,
+            template: "spring_outdoor_collection",
+            personalization: {
+                preferred_brands: user.preferences.favorite_brands,
+                size_preferences: user.profile.size_preferences,
+                local_weather: user.location.current_weather
+            },
+            campaign_id: "spring_2024_outdoor"
+        )
+    }
+}
+
+// Premium upgrade opportunity with complex logic
+rule "premium_upgrade_opportunity" {
+    when {
+        user.tier == "basic" &&
+        user.activity_score > 75.0 &&
+        user.total_orders >= 3 &&
+        sum(user.order_history, {.total_amount}) > 500.0 &&
+        user.last_purchase_at.After(time.Now().Add(-30*24*time.Hour)) &&
+        user.preferences.promotional_emails == true
+    }
+    then {
+        total_spent = sum(user.order_history, {.total_amount})
+        estimated_savings = calculate_premium_savings(order_history: user.order_history)
+        
+        send_email(
+            to: user.email,
+            template: "premium_upgrade_invitation",
+            personalization: {
+                total_spent: $total_spent,
+                orders_count: user.total_orders,
+                estimated_savings: $estimated_savings,
+                upgrade_incentive: "50% off first year"
+            }
+        )
+    }
+}
+
+// Cart abandonment with smart timing
+rule "abandoned_cart_recovery" {
+    when {
+        cart.event_type == "cart_abandoned" &&
+        cart.total_value > 25.0 &&
+        cart.created_at.After(time.Now().Add(-4*time.Hour)) &&
+        cart.created_at.Before(time.Now().Add(-1*time.Hour)) &&
+        user.user_id == cart.user_id &&
+        user.preferences.cart_reminders == true &&
+        count(filter(user.recent_emails, {.template == "cart_reminder"})) == 0
+    }
+    then {
+        discount_code = generate_discount_code(user_id: user.user_id, percentage: 10)
+        
+        send_email(
+            to: user.email,
+            template: "cart_reminder",
+            personalization: {
+                cart_items: cart.items,
+                cart_total: cart.total_value,
+                discount_code: $discount_code,
+                expires_in: "24h"
+            }
+        )
+    }
+} 

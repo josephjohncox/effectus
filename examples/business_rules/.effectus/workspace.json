@@ -1,0 +1,174 @@
+{
+  "workspace": {
+    "name": "Customer Engagement Rules",
+    "version": "1.0.0",
+    "description": "Business rules for customer onboarding, retention, and engagement",
+    "created_at": "2024-01-15T10:00:00Z",
+    "team": "Customer Success"
+  },
+  
+  "schema": {
+    "path": "./schema-docs",
+    "auto_sync": true,
+    "sync_interval": "5m",
+    "sources": [
+      {
+        "name": "production_adapters",
+        "url": "https://api.acme.com/effectus/schemas",
+        "auth": "bearer_token"
+      },
+      {
+        "name": "local_definitions", 
+        "path": "../protobuf/acme/v1"
+      }
+    ]
+  },
+  
+  "development": {
+    "hot_reload": {
+      "enabled": true,
+      "port": 9090,
+      "watch_patterns": ["**/*.eff", "**/*.effx"],
+      "ignore_patterns": ["**/test/**", "**/*.tmp"]
+    },
+    "validation": {
+      "realtime": true,
+      "strict_mode": true,
+      "lint_on_save": true
+    },
+    "testing": {
+      "auto_generate_data": true,
+      "data_sources": [
+        {
+          "name": "synthetic",
+          "type": "generator",
+          "count": 100
+        },
+        {
+          "name": "staging",
+          "type": "database",
+          "connection": "postgres://readonly@staging-db:5432/effectus",
+          "readonly": true
+        }
+      ]
+    }
+  },
+  
+  "deployment": {
+    "environments": {
+      "staging": {
+        "url": "https://staging-effectus.acme.com",
+        "auto_deploy": true,
+        "branch": "main",
+        "health_check": true
+      },
+      "production": {
+        "url": "https://effectus.acme.com", 
+        "auto_deploy": false,
+        "approval_required": true,
+        "rollout_strategy": "canary"
+      }
+    }
+  },
+  
+  "ide": {
+    "vscode": {
+      "extensions": [
+        "effectus.effectus-language-support"
+      ],
+      "settings": {
+        "effectus.schemaPath": "./schema-docs",
+        "effectus.factExamplesPath": "./examples",
+        "effectus.lsp.enabled": true,
+        "effectus.autoComplete.schemas": true,
+        "effectus.validation.realtime": true,
+        "effectus.hotReload.enabled": true,
+        "effectus.lineage.showInHover": true,
+        "effectus.performance.showMetrics": true
+      }
+    }
+  },
+  
+  "team": {
+    "members": [
+      {
+        "name": "Sarah Chen",
+        "role": "Business Analyst", 
+        "permissions": ["read", "write", "test"]
+      },
+      {
+        "name": "Mike Rodriguez",
+        "role": "Product Manager",
+        "permissions": ["read", "write", "test", "deploy_staging"]
+      },
+      {
+        "name": "Alex Kim",
+        "role": "Engineering Lead",
+        "permissions": ["read", "write", "test", "deploy_staging", "deploy_production"]
+      }
+    ]
+  },
+  
+  "templates": {
+    "rule_patterns": [
+      {
+        "name": "User Lifecycle",
+        "description": "Rules for user onboarding, engagement, and retention",
+        "template": "templates/user_lifecycle.eff",
+        "examples": ["welcome_new_user", "re_engage_inactive"]
+      },
+      {
+        "name": "Purchase Behavior",
+        "description": "Rules based on purchase patterns and cart activity",
+        "template": "templates/purchase_behavior.eff", 
+        "examples": ["abandoned_cart", "cross_sell", "upsell"]
+      },
+      {
+        "name": "Seasonal Campaigns",
+        "description": "Time-based promotional and seasonal rules",
+        "template": "templates/seasonal.eff",
+        "examples": ["holiday_promotion", "back_to_school", "summer_sale"]
+      }
+    ]
+  },
+  
+  "observability": {
+    "metrics": {
+      "enabled": true,
+      "dashboard_url": "https://grafana.acme.com/effectus",
+      "alerts": [
+        {
+          "name": "rule_execution_errors",
+          "threshold": "error_rate > 5%",
+          "notification": "slack://customer-success"
+        },
+        {
+          "name": "rule_performance_degradation", 
+          "threshold": "p95_latency > 100ms",
+          "notification": "email://engineering@acme.com"
+        }
+      ]
+    },
+    "logging": {
+      "level": "info",
+      "include_rule_context": true,
+      "structured": true
+    }
+  },
+  
+  "compliance": {
+    "pii_detection": {
+      "enabled": true,
+      "auto_mask": true,
+      "fields": ["email", "phone", "address", "ssn"]
+    },
+    "audit_trail": {
+      "enabled": true,
+      "retention_days": 2555  // 7 years
+    },
+    "data_governance": {
+      "classification_required": true,
+      "retention_policies": true
+    }
+  }
+} 

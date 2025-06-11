@@ -1,0 +1,190 @@
+syntax = "proto3";
+
+package acme.v1.facts;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "acme.com/gen/go/acme/v1/facts;factsv1";
+
+// UserProfile represents a user's profile information
+message UserProfile {
+  // Unique user identifier
+  string user_id = 1;
+  
+  // User's email address
+  string email = 2;
+  
+  // User's display name
+  string name = 3;
+  
+  // User's first name
+  optional string first_name = 4;
+  
+  // User's last name  
+  optional string last_name = 5;
+  
+  // Phone number
+  optional string phone = 6;
+  
+  // User's preferred language (ISO 639-1 code)
+  optional string language = 7;
+  
+  // User's timezone (IANA timezone)
+  optional string timezone = 8;
+  
+  // User's avatar/profile picture URL
+  optional string avatar_url = 9;
+  
+  // User preferences
+  UserPreferences preferences = 10;
+  
+  // Account status
+  AccountStatus status = 11;
+  
+  // When the user account was created
+  google.protobuf.Timestamp created_at = 12;
+  
+  // When the user profile was last updated
+  google.protobuf.Timestamp updated_at = 13;
+  
+  // Last login timestamp
+  optional google.protobuf.Timestamp last_login_at = 14;
+  
+  // User's subscription tier
+  optional SubscriptionTier subscription_tier = 15;
+  
+  // Custom metadata (extensible key-value pairs)
+  map<string, string> metadata = 16;
+}
+
+// UserPreferences for notification and app settings
+message UserPreferences {
+  // Notification preferences
+  NotificationPreferences notifications = 1;
+  
+  // Privacy settings
+  PrivacySettings privacy = 2;
+  
+  // UI/UX preferences
+  UIPreferences ui = 3;
+}
+
+// NotificationPreferences controls how user receives notifications
+message NotificationPreferences {
+  // Email notifications enabled
+  bool email_enabled = 1;
+  
+  // SMS notifications enabled  
+  bool sms_enabled = 2;
+  
+  // Push notifications enabled
+  bool push_enabled = 3;
+  
+  // Marketing emails enabled
+  bool marketing_enabled = 4;
+  
+  // Notification frequency
+  NotificationFrequency frequency = 5;
+  
+  // Quiet hours (no notifications during this time)
+  optional QuietHours quiet_hours = 6;
+}
+
+// PrivacySettings controls user's privacy preferences
+message PrivacySettings {
+  // Profile visibility
+  ProfileVisibility profile_visibility = 1;
+  
+  // Allow search engines to index profile
+  bool allow_indexing = 2;
+  
+  // Show online status to other users
+  bool show_online_status = 3;
+  
+  // Allow direct messages from non-contacts
+  bool allow_direct_messages = 4;
+}
+
+// UIPreferences for user interface customization
+message UIPreferences {
+  // Dark mode enabled
+  bool dark_mode = 1;
+  
+  // Compact view enabled
+  bool compact_view = 2;
+  
+  // Preferred date format
+  DateFormat date_format = 3;
+  
+  // Items per page in lists
+  optional int32 items_per_page = 4;
+}
+
+// QuietHours defines when not to send notifications
+message QuietHours {
+  // Start time (24-hour format, e.g., "22:00")
+  string start_time = 1;
+  
+  // End time (24-hour format, e.g., "08:00")
+  string end_time = 2;
+  
+  // Days of week when quiet hours apply
+  repeated DayOfWeek days = 3;
+}
+
+// Account status enumeration
+enum AccountStatus {
+  ACCOUNT_STATUS_UNSPECIFIED = 0;
+  ACCOUNT_STATUS_ACTIVE = 1;      // Active account
+  ACCOUNT_STATUS_INACTIVE = 2;    // Temporarily inactive
+  ACCOUNT_STATUS_SUSPENDED = 3;   // Suspended by admin
+  ACCOUNT_STATUS_PENDING = 4;     // Pending email verification
+  ACCOUNT_STATUS_DELETED = 5;     // Soft deleted
+}
+
+// Subscription tier enumeration
+enum SubscriptionTier {
+  SUBSCRIPTION_TIER_UNSPECIFIED = 0;
+  SUBSCRIPTION_TIER_FREE = 1;     // Free tier
+  SUBSCRIPTION_TIER_BASIC = 2;    // Basic paid tier
+  SUBSCRIPTION_TIER_PREMIUM = 3;  // Premium tier
+  SUBSCRIPTION_TIER_ENTERPRISE = 4; // Enterprise tier
+}
+
+// Notification frequency enumeration
+enum NotificationFrequency {
+  NOTIFICATION_FREQUENCY_UNSPECIFIED = 0;
+  NOTIFICATION_FREQUENCY_IMMEDIATE = 1; // Immediately
+  NOTIFICATION_FREQUENCY_HOURLY = 2;    // Hourly digest
+  NOTIFICATION_FREQUENCY_DAILY = 3;     // Daily digest
+  NOTIFICATION_FREQUENCY_WEEKLY = 4;    // Weekly digest
+  NOTIFICATION_FREQUENCY_NEVER = 5;     // No notifications
+}
+
+// Profile visibility enumeration
+enum ProfileVisibility {
+  PROFILE_VISIBILITY_UNSPECIFIED = 0;
+  PROFILE_VISIBILITY_PUBLIC = 1;    // Visible to everyone
+  PROFILE_VISIBILITY_FRIENDS = 2;   // Visible to friends only
+  PROFILE_VISIBILITY_PRIVATE = 3;   // Private profile
+}
+
+// Date format preference enumeration
+enum DateFormat {
+  DATE_FORMAT_UNSPECIFIED = 0;
+  DATE_FORMAT_MM_DD_YYYY = 1;  // US format: 12/31/2023
+  DATE_FORMAT_DD_MM_YYYY = 2;  // European format: 31/12/2023
+  DATE_FORMAT_YYYY_MM_DD = 3;  // ISO format: 2023-12-31
+}
+
+// Day of week enumeration
+enum DayOfWeek {
+  DAY_OF_WEEK_UNSPECIFIED = 0;
+  DAY_OF_WEEK_MONDAY = 1;
+  DAY_OF_WEEK_TUESDAY = 2;
+  DAY_OF_WEEK_WEDNESDAY = 3;
+  DAY_OF_WEEK_THURSDAY = 4;
+  DAY_OF_WEEK_FRIDAY = 5;
+  DAY_OF_WEEK_SATURDAY = 6;
+  DAY_OF_WEEK_SUNDAY = 7;
+} 

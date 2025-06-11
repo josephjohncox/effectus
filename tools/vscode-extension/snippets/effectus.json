@@ -1,0 +1,38 @@
+{
+  "Rule Template": {
+    "prefix": "rule",
+    "body": [
+      "rule \"${1:rule_name}\" {",
+      "  when {",
+      "    ${2:condition}",
+      "  }",
+      "  then {",
+      "    emit ${3:verb_name} {",
+      "      ${4:fields}",
+      "    }",
+      "  }",
+      "}"
+    ],
+    "description": "Basic rule template"
+  },
+  "When Block": {
+    "prefix": "when",
+    "body": [
+      "when {",
+      "  ${1:condition}",
+      "}"
+    ],
+    "description": "When condition block"
+  },
+  "Then Block": {
+    "prefix": "then",
+    "body": [
+      "then {",
+      "  emit ${1:verb_name} {",
+      "    ${2:fields}",
+      "  }",
+      "}"
+    ],
+    "description": "Then action block"
+  }
+}

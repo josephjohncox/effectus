@@ -1,0 +1,243 @@
+syntax = "proto3";
+
+package acme.v1.verbs;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+option go_package = "acme.com/gen/go/acme/v1/verbs;verbsv1";
+
+// HttpRequestInput defines the input for the http_request verb
+message HttpRequestInput {
+  // Target URL
+  string url = 1;
+  
+  // HTTP method (GET, POST, PUT, DELETE, etc.)
+  HttpMethod method = 2;
+  
+  // Request headers
+  map<string, string> headers = 3;
+  
+  // Request body (for POST, PUT, etc.)
+  optional bytes body = 4;
+  
+  // Request timeout
+  optional google.protobuf.Duration timeout = 5;
+  
+  // Follow redirects (default: true)
+  optional bool follow_redirects = 6;
+  
+  // Maximum number of redirects to follow
+  optional int32 max_redirects = 7;
+  
+  // User agent string
+  optional string user_agent = 8;
+  
+  // Authentication configuration
+  optional AuthConfig auth = 9;
+  
+  // Retry configuration
+  optional RetryConfig retry = 10;
+  
+  // TLS configuration
+  optional TLSConfig tls = 11;
+  
+  // Proxy configuration
+  optional ProxyConfig proxy = 12;
+}
+
+// HttpRequestOutput defines the output for the http_request verb
+message HttpRequestOutput {
+  // HTTP status code
+  int32 status_code = 1;
+  
+  // HTTP status text
+  string status_text = 2;
+  
+  // Response headers
+  map<string, string> headers = 3;
+  
+  // Response body
+  bytes body = 4;
+  
+  // Response content type
+  optional string content_type = 5;
+  
+  // Response content length
+  optional int64 content_length = 6;
+  
+  // Request duration
+  google.protobuf.Duration duration = 7;
+  
+  // Timestamp when request was made
+  google.protobuf.Timestamp requested_at = 8;
+  
+  // Timestamp when response was received
+  google.protobuf.Timestamp responded_at = 9;
+  
+  // Final URL after redirects
+  optional string final_url = 10;
+  
+  // Number of redirects followed
+  optional int32 redirects_followed = 11;
+  
+  // Whether the request succeeded
+  bool success = 12;
+  
+  // Error message if request failed
+  optional string error_message = 13;
+}
+
+// HTTP method enumeration
+enum HttpMethod {
+  HTTP_METHOD_UNSPECIFIED = 0;
+  HTTP_METHOD_GET = 1;
+  HTTP_METHOD_POST = 2;
+  HTTP_METHOD_PUT = 3;
+  HTTP_METHOD_DELETE = 4;
+  HTTP_METHOD_PATCH = 5;
+  HTTP_METHOD_HEAD = 6;
+  HTTP_METHOD_OPTIONS = 7;
+  HTTP_METHOD_TRACE = 8;
+  HTTP_METHOD_CONNECT = 9;
+}
+
+// Authentication configuration
+message AuthConfig {
+  oneof auth_type {
+    BasicAuth basic = 1;
+    BearerAuth bearer = 2;
+    ApiKeyAuth api_key = 3;
+    OAuth2Auth oauth2 = 4;
+  }
+}
+
+// Basic authentication
+message BasicAuth {
+  string username = 1;
+  string password = 2;
+}
+
+// Bearer token authentication
+message BearerAuth {
+  string token = 1;
+}
+
+// API key authentication
+message ApiKeyAuth {
+  string key = 1;
+  string value = 2;
+  ApiKeyLocation location = 3;
+}
+
+// OAuth2 authentication
+message OAuth2Auth {
+  string access_token = 1;
+  optional string token_type = 2;
+}
+
+// API key location enumeration
+enum ApiKeyLocation {
+  API_KEY_LOCATION_UNSPECIFIED = 0;
+  API_KEY_LOCATION_HEADER = 1;
+  API_KEY_LOCATION_QUERY = 2;
+  API_KEY_LOCATION_COOKIE = 3;
+}
+
+// Retry configuration
+message RetryConfig {
+  // Maximum number of retries
+  int32 max_retries = 1;
+  
+  // Initial delay between retries
+  google.protobuf.Duration initial_delay = 2;
+  
+  // Maximum delay between retries
+  google.protobuf.Duration max_delay = 3;
+  
+  // Backoff factor (exponential backoff)
+  optional double backoff_factor = 4;
+  
+  // HTTP status codes that should trigger a retry
+  repeated int32 retry_on_status_codes = 5;
+  
+  // Whether to retry on connection errors
+  optional bool retry_on_connection_error = 6;
+}
+
+// TLS configuration
+message TLSConfig {
+  // Skip TLS certificate verification (insecure)
+  optional bool skip_verify = 1;
+  
+  // Custom CA certificates
+  repeated bytes ca_certs = 2;
+  
+  // Client certificate for mutual TLS
+  optional ClientCert client_cert = 3;
+  
+  // Minimum TLS version
+  optional TLSVersion min_version = 4;
+  
+  // Maximum TLS version
+  optional TLSVersion max_version = 5;
+}
+
+// Client certificate for mutual TLS
+message ClientCert {
+  bytes cert = 1;
+  bytes key = 2;
+}
+
+// TLS version enumeration
+enum TLSVersion {
+  TLS_VERSION_UNSPECIFIED = 0;
+  TLS_VERSION_1_0 = 1;
+  TLS_VERSION_1_1 = 2;
+  TLS_VERSION_1_2 = 3;
+  TLS_VERSION_1_3 = 4;
+}
+
+// Proxy configuration
+message ProxyConfig {
+  // Proxy URL
+  string url = 1;
+  
+  // Proxy authentication
+  optional BasicAuth auth = 2;
+  
+  // Connect timeout for proxy
+  optional google.protobuf.Duration connect_timeout = 3;
+}
+
+// HttpRequestService provides the http_request verb implementation
+service HttpRequestService {
+  // Execute the http_request verb
+  rpc Execute(HttpRequestInput) returns (HttpRequestOutput);
+  
+  // Validate URL before making request
+  rpc ValidateURL(ValidateURLRequest) returns (ValidateURLResponse);
+  
+  // Get supported HTTP methods
+  rpc GetSupportedMethods(GetSupportedMethodsRequest) returns (GetSupportedMethodsResponse);
+}
+
+// ValidateURLRequest for URL validation
+message ValidateURLRequest {
+  string url = 1;
+}
+
+// ValidateURLResponse with validation results
+message ValidateURLResponse {
+  bool is_valid = 1;
+  optional string error_message = 2;
+  optional string normalized_url = 3;
+}
+
+// GetSupportedMethodsRequest for getting supported HTTP methods
+message GetSupportedMethodsRequest {}
+
+// GetSupportedMethodsResponse with supported methods
+message GetSupportedMethodsResponse {
+  repeated HttpMethod methods = 1;
+} 

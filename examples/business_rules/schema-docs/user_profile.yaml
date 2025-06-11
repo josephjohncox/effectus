@@ -1,0 +1,312 @@
+schema:
+  name: "acme.v1.facts.UserProfile"
+  version: "v1.2.0"
+  description: "User profile information with preferences and activity tracking"
+
+fields:
+  user_id:
+    type: "string"
+    required: true
+    description: "Unique user identifier"
+    examples: ["user_12345", "usr_abc123"]
+    validation: "^(user_|usr_|u_)[a-zA-Z0-9]+$"
+    index: true
+
+  email:
+    type: "string"
+    required: true
+    validation: "email"
+    description: "User's primary email address"
+    pii: true
+    encrypted: true
+
+  profile:
+    type: "acme.v1.common.UserProfileData"
+    description: "Nested profile information"
+    fields:
+      first_name:
+        type: "string"
+        description: "User's first name"
+        pii: true
+        examples: ["John", "Sarah", "Mike"]
+
+      last_name:
+        type: "string"
+        description: "User's last name"
+        pii: true
+        examples: ["Doe", "Smith", "Johnson"]
+
+      completion_percentage:
+        type: "double"
+        range: [0.0, 100.0]
+        description: "Profile completion percentage"
+        examples: [75.5, 82.3, 45.0]
+
+      missing_required_fields:
+        type: "repeated string"
+        description: "List of required fields that are still empty"
+        examples: [["phone", "address"], ["birth_date"], []]
+
+  preferences:
+    type: "acme.v1.common.UserPreferences"
+    description: "User notification and marketing preferences"
+    fields:
+      email_marketing:
+        type: "bool"
+        default: false
+        description: "Opt-in for marketing emails"
+        examples: [true, false]
+
+      seasonal_promotions:
+        type: "bool"
+        default: false
+        description: "Opt-in for seasonal promotion emails"
+        examples: [true, false]
+
+      product_recommendations:
+        type: "bool"
+        description: "Allow personalized product recommendations"
+        default: true
+        examples: [true, false]
+
+      retention_emails:
+        type: "bool"
+        description: "Allow re-engagement and win-back emails"
+        default: true
+        examples: [true, false]
+
+      favorite_product_category:
+        type: "string"
+        description: "User's most purchased product category"
+        examples: ["electronics", "clothing", "books", "outdoor_gear"]
+
+      favorite_brands:
+        type: "repeated string"
+        description: "List of user's preferred brands"
+        examples: [["Nike", "Apple"], ["Samsung", "Sony"], ["Amazon Basics"]]
+
+  activity_score:
+    type: "double"
+    range: [0.0, 100.0]
+    description: "User engagement score based on login frequency, purchases, and interactions"
+    calculation: "Weighted average of login_frequency(40%), purchase_activity(35%), site_interaction(25%)"
+    examples: [87.5, 45.2, 92.1, 23.8]
+
+  tier:
+    type: "string"
+    enum: ["basic", "premium", "enterprise"]
+    description: "User subscription tier"
+    examples: ["premium", "basic", "enterprise"]
+    default: "basic"
+
+  created_at:
+    type: "google.protobuf.Timestamp"
+    required: true
+    description: "Account creation timestamp"
+    examples: ["2024-01-15T10:30:00Z", "2023-12-01T14:22:33Z"]
+    index: true
+
+  last_login_at:
+    type: "google.protobuf.Timestamp"
+    description: "Most recent login timestamp"
+    examples: ["2024-01-15T09:15:42Z", "2024-01-14T16:45:12Z"]
+    index: true
+
+  last_purchase_at:
+    type: "google.protobuf.Timestamp"
+    description: "Most recent purchase timestamp"
+    examples: ["2024-01-10T11:23:45Z", "2023-12-25T14:30:00Z"]
+    nullable: true
+
+  total_orders:
+    type: "int32"
+    description: "Total number of completed orders"
+    range: [0, 999999]
+    examples: [0, 5, 23, 142]
+    default: 0
+
+  location:
+    type: "acme.v1.common.UserLocation"
+    description: "User location information for geo-targeting"
+    fields:
+      country:
+        type: "string"
+        description: "ISO 3166-1 alpha-2 country code"
+        examples: ["US", "CA", "GB", "DE"]
+        validation: "^[A-Z]{2}$"
+
+      timezone:
+        type: "string"
+        description: "IANA timezone identifier"
+        examples: ["America/New_York", "Europe/London", "Asia/Tokyo"]
+
+      climate:
+        type: "string"
+        description: "Climate zone for seasonal targeting"
+        enum: ["tropical", "temperate", "continental", "polar"]
+        examples: ["temperate", "continental"]
+
+      current_weather:
+        type: "string"
+        description: "Current weather condition"
+        examples: ["sunny", "rainy", "snowy", "cloudy"]
+
+  browsing_sessions:
+    type: "acme.v1.common.BrowsingData"
+    description: "Recent browsing behavior metrics"
+    fields:
+      last_7_days:
+        type: "int32"
+        description: "Number of browsing sessions in last 7 days"
+        examples: [3, 7, 12, 0]
+        range: [0, 999]
+
+  recent_browse_categories:
+    type: "repeated string"
+    description: "Recently browsed product categories (last 30 days)"
+    examples: [["electronics", "books"], ["clothing", "shoes"], ["outdoor_gear"]]
+    max_length: 10
+
+  loyalty_tier:
+    type: "string"
+    description: "Current loyalty program tier"
+    enum: ["bronze", "silver", "gold", "platinum"]
+    examples: ["silver", "gold", "bronze"]
+    default: "bronze"
+
+  recommendations:
+    type: "acme.v1.common.RecommendationData"
+    description: "Personalized product recommendations"
+    fields:
+      top_3:
+        type: "repeated string"
+        description: "Top 3 recommended product IDs"
+        examples: [["prod_123", "prod_456", "prod_789"]]
+        max_length: 3
+
+usage_in_rules:
+  common_patterns:
+    - "user.activity_score > 75.0"
+    - "user.created_at.After(time.Now().Add(-7*24*time.Hour))"
+    - "user.preferences.email_marketing == true"
+    - 'user.tier in ["premium", "enterprise"]'
+
+usage_patterns:
+  - description: "Welcome new users with high activity scores"
+    frequency: "847 facts/hour"
+    common_filters:
+      - ".activity_score > 80"
+      - ".created_at within 7.days"
+
+  - description: "Re-engage inactive users"
+    frequency: "156 facts/hour"
+    common_filters:
+      - ".last_login_at before 14.days.ago"
+      - ".total_orders > 0"
+
+performance_hints:
+  - field: "activity_score"
+    suggestion: "Index recommended for range queries"
+
+  - field: "created_at"
+    suggestion: "Already indexed for temporal queries"
+
+  - field: "email"
+    suggestion: "Encrypted field - use exact matches only"
+
+compliance:
+  pii_fields: ["email", "profile.first_name", "profile.last_name"]
+  retention_policy: "7 years from account closure"
+  gdpr_compliant: true
+  anonymization_rules:
+    - field: "email"
+      method: "hash_with_salt"
+    - field: "profile.first_name"
+      method: "replace_with_placeholder"
+
+examples:
+  - user_id: "user_12345"
+    email: "john.doe@example.com"
+    profile:
+      first_name: "John"
+      last_name: "Doe"
+      completion_percentage: 85.0
+      missing_required_fields: ["phone"]
+    preferences:
+      email_marketing: true
+      seasonal_promotions: true
+      product_recommendations: true
+      favorite_product_category: "electronics"
+      favorite_brands: ["Apple", "Samsung"]
+    activity_score: 87.5
+    tier: "premium"
+    created_at: "2024-01-01T10:00:00Z"
+    last_login_at: "2024-01-15T09:30:00Z"
+    total_orders: 5
+    location:
+      country: "US"
+      timezone: "America/New_York"
+      climate: "temperate"
+    loyalty_tier: "silver"
+
+  - user_id: "user_67890"
+    email: "sarah.chen@example.com"
+    profile:
+      first_name: "Sarah"
+      last_name: "Chen"
+      completion_percentage: 45.0
+      missing_required_fields: ["phone", "address", "birth_date"]
+    preferences:
+      email_marketing: false
+      retention_emails: true
+      favorite_product_category: "books"
+    activity_score: 23.8
+    tier: "basic"
+    created_at: "2023-11-15T14:22:00Z"
+    last_login_at: "2023-12-01T16:45:00Z"
+    total_orders: 0
+    location:
+      country: "CA"
+      timezone: "America/Toronto"
+      climate: "continental"
+    loyalty_tier: "bronze"
+
+sources:
+  - adapter: "postgres_users"
+    type: "postgres_poller"
+    table: "users"
+    frequency: "30s"
+    incremental: "updated_at"
+    connection: "primary_db"
+    fields_mapped:
+      - "user_id -> id"
+      - "email -> email_address"
+      - "created_at -> registration_date"
+
+  - adapter: "redis_events"
+    type: "redis_streams"
+    stream: "user:profile:updates"
+    realtime: true
+    consumer_group: "effectus_profile_updates"
+    fields_mapped:
+      - "activity_score -> calculated_engagement"
+      - "last_login_at -> last_seen"
+
+lineage:
+  upstream:
+    - "user_registration_event"
+    - "user_activity_event"
+    - "user_preference_update"
+
+  downstream:
+    - "user_segment_classification"
+    - "personalization_context"
+    - "marketing_campaign_targeting"
+
+performance:
+  indexes_recommended:
+    - "activity_score" # For score-based rules
+    - "created_at" # For temporal rules
+    - "tier" # For tier-based rules
+  avg_rule_matches_per_hour: 847
+  peak_processing_time: "0.2ms"

@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package effectus.v1;
+
+import "google/protobuf/any.proto";
+import "effectus/v1/common.proto";
+
+option go_package = "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1";
+
+// FactRegistryService manages fact schemas and their evolution
+service FactRegistryService {
+  // RegisterFactSchema registers a new fact schema
+  rpc RegisterFactSchema(RegisterFactSchemaRequest) returns (RegisterFactSchemaResponse);
+  
+  // GetFactSchema retrieves a fact schema by name and version
+  rpc GetFactSchema(GetFactSchemaRequest) returns (GetFactSchemaResponse);
+  
+  // ListFactSchemas lists all registered fact schemas
+  rpc ListFactSchemas(ListFactSchemasRequest) returns (ListFactSchemasResponse);
+  
+  // ValidateFactData validates fact data against a schema
+  rpc ValidateFactData(ValidateFactDataRequest) returns (ValidateFactDataResponse);
+  
+  // CheckCompatibility checks if schema changes are backward compatible
+  rpc CheckCompatibility(CheckCompatibilityRequest) returns (CheckCompatibilityResponse);
+}
+
+// Fact schema registration and management requests/responses
+
+message RegisterFactSchemaRequest {
+  Schema schema = 1;
+  bool force_update = 2;
+}
+
+message RegisterFactSchemaResponse {
+  bool success = 1;
+  string message = 2;
+  repeated string warnings = 3;
+}
+
+message GetFactSchemaRequest {
+  string name = 1;
+  string version = 2;
+}
+
+message GetFactSchemaResponse {
+  Schema schema = 1;
+  bool found = 2;
+}
+
+message ListFactSchemasRequest {
+  string name_prefix = 1;
+  string version_filter = 2;
+}
+
+message ListFactSchemasResponse {
+  repeated Schema schemas = 1;
+}
+
+message ValidateFactDataRequest {
+  string schema_name = 1;
+  string schema_version = 2;
+  google.protobuf.Any fact_data = 3;
+}
+
+message ValidateFactDataResponse {
+  bool valid = 1;
+  repeated string errors = 2;
+  repeated string warnings = 3;
+}
+
+message CheckCompatibilityRequest {
+  string schema_name = 1;
+  string old_version = 2;
+  string new_version = 3;
+}
+
+message CheckCompatibilityResponse {
+  bool compatible = 1;
+  repeated string breaking_changes = 2;
+  repeated string warnings = 3;
+}
