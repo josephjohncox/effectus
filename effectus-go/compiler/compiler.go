@@ -25,8 +25,19 @@ type Compiler struct {
 
 // NewCompiler creates a new compiler
 func NewCompiler() *Compiler {
+	// Create the parser for AST files
+	parser, err := participle.Build[ast.File](
+		participle.UseLookahead(2),
+		participle.Elide("Whitespace"),
+		participle.Unquote("String"),
+	)
+	if err != nil {
+		// If we can't create the parser, panic since this is a fundamental error
+		panic(fmt.Errorf("failed to create parser: %w", err))
+	}
+
 	return &Compiler{
-		parser:       effectus.GetParser(),
+		parser:       parser,
 		typeSystem:   types.NewTypeSystem(),
 		flowCompiler: &flow.Compiler{},
 		listCompiler: &list.Compiler{},

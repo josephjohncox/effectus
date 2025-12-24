@@ -10,6 +10,8 @@ type VerbExecutor interface {
 }
 
 // StandardVerbSpec is a standard implementation of a verb specification
+// Note: This is kept for compatibility with extension loaders.
+// The main registry uses *verb.Spec internally.
 type StandardVerbSpec struct {
 	Name         string
 	Description  string
@@ -55,45 +57,6 @@ func (s *StandardVerbSpec) IsCommutative() bool {
 // IsExclusive returns whether the verb requires exclusive access
 func (s *StandardVerbSpec) IsExclusive() bool {
 	return s.Cap&CapExclusive != 0
-}
-
-// VerbRegistry manages verb specifications
-type VerbRegistry struct {
-	verbs map[string]*StandardVerbSpec
-}
-
-// NewVerbRegistry creates a new verb registry
-func NewVerbRegistry() *VerbRegistry {
-	return &VerbRegistry{
-		verbs: make(map[string]*StandardVerbSpec),
-	}
-}
-
-// Register adds a verb specification to the registry
-func (r *VerbRegistry) Register(spec *StandardVerbSpec) {
-	r.verbs[spec.Name] = spec
-}
-
-// GetVerb looks up a verb specification by name
-func (r *VerbRegistry) GetVerb(name string) (*StandardVerbSpec, bool) {
-	spec, exists := r.verbs[name]
-	return spec, exists
-}
-
-// CheckVerbConflicts checks if two verbs have conflicting resource access
-func (r *VerbRegistry) CheckVerbConflicts(verb1, verb2 string) (bool, error) {
-	spec1, exists := r.GetVerb(verb1)
-	if !exists {
-		return false, ErrVerbNotFound{Verb: verb1}
-	}
-
-	spec2, exists := r.GetVerb(verb2)
-	if !exists {
-		return false, ErrVerbNotFound{Verb: verb2}
-	}
-
-	// Check if resources conflict
-	return spec1.GetResourceSet().ConflictsWith(spec2.GetResourceSet()), nil
 }
 
 // ErrVerbNotFound is returned when a requested verb is not found

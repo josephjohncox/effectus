@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/effectus/effectus-go/schema/registry"
 )
 
 func TestBundleBuilder(t *testing.T) {

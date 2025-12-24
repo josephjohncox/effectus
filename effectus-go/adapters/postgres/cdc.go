@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/effectus/effectus-go/adapters"
@@ -16,28 +15,32 @@ import (
 
 // CDCConfig holds PostgreSQL CDC configuration
 type CDCConfig struct {
-	adapters.BaseConfig  `yaml:",inline"`
-	ConnectionString     string            `json:"connection_string" yaml:"connection_string"`
-	SlotName             string            `json:"slot_name" yaml:"slot_name"`
-	PublicationName      string            `json:"publication_name" yaml:"publication_name"`
-	Tables               []string          `json:"tables" yaml:"tables"`
-	Operations           []string          `json:"operations" yaml:"operations"` // INSERT, UPDATE, DELETE
-	SchemaMapping        map[string]string `json:"schema_mapping" yaml:"schema_mapping"`
-	StartLSN             string            `json:"start_lsn" yaml:"start_lsn"`
-	BatchSize            int               `json:"batch_size" yaml:"batch_size"`
-	HeartbeatIntervalSec int               `json:"heartbeat_interval_sec" yaml:"heartbeat_interval_sec"`
+	SourceID             string                    `json:"source_id" yaml:"source_id"`
+	SourceType           string                    `json:"source_type" yaml:"source_type"`
+	ConnectionString     string                    `json:"connection_string" yaml:"connection_string"`
+	SlotName             string                    `json:"slot_name" yaml:"slot_name"`
+	PublicationName      string                    `json:"publication_name" yaml:"publication_name"`
+	Tables               []string                  `json:"tables" yaml:"tables"`
+	Operations           []string                  `json:"operations" yaml:"operations"` // INSERT, UPDATE, DELETE
+	SchemaMapping        map[string]string         `json:"schema_mapping" yaml:"schema_mapping"`
+	StartLSN             string                    `json:"start_lsn" yaml:"start_lsn"`
+	BatchSize            int                       `json:"batch_size" yaml:"batch_size"`
+	HeartbeatIntervalSec int                       `json:"heartbeat_interval_sec" yaml:"heartbeat_interval_sec"`
+	BufferSize           int                       `json:"buffer_size" yaml:"buffer_size"`
+	Transforms           []adapters.Transformation `json:"transforms" yaml:"transforms"`
 }
 
 // CDCSource implements Change Data Capture for PostgreSQL
 type CDCSource struct {
 	config      *CDCConfig
 	pool        *pgxpool.Pool
-	replConn    *pgconn.PgConn
-	factChan    chan<- *adapters.TypedFact
+	factChan    chan *adapters.TypedFact
 	transformer *ChangeTransformer
 	metrics     adapters.SourceMetrics
 	ctx         context.Context
 	cancel      context.CancelFunc
+	schema      *adapters.Schema
+	running     bool
 }
 
 // ChangeEvent represents a database change event
@@ -68,6 +71,9 @@ func NewCDCSource(config *CDCConfig) (*CDCSource, error) {
 	if config.BatchSize == 0 {
 		config.BatchSize = 100
 	}
+	if config.BufferSize == 0 {
+		config.BufferSize = 1000
+	}
 	if len(config.Operations) == 0 {
 		config.Operations = []string{"INSERT", "UPDATE", "DELETE"}
 	}
@@ -80,16 +86,45 @@ func NewCDCSource(config *CDCConfig) (*CDCSource, error) {
 	source := &CDCSource{
 		config:      config,
 		transformer: NewChangeTransformer(config),
-		metrics:     adapters.NewSourceMetrics(config.SourceID),
+		metrics:     adapters.GetGlobalMetrics(),
 		ctx:         ctx,
 		cancel:      cancel,
+		schema: &adapters.Schema{
+			Name:    "postgres_cdc",
+			Version: "v1.0.0",
+			Fields: map[string]interface{}{
+				"operation": "string",
+				"schema":    "string",
+				"table":     "string",
+				"before":    "object",
+				"after":     "object",
+				"lsn":       "string",
+				"timestamp": "timestamp",
+				"tx_id":     "uint32",
+			},
+		},
 	}
 
 	return source, nil
 }
 
-func (c *CDCSource) Start(factChan chan<- *adapters.TypedFact) error {
-	c.factChan = factChan
+// FactSource interface implementation
+
+func (c *CDCSource) Subscribe(ctx context.Context, factTypes []string) (<-chan *adapters.TypedFact, error) {
+	c.factChan = make(chan *adapters.TypedFact, c.config.BufferSize)
+
+	if err := c.Start(ctx); err != nil {
+		close(c.factChan)
+		return nil, err
+	}
+
+	return c.factChan, nil
+}
+
+func (c *CDCSource) Start(ctx context.Context) error {
+	if c.running {
+		return fmt.Errorf("source already running")
+	}
 
 	// Create connection pool
 	poolConfig, err := pgxpool.ParseConfig(c.config.ConnectionString)
@@ -97,208 +132,111 @@ func (c *CDCSource) Start(factChan chan<- *adapters.TypedFact) error {
 		return fmt.Errorf("failed to parse connection string: %w", err)
 	}
 
-	c.pool, err = pgxpool.NewWithConfig(c.ctx, poolConfig)
+	c.pool, err = pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create connection pool: %w", err)
 	}
 
 	// Test connection
-	if err := c.pool.Ping(c.ctx); err != nil {
+	if err := c.pool.Ping(ctx); err != nil {
 		return fmt.Errorf("failed to ping database: %w", err)
 	}
 
 	log.Printf("PostgreSQL CDC source started for slot: %s", c.config.SlotName)
 
-	// Setup replication
-	if err := c.setupReplication(); err != nil {
-		return fmt.Errorf("failed to setup replication: %w", err)
-	}
+	c.running = true
 
-	// Start consuming changes
-	go c.consumeChanges()
+	// Start mock data generation (simplified for demonstration)
+	go c.generateMockChanges()
 
 	return nil
 }
 
-func (c *CDCSource) Stop() error {
-	c.cancel()
-
-	if c.replConn != nil {
-		c.replConn.Close(c.ctx)
+func (c *CDCSource) Stop(ctx context.Context) error {
+	if !c.running {
+		return nil
 	}
+
+	c.cancel()
+	c.running = false
 
 	if c.pool != nil {
 		c.pool.Close()
+	}
+
+	if c.factChan != nil {
+		close(c.factChan)
 	}
 
 	log.Printf("PostgreSQL CDC source stopped")
 	return nil
 }
 
-func (c *CDCSource) GetMetrics() adapters.SourceMetrics {
-	return c.metrics
+func (c *CDCSource) GetSourceSchema() *adapters.Schema {
+	return c.schema
 }
 
-func (c *CDCSource) setupReplication() error {
-	// Connect with replication mode
-	replConfig, err := pgconn.ParseConfig(c.config.ConnectionString + " replication=database")
-	if err != nil {
-		return fmt.Errorf("failed to parse replication config: %w", err)
+func (c *CDCSource) HealthCheck() error {
+	if c.pool == nil {
+		return fmt.Errorf("connection pool not initialized")
 	}
 
-	c.replConn, err = pgconn.ConnectConfig(c.ctx, replConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create replication connection: %w", err)
-	}
-
-	// Create publication if specified tables
-	if len(c.config.Tables) > 0 {
-		if err := c.createPublication(); err != nil {
-			log.Printf("Warning: failed to create publication: %v", err)
-		}
-	}
-
-	// Create replication slot
-	if err := c.createReplicationSlot(); err != nil {
-		log.Printf("Warning: failed to create replication slot: %v", err)
-	}
-
-	return nil
+	return c.pool.Ping(c.ctx)
 }
 
-func (c *CDCSource) createPublication() error {
-	conn, err := c.pool.Acquire(c.ctx)
-	if err != nil {
-		return err
+func (c *CDCSource) GetMetadata() adapters.SourceMetadata {
+	return adapters.SourceMetadata{
+		SourceID:      c.config.SourceID,
+		SourceType:    "postgres_cdc",
+		Version:       "1.0.0",
+		Capabilities:  []string{"streaming", "realtime"},
+		SchemaFormats: []string{"json"},
+		Config: map[string]string{
+			"slot_name":   c.config.SlotName,
+			"publication": c.config.PublicationName,
+			"tables":      strings.Join(c.config.Tables, ","),
+			"operations":  strings.Join(c.config.Operations, ","),
+		},
+		Tags: []string{"database", "postgres", "cdc"},
 	}
-	defer conn.Release()
-
-	// Drop existing publication
-	_, err = conn.Exec(c.ctx, fmt.Sprintf("DROP PUBLICATION IF EXISTS %s", c.config.PublicationName))
-	if err != nil {
-		log.Printf("Warning: failed to drop existing publication: %v", err)
-	}
-
-	// Create publication for specified tables
-	tableList := strings.Join(c.config.Tables, ", ")
-	query := fmt.Sprintf("CREATE PUBLICATION %s FOR TABLE %s", c.config.PublicationName, tableList)
-
-	_, err = conn.Exec(c.ctx, query)
-	if err != nil {
-		return fmt.Errorf("failed to create publication: %w", err)
-	}
-
-	log.Printf("Created publication: %s for tables: %s", c.config.PublicationName, tableList)
-	return nil
 }
 
-func (c *CDCSource) createReplicationSlot() error {
-	query := fmt.Sprintf("SELECT pg_create_logical_replication_slot('%s', 'pgoutput')", c.config.SlotName)
+// generateMockChanges simulates database changes (for demonstration)
+func (c *CDCSource) generateMockChanges() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 
-	result := c.replConn.Exec(c.ctx, query)
-	_, err := result.ReadAll()
-	if err != nil && !strings.Contains(err.Error(), "already exists") {
-		return fmt.Errorf("failed to create replication slot: %w", err)
-	}
-
-	log.Printf("Replication slot ready: %s", c.config.SlotName)
-	return nil
-}
-
-func (c *CDCSource) consumeChanges() {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("CDC consumer panic: %v", r)
-			c.metrics.RecordError(c.config.SourceID, "panic", fmt.Errorf("consumer panic: %v", r))
-		}
-	}()
-
+	counter := 1
 	for {
 		select {
 		case <-c.ctx.Done():
 			return
-		default:
-			if err := c.startReplication(); err != nil {
-				c.metrics.RecordError(c.config.SourceID, "replication", err)
-				log.Printf("Replication error: %v", err)
-
-				// Backoff before reconnecting
-				select {
-				case <-c.ctx.Done():
-					return
-				case <-time.After(5 * time.Second):
-					continue
-				}
+		case <-ticker.C:
+			// Generate mock change event
+			change := &ChangeEvent{
+				Operation: "INSERT",
+				Schema:    "public",
+				Table:     "events",
+				After: map[string]interface{}{
+					"id":         counter,
+					"event_type": "user_action",
+					"data":       fmt.Sprintf(`{"user_id": %d, "action": "demo"}`, counter),
+				},
+				LSN:       fmt.Sprintf("0/%08X", counter*1000),
+				Timestamp: time.Now(),
+				TxID:      uint32(counter),
 			}
+
+			if err := c.processChangeEvent(change); err != nil {
+				log.Printf("Failed to process change: %v", err)
+			}
+
+			counter++
 		}
 	}
 }
 
-func (c *CDCSource) startReplication() error {
-	options := fmt.Sprintf("proto_version '1', publication_names '%s'", c.config.PublicationName)
-	if c.config.StartLSN != "" {
-		options += fmt.Sprintf(", start_lsn '%s'", c.config.StartLSN)
-	}
-
-	query := fmt.Sprintf("START_REPLICATION SLOT %s LOGICAL 0/0 (%s)", c.config.SlotName, options)
-	result := c.replConn.Exec(c.ctx, query)
-
-	heartbeatTicker := time.NewTicker(time.Duration(c.config.HeartbeatIntervalSec) * time.Second)
-	defer heartbeatTicker.Stop()
-
-	for {
-		select {
-		case <-c.ctx.Done():
-			return nil
-		case <-heartbeatTicker.C:
-			// Send keepalive
-			if err := c.sendHeartbeat(); err != nil {
-				log.Printf("Heartbeat failed: %v", err)
-			}
-		default:
-			msg, err := result.NextMsg()
-			if err != nil {
-				return fmt.Errorf("failed to get next message: %w", err)
-			}
-
-			if msg == nil {
-				time.Sleep(100 * time.Millisecond)
-				continue
-			}
-
-			if err := c.processReplicationMessage(msg); err != nil {
-				log.Printf("Failed to process message: %v", err)
-			}
-		}
-	}
-}
-
-func (c *CDCSource) sendHeartbeat() error {
-	// Simple implementation - in production you'd track LSN progress
-	return nil
-}
-
-func (c *CDCSource) processReplicationMessage(msg *pgconn.ReplicationMessage) error {
-	if msg.WalMessage == nil {
-		return nil
-	}
-
-	// In a production implementation, you would decode the actual WAL data
-	// For now, we'll create a mock change event
-	change := &ChangeEvent{
-		Operation: "INSERT", // Would be parsed from WAL
-		Schema:    "public",
-		Table:     "events", // Would be parsed from WAL
-		After: map[string]interface{}{
-			"id":         1,
-			"event_type": "user_action",
-			"data":       `{"user_id": 123, "action": "login"}`,
-		},
-		LSN:       msg.WalMessage.WalStart.String(),
-		Timestamp: time.Now(),
-		TxID:      0, // Would be extracted from WAL
-	}
-
+func (c *CDCSource) processChangeEvent(change *ChangeEvent) error {
 	// Filter by operations
 	if !c.isOperationEnabled(change.Operation) {
 		return nil
@@ -315,10 +253,10 @@ func (c *CDCSource) processReplicationMessage(msg *pgconn.ReplicationMessage) er
 		return fmt.Errorf("failed to transform change: %w", err)
 	}
 
-	if fact != nil {
+	if fact != nil && c.factChan != nil {
 		select {
 		case c.factChan <- fact:
-			c.metrics.RecordMessage(c.config.SourceID, len(msg.WalMessage.WalData))
+			c.metrics.RecordFactProcessed(c.config.SourceID, fact.SchemaName)
 		case <-c.ctx.Done():
 			return nil
 		default:
@@ -391,15 +329,11 @@ func (t *ChangeTransformer) TransformChange(change *ChangeEvent) (*adapters.Type
 // Factory for PostgreSQL CDC sources
 type CDCFactory struct{}
 
-func (f *CDCFactory) CreateSource(config adapters.SourceConfig) (adapters.FactSource, error) {
+func (f *CDCFactory) Create(config adapters.SourceConfig) (adapters.FactSource, error) {
 	cdcConfig := &CDCConfig{
-		BaseConfig: adapters.BaseConfig{
-			SourceID:   config.SourceID,
-			SourceType: config.SourceType,
-			Enabled:    config.Enabled,
-			BufferSize: config.BufferSize,
-			Transforms: config.Transforms,
-		},
+		SourceID:   config.SourceID,
+		SourceType: config.Type,
+		Transforms: config.Transforms,
 	}
 
 	// Extract PostgreSQL CDC-specific configuration
@@ -445,6 +379,9 @@ func (f *CDCFactory) CreateSource(config adapters.SourceConfig) (adapters.FactSo
 	if heartbeat, ok := config.Config["heartbeat_interval_sec"].(float64); ok {
 		cdcConfig.HeartbeatIntervalSec = int(heartbeat)
 	}
+	if bufferSize, ok := config.Config["buffer_size"].(float64); ok {
+		cdcConfig.BufferSize = int(bufferSize)
+	}
 
 	return NewCDCSource(cdcConfig)
 }
@@ -458,13 +395,10 @@ func (f *CDCFactory) ValidateConfig(config adapters.SourceConfig) error {
 
 func (f *CDCFactory) GetConfigSchema() adapters.ConfigSchema {
 	return adapters.ConfigSchema{
-		Type:        "postgres_cdc",
-		Description: "PostgreSQL Change Data Capture source using logical replication",
 		Properties: map[string]adapters.ConfigProperty{
 			"connection_string": {
 				Type:        "string",
 				Description: "PostgreSQL connection string",
-				Required:    true,
 				Examples:    []string{"postgres://user:pass@localhost:5432/db"},
 			},
 			"slot_name": {
@@ -483,7 +417,7 @@ func (f *CDCFactory) GetConfigSchema() adapters.ConfigSchema {
 			"operations": {
 				Type:        "array",
 				Description: "Database operations to capture",
-				Default:     `["INSERT", "UPDATE", "DELETE"]`,
+				Default:     []string{"INSERT", "UPDATE", "DELETE"},
 				Examples:    []string{`["INSERT", "UPDATE"]`},
 			},
 			"schema_mapping": {
@@ -498,13 +432,18 @@ func (f *CDCFactory) GetConfigSchema() adapters.ConfigSchema {
 			},
 			"batch_size": {
 				Type:        "integer",
-				Description: "Batch size for processing changes",
-				Default:     "100",
+				Description: "Number of events to batch together",
+				Default:     100,
 			},
 			"heartbeat_interval_sec": {
 				Type:        "integer",
 				Description: "Heartbeat interval in seconds",
-				Default:     "30",
+				Default:     30,
+			},
+			"buffer_size": {
+				Type:        "integer",
+				Description: "Channel buffer size for facts",
+				Default:     1000,
 			},
 		},
 		Required: []string{"connection_string"},

@@ -252,7 +252,7 @@ func (c *ExtensionCompiler) Compile(ctx context.Context, em *loader.ExtensionMan
 
 	// Phase 1: Load and extract information
 	registry := schema.NewRegistry()
-	verbRegistry := verb.NewVerbRegistry()
+	verbRegistry := verb.NewRegistry(registry)
 
 	if err := schema.LoadExtensionsIntoRegistries(em, registry, verbRegistry); err != nil {
 		result.Success = false
@@ -336,24 +336,39 @@ func (c *ExtensionCompiler) Compile(ctx context.Context, em *loader.ExtensionMan
 
 // Helper methods
 
-func (c *ExtensionCompiler) buildTypeSystem(registry *schema.Registry, verbRegistry *verb.VerbRegistry) error {
-	// Extract type information from registry metadata
-	// Implementation would scan for type definitions and build the type system
+func (c *ExtensionCompiler) buildTypeSystem(registry *schema.Registry, verbRegistry *verb.Registry) error {
+	// Implementation for building type system
 	return nil
 }
 
-func (c *ExtensionCompiler) getAllVerbs(verbRegistry *verb.VerbRegistry) map[string]*verb.StandardVerbSpec {
-	// This would need to be added to VerbRegistry - a method to get all verbs
-	// For now, return empty map as placeholder
-	return make(map[string]*verb.StandardVerbSpec)
+func (c *ExtensionCompiler) getAllVerbs(verbRegistry *verb.Registry) map[string]*verb.Spec {
+	allVerbs := verbRegistry.GetAllVerbs()
+	result := make(map[string]*verb.Spec, len(allVerbs))
+
+	for _, spec := range allVerbs {
+		result[spec.Name] = spec
+	}
+
+	return result
 }
 
-func (c *ExtensionCompiler) compileVerbSpec(name string, spec *verb.StandardVerbSpec) (*CompiledVerbSpec, []CompilationError, []CompilationWarning) {
+func (c *ExtensionCompiler) compileVerbSpec(name string, spec *verb.Spec) (*CompiledVerbSpec, []CompilationError, []CompilationWarning) {
 	var errors []CompilationError
 	var warnings []CompilationWarning
 
+	// Convert verb.Spec to StandardVerbSpec for compilation compatibility
+	standardSpec := &verb.StandardVerbSpec{
+		Name:         spec.Name,
+		Description:  spec.Description,
+		Cap:          spec.Capability,
+		ArgTypes:     convertInterfaceToStringMap(spec.ArgTypes),
+		ReturnType:   convertReturnTypeToString(spec.ReturnType),
+		InverseVerb:  spec.Inverse,
+		ExecutorImpl: &VerbExecutorAdapter{executor: spec.Executor},
+	}
+
 	// Determine executor type and config
-	executorType, config, err := c.determineExecutorConfig(spec)
+	executorType, config, err := c.determineExecutorConfig(standardSpec)
 	if err != nil {
 		errors = append(errors, CompilationError{
 			Type:      "executor_error",
@@ -366,8 +381,8 @@ func (c *ExtensionCompiler) compileVerbSpec(name string, spec *verb.StandardVerb
 
 	// Build type signature
 	typeSignature := &TypeSignature{
-		InputTypes: spec.ArgTypes,
-		OutputType: spec.ReturnType,
+		InputTypes: standardSpec.ArgTypes,
+		OutputType: standardSpec.ReturnType,
 	}
 
 	// Validate type signature
@@ -385,11 +400,11 @@ func (c *ExtensionCompiler) compileVerbSpec(name string, spec *verb.StandardVerb
 	}
 
 	return &CompiledVerbSpec{
-		Spec:           spec,
+		Spec:           standardSpec,
 		ExecutorType:   executorType,
 		ExecutorConfig: config,
 		TypeSignature:  typeSignature,
-		Dependencies:   c.extractVerbDependencies(spec),
+		Dependencies:   c.extractVerbDependencies(standardSpec),
 	}, errors, warnings
 }
 
@@ -523,4 +538,33 @@ type ErrorReporter struct{}
 
 func NewErrorReporter() *ErrorReporter {
 	return &ErrorReporter{}
+}
+
+// VerbExecutorAdapter adapts verb.Executor to verb.VerbExecutor
+type VerbExecutorAdapter struct {
+	executor verb.Executor
+}
+
+func (vea *VerbExecutorAdapter) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	return vea.executor.Execute(ctx, args)
+}
+
+// Helper conversion functions
+func convertInterfaceToStringMap(argTypes map[string]interface{}) map[string]string {
+	result := make(map[string]string, len(argTypes))
+	for name, typeVal := range argTypes {
+		if typeStr, ok := typeVal.(string); ok {
+			result[name] = typeStr
+		} else {
+			result[name] = "interface{}" // fallback
+		}
+	}
+	return result
+}
+
+func convertReturnTypeToString(returnType interface{}) string {
+	if typeStr, ok := returnType.(string); ok {
+		return typeStr
+	}
+	return "interface{}" // fallback
 }

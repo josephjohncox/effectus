@@ -6,16 +6,20 @@ import (
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/common"
-	"github.com/effectus/effectus-go/eval"
-	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/capability"
+	"github.com/effectus/effectus-go/schema/types"
 )
 
 // Spec implements the effectus.Spec interface for flow rules
 type Spec struct {
-	Name       string
-	Flows      []*CompiledFlow
-	FactPaths  []string
-	VerbSystem *verb.UnifiedVerbSystem // Use unified verb system
+	Name         string
+	Flows        []*CompiledFlow
+	FactPaths    []string
+	SagaEnabled  bool                         // Whether to use saga execution
+	SagaStore    schema.SagaStore             // Saga store for transaction management
+	CapSystem    *capability.CapabilitySystem // Capability system for locking
+	VerbRegistry common.VerbRegistry          // Verb registry for execution
 }
 
 // GetName returns the name of this spec
@@ -28,18 +32,27 @@ func (s *Spec) RequiredFacts() []string {
 	return s.FactPaths
 }
 
-// Execute runs all flows in the spec
+// Execute runs all flows in the spec with saga and capability support
 func (s *Spec) Execute(ctx context.Context, facts effectus.Facts, ex effectus.Executor) error {
-	// Sort flows by priority using common utility
-	flows := common.SortByPriorityFunc(s.Flows, func(flow *CompiledFlow) int {
-		return flow.Priority
-	})
+	// Sort flows by priority using common utility (make a copy first)
+	flows := make([]*CompiledFlow, len(s.Flows))
+	copy(flows, s.Flows)
+	common.SortByPriority(flows)
 
-	// Create an executor wrapper that uses unified verb system when available
-	executor := &unifiedExecutor{
-		ctx:        ctx,
-		executor:   ex,
-		verbSystem: s.VerbSystem,
+	// Create executor with saga and capability support if available
+	var executor *Executor
+	if s.VerbRegistry != nil {
+		var options []ExecutorOption
+
+		if s.SagaEnabled && s.SagaStore != nil {
+			options = append(options, WithSaga(s.SagaStore))
+		}
+
+		if s.CapSystem != nil {
+			options = append(options, WithCapabilitySystem(s.CapSystem))
+		}
+
+		executor = NewExecutor(s.VerbRegistry, options...)
 	}
 
 	// Run each flow
@@ -49,26 +62,52 @@ func (s *Spec) Execute(ctx context.Context, facts effectus.Facts, ex effectus.Ex
 			return ctx.Err()
 		}
 
-		// Evaluate flow predicates
-		if !eval.EvaluatePredicates(flow.Predicates, facts) {
+		// Evaluate flow predicates using facts directly
+		if !schema.EvaluatePredicatesWithFacts(flow.Predicates, facts) {
 			continue
 		}
 
-		// Execute the program
-		_, err := Run(flow.Program, executor)
-		if err != nil {
-			return fmt.Errorf("error executing flow %s: %w", flow.Name, err)
+		fmt.Printf("Flow %s matches, executing program\n", flow.Name)
+
+		// Execute the program based on available execution modes
+		if executor != nil {
+			// Use the enhanced executor with saga/capability support
+			if err := s.executeFlowWithEnhancedExecutor(ctx, flow, facts, executor); err != nil {
+				return fmt.Errorf("error executing flow %s: %w", flow.Name, err)
+			}
+		} else {
+			// Fallback to simple execution
+			if err := s.executeFlowSimple(ctx, flow, facts, ex); err != nil {
+				return fmt.Errorf("error executing flow %s: %w", flow.Name, err)
+			}
 		}
 	}
 
 	return nil
 }
 
+// executeFlowWithEnhancedExecutor executes a flow using the enhanced executor with saga/capability support
+func (s *Spec) executeFlowWithEnhancedExecutor(ctx context.Context, flow *CompiledFlow, facts effectus.Facts, executor *Executor) error {
+	// Convert facts to common.Facts for the executor
+	commonFacts := &factsAdapter{facts: facts}
+
+	// Execute the program
+	_, err := executor.ExecuteProgram(ctx, flow.Name, flow.Program, commonFacts)
+	return err
+}
+
+// executeFlowSimple executes a flow using simple execution without saga/capability support
+func (s *Spec) executeFlowSimple(ctx context.Context, flow *CompiledFlow, facts effectus.Facts, ex effectus.Executor) error {
+	// Execute the program using standard executor
+	_, err := Run(flow.Program, ex)
+	return err
+}
+
 // CompiledFlow represents a flow after compilation
 type CompiledFlow struct {
 	Name       string
 	Priority   int
-	Predicates []*eval.Predicate
+	Predicates []*schema.Predicate
 	Program    *Program
 	FactPaths  []string
 	SourceFile string
@@ -79,42 +118,58 @@ func (cf *CompiledFlow) GetPriority() int {
 	return cf.Priority
 }
 
-// sortFlowsByPriority is now replaced by common.SortByPriorityFunc
-// This eliminates code duplication across different spec types
-
-// unifiedExecutor wraps an Executor to use the unified verb system when available
-type unifiedExecutor struct {
-	ctx        context.Context
-	executor   effectus.Executor
-	verbSystem *verb.UnifiedVerbSystem
+// factsAdapter adapts effectus.Facts to common.Facts for the executor
+type factsAdapter struct {
+	facts effectus.Facts
 }
 
-// Do executes an effect, using unified verb system if available
-func (e *unifiedExecutor) Do(effect effectus.Effect) (interface{}, error) {
-	// Check if context is cancelled
-	if e.ctx.Err() != nil {
-		return nil, e.ctx.Err()
+// Get implements common.Facts
+func (fa *factsAdapter) Get(path string) (interface{}, bool) {
+	return fa.facts.Get(path)
+}
+
+// GetWithContext implements common.Facts (required by the interface)
+func (fa *factsAdapter) GetWithContext(path string) (interface{}, *common.ResolutionResult) {
+	value, exists := fa.facts.Get(path)
+	return value, &common.ResolutionResult{
+		Exists: exists,
+		Path:   path,
+		Value:  value,
 	}
+}
 
-	// Use unified verb system if available for better validation and capability checking
-	if e.verbSystem != nil {
-		// Validate that this verb can be executed
-		if args, ok := effect.Payload.(map[string]interface{}); ok {
-			if err := e.verbSystem.CanExecute(effect.Verb, args); err != nil {
-				return nil, fmt.Errorf("verb validation failed: %w", err)
-			}
+// HasPath implements common.Facts (required by the interface)
+func (fa *factsAdapter) HasPath(path string) bool {
+	_, exists := fa.facts.Get(path)
+	return exists
+}
 
-			// Create properly validated effect
-			validatedEffect, err := e.verbSystem.CreateEffect(effect.Verb, args)
-			if err != nil {
-				return nil, fmt.Errorf("error creating validated effect: %w", err)
-			}
+// Schema implements common.Facts
+func (fa *factsAdapter) Schema() common.SchemaInfo {
+	return &schemaAdapter{schema: fa.facts.Schema()}
+}
 
-			// Execute using unified system
-			return e.verbSystem.Execute(e.ctx, validatedEffect)
-		}
+// schemaAdapter adapts effectus.SchemaInfo to common.SchemaInfo
+type schemaAdapter struct {
+	schema effectus.SchemaInfo
+}
+
+// ValidatePath implements common.SchemaInfo
+func (sa *schemaAdapter) ValidatePath(path string) bool {
+	return sa.schema.ValidatePath(path)
+}
+
+// GetPathType implements common.SchemaInfo (required by the interface)
+func (sa *schemaAdapter) GetPathType(path string) *types.Type {
+	// Simple implementation - in practice this would be more sophisticated
+	if sa.schema.ValidatePath(path) {
+		// Return a generic type since we don't have type information from effectus.SchemaInfo
+		return &types.Type{Name: "unknown"}
 	}
+	return nil
+}
 
-	// Fallback to legacy executor
-	return e.executor.Do(effect)
+// RegisterPathType implements common.SchemaInfo (required by the interface)
+func (sa *schemaAdapter) RegisterPathType(path string, typ *types.Type) {
+	// No-op for now since effectus.SchemaInfo doesn't support registration
 }

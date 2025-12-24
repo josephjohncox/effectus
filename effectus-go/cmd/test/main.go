@@ -233,11 +233,13 @@ func main() {
 
 // parseFiles parses multiple rule files and displays their structure
 func parseFiles(filenames []string, verbose bool, dumpAST bool) {
+	comp := compiler.NewCompiler()
+
 	for _, filename := range filenames {
 		fmt.Printf("Parsing file: %s\n", filename)
 
 		// Parse the file
-		file, err := effectus.ParseFile(filename)
+		file, err := comp.ParseFile(filename)
 		if err != nil {
 			fmt.Printf("Parser error for %s: %v\n", filename, err)
 			continue
@@ -297,9 +299,12 @@ func compileFiles(filenames []string, verbose bool, dumpAST bool) {
 	fmt.Printf("Required facts: %v\n", mergedSpec.RequiredFacts())
 
 	if dumpAST && verbose {
+		// Create a compiler for parsing
+		comp := compiler.NewCompiler()
+
 		// Parse the files again to dump the AST
 		for _, filename := range filenames {
-			file, err := effectus.ParseFile(filename)
+			file, err := comp.ParseFile(filename)
 			if err == nil {
 				fmt.Printf("\nAST for %s:\n", filename)
 				dumpASTStructure(file)
@@ -461,9 +466,12 @@ func runFiles(filenames []string, verbose bool, execute bool, dumpAST bool) {
 	fmt.Printf("Successfully compiled %d files!\n", len(effFiles)+len(effxFiles))
 
 	if dumpAST {
+		// Create a compiler for parsing
+		comp := compiler.NewCompiler()
+
 		// Parse the files again to dump the AST
 		for _, filename := range filenames {
-			file, err := effectus.ParseFile(filename)
+			file, err := comp.ParseFile(filename)
 			if err == nil {
 				fmt.Printf("\nAST for %s:\n", filename)
 				dumpASTStructure(file)

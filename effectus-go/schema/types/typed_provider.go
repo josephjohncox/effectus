@@ -2,20 +2,40 @@ package types
 
 import (
 	"github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/pathutil"
 )
+
+// FactProvider represents a simple interface for retrieving facts
+type FactProvider interface {
+	Get(path string) (interface{}, bool)
+}
+
+// ResolutionResult provides details about path resolution
+type ResolutionResult struct {
+	Exists   bool
+	Path     string
+	Value    interface{}
+	Error    error
+	Depth    int
+	Resolved []string
+}
+
+// AdvancedFactProvider extends FactProvider with context
+type AdvancedFactProvider interface {
+	FactProvider
+	GetWithContext(path string) (interface{}, *ResolutionResult)
+}
 
 // TypedProvider is a fact provider that includes type information
 type TypedProvider struct {
 	// provider is the underlying fact provider
-	provider pathutil.FactProvider
+	provider FactProvider
 
 	// typeSystem contains type information
 	typeSystem *TypeSystem
 }
 
 // NewTypedProvider creates a new typed provider
-func NewTypedProvider(provider pathutil.FactProvider, typeSystem *TypeSystem) *TypedProvider {
+func NewTypedProvider(provider FactProvider, typeSystem *TypeSystem) *TypedProvider {
 	return &TypedProvider{
 		provider:   provider,
 		typeSystem: typeSystem,
@@ -28,12 +48,18 @@ func (p *TypedProvider) Get(path string) (interface{}, bool) {
 }
 
 // GetWithContext retrieves a value with detailed resolution information including type
-func (p *TypedProvider) GetWithContext(path string) (interface{}, *pathutil.ResolutionResult) {
+func (p *TypedProvider) GetWithContext(path string) (interface{}, *ResolutionResult) {
 	// Get value from underlying provider
-	value, result := p.provider.GetWithContext(path)
+	value, exists := p.provider.Get(path)
 
-	// If path doesn't exist, just return the result
-	if !result.Exists || result.Error != nil {
+	result := &ResolutionResult{
+		Exists: exists,
+		Path:   path,
+		Value:  value,
+	}
+
+	// If path doesn't exist, return the result
+	if !exists {
 		return value, result
 	}
 
@@ -41,7 +67,7 @@ func (p *TypedProvider) GetWithContext(path string) (interface{}, *pathutil.Reso
 }
 
 // WithProvider creates a new typed provider with a different underlying provider
-func (p *TypedProvider) WithProvider(provider pathutil.FactProvider) *TypedProvider {
+func (p *TypedProvider) WithProvider(provider FactProvider) *TypedProvider {
 	return NewTypedProvider(provider, p.typeSystem)
 }
 

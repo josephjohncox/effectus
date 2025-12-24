@@ -76,11 +76,11 @@ DELETE FROM rulesets
 WHERE id = $1;
 
 -- name: GetRulesetVersions :many
-SELECT version, created_at, created_by, git_commit, status,
+SELECT r.version, r.created_at, r.created_by, r.git_commit, r.status,
        EXISTS(SELECT 1 FROM deployments d WHERE d.ruleset_id = r.id AND d.status = 'active') as is_deployed
 FROM rulesets r
-WHERE name = $1 AND environment = $2
-ORDER BY created_at DESC;
+WHERE r.name = $1 AND r.environment = $2
+ORDER BY r.created_at DESC;
 
 -- name: SearchRulesets :many
 SELECT r.*, 

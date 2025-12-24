@@ -11,11 +11,11 @@ import (
 // LoaderAdapter adapts the ExtensionManager to work with existing registries
 type LoaderAdapter struct {
 	registry     *Registry
-	verbRegistry *verb.VerbRegistry
+	verbRegistry *verb.Registry
 }
 
 // NewLoaderAdapter creates a new adapter for the extension system
-func NewLoaderAdapter(registry *Registry, verbRegistry *verb.VerbRegistry) *LoaderAdapter {
+func NewLoaderAdapter(registry *Registry, verbRegistry *verb.Registry) *LoaderAdapter {
 	return &LoaderAdapter{
 		registry:     registry,
 		verbRegistry: verbRegistry,
@@ -24,21 +24,18 @@ func NewLoaderAdapter(registry *Registry, verbRegistry *verb.VerbRegistry) *Load
 
 // RegisterVerb implements loader.LoadTarget for verb registration
 func (la *LoaderAdapter) RegisterVerb(spec loader.VerbSpec, executor loader.VerbExecutor) error {
-	// Convert loader interfaces to our concrete types
-	standardSpec := &verb.StandardVerbSpec{
-		Name:         spec.GetName(),
-		Description:  spec.GetDescription(),
-		Cap:          convertCapabilities(spec.GetCapabilities()),
-		Resources:    convertResources(spec.GetResources()),
-		ArgTypes:     spec.GetArgTypes(),
-		RequiredArgs: spec.GetRequiredArgs(),
-		ReturnType:   spec.GetReturnType(),
-		InverseVerb:  spec.GetInverseVerb(),
-		ExecutorImpl: &ExecutorAdapter{executor: executor},
+	// Convert loader interfaces to our concrete verb.Spec type
+	verbSpec := &verb.Spec{
+		Name:        spec.GetName(),
+		Description: spec.GetDescription(),
+		Capability:  convertCapabilities(spec.GetCapabilities()),
+		ArgTypes:    convertArgTypesToInterface(spec.GetArgTypes()),
+		ReturnType:  spec.GetReturnType(),
+		Inverse:     spec.GetInverseVerb(),
+		Executor:    &ExecutorAdapter{executor: executor},
 	}
 
-	la.verbRegistry.Register(standardSpec)
-	return nil
+	return la.verbRegistry.RegisterVerb(verbSpec)
 }
 
 // RegisterFunction implements loader.LoadTarget for function registration
@@ -61,7 +58,7 @@ func (la *LoaderAdapter) RegisterType(name string, typeDef loader.TypeDefinition
 	return nil
 }
 
-// ExecutorAdapter adapts loader.VerbExecutor to verb.VerbExecutor
+// ExecutorAdapter adapts loader.VerbExecutor to verb.Executor
 type ExecutorAdapter struct {
 	executor loader.VerbExecutor
 }
@@ -70,7 +67,7 @@ func (ea *ExecutorAdapter) Execute(ctx context.Context, args map[string]interfac
 	return ea.executor.Execute(ctx, args)
 }
 
-// Helper functions to convert capabilities and resources
+// Helper functions to convert capabilities and types
 
 func convertCapabilities(caps []string) verb.Capability {
 	result := verb.CapNone
@@ -95,6 +92,14 @@ func convertCapabilities(caps []string) verb.Capability {
 	return result
 }
 
+func convertArgTypesToInterface(argTypes map[string]string) map[string]interface{} {
+	result := make(map[string]interface{}, len(argTypes))
+	for name, typeName := range argTypes {
+		result[name] = typeName
+	}
+	return result
+}
+
 func convertResources(resources []loader.ResourceSpec) verb.ResourceSet {
 	result := make(verb.ResourceSet, 0, len(resources))
 	for _, res := range resources {
@@ -109,7 +114,7 @@ func convertResources(resources []loader.ResourceSpec) verb.ResourceSet {
 // === Convenience Functions ===
 
 // LoadExtensionsIntoRegistries loads extensions from an ExtensionManager into registries
-func LoadExtensionsIntoRegistries(em *loader.ExtensionManager, registry *Registry, verbRegistry *verb.VerbRegistry) error {
+func LoadExtensionsIntoRegistries(em *loader.ExtensionManager, registry *Registry, verbRegistry *verb.Registry) error {
 	adapter := NewLoaderAdapter(registry, verbRegistry)
 	return em.LoadExtensions(context.Background(), adapter)
 }

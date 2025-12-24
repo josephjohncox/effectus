@@ -7,13 +7,25 @@ import (
 	"github.com/effectus/effectus-go/ast"
 )
 
+// AnalyzerVerbRegistry defines the interface needed by the analyzer
+// This breaks the import cycle with common package
+type AnalyzerVerbRegistry interface {
+	GetVerb(name string) (AnalyzerVerbSpec, bool)
+}
+
+// AnalyzerVerbSpec defines the interface for verb specifications used in analysis
+type AnalyzerVerbSpec interface {
+	GetResourceSet() ResourceSet
+	IsExclusive() bool
+}
+
 // CapabilityAnalyzer analyzes effects for capability conflicts
 type CapabilityAnalyzer struct {
-	registry *VerbRegistry
+	registry AnalyzerVerbRegistry
 }
 
 // NewCapabilityAnalyzer creates a new capability analyzer
-func NewCapabilityAnalyzer(registry *VerbRegistry) *CapabilityAnalyzer {
+func NewCapabilityAnalyzer(registry AnalyzerVerbRegistry) *CapabilityAnalyzer {
 	return &CapabilityAnalyzer{
 		registry: registry,
 	}

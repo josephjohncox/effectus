@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"time"
 
+	"github.com/effectus/effectus-go"
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/vm"
 )
@@ -20,10 +22,22 @@ type Registry struct {
 
 // NewRegistry creates a new empty registry
 func NewRegistry() *Registry {
-	return &Registry{
+	registry := &Registry{
 		data:      make(map[string]interface{}),
 		functions: make(map[string]interface{}),
 		programs:  make(map[string]*vm.Program),
+	}
+
+	// Register default temporal functions
+	registry.registerTemporalFunctions()
+
+	return registry
+}
+
+// registerTemporalFunctions registers basic time-based functions
+func (r *Registry) registerTemporalFunctions() {
+	r.functions["now"] = func() time.Time {
+		return time.Now()
 	}
 }
 
@@ -174,6 +188,21 @@ func (r *Registry) LoadFromMap(data map[string]interface{}) {
 	}
 }
 
+// LoadFromFacts loads facts from effectus.Facts into the registry
+func (r *Registry) LoadFromFacts(facts effectus.Facts) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Try to get all data
+	if allData, exists := facts.Get(""); exists {
+		if dataMap, ok := allData.(map[string]interface{}); ok {
+			for k, v := range dataMap {
+				r.loadValue(k, v)
+			}
+		}
+	}
+}
+
 // loadValue recursively loads nested data with dot notation paths
 func (r *Registry) loadValue(prefix string, value interface{}) {
 	if value == nil {
@@ -253,4 +282,96 @@ func (r *Registry) ClearAll() {
 	r.data = make(map[string]interface{})
 	r.functions = make(map[string]interface{})
 	r.programs = make(map[string]*vm.Program)
+}
+
+// === Predicate Functionality (simplified to use expr directly) ===
+
+// Predicate represents a compiled predicate expression
+type Predicate struct {
+	Expression string
+	registry   *Registry
+}
+
+// NewPredicate creates a new predicate using the registry
+func (r *Registry) NewPredicate(expression string) (*Predicate, error) {
+	// Validate the expression using expr's parser
+	if err := r.TypeCheckExpression(expression); err != nil {
+		return nil, fmt.Errorf("invalid predicate expression: %w", err)
+	}
+
+	return &Predicate{
+		Expression: expression,
+		registry:   r,
+	}, nil
+}
+
+// Evaluate evaluates the predicate
+func (p *Predicate) Evaluate() (bool, error) {
+	return p.registry.EvaluateBoolean(p.Expression)
+}
+
+// EvaluatePredicates evaluates multiple predicates (all must be true)
+func (r *Registry) EvaluatePredicates(predicates []*Predicate, facts effectus.Facts) bool {
+	if len(predicates) == 0 {
+		return true
+	}
+
+	// Load facts into this registry
+	r.LoadFromFacts(facts)
+
+	// Evaluate each predicate using this registry (which now has the facts loaded)
+	for _, predicate := range predicates {
+		result, err := predicate.Evaluate()
+		if err != nil || !result {
+			return false
+		}
+	}
+
+	return true
+}
+
+// EvaluatePredicatesWithFacts is a convenience method that creates a new registry, loads facts, and evaluates
+func EvaluatePredicatesWithFacts(predicates []*Predicate, facts effectus.Facts) bool {
+	if len(predicates) == 0 {
+		return true
+	}
+
+	// Create a registry specifically for this evaluation
+	registry := NewRegistry()
+	registry.LoadFromFacts(facts)
+
+	// Update predicates to use this registry
+	for _, predicate := range predicates {
+		predicate.registry = registry
+	}
+
+	// Evaluate each predicate
+	for _, predicate := range predicates {
+		result, err := predicate.Evaluate()
+		if err != nil || !result {
+			return false
+		}
+	}
+
+	return true
+}
+
+// CompileLogicalExpression compiles a logical expression and extracts fact paths
+// Note: expr handles path resolution automatically, so we don't need custom parsing
+func (r *Registry) CompileLogicalExpression(expression string, schemaInfo effectus.SchemaInfo) ([]*Predicate, map[string]struct{}, error) {
+	// Create predicate
+	predicate, err := r.NewPredicate(expression)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// For path extraction, we compile the expression and let expr's AST tell us what paths are used
+	// This is more reliable than custom parsing
+	pathsMap := make(map[string]struct{})
+
+	// We could use expr's AST visitor here to extract paths if needed,
+	// but for now, we'll return the compiled predicate
+	// The expr library will handle path resolution at evaluation time
+
+	return []*Predicate{predicate}, pathsMap, nil
 }

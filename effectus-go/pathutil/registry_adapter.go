@@ -1,6 +1,7 @@
 package pathutil
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/effectus/effectus-go/schema"
@@ -65,6 +66,25 @@ func (rfp *RegistryFactProvider) HasPath(path string) bool {
 // EvaluateExpression evaluates an expression
 func (rfp *RegistryFactProvider) EvaluateExpression(expression string) (interface{}, error) {
 	return rfp.registry.EvaluateExpression(expression)
+}
+
+// EvaluateExpr is a convenience method for evaluating expressions
+func (rfp *RegistryFactProvider) EvaluateExpr(expression string) (interface{}, error) {
+	return rfp.registry.EvaluateExpression(expression)
+}
+
+// EvaluateExprBool evaluates an expression and returns a boolean result
+func (rfp *RegistryFactProvider) EvaluateExprBool(expression string) (bool, error) {
+	result, err := rfp.registry.EvaluateExpression(expression)
+	if err != nil {
+		return false, err
+	}
+
+	if boolResult, ok := result.(bool); ok {
+		return boolResult, nil
+	}
+
+	return false, fmt.Errorf("expression did not evaluate to boolean: %v", result)
 }
 
 // GetRegistry returns the underlying registry
@@ -140,6 +160,50 @@ func (tef *TypedExprFacts) GetPathsByPrefix(prefix string) []string {
 	return tef.provider.registry.GetPathsWithPrefix(prefix)
 }
 
+// RegisterNestedTypes is a no-op for compatibility with examples
+func (tef *TypedExprFacts) RegisterNestedTypes() {
+	// This is now handled automatically by the registry
+}
+
+// EvaluateExprWithType evaluates an expression with type checking
+func (tef *TypedExprFacts) EvaluateExprWithType(expression string) (interface{}, string, error) {
+	// First type check
+	if err := tef.TypeCheck(expression); err != nil {
+		return nil, "", fmt.Errorf("type check failed: %w", err)
+	}
+
+	// Then evaluate
+	result, err := tef.provider.EvaluateExpression(expression)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Determine the type of the result
+	resultType := "unknown"
+	if result != nil {
+		switch result.(type) {
+		case bool:
+			resultType = "bool"
+		case int, int8, int16, int32, int64:
+			resultType = "int"
+		case uint, uint8, uint16, uint32, uint64:
+			resultType = "uint"
+		case float32, float64:
+			resultType = "float"
+		case string:
+			resultType = "string"
+		case []interface{}:
+			resultType = "array"
+		case map[string]interface{}:
+			resultType = "object"
+		default:
+			resultType = fmt.Sprintf("%T", result)
+		}
+	}
+
+	return result, resultType, nil
+}
+
 // MergeTypedFacts merges another TypedExprFacts
 func (tef *TypedExprFacts) MergeTypedFacts(other *TypedExprFacts) {
 	if other != nil && other.provider != nil {
@@ -148,6 +212,30 @@ func (tef *TypedExprFacts) MergeTypedFacts(other *TypedExprFacts) {
 }
 
 // === Factory Functions ===
+
+// NewFactProviderFromJSON creates a FactProvider from a JSON string for compatibility
+func NewFactProviderFromJSON(jsonData string) *RegistryFactProvider {
+	// Parse JSON into a map
+	var data map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonData), &data); err != nil {
+		// If we can't parse JSON, return an empty provider
+		return NewExprFacts(make(map[string]interface{}))
+	}
+	return NewExprFacts(data)
+}
+
+// NewFactProviderFromStruct creates a FactProvider from a struct for compatibility
+func NewFactProviderFromStruct(structData interface{}) (*RegistryFactProvider, error) {
+	// Use the struct loader
+	loader := NewStructLoader(structData)
+	facts, err := loader.LoadIntoFacts()
+	if err != nil {
+		return nil, err
+	}
+
+	// Return the underlying provider from the ExprFacts
+	return facts.provider, nil
+}
 
 // NewExprFacts creates a fact provider from a data map
 func NewExprFacts(data map[string]interface{}) *RegistryFactProvider {

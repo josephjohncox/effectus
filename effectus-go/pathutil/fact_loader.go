@@ -39,24 +39,20 @@ func (l *JSONLoader) LoadIntoFacts() (*ExprFacts, error) {
 	}
 
 	// Create ExprFacts provider
-	return NewExprFacts(data), nil
+	return NewExprFactsFromData(data), nil
 }
 
 // LoadIntoTypedFacts loads JSON data into a TypedExprFacts provider
 func (l *JSONLoader) LoadIntoTypedFacts() (*TypedExprFacts, error) {
-	// Load into ExprFacts first
-	facts, err := l.LoadIntoFacts()
-	if err != nil {
-		return nil, err
+	// Parse JSON into a map
+	var data map[string]interface{}
+	if err := json.Unmarshal(l.data, &data); err != nil {
+		return nil, fmt.Errorf("parsing JSON data: %w", err)
 	}
 
-	// Create typed provider
-	typedFacts := NewTypedExprFacts(facts)
-
-	// Register nested types
-	typedFacts.RegisterNestedTypes()
-
-	return typedFacts, nil
+	// Create provider and typed facts
+	provider := NewExprFacts(data) // This returns *RegistryFactProvider
+	return NewTypedExprFacts(provider), nil
 }
 
 // ProtoLoader loads facts from Protocol Buffer messages
@@ -90,19 +86,25 @@ func (l *ProtoLoader) LoadIntoFacts() (*ExprFacts, error) {
 
 // LoadIntoTypedFacts loads Protocol Buffer data into a TypedExprFacts provider
 func (l *ProtoLoader) LoadIntoTypedFacts() (*TypedExprFacts, error) {
-	// Load into ExprFacts first
-	facts, err := l.LoadIntoFacts()
-	if err != nil {
-		return nil, err
+	// Marshal to JSON first
+	marshaler := protojson.MarshalOptions{
+		UseProtoNames:   true,  // Use original proto field names
+		EmitUnpopulated: false, // Skip zero values
 	}
 
-	// Create typed provider
-	typedFacts := NewTypedExprFacts(facts)
+	data, err := marshaler.Marshal(l.message)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling proto message: %w", err)
+	}
 
-	// Register nested types
-	typedFacts.RegisterNestedTypes()
+	// Parse JSON and create provider
+	var jsonData map[string]interface{}
+	if err := json.Unmarshal(data, &jsonData); err != nil {
+		return nil, fmt.Errorf("parsing JSON data: %w", err)
+	}
 
-	return typedFacts, nil
+	provider := NewExprFacts(jsonData)
+	return NewTypedExprFacts(provider), nil
 }
 
 // StructLoader loads facts from Go structs
@@ -126,24 +128,20 @@ func (l *StructLoader) LoadIntoFacts() (*ExprFacts, error) {
 	}
 
 	// Create ExprFacts provider
-	return NewExprFacts(data), nil
+	return NewExprFactsFromData(data), nil
 }
 
 // LoadIntoTypedFacts loads struct data into a TypedExprFacts provider with type information
 func (l *StructLoader) LoadIntoTypedFacts() (*TypedExprFacts, error) {
-	// Load into ExprFacts first
-	facts, err := l.LoadIntoFacts()
+	// Convert struct to map using reflection
+	data, err := structToMap(l.data)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("converting struct to map: %w", err)
 	}
 
-	// Create typed provider
-	typedFacts := NewTypedExprFacts(facts)
-
-	// Register nested types
-	typedFacts.RegisterNestedTypes()
-
-	return typedFacts, nil
+	// Create provider and typed facts
+	provider := NewExprFacts(data)
+	return NewTypedExprFacts(provider), nil
 }
 
 // NamespacedLoader allows multiple sources to be loaded with different namespaces
@@ -209,24 +207,57 @@ func (l *NamespacedLoader) LoadIntoFacts() (*ExprFacts, error) {
 		result[namespace] = data
 	}
 
-	return NewExprFacts(result), nil
+	return NewExprFactsFromData(result), nil
 }
 
 // LoadIntoTypedFacts loads all data sources into a TypedExprFacts provider
 func (l *NamespacedLoader) LoadIntoTypedFacts() (*TypedExprFacts, error) {
-	// Load into ExprFacts first
-	facts, err := l.LoadIntoFacts()
-	if err != nil {
-		return nil, err
+	// Create result map
+	result := make(map[string]interface{})
+
+	// Process each source
+	for namespace, source := range l.sources {
+		var data map[string]interface{}
+		var err error
+
+		switch s := source.(type) {
+		case []byte:
+			// Assume JSON
+			loader := NewJSONLoader(s)
+			facts, err := loader.LoadIntoFacts()
+			if err != nil {
+				return nil, fmt.Errorf("loading JSON for namespace %s: %w", namespace, err)
+			}
+			data = facts.data
+
+		case proto.Message:
+			// Protocol Buffer
+			loader := NewProtoLoader(s)
+			facts, err := loader.LoadIntoFacts()
+			if err != nil {
+				return nil, fmt.Errorf("loading proto for namespace %s: %w", namespace, err)
+			}
+			data = facts.data
+
+		case map[string]interface{}:
+			// Already a map
+			data = s
+
+		default:
+			// Assume struct
+			data, err = structToMap(s)
+			if err != nil {
+				return nil, fmt.Errorf("converting struct for namespace %s: %w", namespace, err)
+			}
+		}
+
+		// Add to result with namespace
+		result[namespace] = data
 	}
 
-	// Create typed provider
-	typedFacts := NewTypedExprFacts(facts)
-
-	// Register nested types
-	typedFacts.RegisterNestedTypes()
-
-	return typedFacts, nil
+	// Create provider and typed facts
+	provider := NewExprFacts(result)
+	return NewTypedExprFacts(provider), nil
 }
 
 // Helper functions for struct conversion

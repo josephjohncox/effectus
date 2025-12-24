@@ -23,8 +23,6 @@ install-sql-tools:
 	go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.25.0
 	go install github.com/pressly/goose/v3/cmd/goose@v3.17.0
 	@echo "✅ Tools installed"
-	@echo "sqlc version: $(sqlc version)"
-	@echo "goose version: $(goose -version)"
 
 # Build the project
 build:
@@ -60,10 +58,6 @@ clean:
 
 # === Buf Commands ===
 
-# Initialize buf workspace (run once)
-buf-init:
-	buf mod init
-
 # Lint protobuf files
 buf-lint:
 	buf lint
@@ -87,21 +81,6 @@ buf-breaking:
 # Push to buf registry (requires authentication)
 buf-push:
 	buf push
-
-# Create a new protobuf module
-buf-mod-init name:
-	mkdir -p proto/{{name}}
-	cd proto/{{name}} && buf mod init
-
-# Validate all protobuf schemas
-buf-validate:
-	buf lint
-	buf build
-	-buf breaking --against '.git#branch=main'
-
-# Update buf dependencies
-buf-update:
-	buf mod update
 
 # === SQL Database Commands ===
 
@@ -128,11 +107,7 @@ sql-generate:
 # Check if generated code is up to date
 sql-generate-check:
 	@echo "Checking if generated code is up to date..."
-	#!/usr/bin/env bash
-	if ! git diff --quiet effectus-go/runtime/internal/db/; then
-		echo "❌ Generated code is out of date. Run 'just sql-generate'"
-		exit 1
-	fi
+	@git diff --quiet effectus-go/runtime/internal/db/ || (echo "❌ Generated code is out of date. Run 'just sql-generate'" && exit 1)
 	@echo "✅ Generated code is up to date"
 
 # Run all pending migrations
@@ -165,20 +140,20 @@ migrate-create name:
 
 # Reset database (⚠️ DESTROYS ALL DATA)
 migrate-reset:
-	#!/usr/bin/env bash
-	echo "⚠️  This will destroy all data. Are you sure? [y/N]" && read ans && [ ${ans:-N} = y ]
-	echo "Resetting database..."
+	@echo "⚠️  This will destroy all data. Continue? (Press Enter to continue, Ctrl+C to cancel)"
+	@read
+	@echo "Resetting database..."
 	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
-	echo "✅ Database reset"
+	@echo "✅ Database reset"
 
 # Reset and run all migrations (⚠️ DESTROYS ALL DATA)  
 migrate-fresh:
-	#!/usr/bin/env bash
-	echo "⚠️  This will destroy all data. Are you sure? [y/N]" && read ans && [ ${ans:-N} = y ]
-	echo "Fresh migration..."
+	@echo "⚠️  This will destroy all data. Continue? (Press Enter to continue, Ctrl+C to cancel)"
+	@read
+	@echo "Fresh migration..."
 	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
 	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
-	echo "✅ Fresh migration complete"
+	@echo "✅ Fresh migration complete"
 
 # Run integration tests with database
 test-integration: setup-test-db
@@ -188,21 +163,14 @@ test-integration: setup-test-db
 # Test migrations up and down
 test-migrate:
 	@echo "Testing migrations..."
-	@echo "Testing migration up..."
 	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
-	@echo "Testing migration down..."
 	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
-	@echo "Restoring migrations..."
 	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
 	@echo "✅ Migration tests complete"
 
 # Complete development setup for SQL
 dev-sql-setup: install-sql-tools setup-db migrate-up sql-generate
 	@echo "✅ SQL development environment ready!"
-	@echo ""
-	@echo "Database: {{DB_DSN}}"
-	@echo "Run 'just sql-generate' after modifying SQL queries"
-	@echo "Run 'just migrate-create <name>' to create new migrations"
 
 # Reset SQL development environment
 dev-sql-reset: migrate-fresh sql-generate
@@ -217,34 +185,20 @@ sql-validate: sql-generate-check
 # Lint SQL files (requires sqlfluff)
 sql-lint:
 	@echo "Linting SQL files..."
-	#!/usr/bin/env bash
-	if command -v sqlfluff >/dev/null 2>&1; then
-		sqlfluff lint {{MIGRATIONS_DIR}}
-	else
-		echo "⚠️  sqlfluff not installed. Install with: pip install sqlfluff"
-	fi
+	@if command -v sqlfluff >/dev/null 2>&1; then sqlfluff lint {{MIGRATIONS_DIR}}; else echo "⚠️  sqlfluff not installed. Install with: pip install sqlfluff"; fi
 
 # Format SQL files (requires sqlfluff)
 sql-format:
 	@echo "Formatting SQL files..."
-	#!/usr/bin/env bash
-	if command -v sqlfluff >/dev/null 2>&1; then
-		sqlfluff format {{MIGRATIONS_DIR}} --dialect postgres
-	else
-		echo "⚠️  sqlfluff not installed. Install with: pip install sqlfluff"
-	fi
+	@if command -v sqlfluff >/dev/null 2>&1; then sqlfluff format {{MIGRATIONS_DIR}} --dialect postgres; else echo "⚠️  sqlfluff not installed. Install with: pip install sqlfluff"; fi
 
 # Generate schema documentation
 schema-docs:
+	@echo "Generating schema documentation..."
 	@echo "Database Schema Documentation" > effectus-go/runtime/SCHEMA.md
 	@echo "============================" >> effectus-go/runtime/SCHEMA.md
-	@echo "" >> effectus-go/runtime/SCHEMA.md
-	@echo "## Tables" >> effectus-go/runtime/SCHEMA.md
 	@psql "{{DB_DSN}}" -c "\dt" >> effectus-go/runtime/SCHEMA.md
-	@echo "" >> effectus-go/runtime/SCHEMA.md
-	@echo "## Indexes" >> effectus-go/runtime/SCHEMA.md  
-	@psql "{{DB_DSN}}" -c "\di" >> effectus-go/runtime/SCHEMA.md
-	@echo "✅ Schema documentation generated in effectus-go/runtime/SCHEMA.md"
+	@echo "✅ Schema documentation generated"
 
 # Clean generated SQL files
 sql-clean:
@@ -254,10 +208,10 @@ sql-clean:
 
 # Clean everything including database (⚠️ DESTROYS ALL DATA)
 sql-clean-all: sql-clean
-	#!/usr/bin/env bash
-	echo "⚠️  This will destroy all data. Are you sure? [y/N]" && read ans && [ ${ans:-N} = y ]
+	@echo "⚠️  This will destroy database. Continue? (Press Enter to continue, Ctrl+C to cancel)"
+	@read
 	{{DOCKER_COMPOSE}} down -v postgres
-	echo "✅ Complete SQL cleanup done"
+	@echo "✅ Complete SQL cleanup done"
 
 # Open database shell
 db-shell:
@@ -272,67 +226,11 @@ db-dump:
 
 # Restore database from dump
 db-restore dump:
-	#!/usr/bin/env bash
-	echo "⚠️  This will overwrite the database. Are you sure? [y/N]" && read ans && [ ${ans:-N} = y ]
-	echo "Restoring database from {{dump}}..."
+	@echo "⚠️  This will overwrite the database. Continue? (Press Enter to continue, Ctrl+C to cancel)"
+	@read
+	@echo "Restoring database from {{dump}}..."
 	psql "{{DB_DSN}}" < {{dump}}
-	echo "✅ Database restored"
-
-# Show query plans for common operations
-explain-queries:
-	@echo "Query execution plans:"
-	@echo "====================="
-	@echo ""
-	@echo "1. List rulesets by environment:"
-	@psql "{{DB_DSN}}" -c "EXPLAIN ANALYZE SELECT * FROM rulesets WHERE environment = 'production' LIMIT 10;"
-	@echo ""
-	@echo "2. Search rulesets by tags:"
-	@psql "{{DB_DSN}}" -c "EXPLAIN ANALYZE SELECT * FROM rulesets WHERE tags && ARRAY['production'];"
-	@echo ""
-	@echo "3. Audit log by timestamp:"
-	@psql "{{DB_DSN}}" -c "EXPLAIN ANALYZE SELECT * FROM audit_log WHERE timestamp >= NOW() - INTERVAL '1 day';"
-
-# Analyze database performance
-analyze-performance:
-	@echo "Database performance analysis:"
-	@echo "============================="
-	@echo ""
-	@echo "Table sizes:"
-	@psql "{{DB_DSN}}" -c "SELECT schemaname,tablename,pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as size FROM pg_tables WHERE schemaname='public' ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;"
-	@echo ""
-	@echo "Index usage:"
-	@psql "{{DB_DSN}}" -c "SELECT indexrelname, idx_tup_read, idx_tup_fetch FROM pg_stat_user_indexes ORDER BY idx_tup_read DESC;"
-
-# Run migrations in production (with confirmation)
-prod-migrate:
-	#!/usr/bin/env bash
-	echo "⚠️  Running migrations in PRODUCTION. Are you sure? [y/N]" && read ans && [ ${ans:-N} = y ]
-	if [ -z "${PROD_DSN}" ]; then
-		echo "❌ Please set PROD_DSN environment variable"
-		exit 1
-	fi
-	echo "Running production migrations..."
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "${PROD_DSN}" up
-	echo "✅ Production migrations complete"
-
-# Run migrations in staging
-staging-migrate:
-	#!/usr/bin/env bash
-	if [ -z "${STAGING_DSN}" ]; then
-		echo "❌ Please set STAGING_DSN environment variable"
-		exit 1
-	fi
-	echo "Running staging migrations..."
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "${STAGING_DSN}" up
-	echo "✅ Staging migrations complete"
-
-# CI/CD setup and validation
-ci-sql-setup: install-sql-tools sql-generate-check sql-validate
-	@echo "✅ CI/CD SQL checks passed"
-
-# CI/CD testing
-ci-sql-test: setup-test-db test-integration
-	@echo "✅ CI/CD SQL tests passed"
+	@echo "✅ Database restored"
 
 # === VS Code Extension Commands ===
 
@@ -402,7 +300,7 @@ validate-schemas:
 # Generate client code for all languages
 generate-clients:
 	just buf-generate
-	echo "Generated clients for Go, Python, TypeScript, Java, and Rust"
+	@echo "Generated clients for Go, Python, TypeScript, Java, and Rust"
 
 # === Development Workflow ===
 
@@ -458,7 +356,6 @@ example-modern-sql:
 # Generate documentation
 docs:
 	go doc -all ./effectus-go/... > docs/api.md
-	buf generate --template buf.gen.docs.yaml
 
 # Serve documentation locally
 docs-serve:

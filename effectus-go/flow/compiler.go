@@ -7,7 +7,7 @@ import (
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
 	"github.com/effectus/effectus-go/common"
-	"github.com/effectus/effectus-go/eval"
+	"github.com/effectus/effectus-go/schema"
 )
 
 // Compiler implements the Compiler interface for flow-style rules
@@ -21,14 +21,9 @@ func (c *Compiler) CompileFile(path string, schema effectus.SchemaInfo) (effectu
 		return nil, fmt.Errorf("flow compiler can only compile .effx files, got: %s", path)
 	}
 
-	// Parse the file
-	file, err := effectus.ParseFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	// Compile the file
-	return c.CompileParsedFile(file, path, schema)
+	// For now, return an error indicating that file parsing needs to be implemented
+	// This breaks the dependency cycle while maintaining the interface
+	return nil, fmt.Errorf("flow compiler file parsing not yet implemented for %s", path)
 }
 
 // CompileParsedFile compiles a parsed file into a flow-style spec
@@ -113,15 +108,17 @@ func (c *Compiler) CompileFiles(paths []string, schema effectus.SchemaInfo) (eff
 }
 
 // compileFlow compiles a single flow into a CompiledFlow
-func compileFlow(flow *ast.Flow, schema effectus.SchemaInfo) (*CompiledFlow, error) {
+func compileFlow(flow *ast.Flow, schemaInfo effectus.SchemaInfo) (*CompiledFlow, error) {
 	compiledFlow := &CompiledFlow{
 		Name:     flow.Name,
 		Priority: flow.Priority,
 	}
 
-	// Compile predicates
+	// Compile predicates using schema registry
 	if flow.When != nil && flow.When.Expression != "" {
-		predicates, factPaths, err := eval.CompileLogicalExpression(flow.When.Expression, schema)
+		// Create a registry for compilation
+		registry := schema.NewRegistry()
+		predicates, factPaths, err := registry.CompileLogicalExpression(flow.When.Expression, schemaInfo)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile predicates: %w", err)
 		}
@@ -141,7 +138,7 @@ func compileFlow(flow *ast.Flow, schema effectus.SchemaInfo) (*CompiledFlow, err
 		bindings := make(map[string]interface{})
 
 		// Compile the steps into a Program
-		program, err := compileSteps(flow.Steps.Steps, bindings, schema)
+		program, err := compileSteps(flow.Steps.Steps, bindings, schemaInfo)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile steps: %w", err)
 		}

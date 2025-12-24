@@ -13,7 +13,7 @@ import (
 	fl "github.com/effectus/effectus-go/flow"
 	list "github.com/effectus/effectus-go/list"
 	"github.com/effectus/effectus-go/pathutil"
-	"github.com/effectus/effectus-go/schema/registry"
+	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/schema/verb"
 )
@@ -40,7 +40,7 @@ type BundleBuilder struct {
 	schemaDir       string
 	verbDir         string
 	rulesDir        string
-	schemaRegistry  *registry.Registry
+	schemaRegistry  *schema.Registry
 	verbRegistry    *verb.Registry
 	compiler        *comp.Compiler
 	skipCompilation bool // Flag to skip rule compilation
@@ -54,7 +54,7 @@ func NewBundleBuilder(name, version string) *BundleBuilder {
 			Version:   version,
 			CreatedAt: time.Now(),
 		},
-		schemaRegistry: registry.NewRegistry(),
+		schemaRegistry: schema.NewRegistry(),
 	}
 }
 
@@ -114,7 +114,7 @@ func (bb *BundleBuilder) Build() (*Bundle, error) {
 	// Create a type system
 	typeSystem := &types.TypeSystem{}
 
-	// Create verb registry
+	// Create verb registry with proper type system
 	bb.verbRegistry = verb.NewRegistry(typeSystem)
 
 	// Load verbs

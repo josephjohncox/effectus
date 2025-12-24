@@ -235,7 +235,7 @@ func main() {
 
 	// 1. Create registries
 	registry := schema.NewRegistry()
-	verbRegistry := verb.NewVerbRegistry()
+	verbRegistry := verb.NewRegistry(registry)
 
 	// 2. Create extension manager
 	em := loader.NewExtensionManager()
