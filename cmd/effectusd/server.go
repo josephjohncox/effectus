@@ -1547,7 +1547,7 @@ const uiHTML = `<!doctype html>
       <h2>Rules</h2>
       <pre id="rules">Loading...</pre>
     </div>
-    <div class="card">
+    <div class="card" style="grid-column: 1 / -1;">
       <h2>Rule Sources</h2>
       <div id="rule-sources" class="list"></div>
     </div>
@@ -1574,6 +1574,7 @@ const uiHTML = `<!doctype html>
     <div class="card" style="grid-column: 1 / -1;">
       <h2>Facts Browser</h2>
       <div class="stack">
+        <div id="facts-merge-config" class="muted"></div>
         <div class="row">
           <div style="flex: 1;">
             <label>Universe</label>
@@ -1675,6 +1676,17 @@ const uiHTML = `<!doctype html>
         merge: "default " + defaultMerge + ", namespaces " + nsText,
         cache: cacheText
       };
+    };
+
+    const renderFactsMergeConfig = (status) => {
+      const target = document.getElementById("facts-merge-config");
+      if (!target) return;
+      const config = formatMergeConfig(status ? status.fact_store_config : null);
+      if (!config) {
+        target.textContent = "";
+        return;
+      }
+      target.textContent = "Merge: " + config.merge + " · Cache: " + config.cache;
     };
 
     function saveToken() {
@@ -1905,6 +1917,7 @@ const uiHTML = `<!doctype html>
         const status = await fetchJSON("/api/status");
         renderStatus(status);
         populateUniverseOptions(status);
+        renderFactsMergeConfig(status);
       } catch (err) {
         render("status", { error: err.message });
       }

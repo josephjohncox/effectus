@@ -5,6 +5,7 @@ These files are ready to drop into your config loader or adapt to your runtime.
 
 ## Files
 - `snowflake.yaml` - batch snapshot from Snowflake
+- `sql_scheduled_scrape.yaml` - scheduled SQL polling (batch + incremental stream)
 - `trino_iceberg.yaml` - streaming Iceberg table via Trino
 - `sources.yaml` - both sources in one file
 - `env.example` - required environment variables

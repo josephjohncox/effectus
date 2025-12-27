@@ -213,6 +213,7 @@ ui-demo:
 		--bundle {{UI_DEMO_BUNDLE}} \
 		--http-addr :8080 \
 		--api-token {{UI_DEMO_TOKEN}} \
+		--verb-dir {{UI_DEMO_VERB_DIR}} \
 		--facts-store file \
 		--facts-path out/ui_demo/facts.json
 
@@ -270,6 +271,7 @@ ui-flow-demo:
 		--bundle {{UI_FLOW_DEMO_BUNDLE}} \
 		--http-addr :8080 \
 		--api-token {{UI_FLOW_DEMO_TOKEN}} \
+		--verb-dir {{UI_FLOW_DEMO_VERB_DIR}} \
 		--saga \
 		--facts-store file \
 		--facts-path out/flow_ui_demo/facts.json

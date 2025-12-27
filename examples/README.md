@@ -136,6 +136,7 @@ ls ./warehouse_sources
 **What it demonstrates:**
 - Production-style config shapes for warehouse ingestion
 - Batch Snowflake snapshots and streaming Iceberg tables
+- Scheduled SQL polling via `warehouse_sources/sql_scheduled_scrape.yaml`
 - Local Trino + Iceberg + MinIO devstack in `warehouse_sources/devstack`
 - S3 Parquet reader demo in `warehouse_sources/s3_parquet_demo`
 

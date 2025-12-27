@@ -264,6 +264,8 @@ config:
 
 **Driver note:** you must import the matching `database/sql` driver in your app (Snowflake, MySQL, Trino, etc.).
 
+See `examples/warehouse_sources/sql_scheduled_scrape.yaml` for a mocked scheduled scrape config (batch + incremental).
+
 ---
 
 ### S3 (Batch or Streaming)

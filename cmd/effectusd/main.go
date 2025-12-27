@@ -94,6 +94,7 @@ var (
 	bundleFile     = flag.String("bundle", "", "Path to bundle file")
 	ociRef         = flag.String("oci-ref", "", "OCI reference for bundle (e.g., ghcr.io/user/bundle:v1)")
 	pluginDir      = flag.String("plugin-dir", "", "Directory containing verb plugins")
+	verbDir        = flag.String("verb-dir", "", "Directory containing JSON verb specs")
 	reloadInterval = flag.Duration("reload-interval", 30*time.Second, "Interval for hot-reloading")
 
 	// Runtime flags
@@ -193,6 +194,26 @@ func main() {
 	// Create verb registry
 	verbReg := verb.NewRegistry(typeSystem)
 
+	if *verbDir != "" && *pluginDir != "" {
+		fmt.Fprintln(os.Stderr, "Use either -verb-dir or -plugin-dir, not both")
+		os.Exit(1)
+	}
+
+	if *verbDir != "" {
+		for _, dir := range splitCommaList(*verbDir) {
+			if dir == "" {
+				continue
+			}
+			if *verbose {
+				fmt.Printf("Loading verb specs from directory: %s\n", dir)
+			}
+			if err := verbReg.RegisterDirectory(dir); err != nil {
+				fmt.Fprintf(os.Stderr, "Error loading verb specs: %v\n", err)
+				os.Exit(1)
+			}
+		}
+	}
+
 	// Load verb plugins
 	if *pluginDir != "" {
 		if *verbose {
@@ -205,12 +226,14 @@ func main() {
 	}
 
 	// Verify verb hash
-	currentVerbHash := verbReg.GetVerbHash()
-	if currentVerbHash != bundle.VerbHash {
-		fmt.Fprintf(os.Stderr, "Warning: verb hash mismatch\n")
-		fmt.Fprintf(os.Stderr, "  Bundle hash: %s\n", bundle.VerbHash)
-		fmt.Fprintf(os.Stderr, "  Current hash: %s\n", currentVerbHash)
-		// In production, you might want to fail here
+	if verbReg.Count() > 0 {
+		currentVerbHash := verbReg.GetVerbHash()
+		if currentVerbHash != bundle.VerbHash {
+			fmt.Fprintf(os.Stderr, "Warning: verb hash mismatch\n")
+			fmt.Fprintf(os.Stderr, "  Bundle hash: %s\n", bundle.VerbHash)
+			fmt.Fprintf(os.Stderr, "  Current hash: %s\n", currentVerbHash)
+			// In production, you might want to fail here
+		}
 	}
 
 	// Create executor options
@@ -393,6 +416,19 @@ func main() {
 			}
 		}
 	}
+}
+
+func splitCommaList(value string) []string {
+	parts := strings.Split(value, ",")
+	results := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		results = append(results, trimmed)
+	}
+	return results
 }
 
 // startFactSource starts the appropriate fact source
