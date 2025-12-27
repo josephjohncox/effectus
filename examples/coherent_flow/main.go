@@ -181,7 +181,9 @@ func createDynamicExtensions() (string, error) {
       },
       "requiredArgs": ["accountId"],
       "returnType": "ValidationResult",
-      "executorType": "mock"
+      "target": {
+        "type": "mock"
+      }
     },
     {
       "name": "CheckFraud",
@@ -200,11 +202,13 @@ func createDynamicExtensions() (string, error) {
       },
       "requiredArgs": ["amount", "account"],
       "returnType": "FraudResult",
-      "executorType": "http",
-      "executorConfig": {
-        "url": "https://api.fraud-detection.com/check",
-        "method": "POST",
-        "timeout": "5s"
+      "target": {
+        "type": "http",
+        "config": {
+          "url": "https://api.fraud-detection.com/check",
+          "method": "POST",
+          "timeout": "5s"
+        }
       }
     }
   ]

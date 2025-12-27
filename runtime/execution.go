@@ -617,6 +617,13 @@ type kafkaPublisher struct {
 	key    []byte
 }
 
+type stdoutPublisher struct{}
+
+func (sp *stdoutPublisher) Publish(ctx context.Context, payload []byte) error {
+	fmt.Printf("verb.stream %s\n", strings.TrimSpace(string(payload)))
+	return nil
+}
+
 func (kp *kafkaPublisher) Publish(ctx context.Context, payload []byte) error {
 	return kp.writer.WriteMessages(ctx, kafka.Message{
 		Key:   kp.key,
@@ -652,6 +659,11 @@ func newMessageExecutor(config *compiler.MessageExecutorConfig) (*MessageExecuto
 				key:    []byte(config.RoutingKey),
 			},
 		}, nil
+	case "stdout":
+		return &MessageExecutor{
+			config:    config,
+			publisher: &stdoutPublisher{},
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported publisher: %s", config.Publisher)
 	}
@@ -666,6 +678,9 @@ func messageTarget(config *compiler.MessageExecutorConfig) string {
 	}
 	if config.Publisher == "kafka" {
 		return config.Topic
+	}
+	if config.Publisher == "stdout" {
+		return "stdout"
 	}
 	if config.Topic != "" {
 		return config.Topic

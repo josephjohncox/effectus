@@ -77,6 +77,8 @@ message InventoryItem {
 }
 ```
 
+If `target` is omitted, verbs default to stream emission (stdout).
+
 ### Schema Composition
 
 Facts are composed from multiple modules:
@@ -152,11 +154,13 @@ runtime.RegisterExtensionLoader(loader)
       },
       "returnType": "ValidationResult",
       "capabilities": ["read", "idempotent"],
-      "executorType": "http",
-      "executorConfig": {
-        "url": "https://api.validation.com/check",
-        "method": "POST",
-        "timeout": "5s"
+      "target": {
+        "type": "http",
+        "config": {
+          "url": "https://api.validation.com/check",
+          "method": "POST",
+          "timeout": "5s"
+        }
       }
     }
   ]

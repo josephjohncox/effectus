@@ -147,6 +147,8 @@ func (mec *MessageExecutorConfig) Validate() error {
 			mec.Publisher = "http"
 		case len(mec.Brokers) > 0:
 			mec.Publisher = "kafka"
+		default:
+			mec.Publisher = "stdout"
 		}
 	}
 
@@ -162,6 +164,8 @@ func (mec *MessageExecutorConfig) Validate() error {
 		if mec.Topic == "" {
 			return fmt.Errorf("message executor requires topic for kafka publisher")
 		}
+	case "stdout":
+		return nil
 	default:
 		if mec.Topic == "" && mec.Queue == "" {
 			return fmt.Errorf("message executor requires topic or queue")
@@ -456,7 +460,9 @@ func (c *ExtensionCompiler) determineExecutorConfig(spec *verb.Spec) (ExecutorTy
 
 	// No implementation - need to determine from metadata or configuration
 	// This would be expanded based on actual requirements
-	return ExecutorMock, &MockExecutorConfig{}, nil
+	return ExecutorMessage, &MessageExecutorConfig{
+		Publisher: "stdout",
+	}, nil
 }
 
 func (c *ExtensionCompiler) validateTypeSignature(sig *TypeSignature) error {

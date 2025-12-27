@@ -330,6 +330,8 @@ func startHTTPServer(ctx context.Context, addr string, state *serverState) {
 	mux.HandleFunc("/api/rules", state.handleRules)
 	mux.HandleFunc("/api/flows", state.handleFlows)
 	mux.HandleFunc("/api/graph", state.handleGraph)
+	mux.HandleFunc("/api/verbs", state.handleVerbs)
+	mux.HandleFunc("/api/schema", state.handleSchema)
 	mux.HandleFunc("/api/playground/dry-run", state.handleDryRun)
 	mux.HandleFunc("/api/facts", state.handleFacts)
 
@@ -828,6 +830,8 @@ type statusResponse struct {
 	Universes    []universeSummary `json:"universes"`
 	RequiredFact []string          `json:"required_facts"`
 	FactStore    string            `json:"fact_store"`
+	VerbCount    int               `json:"verb_count"`
+	FactCount    int               `json:"fact_count"`
 }
 
 type bundleSummary struct {
@@ -868,8 +872,8 @@ func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 			VerbFiles:   bundle.VerbFiles,
 		},
 		Counts: bundleCounts{
-			Rules: countRules(bundle.ListSpec),
-			Flows: countFlows(bundle.FlowSpec),
+			Rules: countRules(bundle),
+			Flows: countFlows(bundle),
 		},
 		StartedAt:    s.startedAt,
 		LastReload:   s.updatedAt,
@@ -877,6 +881,8 @@ func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Universes:    summariesOrEmpty(s.factStore),
 		RequiredFact: bundle.RequiredFacts,
 		FactStore:    storeTypeOrUnknown(s.factStore),
+		VerbCount:    len(bundle.VerbSpecs),
+		FactCount:    len(bundle.FactTypes),
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -902,27 +908,13 @@ func (s *serverState) handleRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bundle := s.Bundle()
-	if bundle == nil || bundle.ListSpec == nil {
-		writeJSON(w, http.StatusOK, []ruleInfo{})
+	if bundle == nil {
+		writeJSON(w, http.StatusOK, []unified.RuleSummary{})
 		return
 	}
-	rules := make([]ruleInfo, 0, len(bundle.ListSpec.Rules))
-	for _, rule := range bundle.ListSpec.Rules {
-		predicates := make([]string, 0, len(rule.Predicates))
-		for _, predicate := range rule.Predicates {
-			predicates = append(predicates, predicate.Expression)
-		}
-		effects := make([]effectInfo, 0, len(rule.Effects))
-		for _, effect := range rule.Effects {
-			effects = append(effects, effectInfo{Verb: effect.Verb, Args: effect.Args})
-		}
-		rules = append(rules, ruleInfo{
-			Name:       rule.Name,
-			Priority:   rule.Priority,
-			Predicates: predicates,
-			FactPaths:  rule.FactPaths,
-			Effects:    effects,
-		})
+	rules := bundle.Rules
+	if len(rules) == 0 && bundle.ListSpec != nil {
+		rules = unified.SummarizeRules(bundle.ListSpec)
 	}
 	writeJSON(w, http.StatusOK, rules)
 }
@@ -941,24 +933,13 @@ func (s *serverState) handleFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bundle := s.Bundle()
-	if bundle == nil || bundle.FlowSpec == nil {
-		writeJSON(w, http.StatusOK, []flowInfo{})
+	if bundle == nil {
+		writeJSON(w, http.StatusOK, []unified.FlowSummary{})
 		return
 	}
-	flows := make([]flowInfo, 0, len(bundle.FlowSpec.Flows))
-	for _, flowSpec := range bundle.FlowSpec.Flows {
-		predicates := make([]string, 0, len(flowSpec.Predicates))
-		for _, predicate := range flowSpec.Predicates {
-			predicates = append(predicates, predicate.Expression)
-		}
-		verbs := collectProgramVerbs(flowSpec.Program)
-		flows = append(flows, flowInfo{
-			Name:       flowSpec.Name,
-			Priority:   flowSpec.Priority,
-			Predicates: predicates,
-			FactPaths:  flowSpec.FactPaths,
-			Verbs:      verbs,
-		})
+	flows := bundle.Flows
+	if len(flows) == 0 && bundle.FlowSpec != nil {
+		flows = unified.SummarizeFlows(bundle.FlowSpec)
 	}
 	writeJSON(w, http.StatusOK, flows)
 }
@@ -1000,37 +981,41 @@ func (s *serverState) handleGraph(w http.ResponseWriter, r *http.Request) {
 		nodeMap[id] = graphNode{ID: id, Kind: kind, Label: label}
 	}
 
-	if bundle.ListSpec != nil {
-		for _, rule := range bundle.ListSpec.Rules {
-			ruleID := "rule:" + rule.Name
-			addNode(ruleID, "rule", rule.Name)
-			for _, fact := range rule.FactPaths {
-				factID := "fact:" + fact
-				addNode(factID, "fact", fact)
-				edges = append(edges, graphEdge{From: factID, To: ruleID, Kind: "uses"})
-			}
-			for _, effect := range rule.Effects {
-				verbID := "verb:" + effect.Verb
-				addNode(verbID, "verb", effect.Verb)
-				edges = append(edges, graphEdge{From: ruleID, To: verbID, Kind: "emits"})
-			}
+	rules := bundle.Rules
+	if len(rules) == 0 && bundle.ListSpec != nil {
+		rules = unified.SummarizeRules(bundle.ListSpec)
+	}
+	for _, rule := range rules {
+		ruleID := "rule:" + rule.Name
+		addNode(ruleID, "rule", rule.Name)
+		for _, fact := range rule.FactPaths {
+			factID := "fact:" + fact
+			addNode(factID, "fact", fact)
+			edges = append(edges, graphEdge{From: factID, To: ruleID, Kind: "uses"})
+		}
+		for _, effect := range rule.Effects {
+			verbID := "verb:" + effect.Verb
+			addNode(verbID, "verb", effect.Verb)
+			edges = append(edges, graphEdge{From: ruleID, To: verbID, Kind: "emits"})
 		}
 	}
 
-	if bundle.FlowSpec != nil {
-		for _, flowSpec := range bundle.FlowSpec.Flows {
-			flowID := "flow:" + flowSpec.Name
-			addNode(flowID, "flow", flowSpec.Name)
-			for _, fact := range flowSpec.FactPaths {
-				factID := "fact:" + fact
-				addNode(factID, "fact", fact)
-				edges = append(edges, graphEdge{From: factID, To: flowID, Kind: "uses"})
-			}
-			for _, verb := range collectProgramVerbs(flowSpec.Program) {
-				verbID := "verb:" + verb
-				addNode(verbID, "verb", verb)
-				edges = append(edges, graphEdge{From: flowID, To: verbID, Kind: "emits"})
-			}
+	flows := bundle.Flows
+	if len(flows) == 0 && bundle.FlowSpec != nil {
+		flows = unified.SummarizeFlows(bundle.FlowSpec)
+	}
+	for _, flowSpec := range flows {
+		flowID := "flow:" + flowSpec.Name
+		addNode(flowID, "flow", flowSpec.Name)
+		for _, fact := range flowSpec.FactPaths {
+			factID := "fact:" + fact
+			addNode(factID, "fact", fact)
+			edges = append(edges, graphEdge{From: factID, To: flowID, Kind: "uses"})
+		}
+		for _, verb := range flowSpec.Verbs {
+			verbID := "verb:" + verb
+			addNode(verbID, "verb", verb)
+			edges = append(edges, graphEdge{From: flowID, To: verbID, Kind: "emits"})
 		}
 	}
 
@@ -1041,6 +1026,40 @@ func (s *serverState) handleGraph(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
 
 	writeJSON(w, http.StatusOK, graphResponse{Nodes: nodes, Edges: edges})
+}
+
+func (s *serverState) handleVerbs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	bundle := s.Bundle()
+	if bundle == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
+		return
+	}
+	if len(bundle.VerbSpecs) == 0 {
+		writeJSON(w, http.StatusOK, []unified.VerbSpecSummary{})
+		return
+	}
+	writeJSON(w, http.StatusOK, bundle.VerbSpecs)
+}
+
+func (s *serverState) handleSchema(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	bundle := s.Bundle()
+	if bundle == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
+		return
+	}
+	if len(bundle.FactTypes) == 0 {
+		writeJSON(w, http.StatusOK, []unified.FactTypeSummary{})
+		return
+	}
+	writeJSON(w, http.StatusOK, bundle.FactTypes)
 }
 
 type factIngestRequest struct {
@@ -1181,34 +1200,42 @@ func (s *serverState) handleDryRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if mode == "list" || mode == "both" {
-		rules, matched := evaluateRules(bundle.ListSpec, registry)
-		resp.Rules = rules
+		rules := bundle.Rules
+		if len(rules) == 0 && bundle.ListSpec != nil {
+			rules = unified.SummarizeRules(bundle.ListSpec)
+		}
+		evaluated, matched := evaluateRules(rules, registry)
+		resp.Rules = evaluated
 		resp.Summary.RulesMatched = matched
-		resp.Summary.RulesTotal = len(rules)
+		resp.Summary.RulesTotal = len(evaluated)
 	}
 	if mode == "flow" || mode == "both" {
-		flows, matched := evaluateFlows(bundle.FlowSpec, registry)
-		resp.Flows = flows
+		flows := bundle.Flows
+		if len(flows) == 0 && bundle.FlowSpec != nil {
+			flows = unified.SummarizeFlows(bundle.FlowSpec)
+		}
+		evaluated, matched := evaluateFlows(flows, registry)
+		resp.Flows = evaluated
 		resp.Summary.FlowsMatched = matched
-		resp.Summary.FlowsTotal = len(flows)
+		resp.Summary.FlowsTotal = len(evaluated)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func evaluateRules(spec *list.Spec, registry *schema.Registry) ([]dryRunRule, int) {
-	if spec == nil {
+func evaluateRules(rules []unified.RuleSummary, registry *schema.Registry) ([]dryRunRule, int) {
+	if len(rules) == 0 {
 		return nil, 0
 	}
-	rules := make([]dryRunRule, 0, len(spec.Rules))
+	evaluated := make([]dryRunRule, 0, len(rules))
 	matched := 0
-	for _, rule := range spec.Rules {
+	for _, rule := range rules {
 		predicates, ok := evaluatePredicates(registry, rule.Predicates)
 		effects := make([]effectInfo, 0, len(rule.Effects))
 		for _, effect := range rule.Effects {
 			effects = append(effects, effectInfo{Verb: effect.Verb, Args: effect.Args})
 		}
-		rules = append(rules, dryRunRule{
+		evaluated = append(evaluated, dryRunRule{
 			Name:       rule.Name,
 			Priority:   rule.Priority,
 			Matched:    ok,
@@ -1219,41 +1246,40 @@ func evaluateRules(spec *list.Spec, registry *schema.Registry) ([]dryRunRule, in
 			matched++
 		}
 	}
-	return rules, matched
+	return evaluated, matched
 }
 
-func evaluateFlows(spec *flow.Spec, registry *schema.Registry) ([]dryRunFlow, int) {
-	if spec == nil {
+func evaluateFlows(flows []unified.FlowSummary, registry *schema.Registry) ([]dryRunFlow, int) {
+	if len(flows) == 0 {
 		return nil, 0
 	}
-	flows := make([]dryRunFlow, 0, len(spec.Flows))
+	evaluated := make([]dryRunFlow, 0, len(flows))
 	matched := 0
-	for _, flowSpec := range spec.Flows {
+	for _, flowSpec := range flows {
 		predicates, ok := evaluatePredicates(registry, flowSpec.Predicates)
-		verbs := collectProgramVerbs(flowSpec.Program)
-		flows = append(flows, dryRunFlow{
+		evaluated = append(evaluated, dryRunFlow{
 			Name:       flowSpec.Name,
 			Priority:   flowSpec.Priority,
 			Matched:    ok,
 			Predicates: predicates,
-			Verbs:      verbs,
+			Verbs:      append([]string(nil), flowSpec.Verbs...),
 		})
 		if ok {
 			matched++
 		}
 	}
-	return flows, matched
+	return evaluated, matched
 }
 
-func evaluatePredicates(registry *schema.Registry, predicates []*schema.Predicate) ([]predicateEval, bool) {
+func evaluatePredicates(registry *schema.Registry, predicates []string) ([]predicateEval, bool) {
 	if len(predicates) == 0 {
 		return nil, true
 	}
 	results := make([]predicateEval, 0, len(predicates))
 	matched := true
-	for _, predicate := range predicates {
-		value, err := registry.EvaluateBoolean(predicate.Expression)
-		entry := predicateEval{Expression: predicate.Expression, Value: value}
+	for _, expression := range predicates {
+		value, err := registry.EvaluateBoolean(expression)
+		entry := predicateEval{Expression: expression, Value: value}
 		if err != nil {
 			entry.Error = err.Error()
 			matched = false
@@ -1266,53 +1292,30 @@ func evaluatePredicates(registry *schema.Registry, predicates []*schema.Predicat
 	return results, matched
 }
 
-func collectProgramVerbs(program *flow.Program) []string {
-	verbCounts := make(map[string]int)
-	collectProgramVerbsRecursive(program, verbCounts)
-	verbs := make([]string, 0, len(verbCounts))
-	for verb := range verbCounts {
-		verbs = append(verbs, verb)
-	}
-	sort.Strings(verbs)
-	return verbs
-}
-
-func collectProgramVerbsRecursive(program *flow.Program, verbCounts map[string]int) {
-	if program == nil {
-		return
-	}
-	switch program.Tag {
-	case flow.EffectProgramTag:
-		if program.Effect.Verb != "" {
-			verbCounts[program.Effect.Verb]++
-		}
-		if program.Continue != nil {
-			next := program.Continue(nil)
-			collectProgramVerbsRecursive(next, verbCounts)
-		}
-	case flow.TransactionProgramTag:
-		collectProgramVerbsRecursive(program.Transaction.Program, verbCounts)
-		if program.Continue != nil {
-			next := program.Continue(nil)
-			collectProgramVerbsRecursive(next, verbCounts)
-		}
-	case flow.PureProgramTag:
-		return
-	}
-}
-
-func countRules(spec *list.Spec) int {
-	if spec == nil {
+func countRules(bundle *unified.Bundle) int {
+	if bundle == nil {
 		return 0
 	}
-	return len(spec.Rules)
+	if len(bundle.Rules) > 0 {
+		return len(bundle.Rules)
+	}
+	if bundle.ListSpec != nil {
+		return len(bundle.ListSpec.Rules)
+	}
+	return 0
 }
 
-func countFlows(spec *flow.Spec) int {
-	if spec == nil {
+func countFlows(bundle *unified.Bundle) int {
+	if bundle == nil {
 		return 0
 	}
-	return len(spec.Flows)
+	if len(bundle.Flows) > 0 {
+		return len(bundle.Flows)
+	}
+	if bundle.FlowSpec != nil {
+		return len(bundle.FlowSpec.Flows)
+	}
+	return 0
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload interface{}) {

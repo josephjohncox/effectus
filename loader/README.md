@@ -39,6 +39,8 @@ func main() {
 }
 ```
 
+If `target` is omitted, verbs default to **stream** emission using the stdout publisher.
+
 ## Loading Patterns
 
 ### 1. Static Registration (Compile-time)
@@ -100,10 +102,12 @@ Use when you want to load extensions from configuration files:
       },
       "requiredArgs": ["amount", "method"],
       "returnType": "PaymentResult",
-      "executorType": "http",
-      "executorConfig": {
-        "url": "https://api.payments.com/process",
-        "method": "POST"
+      "target": {
+        "type": "http",
+        "config": {
+          "url": "https://api.payments.com/process",
+          "method": "POST"
+        }
       }
     }
   ]
@@ -173,6 +177,9 @@ loader := loader.NewOCIBundleLoader("external", "registry.io/my-extensions:v1.0.
 - Dependency management
 - Hot reloading capabilities
 
+**Bundle layout:**
+- Include `*.verbs.json` and `*.schema.json` files inside the OCI bundle (for example under `verbs/` or `schema/`).
+
 ## Directory Scanning
 
 Automatically discover extensions in directories:
@@ -197,6 +204,9 @@ for _, l := range loaders {
 - **mock**: Returns mock responses for testing
 - **noop**: No-operation executor
 - **http**: Makes HTTP calls to external services
+- **grpc**: Invokes gRPC methods with Struct payloads
+- **stream**: Emits verb payloads to a stream (stdout/http/kafka)
+- **oci**: Resolves executors from OCI extension bundles
 
 ### Custom Executors
 

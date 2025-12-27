@@ -195,6 +195,16 @@ type unifiedSpecWrapper struct {
 	}
 }
 
+// ListSpec exposes the compiled list spec for downstream consumers.
+func (s *unifiedSpecWrapper) ListSpec() *list.Spec {
+	return s.spec.ListSpec
+}
+
+// FlowSpec exposes the compiled flow spec for downstream consumers.
+func (s *unifiedSpecWrapper) FlowSpec() *flow.Spec {
+	return s.spec.FlowSpec
+}
+
 // RequiredFacts implements effectus.Spec
 func (s *unifiedSpecWrapper) RequiredFacts() []string {
 	factPathSet := make(map[string]struct{})

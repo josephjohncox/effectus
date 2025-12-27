@@ -181,7 +181,7 @@ verbRegistry := verb.NewRegistry(nil)
 _ = schema.LoadExtensionsIntoRegistries(mgr, registry, verbRegistry)
 ```
 
-For **cross-container** execution, keep verbs local and call remote services from the executor implementation (HTTP/gRPC/queue). The JSON loader supports `executorType: "http"` as a placeholder; for production, implement a real executor or register custom executors in code that call your service endpoints.
+For **cross-container** execution, keep verbs local and call remote services from the executor implementation (HTTP/gRPC/stream). The JSON loader supports `target.type` with `http`, `grpc`, `stream`, `oci`, and `mock`.
 
 For **hot loading**, `runtime.ExecutionRuntime.HotReload` can re-run extension loading and compilation using the same `ExtensionManager` (swap bundles or directories without restart).
 

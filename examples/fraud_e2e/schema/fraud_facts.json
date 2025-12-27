@@ -1,7 +1,7 @@
 [
   {
     "path": "transaction.id",
-    "type": {"PrimType": 1, "Name": "string"}
+    "type": {"PrimType": 4, "Name": "string"}
   },
   {
     "path": "transaction.amount",
@@ -9,15 +9,15 @@
   },
   {
     "path": "transaction.currency",
-    "type": {"PrimType": 1, "Name": "string"}
+    "type": {"PrimType": 4, "Name": "string"}
   },
   {
     "path": "transaction.channel",
-    "type": {"PrimType": 1, "Name": "string"}
+    "type": {"PrimType": 4, "Name": "string"}
   },
   {
     "path": "customer.id",
-    "type": {"PrimType": 1, "Name": "string"}
+    "type": {"PrimType": 4, "Name": "string"}
   },
   {
     "path": "customer.risk_score",
@@ -25,11 +25,11 @@
   },
   {
     "path": "customer.vip",
-    "type": {"PrimType": 4, "Name": "bool"}
+    "type": {"PrimType": 1, "Name": "bool"}
   },
   {
     "path": "device.ip",
-    "type": {"PrimType": 1, "Name": "string"}
+    "type": {"PrimType": 4, "Name": "string"}
   },
   {
     "path": "device.velocity",

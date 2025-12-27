@@ -1,8 +1,10 @@
 package loader
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,11 +12,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/segmentio/kafka-go"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // ExtensionManager provides a unified way to extend Effectus with verbs and schemas
@@ -211,18 +223,24 @@ type VerbManifest struct {
 	Executors   map[string]interface{} `json:"executors,omitempty"`
 }
 
+// VerbTarget defines how a verb should be executed.
+type VerbTarget struct {
+	Type   string                 `json:"type"`
+	Ref    string                 `json:"ref,omitempty"`
+	Config map[string]interface{} `json:"config,omitempty"`
+}
+
 // JSONVerbSpec defines a verb specification in JSON
 type JSONVerbSpec struct {
-	Name           string                 `json:"name"`
-	Description    string                 `json:"description"`
-	Capabilities   []string               `json:"capabilities"`
-	Resources      []JSONResourceSpec     `json:"resources"`
-	ArgTypes       map[string]string      `json:"argTypes"`
-	RequiredArgs   []string               `json:"requiredArgs"`
-	ReturnType     string                 `json:"returnType"`
-	InverseVerb    string                 `json:"inverseVerb,omitempty"`
-	ExecutorType   string                 `json:"executorType"`
-	ExecutorConfig map[string]interface{} `json:"executorConfig,omitempty"`
+	Name         string             `json:"name"`
+	Description  string             `json:"description"`
+	Capabilities []string           `json:"capabilities"`
+	Resources    []JSONResourceSpec `json:"resources"`
+	ArgTypes     map[string]string  `json:"argTypes"`
+	RequiredArgs []string           `json:"requiredArgs"`
+	ReturnType   string             `json:"returnType"`
+	InverseVerb  string             `json:"inverseVerb,omitempty"`
+	Target       *VerbTarget        `json:"target,omitempty"`
 }
 
 func (jvs *JSONVerbSpec) GetName() string           { return jvs.Name }
@@ -273,7 +291,8 @@ func (jvl *JSONVerbLoader) Load(ctx context.Context, target LoadTarget) error {
 	}
 
 	for _, verbSpec := range manifest.Verbs {
-		executor, err := jvl.createExecutor(verbSpec.ExecutorType, verbSpec.ExecutorConfig)
+		targetType, targetConfig := resolveVerbTarget(&verbSpec)
+		executor, err := jvl.createExecutor(targetType, targetConfig, verbSpec.Name)
 		if err != nil {
 			return fmt.Errorf("creating executor for %s: %w", verbSpec.Name, err)
 		}
@@ -286,17 +305,51 @@ func (jvl *JSONVerbLoader) Load(ctx context.Context, target LoadTarget) error {
 	return nil
 }
 
-func (jvl *JSONVerbLoader) createExecutor(executorType string, config map[string]interface{}) (VerbExecutor, error) {
-	switch executorType {
+func (jvl *JSONVerbLoader) createExecutor(targetType string, config map[string]interface{}, verbName string) (VerbExecutor, error) {
+	switch strings.ToLower(strings.TrimSpace(targetType)) {
 	case "mock":
 		return &MockExecutor{Name: fmt.Sprintf("Mock:%s", jvl.name)}, nil
 	case "noop":
 		return &NoOpExecutor{}, nil
 	case "http":
 		return NewHTTPExecutor(config)
+	case "grpc":
+		return NewGRPCExecutor(config)
+	case "stream", "message":
+		return NewStreamExecutor(config)
+	case "local":
+		return nil, fmt.Errorf("local target requires in-process executor; use static loader for %s", verbName)
+	case "oci":
+		return NewOCIExecutor(verbName, config)
 	default:
-		return nil, fmt.Errorf("unsupported executor type: %s", executorType)
+		return nil, fmt.Errorf("unsupported executor target: %s", targetType)
 	}
+}
+
+func resolveVerbTarget(spec *JSONVerbSpec) (string, map[string]interface{}) {
+	if spec == nil || spec.Target == nil {
+		return "stream", map[string]interface{}{"publisher": "stdout"}
+	}
+
+	targetType := strings.TrimSpace(spec.Target.Type)
+	config := map[string]interface{}{}
+	for key, value := range spec.Target.Config {
+		config[key] = value
+	}
+	if spec.Target.Ref != "" {
+		config["ref"] = spec.Target.Ref
+	}
+
+	if targetType == "" {
+		targetType = "stream"
+	}
+	if targetType == "stream" {
+		if _, ok := config["publisher"]; !ok && len(config) == 0 {
+			config["publisher"] = "stdout"
+		}
+	}
+
+	return targetType, config
 }
 
 // JSONSchemaLoader loads schemas from JSON Schema files
@@ -507,9 +560,112 @@ func (obl *OCIBundleLoader) Name() string {
 }
 
 func (obl *OCIBundleLoader) Load(ctx context.Context, target LoadTarget) error {
-	// TODO: Implement OCI bundle pulling using oras-go
-	// For now, return a placeholder
-	return fmt.Errorf("OCI bundle loading not yet implemented for ref: %s", obl.ref)
+	loaders, cleanup, err := loadOCIBundleLoaders(obl.ref)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	for _, loader := range loaders {
+		if err := loader.Load(ctx, target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func loadOCIBundleLoaders(ref string) ([]Loader, func(), error) {
+	if strings.TrimSpace(ref) == "" {
+		return nil, func() {}, fmt.Errorf("oci ref is required")
+	}
+	dir, err := os.MkdirTemp("", "effectus-oci-*")
+	if err != nil {
+		return nil, func() {}, err
+	}
+	cleanup := func() {
+		_ = os.RemoveAll(dir)
+	}
+
+	if err := pullOCIExtensionBundle(ref, dir); err != nil {
+		cleanup()
+		return nil, func() {}, err
+	}
+
+	loaders, err := LoadFromDirectory(dir)
+	if err != nil {
+		cleanup()
+		return nil, func() {}, err
+	}
+	return loaders, cleanup, nil
+}
+
+func pullOCIExtensionBundle(ref string, outputDir string) error {
+	parsed, err := name.ParseReference(ref)
+	if err != nil {
+		return fmt.Errorf("parsing oci ref: %w", err)
+	}
+
+	image, err := remote.Image(parsed, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	if err != nil {
+		return fmt.Errorf("pulling image: %w", err)
+	}
+
+	layers, err := image.Layers()
+	if err != nil {
+		return fmt.Errorf("getting layers: %w", err)
+	}
+	if len(layers) == 0 {
+		return fmt.Errorf("image has no layers")
+	}
+
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return err
+	}
+
+	// Extract all layers except the last one (bundle metadata).
+	for i, layer := range layers {
+		if i == len(layers)-1 {
+			break
+		}
+		rc, err := layer.Uncompressed()
+		if err != nil {
+			return fmt.Errorf("getting layer %d: %w", i, err)
+		}
+		if err := extractTarLayer(rc, outputDir); err != nil {
+			rc.Close()
+			return fmt.Errorf("extracting layer %d: %w", i, err)
+		}
+		rc.Close()
+	}
+	return nil
+}
+
+type captureTarget struct {
+	verbs map[string]VerbExecutor
+}
+
+func newCaptureTarget() *captureTarget {
+	return &captureTarget{verbs: make(map[string]VerbExecutor)}
+}
+
+func (ct *captureTarget) RegisterVerb(spec VerbSpec, executor VerbExecutor) error {
+	if spec == nil || executor == nil {
+		return nil
+	}
+	ct.verbs[spec.GetName()] = executor
+	return nil
+}
+
+func (ct *captureTarget) RegisterFunction(name string, fn interface{}) error {
+	return nil
+}
+
+func (ct *captureTarget) LoadData(path string, value interface{}) error {
+	return nil
+}
+
+func (ct *captureTarget) RegisterType(name string, typeDef TypeDefinition) error {
+	return nil
 }
 
 // === Utility Executors ===
@@ -621,6 +777,284 @@ func (he *HTTPExecutor) Execute(ctx context.Context, args map[string]interface{}
 	return strings.TrimSpace(string(body)), nil
 }
 
+// GRPCExecutor executes verbs via gRPC calls.
+type GRPCExecutor struct {
+	Address  string
+	Method   string
+	Timeout  time.Duration
+	Metadata map[string]string
+	UseTLS   bool
+	conn     *grpc.ClientConn
+}
+
+func NewGRPCExecutor(config map[string]interface{}) (*GRPCExecutor, error) {
+	address, _ := config["address"].(string)
+	if address == "" {
+		return nil, fmt.Errorf("grpc executor requires 'address' config")
+	}
+	method, _ := config["method"].(string)
+	if method == "" {
+		return nil, fmt.Errorf("grpc executor requires 'method' config")
+	}
+	timeout := 10 * time.Second
+	if raw, ok := config["timeout"].(string); ok {
+		if parsed, err := time.ParseDuration(raw); err == nil {
+			timeout = parsed
+		}
+	}
+	metadata := make(map[string]string)
+	if raw, ok := config["metadata"].(map[string]interface{}); ok {
+		for k, v := range raw {
+			if s, ok := v.(string); ok {
+				metadata[k] = s
+			}
+		}
+	}
+	useTLS := false
+	if raw, ok := config["useTLS"].(bool); ok {
+		useTLS = raw
+	}
+
+	return &GRPCExecutor{
+		Address:  address,
+		Method:   method,
+		Timeout:  timeout,
+		Metadata: metadata,
+		UseTLS:   useTLS,
+	}, nil
+}
+
+func (ge *GRPCExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if ge.conn == nil {
+		var opts []grpc.DialOption
+		if ge.UseTLS {
+			opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
+		} else {
+			opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		}
+		conn, err := grpc.Dial(ge.Address, opts...)
+		if err != nil {
+			return nil, fmt.Errorf("grpc dial: %w", err)
+		}
+		ge.conn = conn
+	}
+
+	req, err := structpb.NewStruct(args)
+	if err != nil {
+		return nil, fmt.Errorf("grpc encode args: %w", err)
+	}
+
+	callCtx := ctx
+	if ge.Timeout > 0 {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, ge.Timeout)
+		defer cancel()
+	}
+
+	if len(ge.Metadata) > 0 {
+		md := metadataFromMap(ge.Metadata)
+		callCtx = metadata.NewOutgoingContext(callCtx, md)
+	}
+
+	var resp structpb.Struct
+	if err := grpc.Invoke(callCtx, ge.Method, req, &resp, ge.conn); err != nil {
+		return nil, err
+	}
+	return resp.AsMap(), nil
+}
+
+func metadataFromMap(values map[string]string) metadata.MD {
+	md := metadata.MD{}
+	for key, value := range values {
+		md[key] = []string{value}
+	}
+	return md
+}
+
+// StreamExecutor emits verbs to a stream publisher.
+type StreamExecutor struct {
+	publisher streamPublisher
+}
+
+type streamPublisher interface {
+	Publish(ctx context.Context, payload []byte) error
+}
+
+type stdoutPublisher struct{}
+
+func (sp *stdoutPublisher) Publish(ctx context.Context, payload []byte) error {
+	_, _ = fmt.Printf("stream.emit %s\n", string(payload))
+	return nil
+}
+
+type httpStreamPublisher struct {
+	url     string
+	headers map[string]string
+	client  *http.Client
+}
+
+func (hp *httpStreamPublisher) Publish(ctx context.Context, payload []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hp.url, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for key, value := range hp.headers {
+		req.Header.Set(key, value)
+	}
+	resp, err := hp.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("stream http status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+type kafkaStreamPublisher struct {
+	writer *kafka.Writer
+}
+
+func (kp *kafkaStreamPublisher) Publish(ctx context.Context, payload []byte) error {
+	return kp.writer.WriteMessages(ctx, kafka.Message{
+		Value: payload,
+		Time:  time.Now(),
+	})
+}
+
+func NewStreamExecutor(config map[string]interface{}) (*StreamExecutor, error) {
+	publisher := "stdout"
+	if raw, ok := config["publisher"].(string); ok && raw != "" {
+		publisher = raw
+	}
+	switch strings.ToLower(publisher) {
+	case "stdout":
+		return &StreamExecutor{publisher: &stdoutPublisher{}}, nil
+	case "http":
+		url, _ := config["url"].(string)
+		if url == "" {
+			return nil, fmt.Errorf("stream http publisher requires url")
+		}
+		headers := map[string]string{}
+		if raw, ok := config["headers"].(map[string]interface{}); ok {
+			for k, v := range raw {
+				if s, ok := v.(string); ok {
+					headers[k] = s
+				}
+			}
+		}
+		timeout := 5 * time.Second
+		if raw, ok := config["timeout"].(string); ok {
+			if parsed, err := time.ParseDuration(raw); err == nil {
+				timeout = parsed
+			}
+		}
+		client := &http.Client{Timeout: timeout}
+		return &StreamExecutor{publisher: &httpStreamPublisher{url: url, headers: headers, client: client}}, nil
+	case "kafka":
+		var brokers []string
+		if raw, ok := config["brokers"].([]interface{}); ok {
+			for _, entry := range raw {
+				if s, ok := entry.(string); ok {
+					brokers = append(brokers, s)
+				}
+			}
+		}
+		if raw, ok := config["brokers"].([]string); ok {
+			brokers = append(brokers, raw...)
+		}
+		if len(brokers) == 0 {
+			return nil, fmt.Errorf("stream kafka publisher requires brokers")
+		}
+		topic, _ := config["topic"].(string)
+		if topic == "" {
+			return nil, fmt.Errorf("stream kafka publisher requires topic")
+		}
+		writer := &kafka.Writer{
+			Addr:         kafka.TCP(brokers...),
+			Topic:        topic,
+			Balancer:     &kafka.LeastBytes{},
+			RequiredAcks: kafka.RequireOne,
+		}
+		return &StreamExecutor{publisher: &kafkaStreamPublisher{writer: writer}}, nil
+	default:
+		return nil, fmt.Errorf("unsupported stream publisher: %s", publisher)
+	}
+}
+
+func (se *StreamExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	payload, err := json.Marshal(args)
+	if err != nil {
+		return nil, fmt.Errorf("marshal args: %w", err)
+	}
+	if err := se.publisher.Publish(ctx, payload); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"status": "queued"}, nil
+}
+
+// OCIExecutor resolves a verb executor from an OCI extension bundle.
+type OCIExecutor struct {
+	ref      string
+	verbName string
+	once     sync.Once
+	executor VerbExecutor
+	err      error
+}
+
+func NewOCIExecutor(verbName string, config map[string]interface{}) (*OCIExecutor, error) {
+	ref, _ := config["ref"].(string)
+	if ref == "" {
+		return nil, fmt.Errorf("oci target requires ref")
+	}
+	if raw, ok := config["verb"].(string); ok && raw != "" {
+		verbName = raw
+	}
+	return &OCIExecutor{ref: ref, verbName: verbName}, nil
+}
+
+func (oe *OCIExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	oe.once.Do(func() {
+		executors, err := loadOCIBundleExecutors(ctx, oe.ref)
+		if err != nil {
+			oe.err = err
+			return
+		}
+		executor, ok := executors[oe.verbName]
+		if !ok {
+			oe.err = fmt.Errorf("verb %s not found in oci bundle", oe.verbName)
+			return
+		}
+		oe.executor = executor
+	})
+	if oe.err != nil {
+		return nil, oe.err
+	}
+	if oe.executor == nil {
+		return nil, fmt.Errorf("oci executor not initialized")
+	}
+	return oe.executor.Execute(ctx, args)
+}
+
+func loadOCIBundleExecutors(ctx context.Context, ref string) (map[string]VerbExecutor, error) {
+	loaders, cleanup, err := loadOCIBundleLoaders(ref)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	target := newCaptureTarget()
+	for _, loader := range loaders {
+		if err := loader.Load(ctx, target); err != nil {
+			return nil, err
+		}
+	}
+	return target.verbs, nil
+}
+
 // === Directory Loaders ===
 
 // LoadFromDirectory scans a directory for extension files and creates loaders
@@ -679,4 +1113,44 @@ func LoadExtensionsFromReader(r io.Reader, extension string) (Loader, error) {
 	default:
 		return nil, fmt.Errorf("unsupported extension: %s", extension)
 	}
+}
+
+// extractTarLayer extracts files from a tar stream to the target directory.
+func extractTarLayer(r io.Reader, targetDir string) error {
+	tr := tar.NewReader(r)
+
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("reading tar header: %w", err)
+		}
+
+		if header.FileInfo().IsDir() {
+			continue
+		}
+
+		targetPath := filepath.Join(targetDir, header.Name)
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+			return fmt.Errorf("creating directory for %s: %w", targetPath, err)
+		}
+
+		file, err := os.Create(targetPath)
+		if err != nil {
+			return fmt.Errorf("creating file %s: %w", targetPath, err)
+		}
+
+		if _, err := io.Copy(file, tr); err != nil {
+			file.Close()
+			return fmt.Errorf("writing to %s: %w", targetPath, err)
+		}
+
+		if err := file.Close(); err != nil {
+			return fmt.Errorf("closing file %s: %w", targetPath, err)
+		}
+	}
+
+	return nil
 }

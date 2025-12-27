@@ -158,7 +158,9 @@ func createDynamicExtensionFiles() (string, string, error) {
       },
       "requiredArgs": ["event", "level"],
       "returnType": "bool",
-      "executorType": "mock"
+      "target": {
+        "type": "mock"
+      }
     },
     {
       "name": "ValidateInput",
@@ -176,7 +178,9 @@ func createDynamicExtensionFiles() (string, string, error) {
       },
       "requiredArgs": ["data", "schema"],
       "returnType": "ValidationResult",
-      "executorType": "mock"
+      "target": {
+        "type": "mock"
+      }
     }
   ]
 }`

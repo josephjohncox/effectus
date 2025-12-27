@@ -153,16 +153,20 @@ runtime.RegisterExtensionLoader(loader)
       "name": "ValidateAccount", 
       "argTypes": {"accountId": "string"},
       "returnType": "ValidationResult",
-      "executorType": "http",
-      "executorConfig": {
+      "target": {
+        "type": "http",
+        "config": {
         "url": "https://api.validation.com/check",
         "method": "POST",
         "timeout": "5s"
+        }
       }
     }
   ]
 }
 ```
+
+If `target` is omitted, verbs default to **stream** emission (stdout publisher).
 
 ## CLI Usage
 

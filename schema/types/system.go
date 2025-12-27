@@ -209,6 +209,18 @@ func (ts *TypeSystem) GetAllFactPaths() []string {
 	return result
 }
 
+// GetAllVerbNames returns all registered verb names.
+func (ts *TypeSystem) GetAllVerbNames() []string {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+
+	names := make([]string, 0, len(ts.verbSpecs))
+	for name := range ts.verbSpecs {
+		names = append(names, name)
+	}
+	return names
+}
+
 func splitVersionedPath(path string) (string, string, bool) {
 	idx := strings.LastIndex(path, "@")
 	if idx == -1 {

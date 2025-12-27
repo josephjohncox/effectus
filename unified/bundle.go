@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	eff "github.com/effectus/effectus-go"
@@ -20,18 +21,63 @@ import (
 
 // Bundle represents a compiled bundle of rules and schemas
 type Bundle struct {
-	Name          string     `json:"name"`
-	Version       string     `json:"version"`
-	Description   string     `json:"description"`
-	VerbHash      string     `json:"verb_hash"`
-	CreatedAt     time.Time  `json:"created_at"`
-	SchemaFiles   []string   `json:"schema_files"`
-	VerbFiles     []string   `json:"verb_files"`
-	RuleFiles     []string   `json:"rule_files"`
-	ListSpec      *list.Spec `json:"list_spec,omitempty"`
-	FlowSpec      *fl.Spec   `json:"flow_spec,omitempty"`
-	RequiredFacts []string   `json:"required_facts"`
-	PIIMasks      []string   `json:"pii_masks,omitempty"`
+	Name          string             `json:"name"`
+	Version       string             `json:"version"`
+	Description   string             `json:"description"`
+	VerbHash      string             `json:"verb_hash"`
+	CreatedAt     time.Time          `json:"created_at"`
+	SchemaFiles   []string           `json:"schema_files"`
+	VerbFiles     []string           `json:"verb_files"`
+	RuleFiles     []string           `json:"rule_files"`
+	ListSpec      *list.Spec         `json:"-"`
+	FlowSpec      *fl.Spec           `json:"-"`
+	Rules         []RuleSummary      `json:"rules,omitempty"`
+	Flows         []FlowSummary      `json:"flows,omitempty"`
+	FactTypes     []FactTypeSummary  `json:"fact_types,omitempty"`
+	VerbSpecs     []VerbSpecSummary  `json:"verb_specs,omitempty"`
+	RequiredFacts []string           `json:"required_facts"`
+	PIIMasks      []string           `json:"pii_masks,omitempty"`
+}
+
+// FactTypeSummary describes a fact path and its inferred type.
+type FactTypeSummary struct {
+	Path string `json:"path"`
+	Type string `json:"type"`
+}
+
+// VerbSpecSummary captures the verb signature metadata for UI/status.
+type VerbSpecSummary struct {
+	Name         string            `json:"name"`
+	Description  string            `json:"description,omitempty"`
+	Capability   string            `json:"capability,omitempty"`
+	InverseVerb  string            `json:"inverse,omitempty"`
+	ArgTypes     map[string]string `json:"arg_types,omitempty"`
+	RequiredArgs []string          `json:"required_args,omitempty"`
+	ReturnType   string            `json:"return_type,omitempty"`
+}
+
+// RuleSummary summarizes a compiled list rule.
+type RuleSummary struct {
+	Name       string              `json:"name"`
+	Priority   int                 `json:"priority"`
+	Predicates []string            `json:"predicates,omitempty"`
+	FactPaths  []string            `json:"fact_paths,omitempty"`
+	Effects    []RuleEffectSummary `json:"effects,omitempty"`
+}
+
+// RuleEffectSummary summarizes a verb effect in a rule.
+type RuleEffectSummary struct {
+	Verb string                 `json:"verb"`
+	Args map[string]interface{} `json:"args,omitempty"`
+}
+
+// FlowSummary summarizes a compiled flow.
+type FlowSummary struct {
+	Name       string   `json:"name"`
+	Priority   int      `json:"priority"`
+	Predicates []string `json:"predicates,omitempty"`
+	FactPaths  []string `json:"fact_paths,omitempty"`
+	Verbs      []string `json:"verbs,omitempty"`
 }
 
 // BundleBuilder helps construct a bundle
@@ -127,6 +173,10 @@ func (bb *BundleBuilder) Build() (*Bundle, error) {
 	if err := bb.loadVerbSpecsIntoTypeSystem(typeSystem); err != nil {
 		return nil, fmt.Errorf("loading verb specs: %w", err)
 	}
+
+	// Capture schema + verb summaries for status/UI.
+	bb.bundle.FactTypes = SummarizeFactTypes(typeSystem)
+	bb.bundle.VerbSpecs = SummarizeVerbSpecs(typeSystem)
 
 	// Create verb registry with proper type system
 	bb.verbRegistry = verb.NewRegistry(typeSystem)
@@ -310,9 +360,11 @@ func (bb *BundleBuilder) loadRules() error {
 		return fmt.Errorf("compiling rules: %w", err)
 	}
 
-	// Extract list and flow specs
+	// Extract list and flow specs (in-memory only) and summarize for storage.
 	bb.bundle.ListSpec = getListSpec(compiledSpec)
 	bb.bundle.FlowSpec = getFlowSpec(compiledSpec)
+	bb.bundle.Rules = SummarizeRules(bb.bundle.ListSpec)
+	bb.bundle.Flows = SummarizeFlows(bb.bundle.FlowSpec)
 	bb.bundle.RequiredFacts = compiledSpec.RequiredFacts()
 
 	return nil
@@ -357,6 +409,170 @@ func (bb *BundleBuilder) createEmptyFacts() eff.Facts {
 	return &testFacts{
 		factRegistry: pathutil.NewRegistry(),
 		schema:       &testSchema{},
+	}
+}
+
+// SummarizeFactTypes returns a stable summary of registered fact paths and types.
+func SummarizeFactTypes(ts *types.TypeSystem) []FactTypeSummary {
+	if ts == nil {
+		return nil
+	}
+	paths := ts.GetAllFactPaths()
+	sort.Strings(paths)
+	summaries := make([]FactTypeSummary, 0, len(paths))
+	for _, path := range paths {
+		typ, err := ts.GetFactType(path)
+		typeName := "unknown"
+		if err == nil && typ != nil {
+			typeName = typ.String()
+		}
+		summaries = append(summaries, FactTypeSummary{
+			Path: path,
+			Type: typeName,
+		})
+	}
+	return summaries
+}
+
+// SummarizeVerbSpecs returns a stable summary of registered verb specs.
+func SummarizeVerbSpecs(ts *types.TypeSystem) []VerbSpecSummary {
+	if ts == nil {
+		return nil
+	}
+	names := ts.GetAllVerbNames()
+	sort.Strings(names)
+	summaries := make([]VerbSpecSummary, 0, len(names))
+	for _, name := range names {
+		spec, err := ts.GetVerbSpec(name)
+		if err != nil || spec == nil {
+			continue
+		}
+		argTypes := make(map[string]string, len(spec.ArgTypes))
+		for argName, argType := range spec.ArgTypes {
+			if argType == nil {
+				argTypes[argName] = "unknown"
+				continue
+			}
+			argTypes[argName] = argType.String()
+		}
+		returnType := "unknown"
+		if spec.ReturnType != nil {
+			returnType = spec.ReturnType.String()
+		}
+		summaries = append(summaries, VerbSpecSummary{
+			Name:         spec.Name,
+			Description:  spec.Description,
+			Capability:   spec.Capability.String(),
+			InverseVerb:  spec.InverseVerb,
+			ArgTypes:     argTypes,
+			RequiredArgs: append([]string(nil), spec.RequiredArgs...),
+			ReturnType:   returnType,
+		})
+	}
+	return summaries
+}
+
+// SummarizeRules returns a summary of list rules suitable for JSON export.
+func SummarizeRules(spec *list.Spec) []RuleSummary {
+	if spec == nil {
+		return nil
+	}
+	summaries := make([]RuleSummary, 0, len(spec.Rules))
+	for _, rule := range spec.Rules {
+		if rule == nil {
+			continue
+		}
+		predicates := make([]string, 0, len(rule.Predicates))
+		for _, predicate := range rule.Predicates {
+			if predicate == nil {
+				continue
+			}
+			predicates = append(predicates, predicate.Expression)
+		}
+		effects := make([]RuleEffectSummary, 0, len(rule.Effects))
+		for _, effect := range rule.Effects {
+			if effect == nil {
+				continue
+			}
+			effects = append(effects, RuleEffectSummary{
+				Verb: effect.Verb,
+				Args: effect.Args,
+			})
+		}
+		summaries = append(summaries, RuleSummary{
+			Name:       rule.Name,
+			Priority:   rule.Priority,
+			Predicates: predicates,
+			FactPaths:  append([]string(nil), rule.FactPaths...),
+			Effects:    effects,
+		})
+	}
+	return summaries
+}
+
+// SummarizeFlows returns a summary of flows suitable for JSON export.
+func SummarizeFlows(spec *fl.Spec) []FlowSummary {
+	if spec == nil {
+		return nil
+	}
+	summaries := make([]FlowSummary, 0, len(spec.Flows))
+	for _, flowSpec := range spec.Flows {
+		if flowSpec == nil {
+			continue
+		}
+		predicates := make([]string, 0, len(flowSpec.Predicates))
+		for _, predicate := range flowSpec.Predicates {
+			if predicate == nil {
+				continue
+			}
+			predicates = append(predicates, predicate.Expression)
+		}
+		verbs := collectProgramVerbs(flowSpec.Program)
+		summaries = append(summaries, FlowSummary{
+			Name:       flowSpec.Name,
+			Priority:   flowSpec.Priority,
+			Predicates: predicates,
+			FactPaths:  append([]string(nil), flowSpec.FactPaths...),
+			Verbs:      verbs,
+		})
+	}
+	return summaries
+}
+
+func collectProgramVerbs(program *fl.Program) []string {
+	verbCounts := make(map[string]int)
+	collectProgramVerbsRecursive(program, verbCounts)
+	verbs := make([]string, 0, len(verbCounts))
+	for verb := range verbCounts {
+		verbs = append(verbs, verb)
+	}
+	sort.Strings(verbs)
+	return verbs
+}
+
+func collectProgramVerbsRecursive(program *fl.Program, verbCounts map[string]int) {
+	if program == nil {
+		return
+	}
+	switch program.Tag {
+	case fl.EffectProgramTag:
+		if program.Effect.Verb != "" {
+			verbCounts[program.Effect.Verb]++
+		}
+		if program.Continue != nil {
+			next := program.Continue(nil)
+			collectProgramVerbsRecursive(next, verbCounts)
+		}
+	case fl.TransactionProgramTag:
+		if program.Transaction != nil {
+			collectProgramVerbsRecursive(program.Transaction.Program, verbCounts)
+		}
+		if program.Continue != nil {
+			next := program.Continue(nil)
+			collectProgramVerbsRecursive(next, verbCounts)
+		}
+	case fl.PureProgramTag:
+		return
 	}
 }
 
