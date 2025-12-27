@@ -112,6 +112,29 @@ Options:
 effectusc format --check rules/*.eff
 ```
 
+**Example (bound flow formatting):**
+```bash
+effectusc format --stdout rules/case_hold.effx
+```
+
+Input:
+```effx
+flow "CaseHold" priority 5 { when { order.amount>1000 } steps { caseId=OpenCase(orderId:order.id,reason:"risk") UpdateCase(caseId:$caseId,status:"held") } }
+```
+
+Output:
+```effx
+flow "CaseHold" priority 5 {
+  when {
+    order.amount > 1000
+  }
+  steps {
+    caseId = OpenCase(orderId: order.id, reason: "risk")
+    UpdateCase(caseId: $caseId, status: "held")
+  }
+}
+```
+
 #### graph
 
 Emits a dependency graph (rules/flows → facts/verbs) plus fact coverage.
@@ -148,42 +171,6 @@ Options:
 **Example:**
 ```bash
 effectusc facts --schema schemas/ rules/*.eff
-```
-
-#### format
-
-Formats `.eff` / `.effx` files to a stable style.
-
-```bash
-effectusc format [options] file1.eff [file2.effx ...]
-
-Options:
-  --write   Write formatted output back to files (default: true)
-  --stdout  Print formatted output to stdout
-  --check   Return non-zero exit code if files need formatting
-```
-
-**Example (bound flow formatting):**
-```bash
-effectusc format --stdout rules/case_hold.effx
-```
-
-Input:
-```effx
-flow "CaseHold" priority 5 { when { order.amount>1000 } steps { caseId=OpenCase(orderId:order.id,reason:"risk") UpdateCase(caseId:$caseId,status:"held") } }
-```
-
-Output:
-```effx
-flow "CaseHold" priority 5 {
-  when {
-    order.amount > 1000
-  }
-  steps {
-    caseId = OpenCase(orderId: order.id, reason: "risk")
-    UpdateCase(caseId: $caseId, status: "held")
-  }
-}
 ```
 
 #### compile
