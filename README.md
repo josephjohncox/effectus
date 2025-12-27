@@ -180,6 +180,15 @@ effectusd --oci-ref ghcr.io/myorg/rules:v1.0.0
 effectusd --oci-ref ghcr.io/myorg/rules:latest --reload-interval 60s
 ```
 
+## Adapters Quick Start
+
+1. Define fact schemas (Proto or JSON) and register them with the type system.
+2. Configure one or more `fact_sources` using adapter types (Kafka, CDC, S3, etc.).
+3. Start `effectusd` with your bundle and adapter config.
+
+Adapters available: `kafka`, `postgres_poller`, `postgres_cdc`, `mysql_cdc`, `amqp`, `grpc`, `redis_streams`,
+`http`, `file_watcher`, `sql`, `s3`, `iceberg`.
+
 ## Warehouse Devstack
 
 Run a local Trino + Iceberg + MinIO stack for warehouse adapters and Parquet ingestion.
@@ -188,9 +197,21 @@ Run a local Trino + Iceberg + MinIO stack for warehouse adapters and Parquet ing
 just devstack-up
 just devstack-seed-iceberg
 just devstack-seed-parquet
+just devstack-smoke-test
 just devstack-trino-cli
 just devstack-down
 ```
+
+## CDC Demos and Integration Tests
+
+```bash
+just cdc-up
+go run ./examples/cdc_all
+just cdc-test
+just cdc-down
+```
+
+Note: CDC demos and tests require Docker.
 
 ## Mathematical Foundations
 

@@ -67,8 +67,33 @@ Working examples demonstrating Effectus features:
 - **[Protocol-Driven Development](../examples/proto_driven_development/)** - Schema-first development workflow
 - **[Multi-Source Ingestion](../examples/multi_source_ingestion/)** - Universal data ingestion examples
 - **[Extension System](../examples/extension_system/)** - Static and dynamic extension loading
+- **[CDC Demos](../examples/cdc_all/)** - Postgres CDC + MySQL CDC + AMQP with a local docker stack
 - **[Warehouse Sources](../examples/warehouse_sources/)** - Snowflake + Iceberg configs and local devstack
 - **[Business Examples](../examples/)** - Domain-specific rule examples
+
+## CDC Stack and Integration Tests
+
+Start the local stack and run the CDC demos:
+
+```bash
+just cdc-up
+go run ./examples/cdc_all
+just cdc-down
+```
+
+Run the CDC integration tests (requires Docker):
+
+```bash
+just cdc-up
+just cdc-test
+just cdc-down
+```
+
+## Warehouse Devstack Smoke Test
+
+```bash
+just devstack-smoke-test
+```
 
 ## Contributing to Documentation
 

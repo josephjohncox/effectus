@@ -33,6 +33,12 @@ func TestMySQLCDCIntegration(t *testing.T) {
 	}
 	defer db.Close()
 
+	readyCtx, readyCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer readyCancel()
+	if err := waitForMySQL(readyCtx, db); err != nil {
+		t.Fatalf("db not ready: %v", err)
+	}
+
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS cdc_events (
 		id INT AUTO_INCREMENT PRIMARY KEY,
 		name VARCHAR(255),
@@ -84,6 +90,23 @@ func TestMySQLCDCIntegration(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatalf("timeout waiting for fact")
 	}
+}
+
+func waitForMySQL(ctx context.Context, db *sql.DB) error {
+	var lastErr error
+	for i := 0; i < 30; i++ {
+		if err := db.PingContext(ctx); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
+	}
+	return lastErr
 }
 
 func envInt(key string, fallback int) int {

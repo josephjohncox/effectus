@@ -34,6 +34,16 @@ Or:
 just devstack-seed-iceberg
 ```
 
+## Smoke test (boot + seed + query)
+```bash
+./scripts/smoke-test.sh
+```
+
+Or:
+```bash
+just devstack-smoke-test
+```
+
 ## Open the Trino CLI
 ```bash
 ./scripts/trino-cli.sh

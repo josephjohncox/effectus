@@ -1,6 +1,8 @@
 services:
   postgres:
-    image: debezium/postgres:16
+    build:
+      context: ./postgres
+    image: effectus/postgres-wal2json:16
     environment:
       POSTGRES_USER: effectus
       POSTGRES_PASSWORD: effectus

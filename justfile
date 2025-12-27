@@ -5,6 +5,7 @@ DB_DSN := env_var_or_default("DB_DSN", "postgres://effectus:effectus@localhost/e
 MIGRATIONS_DIR := "migrations"
 DOCKER_COMPOSE := "docker-compose -f docker-compose.yml"
 WAREHOUSE_DEVSTACK := "examples/warehouse_sources/devstack"
+CDC_STACK := "examples/cdc_stack"
 
 # Default recipe
 default:
@@ -223,6 +224,30 @@ devstack-seed-parquet:
 devstack-trino-cli:
 	{{WAREHOUSE_DEVSTACK}}/scripts/trino-cli.sh
 	@echo "OK Schema documentation generated"
+
+devstack-smoke-test:
+	{{WAREHOUSE_DEVSTACK}}/scripts/smoke-test.sh
+
+# === CDC Stack (Postgres + MySQL + RabbitMQ) ===
+
+cdc-up:
+	docker compose -f {{CDC_STACK}}/docker-compose.yml up -d
+
+cdc-down:
+	docker compose -f {{CDC_STACK}}/docker-compose.yml down
+
+cdc-logs:
+	docker compose -f {{CDC_STACK}}/docker-compose.yml logs -f
+
+cdc-test:
+	POSTGRES_DSN="postgres://effectus:effectus@localhost:5432/effectus_cdc?sslmode=disable" \
+	MYSQL_HOST=127.0.0.1 \
+	MYSQL_PORT=3306 \
+	MYSQL_USER=effectus \
+	MYSQL_PASSWORD=effectus \
+	MYSQL_DATABASE=effectus_cdc \
+	MYSQL_DSN="effectus:effectus@tcp(127.0.0.1:3306)/effectus_cdc?parseTime=true&multiStatements=true" \
+	go test -tags=integration ./adapters/postgres ./adapters/mysql
 
 # Clean generated SQL files
 sql-clean:
