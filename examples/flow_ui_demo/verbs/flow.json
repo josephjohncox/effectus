@@ -54,13 +54,13 @@
   },
   "UpdateCase": {
     "arg_types": {
-      "orderId": "string",
-      "status": "string"
+      "status": "string",
+      "caseId": "string"
     },
     "return_type": "bool",
     "capability": 68,
     "required_args": [
-      "orderId",
+      "caseId",
       "status"
     ],
     "inverse": "RevertCase",
@@ -74,13 +74,13 @@
   },
   "RevertCase": {
     "arg_types": {
-      "orderId": "string",
-      "status": "string"
+      "status": "string",
+      "caseId": "string"
     },
     "return_type": "bool",
     "capability": 68,
     "required_args": [
-      "orderId",
+      "caseId",
       "status"
     ],
     "inverse": "UpdateCase",

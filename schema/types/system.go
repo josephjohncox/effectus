@@ -525,6 +525,10 @@ func (ts *TypeSystem) typeCheckEffect(effect *ast.Effect, facts effectus.Facts) 
 
 // typeCheckStep checks a flow step for type correctness
 func (ts *TypeSystem) typeCheckStep(step *ast.Step, facts effectus.Facts) error {
+	return ts.typeCheckStepWithBindings(step, facts, nil)
+}
+
+func (ts *TypeSystem) typeCheckStepWithBindings(step *ast.Step, facts effectus.Facts, bindings map[string]*Type) error {
 	// Similar to typeCheckEffect but for flow steps
 	verbInfo, found := ts.GetVerbType(step.Verb)
 	if !found {
@@ -544,7 +548,7 @@ func (ts *TypeSystem) typeCheckStep(step *ast.Step, facts effectus.Facts) error 
 		}
 
 		// Type check the argument value
-		if err := ts.typeCheckArgValue(arg.Value, expectedType, facts); err != nil {
+		if err := ts.typeCheckArgValueWithBindings(arg.Value, expectedType, facts, bindings); err != nil {
 			return fmt.Errorf("invalid type for argument %s: %w", arg.Name, err)
 		}
 	}
@@ -564,7 +568,47 @@ func (ts *TypeSystem) typeCheckStep(step *ast.Step, facts effectus.Facts) error 
 		}
 	}
 
+	if step.BindName != "" {
+		if verbInfo.ReturnType == nil {
+			return fmt.Errorf("verb %s has no return type; cannot bind result to %s", step.Verb, step.BindName)
+		}
+		if bindings != nil {
+			if existing, ok := bindings[step.BindName]; ok {
+				if existing != nil && !AreTypesCompatible(existing, verbInfo.ReturnType) {
+					return fmt.Errorf("variable %s already bound to type %s, cannot assign %s", step.BindName, existing.String(), verbInfo.ReturnType.String())
+				}
+			}
+			bindings[step.BindName] = verbInfo.ReturnType.Clone()
+		}
+	}
+
 	return nil
+}
+
+func (ts *TypeSystem) typeCheckArgValueWithBindings(arg *ast.ArgValue, requiredType *Type, facts effectus.Facts, bindings map[string]*Type) error {
+	if arg == nil {
+		return fmt.Errorf("argument value is nil")
+	}
+
+	if arg.VarRef != "" {
+		if bindings == nil {
+			return fmt.Errorf("variable reference type checking not available")
+		}
+		varName := strings.TrimPrefix(arg.VarRef, "$")
+		boundType, ok := bindings[varName]
+		if !ok {
+			return fmt.Errorf("unknown variable reference: %s", arg.VarRef)
+		}
+		if requiredType == nil || boundType == nil {
+			return nil
+		}
+		if !AreTypesCompatible(boundType, requiredType) {
+			return fmt.Errorf("variable %s has type %s which is not compatible with required type %s", arg.VarRef, boundType.String(), requiredType.String())
+		}
+		return nil
+	}
+
+	return ts.TypeCheckArgValue(arg, requiredType, facts)
 }
 
 // typeCheckArgValue checks if an argument value has compatible type with expected type
@@ -864,8 +908,9 @@ func (ts *TypeSystem) typeCheckFlow(flow *ast.Flow, facts effectus.Facts) error 
 
 	// Type check steps
 	if flow.Steps != nil {
+		bindings := make(map[string]*Type)
 		for _, step := range flow.Steps.Steps {
-			if err := ts.typeCheckStep(step, facts); err != nil {
+			if err := ts.typeCheckStepWithBindings(step, facts, bindings); err != nil {
 				return fmt.Errorf("step error (%s): %w", step.Verb, err)
 			}
 		}

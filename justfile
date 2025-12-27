@@ -21,6 +21,8 @@ UI_FLOW_DEMO_BUNDLE := "out/flow_ui_demo/bundle.json"
 UI_FLOW_DEMO_FACTS := "examples/flow_ui_demo/data/facts_payload.json"
 UI_FLOW_DEMO_STREAM := "examples/flow_ui_demo/scripts/stream_facts.sh"
 UI_FLOW_DEMO_TOKEN := "flow-demo-token"
+UI_FLOW_SQL_STACK := "examples/flow_ui_demo/sql_scrape"
+UI_FLOW_SQL_DSN := "postgres://effectus:effectus@localhost:55432/effectus_ui_demo?sslmode=disable"
 
 # Default recipe
 default:
@@ -267,6 +269,11 @@ ui-flow-demo:
 	@echo ""
 	@echo "Streaming facts (simulate updates):"
 	@echo "{{UI_FLOW_DEMO_STREAM}}"
+	@echo ""
+	@echo "SQL scrape mock (Postgres):"
+	@echo "just ui-flow-demo-sql-up"
+	@echo "just ui-flow-demo-sql-scrape"
+	@echo "just ui-flow-demo-sql-bump  # insert a new row"
 	go run ./cmd/effectusd \
 		--bundle {{UI_FLOW_DEMO_BUNDLE}} \
 		--http-addr :8080 \
@@ -286,6 +293,22 @@ ui-flow-demo-seed:
 # Stream fact updates (simulated streaming sources).
 ui-flow-demo-stream:
 	EFFECTUS_URL="http://localhost:8080" EFFECTUS_TOKEN="{{UI_FLOW_DEMO_TOKEN}}" {{UI_FLOW_DEMO_STREAM}}
+
+# Start the SQL scrape mock (Postgres).
+ui-flow-demo-sql-up:
+	docker compose -f {{UI_FLOW_SQL_STACK}}/docker-compose.yml up -d
+
+# Run the SQL scrape poller and forward facts into the UI demo.
+ui-flow-demo-sql-scrape:
+	EFFECTUS_URL="http://localhost:8080" EFFECTUS_TOKEN="{{UI_FLOW_DEMO_TOKEN}}" SQL_SCRAPE_DSN="{{UI_FLOW_SQL_DSN}}" go run ./examples/flow_ui_demo/sql_scrape
+
+# Insert an update row in the SQL scrape mock.
+ui-flow-demo-sql-bump:
+	docker compose -f {{UI_FLOW_SQL_STACK}}/docker-compose.yml exec -T postgres psql -U effectus -d effectus_ui_demo -f /seed/insert_update.sql
+
+# Stop the SQL scrape mock.
+ui-flow-demo-sql-down:
+	docker compose -f {{UI_FLOW_SQL_STACK}}/docker-compose.yml down -v
 
 # Open the flow demo UI in a browser (macOS/Linux).
 ui-flow-demo-open:

@@ -71,6 +71,20 @@ Convenience scripts:
 - Flow execution with saga compensation
 - Verb registry wiring with inverse verbs
 
+### [Flow UI Demo](./flow_ui_demo/)
+Flow-heavy UI demo with streaming facts and a SQL scrape mock.
+
+```bash
+just ui-flow-demo
+```
+
+SQL scrape mock (Postgres):
+```bash
+just ui-flow-demo-sql-up
+just ui-flow-demo-sql-scrape
+just ui-flow-demo-sql-bump
+```
+
 ### [Multi-Bundle Runtime](./multi_bundle_runtime/)
 Manifest-driven bundle resolution, merged rule execution, and hot reload.
 
