@@ -481,6 +481,19 @@ effectusd \
   --fact-source kafka
 ```
 
+### HTTP Endpoints
+
+```bash
+# Liveness
+GET /healthz
+
+# Readiness (bundle loaded)
+GET /readyz
+
+# API status (requires token when auth is enabled)
+GET /api/status
+```
+
 ## Error Handling
 
 All commands return appropriate exit codes:

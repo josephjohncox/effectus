@@ -136,15 +136,18 @@ For compile‑time Go executors, use `loader.NewStaticVerbLoader(...)` instead o
 
 ```go
 // Register verbs at compile-time
+import "github.com/effectus/effectus-go/schema/verb"
+
 verbs := []loader.VerbDefinition{
     {
-        Spec: &VerbSpec{
+        Spec: &verb.Spec{
             Name: "SendEmail",
             ArgTypes: map[string]string{
                 "to": "string",
                 "subject": "string",
             },
             ReturnType: "bool",
+            Capability: verb.CapWrite,
         },
         Executor: &EmailExecutor{},
     },
@@ -156,20 +159,30 @@ runtime.RegisterExtensionLoader(loader)
 
 ### Dynamic Extension
 
+Save as `external.verbs.json` (the loader scans `*.verbs.json` files):
+
 ```json
 {
   "name": "ExternalAPI",
+  "version": "1.0.0",
+  "description": "HTTP-backed validators",
   "verbs": [
     {
-      "name": "ValidateAccount", 
-      "argTypes": {"accountId": "string"},
+      "name": "ValidateAccount",
+      "description": "Calls external validation service",
+      "capabilities": ["write", "idempotent"],
+      "resources": [
+        { "resource": "account_validation", "capabilities": ["write", "idempotent"] }
+      ],
+      "argTypes": { "accountId": "string" },
+      "requiredArgs": ["accountId"],
       "returnType": "ValidationResult",
       "target": {
         "type": "http",
         "config": {
-        "url": "https://api.validation.com/check",
-        "method": "POST",
-        "timeout": "5s"
+          "url": "https://api.validation.com/check",
+          "method": "POST",
+          "timeout": "5s"
         }
       }
     }
@@ -178,6 +191,7 @@ runtime.RegisterExtensionLoader(loader)
 ```
 
 If `target` is omitted, verbs default to **stream** emission (stdout publisher).
+For custom return types (like `ValidationResult`), register the schema or use a primitive type.
 
 ### Load Bundles (CLI or Library)
 
@@ -243,6 +257,11 @@ Effectus includes a lightweight status UI with rule listing, dependency graph, a
 override per-endpoint roles via `--api-acl-file`.
 
 Example ACL: `docs/acl.example.yml`.
+
+Notes:
+- `/api/*` is protected; GETs allow the read token, writes require the write token.
+- `/ui`, `/healthz`, and `/readyz` are unauthenticated by default.
+- Rate limits apply only to `/api/*` and are configured with `--api-rate-limit` and `--api-rate-burst`.
 
 The fact store is treated as a cache; use `--facts-cache-policy lru` with size limits to prevent unbounded growth.
 

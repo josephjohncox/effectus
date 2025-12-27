@@ -326,6 +326,8 @@ func startHTTPServer(ctx context.Context, addr string, state *serverState) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", state.handleUI)
 	mux.HandleFunc("/ui", state.handleUI)
+	mux.HandleFunc("/healthz", state.handleHealth)
+	mux.HandleFunc("/readyz", state.handleReady)
 	mux.HandleFunc("/api/status", state.handleStatus)
 	mux.HandleFunc("/api/rules", state.handleRules)
 	mux.HandleFunc("/api/rules/source", state.handleRuleSources)
@@ -1098,6 +1100,31 @@ func (s *serverState) handleSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, bundle.FactTypes)
+}
+
+func (s *serverState) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *serverState) handleReady(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	bundle := s.Bundle()
+	if bundle == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "ready",
+		"bundle":  bundle.Name,
+		"version": bundle.Version,
+	})
 }
 
 type factIngestRequest struct {
