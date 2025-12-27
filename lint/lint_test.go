@@ -160,6 +160,53 @@ rule "NoCap" priority 1 {
 	assert.True(t, hasIssue(issues, CodeMissingCapability))
 }
 
+func TestLintDetectsUnusedBinding(t *testing.T) {
+	content := `
+flow "UnusedBinding" priority 1 {
+  when { true }
+  steps {
+    caseId = OpenCase(orderId: "ord-1")
+  }
+}
+`
+
+	file := parseTempRuleFile(t, content)
+
+	registry := verb.NewRegistry(nil)
+	assert.NoError(t, registry.RegisterVerb(&verb.Spec{
+		Name:       "OpenCase",
+		Capability: verb.CapRead,
+		ArgTypes:   map[string]string{"orderId": "string"},
+		ReturnType: "string",
+	}))
+
+	issues := LintFile(file, "test.effx", registry)
+	assert.True(t, hasIssue(issues, CodeUnusedBinding))
+}
+
+func TestLintDetectsBindingWithoutReturn(t *testing.T) {
+	content := `
+flow "BindNoReturn" priority 1 {
+  when { true }
+  steps {
+    result = NotifyRisk(orderId: "ord-1")
+  }
+}
+`
+
+	file := parseTempRuleFile(t, content)
+
+	registry := verb.NewRegistry(nil)
+	assert.NoError(t, registry.RegisterVerb(&verb.Spec{
+		Name:       "NotifyRisk",
+		Capability: verb.CapRead,
+		ArgTypes:   map[string]string{"orderId": "string"},
+	}))
+
+	issues := LintFile(file, "test.effx", registry)
+	assert.True(t, hasIssue(issues, CodeBindingNoReturn))
+}
+
 func parseTempRuleFile(t *testing.T, content string) *ast.File {
 	t.Helper()
 

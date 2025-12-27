@@ -1451,6 +1451,12 @@ const uiHTML = `<!doctype html>
       display: grid;
       gap: 8px;
     }
+    .sources-grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      align-items: start;
+    }
     .list-item {
       padding: 10px;
       border-radius: 10px;
@@ -1548,8 +1554,17 @@ const uiHTML = `<!doctype html>
       <pre id="rules">Loading...</pre>
     </div>
     <div class="card" style="grid-column: 1 / -1;">
-      <h2>Rule Sources</h2>
-      <div id="rule-sources" class="list"></div>
+      <h2>Sources</h2>
+      <div class="sources-grid">
+        <div>
+          <div class="muted">Rules (.eff)</div>
+          <div id="rule-sources" class="list"></div>
+        </div>
+        <div>
+          <div class="muted">Flows (.effx)</div>
+          <div id="flow-sources" class="list"></div>
+        </div>
+      </div>
     </div>
     <div class="card">
       <h2>Flows</h2>
@@ -1828,26 +1843,47 @@ const uiHTML = `<!doctype html>
     };
 
     const renderRuleSources = (sources) => {
-      const container = document.getElementById("rule-sources");
-      if (!container) return;
+      const ruleContainer = document.getElementById("rule-sources");
+      const flowContainer = document.getElementById("flow-sources");
+      if (!ruleContainer || !flowContainer) return;
+
       if (!sources || sources.length === 0) {
-        container.innerHTML = '<div class="muted">No rule sources stored in bundle.</div>';
+        ruleContainer.innerHTML = '<div class="muted">No rule sources stored in bundle.</div>';
+        flowContainer.innerHTML = '<div class="muted">No flow sources stored in bundle.</div>';
         return;
       }
-      const sorted = sources.slice().sort((a, b) => (a.path || '').localeCompare(b.path || ''));
-      let html = '';
-      sorted.forEach(source => {
-        const path = source.path || 'rule';
-        const format = source.format || '';
-        html += '<details class="list-item">' +
-          '<summary class="row">' +
-            '<strong>' + escapeHtml(path) + '</strong>' +
-            (format ? '<span class="pill">' + escapeHtml(format) + '</span>' : '') +
-          '</summary>' +
-          '<pre>' + escapeHtml(source.content || '') + '</pre>' +
-        '</details>';
-      });
-      container.innerHTML = html;
+
+      const normalized = sources.map(source => ({
+        ...source,
+        format: (source.format || '').toLowerCase(),
+      }));
+      const rules = normalized.filter(source => source.format !== 'effx');
+      const flows = normalized.filter(source => source.format === 'effx');
+
+      const renderList = (container, items, emptyMsg) => {
+        if (!container) return;
+        if (!items || items.length === 0) {
+          container.innerHTML = '<div class="muted">' + emptyMsg + '</div>';
+          return;
+        }
+        const sorted = items.slice().sort((a, b) => (a.path || '').localeCompare(b.path || ''));
+        let html = '';
+        sorted.forEach(source => {
+          const path = source.path || 'rule';
+          const format = source.format || '';
+          html += '<details class="list-item">' +
+            '<summary class="row">' +
+              '<strong>' + escapeHtml(path) + '</strong>' +
+              (format ? '<span class="pill">' + escapeHtml(format) + '</span>' : '') +
+            '</summary>' +
+            '<pre>' + escapeHtml(source.content || '') + '</pre>' +
+          '</details>';
+        });
+        container.innerHTML = html;
+      };
+
+      renderList(ruleContainer, rules, 'No rule sources stored in bundle.');
+      renderList(flowContainer, flows, 'No flow sources stored in bundle.');
     };
 
     const renderGraphSvg = (graph) => {
@@ -1930,9 +1966,13 @@ const uiHTML = `<!doctype html>
         const sources = await fetchJSON("/api/rules/source");
         renderRuleSources(sources);
       } catch (err) {
-        const container = document.getElementById("rule-sources");
-        if (container) {
-          container.innerHTML = '<div class="muted">Error loading rule sources.</div>';
+        const ruleContainer = document.getElementById("rule-sources");
+        const flowContainer = document.getElementById("flow-sources");
+        if (ruleContainer) {
+          ruleContainer.innerHTML = '<div class="muted">Error loading rule sources.</div>';
+        }
+        if (flowContainer) {
+          flowContainer.innerHTML = '<div class="muted">Error loading flow sources.</div>';
         }
       }
       try {

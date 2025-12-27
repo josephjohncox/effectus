@@ -184,6 +184,30 @@ effectusd --oci-ref ghcr.io/myorg/rules:v1.0.0
 effectusd --oci-ref ghcr.io/myorg/rules:latest --reload-interval 60s
 ```
 
+## Publishing Artifacts (OCI + Helm)
+
+```bash
+# Publish a rules bundle to GHCR
+effectusc bundle \
+  --name fraud-demo \
+  --version 1.0.0 \
+  --schema-dir examples/fraud_e2e/schema \
+  --verb-dir examples/fraud_e2e/verbs \
+  --rules-dir examples/fraud_e2e/rules \
+  --oci-ref ghcr.io/myorg/bundles/fraud-demo:1.0.0
+
+# Publish the runtime image
+docker build -t ghcr.io/myorg/effectusd:v1.0.0 .
+docker push ghcr.io/myorg/effectusd:v1.0.0
+
+# Install with Helm (OCI chart)
+helm install effectusd oci://ghcr.io/myorg/helm/effectusd \
+  --version 1.0.0 \
+  --set bundle.ociRef=ghcr.io/myorg/bundles/fraud-demo:1.0.0
+```
+
+See `docs/EXTENSION_SYSTEM.md` for verb extension publishing and hot reload examples.
+
 ## Status UI and Playground
 
 Effectus includes a lightweight status UI with rule listing, dependency graph, and dry-run playground. By default,

@@ -28,6 +28,7 @@ Start here if you're new to Effectus:
 - **[gRPC Execution Interface](GRPC_EXECUTION.md)** - Standard Facts -> Effects interface with rulesets
 - **[Client Examples](CLIENT_EXAMPLES.md)** - Multi-language client integration examples
 - **[External Fact Sources](FACT_SOURCES.md)** - Streaming + batch tutorials for SQL/Kafka/S3/Iceberg adapters
+- **[Helm Chart](../charts/effectusd/)** - Deploy effectusd via OCI Helm chart
 
 ## Learning Path
 

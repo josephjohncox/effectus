@@ -185,6 +185,60 @@ For **cross-container** execution, keep verbs local and call remote services fro
 
 For **hot loading**, `runtime.ExecutionRuntime.HotReload` can re-run extension loading and compilation using the same `ExtensionManager` (swap bundles or directories without restart).
 
+## Publishing Verb Extensions (OCI)
+
+Verb executors can live outside the core binary and be loaded at runtime. The OCI loader expects a directory in the
+bundle that includes one or more `*.verbs.json` (and optionally `*.schema.json`) files.
+
+Example `extensions/payments.verbs.json`:
+
+```json
+{
+  "name": "payments",
+  "version": "1.0.0",
+  "description": "HTTP-backed payment verbs",
+  "verbs": [
+    {
+      "name": "AuthorizePayment",
+      "description": "Authorize a card payment",
+      "capabilities": ["write", "idempotent"],
+      "resources": [{"resource": "payment", "capabilities": ["write", "idempotent"]}],
+      "argTypes": {"orderId": "string", "amount": "float", "currency": "string"},
+      "requiredArgs": ["orderId", "amount", "currency"],
+      "returnType": "string",
+      "target": {
+        "type": "http",
+        "config": {
+          "url": "https://payments.internal/authorize",
+          "method": "POST",
+          "timeout": "5s"
+        }
+      }
+    }
+  ]
+}
+```
+
+Publish the extension bundle with any OCI tooling (for example `oras`):
+
+```bash
+oras push ghcr.io/myorg/effectus-extensions:1.0.0 ./extensions
+```
+
+Then load it at runtime:
+
+```go
+mgr := loader.NewExtensionManager()
+ociLoader := loader.NewOCIBundleLoader("payments", "ghcr.io/myorg/effectus-extensions:1.0.0")
+mgr.AddLoader(ociLoader)
+
+rt := runtime.NewExecutionRuntime()
+rt.RegisterExtensionLoader(ociLoader)
+_ = rt.CompileAndValidate(context.Background())
+```
+
+Re-push the OCI tag and call `ExecutionRuntime.HotReload` to swap updated executors without a restart.
+
 ## Verb Implementation Interface
 
 All verb executors implement the unified interface:

@@ -150,6 +150,42 @@ Options:
 effectusc facts --schema schemas/ rules/*.eff
 ```
 
+#### format
+
+Formats `.eff` / `.effx` files to a stable style.
+
+```bash
+effectusc format [options] file1.eff [file2.effx ...]
+
+Options:
+  --write   Write formatted output back to files (default: true)
+  --stdout  Print formatted output to stdout
+  --check   Return non-zero exit code if files need formatting
+```
+
+**Example (bound flow formatting):**
+```bash
+effectusc format --stdout rules/case_hold.effx
+```
+
+Input:
+```effx
+flow "CaseHold" priority 5 { when { order.amount>1000 } steps { caseId=OpenCase(orderId:order.id,reason:"risk") UpdateCase(caseId:$caseId,status:"held") } }
+```
+
+Output:
+```effx
+flow "CaseHold" priority 5 {
+  when {
+    order.amount > 1000
+  }
+  steps {
+    caseId = OpenCase(orderId: order.id, reason: "risk")
+    UpdateCase(caseId: $caseId, status: "held")
+  }
+}
+```
+
 #### compile
 
 Compiles rule files into a unified specification.
@@ -512,6 +548,23 @@ RUN apk add --no-cache ca-certificates
 COPY effectusd /usr/local/bin/
 EXPOSE 8080 9090
 CMD ["effectusd", "--oci-ref", "ghcr.io/myorg/rules:latest"]
+```
+
+### OCI + Helm Publishing
+
+```bash
+# Build and push runtime image
+docker build -t ghcr.io/myorg/effectusd:v1.2.3 .
+docker push ghcr.io/myorg/effectusd:v1.2.3
+
+# Package and push Helm chart (OCI)
+helm package charts/effectusd --version 1.2.3 --app-version 1.2.3 -d dist
+helm push dist/effectusd-1.2.3.tgz oci://ghcr.io/myorg/helm
+
+# Install from GHCR (OCI)
+helm install effectusd oci://ghcr.io/myorg/helm/effectusd \
+  --version 1.2.3 \
+  --set bundle.ociRef=ghcr.io/myorg/bundles/flow-ui-demo:1.2.3
 ```
 
 This documentation reflects the current implementation and capabilities of the Effectus CLI tools.

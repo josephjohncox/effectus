@@ -1,0 +1,212 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (defaults to tag name)"
+        required: false
+        type: string
+      publish_image:
+        description: "Publish ghcr.io container image"
+        required: true
+        default: true
+        type: boolean
+      publish_bundle:
+        description: "Publish OCI rule bundle"
+        required: true
+        default: true
+        type: boolean
+      publish_chart:
+        description: "Publish Helm chart to ghcr.io (OCI)"
+        required: true
+        default: true
+        type: boolean
+      bundle_name:
+        description: "Bundle name (default: flow-ui-demo)"
+        required: false
+        type: string
+      bundle_version:
+        description: "Bundle version (default: release version)"
+        required: false
+        type: string
+      bundle_schema_dir:
+        description: "Schema directory (default: examples/flow_ui_demo/schema)"
+        required: false
+        type: string
+      bundle_rules_dir:
+        description: "Rules directory (default: examples/flow_ui_demo/rules)"
+        required: false
+        type: string
+      bundle_verb_dir:
+        description: "Verb spec directory (default: examples/flow_ui_demo/verbs)"
+        required: false
+        type: string
+      bundle_verbschema:
+        description: "Verb schema files (default: examples/flow_ui_demo/schema/flow_verbs.json)"
+        required: false
+        type: string
+      bundle_oci_ref:
+        description: "OCI reference override (e.g., ghcr.io/org/bundles/demo:v1)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-image:
+    if: github.event_name == 'push' || inputs.publish_image == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          fi
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/effectusd:${{ steps.version.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/effectusd:latest
+
+  publish-bundle:
+    if: github.event_name == 'push' || inputs.publish_bundle == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          fi
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish OCI bundle
+        run: |
+          BUNDLE_NAME="${{ inputs.bundle_name }}"
+          if [ -z "$BUNDLE_NAME" ]; then
+            BUNDLE_NAME="flow-ui-demo"
+          fi
+
+          BUNDLE_VERSION="${{ inputs.bundle_version }}"
+          if [ -z "$BUNDLE_VERSION" ]; then
+            BUNDLE_VERSION="${{ steps.version.outputs.version }}"
+          fi
+
+          SCHEMA_DIR="${{ inputs.bundle_schema_dir }}"
+          if [ -z "$SCHEMA_DIR" ]; then
+            SCHEMA_DIR="examples/flow_ui_demo/schema"
+          fi
+
+          RULES_DIR="${{ inputs.bundle_rules_dir }}"
+          if [ -z "$RULES_DIR" ]; then
+            RULES_DIR="examples/flow_ui_demo/rules"
+          fi
+
+          VERB_DIR="${{ inputs.bundle_verb_dir }}"
+          if [ -z "$VERB_DIR" ]; then
+            VERB_DIR="examples/flow_ui_demo/verbs"
+          fi
+
+          VERB_SCHEMA="${{ inputs.bundle_verbschema }}"
+          if [ -z "$VERB_SCHEMA" ]; then
+            VERB_SCHEMA="examples/flow_ui_demo/schema/flow_verbs.json"
+          fi
+
+          OCI_REF="${{ inputs.bundle_oci_ref }}"
+          if [ -z "$OCI_REF" ]; then
+            OCI_REF="ghcr.io/${{ github.repository_owner }}/bundles/${BUNDLE_NAME}:${BUNDLE_VERSION}"
+          fi
+
+          echo "Publishing ${BUNDLE_NAME} v${BUNDLE_VERSION} -> ${OCI_REF}"
+          go run ./cmd/effectusc bundle \
+            --name "${BUNDLE_NAME}" \
+            --version "${BUNDLE_VERSION}" \
+            --schema-dir "${SCHEMA_DIR}" \
+            --verb-dir "${VERB_DIR}" \
+            --verbschema "${VERB_SCHEMA}" \
+            --rules-dir "${RULES_DIR}" \
+            --oci-ref "${OCI_REF}"
+
+  publish-chart:
+    if: github.event_name == 'push' || inputs.publish_chart == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          fi
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Log in to GHCR (Helm)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Package chart
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -i "s/^version:.*/version: ${VERSION}/" charts/effectusd/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" charts/effectusd/Chart.yaml
+          helm package charts/effectusd --destination dist
+
+      - name: Push chart to GHCR
+        env:
+          HELM_EXPERIMENTAL_OCI: 1
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          helm push dist/effectusd-${VERSION}.tgz oci://ghcr.io/${{ github.repository_owner }}/helm

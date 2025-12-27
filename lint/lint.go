@@ -27,6 +27,8 @@ const (
 	CodeUnsafeExpression    = "unsafe-expression"
 	CodeDivisionByZero      = "division-by-zero"
 	CodeEmptyFactPath       = "empty-fact-path"
+	CodeUnusedBinding       = "unused-binding"
+	CodeBindingNoReturn     = "binding-no-return"
 )
 
 // UnsafeMode controls how unsafe expression usage is reported.
@@ -147,6 +149,7 @@ func LintFileWithOptions(file *ast.File, path string, verbs VerbLookup, options 
 			issues = append(issues, lintDivisionByZero(path, flow.When.Pos, flow.Name, "flow", flow.When.Expression)...)
 		}
 		if flow.Steps != nil {
+			issues = append(issues, lintFlowBindings(path, flow, verbs, verbSeverity, verbEnabled)...)
 			for _, step := range flow.Steps.Steps {
 				issues = append(issues, lintEmptyArgPath(path, step.Pos, step.Args)...)
 				if verbEnabled {
@@ -158,6 +161,70 @@ func LintFileWithOptions(file *ast.File, path string, verbs VerbLookup, options 
 				}
 			}
 		}
+	}
+
+	return issues
+}
+
+func lintFlowBindings(path string, flow *ast.Flow, verbs VerbLookup, verbSeverity string, verbEnabled bool) []Issue {
+	if flow == nil || flow.Steps == nil {
+		return nil
+	}
+
+	type bindingInfo struct {
+		pos  lexer.Position
+		verb string
+	}
+
+	bindings := make(map[string]bindingInfo)
+	used := make(map[string]struct{})
+	issues := make([]Issue, 0)
+
+	for _, step := range flow.Steps.Steps {
+		if step == nil {
+			continue
+		}
+
+		if step.BindName != "" {
+			bindings[step.BindName] = bindingInfo{pos: step.Pos, verb: step.Verb}
+
+			if verbEnabled && verbs != nil {
+				if spec, ok := verbs.GetVerb(step.Verb); ok && spec != nil {
+					if strings.TrimSpace(spec.ReturnType) == "" {
+						issues = append(issues, Issue{
+							File:     path,
+							Pos:      step.Pos,
+							Severity: verbSeverity,
+							Code:     CodeBindingNoReturn,
+							Message:  fmt.Sprintf("binding %q uses verb %q which has no return type", step.BindName, step.Verb),
+						})
+					}
+				}
+			}
+		}
+
+		for _, arg := range step.Args {
+			if arg == nil || arg.Value == nil || arg.Value.VarRef == "" {
+				continue
+			}
+			name := strings.TrimPrefix(arg.Value.VarRef, "$")
+			if name != "" {
+				used[name] = struct{}{}
+			}
+		}
+	}
+
+	for name, info := range bindings {
+		if _, ok := used[name]; ok {
+			continue
+		}
+		issues = append(issues, Issue{
+			File:     path,
+			Pos:      info.pos,
+			Severity: SeverityWarning,
+			Code:     CodeUnusedBinding,
+			Message:  fmt.Sprintf("binding %q is never used in flow %q", name, flow.Name),
+		})
 	}
 
 	return issues

@@ -1,0 +1,32 @@
+image:
+  repository: ghcr.io/effectus/effectusd
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+bundle:
+  ociRef: ""
+  reloadInterval: "60s"
+
+api:
+  authMode: "token"
+  token: ""
+  readToken: ""
+  aclFile: ""
+  rateLimit: 120
+  rateBurst: 60
+
+facts:
+  store: "file"
+  path: "/data/facts.json"
+  mergeDefault: "last"
+  mergeNamespace: []
+  cachePolicy: "none"
+  cacheMaxUniverses: 0
+  cacheMaxNamespaces: 0
+
+service:
+  type: ClusterIP
+  port: 8080
+  metricsPort: 9090
+
+resources: {}
