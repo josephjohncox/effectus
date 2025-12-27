@@ -1,0 +1,15 @@
+run:
+  timeout: 5m
+  tests: false
+
+linters:
+  disable-all: true
+  enable:
+    - govet
+    - gofmt
+    - ineffassign
+    - typecheck
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

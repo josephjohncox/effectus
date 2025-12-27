@@ -1,0 +1,12 @@
+{
+  "NotifyCustomer": {
+    "arg_types": {
+      "customerId": "string",
+      "channel": "string",
+      "message": "string"
+    },
+    "return_type": "bool",
+    "capability": 0,
+    "description": "Notify a customer"
+  }
+}

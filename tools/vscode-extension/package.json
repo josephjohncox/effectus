@@ -53,6 +53,11 @@
           "default": ".effectus/schemas",
           "description": "Path to schema files for intellisense"
         },
+        "effectus.verbSchemaPath": {
+          "type": "string",
+          "default": ".effectus/verbs",
+          "description": "Path to verb schema files for intellisense"
+        },
         "effectus.factExamplesPath": {
           "type": "string",
           "default": "./examples",
@@ -72,6 +77,26 @@
           "type": "boolean",
           "default": true,
           "description": "Enable real-time rule validation"
+        },
+        "effectus.lint.unsafe": {
+          "type": "string",
+          "default": "warn",
+          "enum": [
+            "warn",
+            "error",
+            "ignore"
+          ],
+          "description": "Unsafe expression policy for linting"
+        },
+        "effectus.lint.verbs": {
+          "type": "string",
+          "default": "error",
+          "enum": [
+            "warn",
+            "error",
+            "ignore"
+          ],
+          "description": "Verb lint policy for missing capabilities, inverses, and resources"
         },
         "effectus.hotReload.enabled": {
           "type": "boolean",

@@ -1,0 +1,11 @@
+{
+  "name": "customer-core",
+  "version": "1.0.0",
+  "description": "Customer notification rules",
+  "verb_hash": "",
+  "created_at": "2025-01-01T00:00:00Z",
+  "schema_files": ["customer.json"],
+  "verb_files": ["customer.json"],
+  "rule_files": ["customer.eff"],
+  "required_facts": ["customer.id", "customer.vip"]
+}

@@ -1,0 +1,12 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: effectus
+      POSTGRES_PASSWORD: effectus
+      POSTGRES_DB: effectus_ui_demo
+    ports:
+      - "55432:5432"
+    volumes:
+      - ./init:/docker-entrypoint-initdb.d:ro
+      - ./scripts:/seed:ro

@@ -1,3 +1,6 @@
+//go:build proto_demo
+// +build proto_demo
+
 package main
 
 import (

@@ -1,0 +1,13 @@
+flow "ExpediteFulfillment" priority 8 {
+  when {
+    order.priority == "expedite" &&
+    inventory.available == true &&
+    payment.state == "authorized"
+  }
+  steps {
+    ReserveInventory(orderId: order.id, sku: order.sku)
+    CreateShipment(orderId: order.id, carrier: "fastship")
+    MarkOrderReady(orderId: order.id, status: "ready")
+    EmitEvent(topic: "fulfillment.ready", orderId: order.id)
+  }
+}

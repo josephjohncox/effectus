@@ -1,0 +1,11 @@
+{
+  "customer": {
+    "id": "cust-1",
+    "vip": true,
+    "tier": "gold"
+  },
+  "transaction": {
+    "amount": 1200.5,
+    "currency": "USD"
+  }
+}

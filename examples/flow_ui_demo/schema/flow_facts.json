@@ -1,0 +1,20 @@
+[
+  {"path": "order.id", "type": {"PrimType": 4, "Name": "string"}},
+  {"path": "order.amount", "type": {"PrimType": 3, "Name": "float"}},
+  {"path": "order.currency", "type": {"PrimType": 4, "Name": "string"}},
+  {"path": "order.state", "type": {"PrimType": 4, "Name": "string"}},
+  {"path": "order.created_at_epoch", "type": {"PrimType": 2, "Name": "int"}},
+  {"path": "order.priority", "type": {"PrimType": 4, "Name": "string"}},
+  {"path": "order.sku", "type": {"PrimType": 4, "Name": "string"}},
+  {"path": "customer.id", "type": {"PrimType": 4, "Name": "string"}},
+  {"path": "customer.risk_score", "type": {"PrimType": 2, "Name": "int"}},
+  {"path": "customer.priority", "type": {"PrimType": 2, "Name": "int"}},
+  {"path": "customer.tenure_days", "type": {"PrimType": 2, "Name": "int"}},
+  {"path": "payment.authorization_id", "type": {"PrimType": 4, "Name": "string"}},
+  {"path": "payment.state", "type": {"PrimType": 4, "Name": "string"}},
+  {"path": "inventory.available", "type": {"PrimType": 1, "Name": "bool"}},
+  {"path": "clock.current_epoch", "type": {"PrimType": 2, "Name": "int"}},
+  {"path": "risk.stream_score", "type": {"PrimType": 2, "Name": "int"}},
+  {"path": "chargeback.open", "type": {"PrimType": 1, "Name": "bool"}},
+  {"path": "device.id", "type": {"PrimType": 4, "Name": "string"}}
+]

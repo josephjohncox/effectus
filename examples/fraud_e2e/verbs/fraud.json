@@ -1,0 +1,119 @@
+{
+  "FlagFraud": {
+    "arg_types": {
+      "orderId": "string",
+      "reason": "string"
+    },
+    "return_type": "bool",
+    "capability": 76,
+    "required_args": [
+      "orderId",
+      "reason"
+    ],
+    "inverse": "UnflagFraud",
+    "resources": [
+      {
+        "resource": "fraud_case",
+        "cap": 76
+      }
+    ],
+    "description": "Flag a transaction for fraud review"
+  },
+  "UnflagFraud": {
+    "arg_types": {
+      "orderId": "string",
+      "reason": "string"
+    },
+    "return_type": "bool",
+    "capability": 52,
+    "required_args": [
+      "orderId"
+    ],
+    "inverse": "FlagFraud",
+    "resources": [
+      {
+        "resource": "fraud_case",
+        "cap": 52
+      }
+    ],
+    "description": "Remove a fraud flag"
+  },
+  "NotifyRisk": {
+    "arg_types": {
+      "orderId": "string",
+      "channel": "string"
+    },
+    "return_type": "bool",
+    "capability": 36,
+    "required_args": [
+      "orderId",
+      "channel"
+    ],
+    "inverse": "UnnotifyRisk",
+    "resources": [
+      {
+        "resource": "notification",
+        "cap": 36
+      }
+    ],
+    "description": "Notify risk operations"
+  },
+  "UnnotifyRisk": {
+    "arg_types": {
+      "orderId": "string",
+      "channel": "string"
+    },
+    "return_type": "bool",
+    "capability": 52,
+    "required_args": [
+      "orderId"
+    ],
+    "inverse": "NotifyRisk",
+    "resources": [
+      {
+        "resource": "notification",
+        "cap": 52
+      }
+    ],
+    "description": "Withdraw a risk notification"
+  },
+  "FreezeAccount": {
+    "arg_types": {
+      "accountId": "string",
+      "reason": "string"
+    },
+    "return_type": "bool",
+    "capability": 68,
+    "required_args": [
+      "accountId",
+      "reason"
+    ],
+    "inverse": "UnfreezeAccount",
+    "resources": [
+      {
+        "resource": "account",
+        "cap": 68
+      }
+    ],
+    "description": "Freeze an account due to risk"
+  },
+  "UnfreezeAccount": {
+    "arg_types": {
+      "accountId": "string",
+      "reason": "string"
+    },
+    "return_type": "bool",
+    "capability": 36,
+    "required_args": [
+      "accountId"
+    ],
+    "inverse": "FreezeAccount",
+    "resources": [
+      {
+        "resource": "account",
+        "cap": 36
+      }
+    ],
+    "description": "Unfreeze a previously frozen account"
+  }
+}

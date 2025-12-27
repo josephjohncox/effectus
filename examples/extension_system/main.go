@@ -158,7 +158,9 @@ func createDynamicExtensionFiles() (string, string, error) {
       },
       "requiredArgs": ["event", "level"],
       "returnType": "bool",
-      "executorType": "mock"
+      "target": {
+        "type": "mock"
+      }
     },
     {
       "name": "ValidateInput",
@@ -176,7 +178,9 @@ func createDynamicExtensionFiles() (string, string, error) {
       },
       "requiredArgs": ["data", "schema"],
       "returnType": "ValidationResult",
-      "executorType": "mock"
+      "target": {
+        "type": "mock"
+      }
     }
   ]
 }`
@@ -319,7 +323,7 @@ func main() {
 	fmt.Println("\nExecuting Verbs:")
 	if spec, exists := verbRegistry.GetVerb("ProcessPayment"); exists {
 		ctx := context.Background()
-		result, err := spec.ExecutorImpl.Execute(ctx, map[string]interface{}{
+		result, err := spec.Executor.Execute(ctx, map[string]interface{}{
 			"amount": 99.99,
 			"method": "credit_card",
 		})
