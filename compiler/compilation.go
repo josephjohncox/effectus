@@ -104,20 +104,68 @@ func (hec *HTTPExecutorConfig) Validate() error {
 	return nil
 }
 
+// GRPCExecutorConfig for gRPC-based execution
+type GRPCExecutorConfig struct {
+	Address     string            `json:"address"`
+	Method      string            `json:"method"` // Fully-qualified method, e.g. /package.Service/Call
+	Timeout     string            `json:"timeout"`
+	Metadata    map[string]string `json:"metadata"`
+	UseTLS      bool              `json:"useTLS"`
+	RetryPolicy *RetryPolicy      `json:"retryPolicy,omitempty"`
+}
+
+func (gec *GRPCExecutorConfig) GetType() ExecutorType { return ExecutorGRPC }
+func (gec *GRPCExecutorConfig) Validate() error {
+	if gec.Address == "" {
+		return fmt.Errorf("gRPC executor requires address")
+	}
+	if gec.Method == "" {
+		return fmt.Errorf("gRPC executor requires method")
+	}
+	return nil
+}
+
 // MessageExecutorConfig for message queue execution
 type MessageExecutorConfig struct {
-	Topic       string       `json:"topic"`
-	Queue       string       `json:"queue"`
-	Exchange    string       `json:"exchange"`
-	RoutingKey  string       `json:"routingKey"`
-	Timeout     string       `json:"timeout"`
-	RetryPolicy *RetryPolicy `json:"retryPolicy,omitempty"`
+	Publisher   string            `json:"publisher,omitempty"` // "kafka" or "http"
+	Brokers     []string          `json:"brokers,omitempty"`
+	URL         string            `json:"url,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
+	Topic       string            `json:"topic"`
+	Queue       string            `json:"queue"`
+	Exchange    string            `json:"exchange"`
+	RoutingKey  string            `json:"routingKey"`
+	Timeout     string            `json:"timeout"`
+	RetryPolicy *RetryPolicy      `json:"retryPolicy,omitempty"`
 }
 
 func (mec *MessageExecutorConfig) GetType() ExecutorType { return ExecutorMessage }
 func (mec *MessageExecutorConfig) Validate() error {
-	if mec.Topic == "" && mec.Queue == "" {
-		return fmt.Errorf("message executor requires topic or queue")
+	if mec.Publisher == "" {
+		switch {
+		case mec.URL != "":
+			mec.Publisher = "http"
+		case len(mec.Brokers) > 0:
+			mec.Publisher = "kafka"
+		}
+	}
+
+	switch mec.Publisher {
+	case "http":
+		if mec.URL == "" {
+			return fmt.Errorf("message executor requires url for http publisher")
+		}
+	case "kafka":
+		if len(mec.Brokers) == 0 {
+			return fmt.Errorf("message executor requires brokers for kafka publisher")
+		}
+		if mec.Topic == "" {
+			return fmt.Errorf("message executor requires topic for kafka publisher")
+		}
+	default:
+		if mec.Topic == "" && mec.Queue == "" {
+			return fmt.Errorf("message executor requires topic or queue")
+		}
 	}
 	return nil
 }

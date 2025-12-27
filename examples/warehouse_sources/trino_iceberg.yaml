@@ -1,0 +1,16 @@
+sources:
+  - source_id: "iceberg_orders"
+    type: "iceberg"
+    config:
+      driver: "trino"
+      dsn: "${TRINO_DSN}"
+      catalog: "lakehouse"
+      namespace: "sales"
+      table: "orders"
+      mode: "stream"
+      watermark_column: "updated_at"
+      start_watermark: "2025-01-01T00:00:00Z"
+      watermark_type: "time"
+      poll_interval: "10s"
+      schema_name: "acme.v1.facts.Order"
+      schema_version: "v1"

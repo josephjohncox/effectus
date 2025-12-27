@@ -120,6 +120,71 @@ effectusc bundle \
 effectusd --oci-ref ghcr.io/myorg/customer-rules:v1.2.0
 ```
 
+### 4. Extension Manifest Resolution
+
+Declare bundle dependencies with semver constraints and checksums:
+
+```json
+{
+  "name": "customer-stack",
+  "version": "0.1.0",
+  "effectus": ">=1.4.0",
+  "registries": [
+    {"name": "public", "base": "ghcr.io/myorg", "default": true}
+  ],
+  "bundles": [
+    {
+      "name": "customer-rules",
+      "version": "^1.2.0",
+      "checksum": "sha256:...",
+      "registry": "public"
+    }
+  ]
+}
+```
+
+Resolve locally:
+
+```bash
+effectusc resolve --registry public=ghcr.io/myorg ./extensions.json
+```
+
+## Using Effectus as a Library
+
+The simplest path is to follow the end-to-end example in `examples/fraud_e2e/main.go`. The flow is:
+
+1. **Load schemas** into a `types.TypeSystem` for type checking.
+2. **Load verb specs + executors** into a `verb.Registry`.
+3. **Compile** `.eff` / `.effx` files with `compiler.NewCompiler()` and the facts/schema adapter.
+4. **Execute** with the list or flow runtime (`spec.Execute`) using the verb registry.
+
+The example shows concrete wiring for facts, schema adapters, and executors without extra boilerplate.
+
+## Runtime Loading + Cross-Container Extensions
+
+There are three supported extension protocols today:
+
+1. **JSON manifests** (`loader.NewJSONVerbLoader`, `loader.NewJSONSchemaLoader`)  
+2. **Protocol Buffers** (`loader.NewProtoVerbLoader`, `loader.NewProtoSchemaLoader`)  
+3. **OCI bundles** (build with `effectusc bundle`, pull with `effectusd --oci-ref` or `effectusc resolve`)
+
+Recommended runtime pattern:
+
+```go
+mgr := loader.NewExtensionManager()
+mgr.AddLoader(loader.NewJSONVerbLoader("verbs", "./verbs.json"))
+mgr.AddLoader(loader.NewJSONSchemaLoader("schema", "./schema.json"))
+// OCI bundles are loaded via effectusd --oci-ref or effectusc resolve today.
+
+registry := schema.NewRegistry()
+verbRegistry := verb.NewRegistry(nil)
+_ = schema.LoadExtensionsIntoRegistries(mgr, registry, verbRegistry)
+```
+
+For **cross-container** execution, keep verbs local and call remote services from the executor implementation (HTTP/gRPC/queue). The JSON loader supports `executorType: "http"` as a placeholder; for production, implement a real executor or register custom executors in code that call your service endpoints.
+
+For **hot loading**, `runtime.ExecutionRuntime.HotReload` can re-run extension loading and compilation using the same `ExtensionManager` (swap bundles or directories without restart).
+
 ## Verb Implementation Interface
 
 All verb executors implement the unified interface:

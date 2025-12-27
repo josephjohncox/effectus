@@ -60,6 +60,76 @@ effectusc typecheck \
   rules/customer.eff
 ```
 
+#### check
+
+Runs parse + type check + lint checks in one command.
+
+```bash
+effectusc check [options] file1.eff [file2.eff ...]
+
+Options:
+  --schema       Comma-separated list of schema files to load
+  --verbschema   Comma-separated list of verb schema files to load
+  --format       Output format: text or json (default: text)
+  --fail-on-warn Return non-zero exit code when warnings are present
+  --unsafe       Unsafe expression policy: warn, error, ignore (default: warn)
+  --verbose      Show detailed output
+```
+
+**Example:**
+```bash
+effectusc check \
+  --schema schemas/customer.json,schemas/payment.json \
+  --verbschema verbs/email.json \
+  --format text \
+  rules/customer.eff
+```
+
+#### lsp
+
+Starts the Effectus Language Server (stdio). This is used by the VS Code extension.
+
+```bash
+effectusc lsp
+```
+
+#### format
+
+Formats `.eff` and `.effx` files into a canonical layout.
+
+```bash
+effectusc format [options] file1.eff [file2.effx ...]
+
+Options:
+  --write   Write formatted output back to files (default: true)
+  --stdout  Print formatted output to stdout
+  --check   Return non-zero exit code if files need formatting
+```
+
+**Example:**
+```bash
+effectusc format --check rules/*.eff
+```
+
+#### graph
+
+Emits a dependency graph (rules/flows → facts/verbs) plus fact coverage.
+
+```bash
+effectusc graph [options] file1.eff [file2.effx ...]
+
+Options:
+  --schema  Comma-separated list of schema files or directories
+  --format  Output format: json or dot (default: json)
+  --output  Output file for the graph (defaults to stdout)
+  --verbose Show detailed output
+```
+
+**Example:**
+```bash
+effectusc graph --schema schemas/ --format dot rules/*.eff
+```
+
 #### compile
 
 Compiles rule files into a unified specification.
@@ -127,6 +197,31 @@ effectusc bundle \
   --verb-dir ./verbs \
   --rules-dir ./rules \
   --oci-ref ghcr.io/myorg/customer-rules:v1.2.0
+```
+
+#### resolve
+
+Resolves bundle dependencies from an extension manifest (including registry lookups and checksum verification).
+
+```bash
+effectusc resolve [options] manifest.json
+
+Options:
+  --manifest         Path to extension manifest (defaults to first arg)
+  --cache            Bundle cache directory (defaults to EFFECTUS_BUNDLE_CACHE or ./bundles)
+  --registry         Registry override(s): name=base or base (comma-separated)
+  --default-registry Default registry name
+  --engine-version   Effectus engine version for compatibility checks
+  --verify           Verify bundle checksums when provided (default: true)
+  --format           Output format: text or json (default: text)
+```
+
+**Example:**
+```bash
+effectusc resolve \
+  --registry public=ghcr.io/myorg \
+  --engine-version 1.4.0 \
+  ./extensions.json
 ```
 
 #### capabilities
@@ -322,7 +417,10 @@ The following environment variables are respected:
 
 - `EFFECTUS_VERBOSE`: Set to "true" to enable verbose output globally
 - `EFFECTUS_BUNDLE_CACHE`: Directory for caching OCI bundles
+- `EFFECTUS_BUNDLE_REGISTRY`: Default bundle registry base (e.g., ghcr.io/myorg)
+- `EFFECTUS_BUNDLE_REGISTRIES`: Additional registries as name=base pairs (comma-separated)
 - `EFFECTUS_PLUGIN_PATH`: Additional directories to search for verb plugins
+- `EFFECTUS_UNSAFE_MODE`: Unsafe expression policy for linting (warn, error, ignore)
 
 ## Integration Examples
 

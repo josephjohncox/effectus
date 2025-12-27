@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/effectus/effectus-go"
+	"github.com/effectus/effectus-go/schema/types"
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/vm"
 )
@@ -26,6 +27,12 @@ func NewRegistry() *Registry {
 		data:      make(map[string]interface{}),
 		functions: make(map[string]interface{}),
 		programs:  make(map[string]*vm.Program),
+	}
+
+	for _, spec := range types.StandardLibrary() {
+		if spec != nil {
+			registry.functions[spec.Name] = spec.Func
+		}
 	}
 
 	// Register default temporal functions
@@ -65,11 +72,10 @@ func (r *Registry) RegisterFunction(name string, fn interface{}) {
 
 // EvaluateExpression evaluates an expression and returns the result
 func (r *Registry) EvaluateExpression(expression string) (interface{}, error) {
-	r.mu.RLock()
-	env := r.buildEnvironment()
-	r.mu.RUnlock()
-
-	return expr.Eval(expression, env)
+	if err := r.CompileExpression(expression); err != nil {
+		return nil, err
+	}
+	return r.EvaluateCompiled(expression)
 }
 
 // EvaluateBoolean evaluates an expression expecting a boolean result
@@ -331,6 +337,7 @@ func (r *Registry) ClearAll() {
 type Predicate struct {
 	Expression string
 	registry   *Registry
+	program    *vm.Program
 }
 
 // NewPredicate creates a new predicate using the registry
@@ -340,14 +347,38 @@ func (r *Registry) NewPredicate(expression string) (*Predicate, error) {
 		return nil, fmt.Errorf("invalid predicate expression: %w", err)
 	}
 
+	r.mu.RLock()
+	env := r.buildEnvironment()
+	r.mu.RUnlock()
+	program, err := expr.Compile(expression, expr.Env(env), expr.AllowUndefinedVariables())
+	if err != nil {
+		return nil, fmt.Errorf("compiling predicate expression: %w", err)
+	}
+
 	return &Predicate{
 		Expression: expression,
 		registry:   r,
+		program:    program,
 	}, nil
 }
 
 // Evaluate evaluates the predicate
 func (p *Predicate) Evaluate() (bool, error) {
+	if p.registry == nil {
+		return false, fmt.Errorf("predicate registry is nil")
+	}
+
+	if p.program != nil {
+		result, err := expr.Run(p.program, p.registry.buildEnvironment())
+		if err != nil {
+			return false, err
+		}
+		if b, ok := result.(bool); ok {
+			return b, nil
+		}
+		return false, fmt.Errorf("expression did not return boolean, got %T", result)
+	}
+
 	return p.registry.EvaluateBoolean(p.Expression)
 }
 
@@ -406,13 +437,7 @@ func (r *Registry) CompileLogicalExpression(expression string, schemaInfo effect
 		return nil, nil, err
 	}
 
-	// For path extraction, we compile the expression and let expr's AST tell us what paths are used
-	// This is more reliable than custom parsing
-	pathsMap := make(map[string]struct{})
-
-	// We could use expr's AST visitor here to extract paths if needed,
-	// but for now, we'll return the compiled predicate
-	// The expr library will handle path resolution at evaluation time
+	pathsMap := ExtractFactPaths(expression)
 
 	return []*Predicate{predicate}, pathsMap, nil
 }

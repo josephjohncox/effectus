@@ -55,8 +55,21 @@ func (ea *ExecutorAdapter) Do(effect eff.Effect) (interface{}, error) {
 		}
 	}
 
+	if err := validateVerbArgs(verbSpec, args, ea.VerbRegistry); err != nil {
+		return nil, fmt.Errorf("invalid args for %s: %w", verbSpec.Name, err)
+	}
+
 	// Execute the verb
-	return executor.Execute(context.Background(), args)
+	result, err := executor.Execute(context.Background(), args)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validateVerbReturn(verbSpec, result, ea.VerbRegistry); err != nil {
+		return nil, fmt.Errorf("invalid return from %s: %w", verbSpec.Name, err)
+	}
+
+	return result, nil
 }
 
 // resolveValue resolves a value from facts or literals

@@ -11,9 +11,12 @@ The Effectus adapters library provides a unified interface for connecting variou
 - **Database Polling** - Poll database tables at regular intervals
 - **Redis Streams** - Real-time event streaming from Redis
 - **File System Watcher** - Monitor directories for file changes
+- **S3 Object Storage** - Batch/stream ingestion from buckets
+- **Iceberg Tables** - Lakehouse facts via SQL engines (Trino/Spark)
 - **Message Queues** - AMQP, Redis, etc.
 
 All adapters convert heterogeneous data formats into strongly-typed protobuf facts for Effectus processing.
+For end-to-end tutorials (streaming + batch), see `docs/FACT_SOURCES.md`.
 
 ## **Quick Start**
 
@@ -135,6 +138,107 @@ config:
 - Row limit controls
 - Automatic connection management
 - JSON serialization of database rows
+
+### SQL / Snowflake (Generic SQL Adapter)
+
+Use the generic SQL adapter when your data source is queryable via `database/sql` drivers
+(e.g., Snowflake, Trino/Athena over Iceberg, MySQL, SQL Server).
+
+**Batch mode (periodic snapshots):**
+
+```yaml
+source_id: "warehouse_snapshot"
+type: "sql"
+config:
+  driver: "snowflake"
+  dsn: "${SNOWFLAKE_DSN}"
+  mode: "batch"
+  query: "SELECT id, email, updated_at FROM customers"
+  poll_interval: "10m"
+  schema_name: "acme.v1.facts.Customer"
+```
+
+**Streaming mode (incremental watermark):**
+
+```yaml
+source_id: "warehouse_stream"
+type: "sql"
+config:
+  driver: "snowflake"
+  dsn: "${SNOWFLAKE_DSN}"
+  mode: "stream"
+  stream_query: "SELECT id, email, updated_at FROM customers WHERE updated_at > ? ORDER BY updated_at ASC"
+  watermark_column: "updated_at"
+  start_watermark: "2025-01-01T00:00:00Z"
+  watermark_type: "time"
+  poll_interval: "5s"
+  schema_name: "acme.v1.facts.Customer"
+```
+
+**Notes:**
+- The SQL adapter relies on your app importing the driver (e.g., Snowflake, Trino, MySQL).
+- For direct object storage, use the `s3` adapter. For lakehouse tables, use the `iceberg` adapter.
+
+### S3 Object Storage (Batch + Streaming)
+
+Use the `s3` adapter to ingest JSON, NDJSON, or Parquet objects directly from a bucket.
+
+**Batch mode (periodic snapshots):**
+
+```yaml
+source_id: "s3_exports"
+type: "s3"
+config:
+  region: "us-east-1"
+  bucket: "acme-exports"
+  prefix: "customers/"
+  mode: "batch"
+  format: "json"
+  poll_interval: "10m"
+  schema_name: "acme.v1.facts.Customer"
+```
+
+**Streaming mode (new objects):**
+
+```yaml
+source_id: "s3_stream"
+type: "s3"
+config:
+  region: "us-east-1"
+  bucket: "acme-exports"
+  prefix: "events/"
+  mode: "stream"
+  format: "ndjson"
+  poll_interval: "5s"
+  start_time: "2025-01-01T00:00:00Z"
+  schema_name: "acme.v1.facts.Event"
+```
+
+**Notes:**
+- For S3-compatible storage (MinIO/R2), set `endpoint` and `force_path_style: true`.
+- Provide `access_key` / `secret_key` only if you do not use default AWS credentials.
+- Set `format: "parquet"` for Parquet objects.
+
+### Iceberg Tables (Batch + Streaming)
+
+Use the `iceberg` adapter when your lakehouse is queryable via SQL (Trino, Spark, Athena).
+
+```yaml
+source_id: "iceberg_orders"
+type: "iceberg"
+config:
+  driver: "trino"
+  dsn: "${TRINO_DSN}"
+  catalog: "lakehouse"
+  namespace: "sales"
+  table: "orders"
+  mode: "stream"
+  watermark_column: "updated_at"
+  start_watermark: "2025-01-01T00:00:00Z"
+  watermark_type: "time"
+  poll_interval: "10s"
+  schema_name: "acme.v1.facts.Order"
+```
 
 ### Redis Streams
 
@@ -347,6 +451,9 @@ for fact := range factChan {
 | `postgres_poller` | PostgreSQL database polling | ✅ Stable |
 | `redis_streams` | Redis streams and consumer groups | ✅ Stable |
 | `file_watcher` | File system change monitoring | ✅ Stable |
+| `sql` | Generic SQL (Snowflake/Trino/Athena/MySQL) | ✅ Stable |
+| `s3` | S3 object storage (batch + stream) | ✅ Stable |
+| `iceberg` | Iceberg tables via SQL engines | ✅ Stable |
 | `postgres_cdc` | PostgreSQL change data capture | 📋 Planned |
 | `mysql_cdc` | MySQL binlog streaming | 📋 Planned |
 | `amqp` | RabbitMQ and AMQP | 📋 Planned |

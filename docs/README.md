@@ -9,6 +9,7 @@ Start here if you're new to Effectus:
 1. **[Project README](../README.md)** - Overview, quick start, and installation
 2. **[Basics](BASICS.md)** - Core concepts: Facts, Verbs, Effects, and rules
 3. **[Commands](COMMANDS.md)** - CLI tools reference
+4. **[Quick Tutorials](TUTORIALS.md)** - Short walkthroughs for common tasks
 
 ## Core Documentation
 
@@ -24,6 +25,7 @@ Start here if you're new to Effectus:
 ### Integration & Deployment
 - **[gRPC Execution Interface](GRPC_EXECUTION.md)** - Standard Facts → Effects interface with rulesets
 - **[Client Examples](CLIENT_EXAMPLES.md)** - Multi-language client integration examples
+- **[External Fact Sources](FACT_SOURCES.md)** - Streaming + batch tutorials for SQL/Kafka/S3/Iceberg adapters
 
 ## Learning Path
 
@@ -40,6 +42,7 @@ Start here if you're new to Effectus:
 ### 3. **System Integrators**
    - Read [Commands](COMMANDS.md)
    - Study [gRPC Execution Interface](GRPC_EXECUTION.md)
+   - Follow [External Fact Sources](FACT_SOURCES.md)
    - Review [Client Examples](CLIENT_EXAMPLES.md)
    - Study deployment patterns in [Architecture](ARCHITECTURE.md)
 
@@ -51,7 +54,7 @@ Start here if you're new to Effectus:
 ## Key Features
 
 - ✅ **Protocol-First Development** - Schema as single source of truth with buf integration
-- ✅ **Multi-Source Data Ingestion** - Kafka, HTTP, Database, Redis, File adapters
+- ✅ **Multi-Source Data Ingestion** - Kafka, HTTP, SQL/Snowflake, S3, Iceberg, Database, Redis, File adapters
 - ✅ **Static Validation** - All rules validated before runtime with comprehensive type checking
 - ✅ **VS Code Integration** - Full language support with IntelliSense and hot reload
 - ✅ **Modern SQL Storage** - Type-safe queries with sqlc and automatic migrations with goose

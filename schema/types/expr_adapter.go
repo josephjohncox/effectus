@@ -103,6 +103,13 @@ func (ts *TypeSystem) buildTypeEnvironment() map[string]interface{} {
 		setEnvPath(env, path, dummyValueForType(factType))
 	}
 
+	// Add registered functions for expression validation.
+	for name, spec := range ts.functions {
+		if spec != nil {
+			env[name] = spec.Func
+		}
+	}
+
 	return env
 }
 
@@ -191,7 +198,7 @@ func parseArraySegment(segment string) (string, bool) {
 }
 
 var (
-	factPathPattern  = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[0-9]+\])+`)
+	factPathPattern   = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[0-9]+\])+`)
 	arrayIndexPattern = regexp.MustCompile(`\[[0-9]+\]`)
 )
 

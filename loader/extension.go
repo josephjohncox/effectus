@@ -1,13 +1,16 @@
 package loader
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/effectus/effectus-go/schema/verb"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -536,6 +539,8 @@ type HTTPExecutor struct {
 	URL     string
 	Method  string
 	Headers map[string]string
+	Timeout time.Duration
+	Client  *http.Client
 }
 
 func NewHTTPExecutor(config map[string]interface{}) (*HTTPExecutor, error) {
@@ -558,22 +563,62 @@ func NewHTTPExecutor(config map[string]interface{}) (*HTTPExecutor, error) {
 		}
 	}
 
+	timeout := 5 * time.Second
+	if raw, ok := config["timeout"].(string); ok {
+		if parsed, err := time.ParseDuration(raw); err == nil {
+			timeout = parsed
+		}
+	}
+
 	return &HTTPExecutor{
 		URL:     url,
 		Method:  method,
 		Headers: headers,
+		Timeout: timeout,
 	}, nil
 }
 
 func (he *HTTPExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	// TODO: Implement actual HTTP execution
-	return map[string]interface{}{
-		"executor": "HTTP",
-		"url":      he.URL,
-		"method":   he.Method,
-		"args":     args,
-		"result":   "http_placeholder",
-	}, nil
+	payload, err := json.Marshal(args)
+	if err != nil {
+		return nil, fmt.Errorf("marshal args: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, he.Method, he.URL, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for key, value := range he.Headers {
+		req.Header.Set(key, value)
+	}
+
+	client := he.Client
+	if client == nil {
+		client = &http.Client{Timeout: he.Timeout}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("http status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	if len(body) == 0 {
+		return true, nil
+	}
+
+	var decoded interface{}
+	if err := json.Unmarshal(body, &decoded); err == nil {
+		return decoded, nil
+	}
+
+	return strings.TrimSpace(string(body)), nil
 }
 
 // === Directory Loaders ===

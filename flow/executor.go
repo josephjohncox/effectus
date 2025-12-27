@@ -11,6 +11,8 @@ import (
 	"github.com/effectus/effectus-go/common"
 	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/schema/capability"
+	"github.com/effectus/effectus-go/schema/types"
+	"github.com/effectus/effectus-go/schema/verb"
 )
 
 // ExecutorOption defines an option for configuring the flow executor
@@ -155,55 +157,195 @@ func (fe *Executor) executeSagaProgram(ctx context.Context, flowName string, pro
 		}
 	}
 
-	// Create saga executor
-	sagaExecutor := schema.NewSagaExecutor(
-		common.NewExecutorAdapter(fe.verbRegistry, facts),
-		fe.sagaStore,
-		fe.capSystem,
-		fe.verbRegistry,
-		fmt.Sprintf("flow-%s", flowName),
-	)
+	executor := common.NewExecutorAdapter(fe.verbRegistry, facts)
+	holderID := fmt.Sprintf("flow-%s", flowName)
 
-	// Convert program to effects for saga execution
-	// This is a simplification - for full saga support we'd need to enhance
-	// the saga executor to understand Programs directly
-	effects := fe.programToEffects(transaction.Program)
+	if err := fe.sagaStore.StartTransaction(sagaID, transaction.Name); err != nil {
+		return nil, fmt.Errorf("starting saga transaction: %w", err)
+	}
 
-	// Execute with saga
-	results, err := sagaExecutor.ExecuteWithSaga(ctx, sagaID, transaction.Name, effects)
+	sagaExecutor := &sagaProgramExecutor{
+		executor:     executor,
+		sagaStore:    fe.sagaStore,
+		capSystem:    fe.capSystem,
+		verbRegistry: fe.verbRegistry,
+		holderID:     holderID,
+		sagaID:       sagaID,
+		ctx:          ctx,
+	}
+
+	result, err := Run(transaction.Program, sagaExecutor)
 	if err != nil {
 		return nil, err
 	}
 
-	// Return the last result
-	if len(results) > 0 {
-		return results[len(results)-1], nil
+	if err := fe.sagaStore.CompleteSaga(sagaID); err != nil {
+		return nil, fmt.Errorf("completing saga: %w", err)
 	}
-	return nil, nil
+
+	return result, nil
 }
 
-// programToEffects converts a program to a list of effects (simplified)
-// This is a temporary bridge until we enhance saga executor to work with Programs directly
-func (fe *Executor) programToEffects(program *Program) []eff.Effect {
-	var effects []eff.Effect
+type sagaProgramExecutor struct {
+	executor     eff.Executor
+	sagaStore    schema.SagaStore
+	capSystem    *capability.CapabilitySystem
+	verbRegistry common.VerbRegistry
+	holderID     string
+	sagaID       string
+	ctx          context.Context
+	mu           sync.Mutex
+	compensated  bool
+}
 
-	var extract func(*Program)
-	extract = func(p *Program) {
-		if p == nil {
-			return
-		}
-
-		if p.Tag == EffectProgramTag {
-			effects = append(effects, p.Effect)
-			// We can't statically follow the continuation, so we stop here
-			// This is a limitation that could be addressed by enhancing the saga executor
-		}
-
-		if p.Tag == TransactionProgramTag {
-			extract(p.Transaction.Program)
+func (se *sagaProgramExecutor) Do(effect eff.Effect) (interface{}, error) {
+	if se.ctx != nil {
+		select {
+		case <-se.ctx.Done():
+			se.compensate()
+			return nil, se.ctx.Err()
+		default:
 		}
 	}
 
-	extract(program)
-	return effects
+	if args, ok := effect.Payload.(map[string]interface{}); ok {
+		if err := se.sagaStore.RecordEffect(se.sagaID, effect.Verb, args); err != nil {
+			return nil, fmt.Errorf("recording effect in saga: %w", err)
+		}
+	}
+
+	locks, err := se.acquireLocks(effect)
+	if err != nil {
+		se.compensate()
+		return nil, fmt.Errorf("acquiring locks for %s: %w", effect.Verb, err)
+	}
+	for _, lock := range locks {
+		defer lock.Unlock()
+	}
+
+	result, err := se.executor.Do(effect)
+	if err != nil {
+		se.sagaStore.MarkFailed(se.sagaID, effect.Verb, err)
+		se.compensate()
+		return nil, fmt.Errorf("executing effect %s: %w", effect.Verb, err)
+	}
+
+	if err := se.sagaStore.MarkSuccess(se.sagaID, effect.Verb); err != nil {
+		se.compensate()
+		return nil, fmt.Errorf("marking effect success in saga: %w", err)
+	}
+
+	return result, nil
+}
+
+func (se *sagaProgramExecutor) acquireLocks(effect eff.Effect) ([]*capability.LockResult, error) {
+	if se.capSystem == nil || se.verbRegistry == nil {
+		return nil, nil
+	}
+
+	spec, exists := se.verbRegistry.GetVerb(effect.Verb)
+	if !exists {
+		return nil, nil
+	}
+
+	var locks []*capability.LockResult
+	for _, resource := range spec.Resources {
+		lock, err := se.capSystem.AcquireLock(
+			convertVerbCapabilityToTypes(resource.Cap),
+			resource.Resource,
+			se.holderID,
+		)
+		if err != nil {
+			for _, held := range locks {
+				held.Unlock()
+			}
+			return nil, err
+		}
+		locks = append(locks, lock)
+	}
+
+	return locks, nil
+}
+
+func (se *sagaProgramExecutor) compensate() {
+	se.mu.Lock()
+	if se.compensated {
+		se.mu.Unlock()
+		return
+	}
+	se.compensated = true
+	se.mu.Unlock()
+
+	sagaEffects, err := se.sagaStore.GetTransactionEffects(se.sagaID)
+	if err != nil {
+		return
+	}
+
+	for i := len(sagaEffects) - 1; i >= 0; i-- {
+		sagaEffect := sagaEffects[i]
+		if sagaEffect.Status != "success" {
+			continue
+		}
+
+		spec, exists := se.verbRegistry.GetVerb(sagaEffect.Verb)
+		if !exists {
+			continue
+		}
+		inverseVerb := spec.Inverse
+		if inverseVerb == "" {
+			continue
+		}
+
+		inverseSpec, exists := se.verbRegistry.GetVerb(inverseVerb)
+		if !exists {
+			continue
+		}
+
+		var locks []*capability.LockResult
+		if se.capSystem != nil {
+			for _, resource := range inverseSpec.Resources {
+				lock, err := se.capSystem.AcquireLock(
+					convertVerbCapabilityToTypes(resource.Cap),
+					resource.Resource,
+					se.holderID,
+				)
+				if err != nil {
+					fmt.Printf("Warning: failed to acquire lock for compensation %s:%s: %v\n",
+						resource.Resource, resource.Cap.String(), err)
+					continue
+				}
+				locks = append(locks, lock)
+			}
+		}
+
+		_, err = se.executor.Do(eff.Effect{
+			Verb:    inverseVerb,
+			Payload: sagaEffect.Args,
+		})
+
+		for _, lock := range locks {
+			lock.Unlock()
+		}
+
+		if err != nil {
+			fmt.Printf("Warning: compensation failed for %s: %v\n", sagaEffect.Verb, err)
+		} else {
+			se.sagaStore.MarkCompensated(se.sagaID, sagaEffect.Verb)
+		}
+	}
+}
+
+func convertVerbCapabilityToTypes(verbCap verb.Capability) types.Capability {
+	switch {
+	case verbCap&verb.CapRead != 0:
+		return types.CapabilityRead
+	case verbCap&verb.CapCreate != 0:
+		return types.CapabilityCreate
+	case verbCap&verb.CapDelete != 0:
+		return types.CapabilityDelete
+	case verbCap&verb.CapWrite != 0:
+		return types.CapabilityModify
+	default:
+		return types.CapabilityModify
+	}
 }

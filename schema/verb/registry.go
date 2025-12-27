@@ -22,6 +22,15 @@ type Registry struct {
 
 	// verbHash is a hash of all registered verbs
 	verbHash string
+
+	// strictArgs enforces argument checks at runtime when set
+	strictArgs *bool
+
+	// strictReturn enforces return checks at runtime when set
+	strictReturn *bool
+
+	// requireInverseForMutating enforces inverse definitions for mutating verbs
+	requireInverseForMutating bool
 }
 
 // NewRegistry creates a new verb registry
@@ -42,6 +51,10 @@ func (r *Registry) RegisterVerb(spec *Spec) error {
 		return fmt.Errorf("verb '%s' already registered with capability %s", spec.Name, existing.Capability)
 	}
 
+	if r.requireInverseForMutating && isMutatingVerbSpec(spec) && spec.Inverse == "" {
+		return fmt.Errorf("verb '%s' mutates state but has no inverse defined", spec.Name)
+	}
+
 	// Register the verb
 	r.verbs[spec.Name] = spec
 
@@ -49,6 +62,48 @@ func (r *Registry) RegisterVerb(spec *Spec) error {
 	r.verbHash = ""
 
 	return nil
+}
+
+// SetStrictArgs sets the registry-level strict argument validation setting.
+func (r *Registry) SetStrictArgs(value *bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.strictArgs = value
+}
+
+// SetStrictReturn sets the registry-level strict return validation setting.
+func (r *Registry) SetStrictReturn(value *bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.strictReturn = value
+}
+
+// SetRequireInverseForMutating enforces inverse verbs for mutating verbs.
+func (r *Registry) SetRequireInverseForMutating(value bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.requireInverseForMutating = value
+}
+
+// StrictArgs returns the registry-level strict argument setting.
+func (r *Registry) StrictArgs() *bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.strictArgs
+}
+
+// StrictReturn returns the registry-level strict return setting.
+func (r *Registry) StrictReturn() *bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.strictReturn
+}
+
+// RequireInverseForMutating returns whether inverse enforcement is enabled.
+func (r *Registry) RequireInverseForMutating() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.requireInverseForMutating
 }
 
 // GetVerb retrieves a verb specification by name

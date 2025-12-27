@@ -51,6 +51,51 @@ go run main.go
 - Using pathutil for fact access
 - Type introspection and validation
 
+### 🧭 [Fraud E2E](./fraud_e2e/)
+End-to-end fraud workflow: list rules, flow execution, and saga compensation.
+
+```bash
+go run ./fraud_e2e
+```
+
+Convenience scripts:
+```bash
+./fraud_e2e/scripts/run-local.sh
+./fraud_e2e/scripts/run-compose.sh
+./fraud_e2e/scripts/run-compose-failure.sh
+```
+
+**What it demonstrates:**
+- Typed fact schemas and fact loading
+- Rule evaluation with list specs
+- Flow execution with saga compensation
+- Verb registry wiring with inverse verbs
+
+### 📦 [Multi-Bundle Runtime](./multi_bundle_runtime/)
+Manifest-driven bundle resolution, merged rule execution, and hot reload.
+
+```bash
+go run ./multi_bundle_runtime
+./multi_bundle_runtime/scripts/hot-reload.sh
+```
+
+**What it demonstrates:**
+- Resolving multiple bundles from a manifest
+- Loading schemas/verbs/rules across bundles
+- Hot reload by swapping bundle versions
+
+### 🧊 [Warehouse Sources](./warehouse_sources/)
+Concrete configs for Snowflake (SQL adapter) and Iceberg via Trino (Iceberg adapter).
+
+```bash
+ls ./warehouse_sources
+```
+
+**What it demonstrates:**
+- Production-style config shapes for warehouse ingestion
+- Batch Snowflake snapshots and streaming Iceberg tables
+- Local Trino + Iceberg + MinIO devstack in `warehouse_sources/devstack`
+
 ## Integration Patterns
 
 ### 1. **Unified Extension Pattern** ⭐ **RECOMMENDED**

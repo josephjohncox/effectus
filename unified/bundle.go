@@ -112,7 +112,7 @@ func (bb *BundleBuilder) Build() (*Bundle, error) {
 	}
 
 	// Create a type system
-	typeSystem := &types.TypeSystem{}
+	typeSystem := types.NewTypeSystem()
 
 	// Create verb registry with proper type system
 	bb.verbRegistry = verb.NewRegistry(typeSystem)

@@ -470,6 +470,11 @@ func defineCommands() {
 	commands["bundle"] = bundleCmd
 	commands["parse"] = parseCmd
 	commands["capabilities"] = capabilitiesCmd
+	commands["check"] = newCheckCommand()
+	commands["lsp"] = newLSPCommand()
+	commands["graph"] = newGraphCommand()
+	commands["format"] = newFormatCommand()
+	commands["resolve"] = newResolveCommand()
 }
 
 // outputReport outputs the report to file or stdout
@@ -493,15 +498,16 @@ func createEmptyFacts(schemaFiles string, verbose bool) (*testFacts, *types.Type
 
 	// Load schema files if provided
 	if schemaFiles != "" {
-		files := strings.Split(schemaFiles, ",")
+		files := expandSchemaPaths(strings.Split(schemaFiles, ","))
 		for _, file := range files {
 			if verbose {
 				fmt.Printf("Loading schema from %s...\n", file)
 			}
-			err := typeSystem.LoadSchemaFile(file)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error loading schema file %s: %v\n", file, err)
-				continue
+			if err := typeSystem.LoadSchemaFile(file); err != nil {
+				if jsonErr := typeSystem.LoadJSONSchemaFile(file); jsonErr != nil {
+					fmt.Fprintf(os.Stderr, "Error loading schema file %s: %v\n", file, err)
+					continue
+				}
 			}
 		}
 
@@ -528,6 +534,43 @@ func createEmptyFacts(schemaFiles string, verbose bool) (*testFacts, *types.Type
 	registry.Register("", provider) // Register at root
 
 	return &testFacts{factRegistry: registry, schema: schemaInfo}, typeSystem
+}
+
+func expandSchemaPaths(paths []string) []string {
+	expanded := make([]string, 0)
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+
+		info, err := os.Stat(path)
+		if err != nil {
+			expanded = append(expanded, path)
+			continue
+		}
+
+		if info.IsDir() {
+			entries, err := os.ReadDir(path)
+			if err != nil {
+				expanded = append(expanded, path)
+				continue
+			}
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				if strings.HasSuffix(entry.Name(), ".json") {
+					expanded = append(expanded, filepath.Join(path, entry.Name()))
+				}
+			}
+			continue
+		}
+
+		expanded = append(expanded, path)
+	}
+
+	return expanded
 }
 
 // loadSchemaFile loads a schema file into the provided type system

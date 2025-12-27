@@ -24,6 +24,12 @@ type TypeSystem struct {
 	// verbTypes maps verb names to their type information
 	verbTypes map[string]*VerbInfo
 
+	// functions stores expression function signatures
+	functions map[string]*FunctionSpec
+
+	// aliases maps namespace aliases to canonical prefixes
+	aliases map[string]string
+
 	// mutex for thread safety
 	mu sync.RWMutex
 }
@@ -50,12 +56,16 @@ type VerbInfo struct {
 
 // NewTypeSystem creates a new type system
 func NewTypeSystem() *TypeSystem {
-	return &TypeSystem{
+	ts := &TypeSystem{
 		factTypes: make(map[string]*Type),
 		verbSpecs: make(map[string]*VerbSpec),
 		types:     make(map[string]*Type),
 		verbTypes: make(map[string]*VerbInfo),
+		functions: make(map[string]*FunctionSpec),
+		aliases:   make(map[string]string),
 	}
+	ts.RegisterStandardLibrary()
+	return ts
 }
 
 // RegisterType registers a named type in the system
@@ -90,7 +100,8 @@ func (ts *TypeSystem) RegisterFactType(path string, typ *Type) {
 
 // GetFactType retrieves the type for a fact path
 func (ts *TypeSystem) GetFactType(path string) (*Type, error) {
-	typ, exists := ts.factTypes[path]
+	resolved := resolveAliasPath(path, ts.aliases)
+	typ, exists := ts.factTypes[resolved]
 	if !exists {
 		return nil, fmt.Errorf("no type registered for path: %s", path)
 	}
@@ -210,6 +221,11 @@ func (ts *TypeSystem) MergeTypeSystem(other *TypeSystem) {
 	// Merge verb specs
 	for name, spec := range other.verbSpecs {
 		ts.verbSpecs[name] = spec
+	}
+
+	// Merge function specs
+	for name, spec := range other.functions {
+		ts.functions[name] = spec
 	}
 }
 

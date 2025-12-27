@@ -1,14 +1,26 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/effectus/effectus-go/compiler"
 	"github.com/effectus/effectus-go/loader"
+	"github.com/segmentio/kafka-go"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // ExecutionRuntime orchestrates the complete flow from extension loading to execution
@@ -45,6 +57,7 @@ func NewExecutionRuntime() *ExecutionRuntime {
 	// Register default executor factories
 	runtime.RegisterExecutorFactory(compiler.ExecutorLocal, &LocalExecutorFactory{})
 	runtime.RegisterExecutorFactory(compiler.ExecutorHTTP, &HTTPExecutorFactory{})
+	runtime.RegisterExecutorFactory(compiler.ExecutorGRPC, &GRPCExecutorFactory{})
 	runtime.RegisterExecutorFactory(compiler.ExecutorMessage, &MessageExecutorFactory{})
 	runtime.RegisterExecutorFactory(compiler.ExecutorMock, &MockExecutorFactory{})
 
@@ -353,6 +366,10 @@ type VerbExecutor interface {
 // Executor factory implementations
 type LocalExecutorFactory struct{}
 type HTTPExecutorFactory struct{}
+type GRPCExecutorFactory struct {
+	mu    sync.Mutex
+	conns map[string]*grpc.ClientConn
+}
 type MessageExecutorFactory struct{}
 type MockExecutorFactory struct{}
 
@@ -369,11 +386,72 @@ func (hef *HTTPExecutorFactory) CreateExecutor(config compiler.ExecutorConfig) (
 	if !ok {
 		return nil, fmt.Errorf("invalid config type for HTTP executor")
 	}
-	return &HTTPExecutor{config: httpConfig}, nil
+	if err := httpConfig.Validate(); err != nil {
+		return nil, err
+	}
+	timeout := parseDuration(httpConfig.Timeout, 10*time.Second)
+	client := &http.Client{Timeout: timeout}
+	return &HTTPExecutor{config: httpConfig, client: client}, nil
+}
+
+func (gef *GRPCExecutorFactory) CreateExecutor(config compiler.ExecutorConfig) (VerbExecutor, error) {
+	grpcConfig, ok := config.(*compiler.GRPCExecutorConfig)
+	if !ok {
+		return nil, fmt.Errorf("invalid config type for gRPC executor")
+	}
+	if err := grpcConfig.Validate(); err != nil {
+		return nil, err
+	}
+
+	conn, err := gef.getConn(grpcConfig)
+	if err != nil {
+		return nil, err
+	}
+	return &GRPCExecutor{config: grpcConfig, conn: conn}, nil
+}
+
+func (gef *GRPCExecutorFactory) getConn(config *compiler.GRPCExecutorConfig) (*grpc.ClientConn, error) {
+	gef.mu.Lock()
+	defer gef.mu.Unlock()
+
+	if gef.conns == nil {
+		gef.conns = make(map[string]*grpc.ClientConn)
+	}
+
+	if conn, ok := gef.conns[config.Address]; ok {
+		return conn, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	if config.UseTLS {
+		opts = []grpc.DialOption{grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{}))}
+	}
+
+	conn, err := grpc.DialContext(ctx, config.Address, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("dial gRPC %s: %w", config.Address, err)
+	}
+
+	gef.conns[config.Address] = conn
+	return conn, nil
 }
 
 func (mef *MessageExecutorFactory) CreateExecutor(config compiler.ExecutorConfig) (VerbExecutor, error) {
-	return &MessageExecutor{}, nil
+	messageConfig, ok := config.(*compiler.MessageExecutorConfig)
+	if !ok {
+		return nil, fmt.Errorf("invalid config type for message executor")
+	}
+	if err := messageConfig.Validate(); err != nil {
+		return nil, err
+	}
+	executor, err := newMessageExecutor(messageConfig)
+	if err != nil {
+		return nil, err
+	}
+	return executor, nil
 }
 
 func (mef *MockExecutorFactory) CreateExecutor(config compiler.ExecutorConfig) (VerbExecutor, error) {
@@ -391,24 +469,111 @@ func (lea *LocalExecutorAdapter) Execute(ctx context.Context, args map[string]in
 
 type HTTPExecutor struct {
 	config *compiler.HTTPExecutorConfig
+	client *http.Client
 }
 
 func (he *HTTPExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	// TODO: Implement actual HTTP execution
-	return map[string]interface{}{
-		"status": "http_success",
-		"url":    he.config.URL,
-		"args":   args,
-	}, nil
+	payload, err := json.Marshal(args)
+	if err != nil {
+		return nil, fmt.Errorf("encode args: %w", err)
+	}
+
+	return executeWithRetry(ctx, he.config.RetryPolicy, func() (interface{}, error) {
+		req, err := http.NewRequestWithContext(ctx, strings.ToUpper(he.config.Method), he.config.URL, bytes.NewReader(payload))
+		if err != nil {
+			return nil, fmt.Errorf("build request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		for key, value := range he.config.Headers {
+			req.Header.Set(key, value)
+		}
+
+		resp, err := he.client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			return nil, fmt.Errorf("http status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+
+		if len(body) == 0 {
+			return true, nil
+		}
+
+		var decoded interface{}
+		if err := json.Unmarshal(body, &decoded); err == nil {
+			return decoded, nil
+		}
+
+		return strings.TrimSpace(string(body)), nil
+	})
 }
 
-type MessageExecutor struct{}
+type GRPCExecutor struct {
+	config *compiler.GRPCExecutorConfig
+	conn   *grpc.ClientConn
+}
+
+func (ge *GRPCExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if ge.conn == nil {
+		return nil, fmt.Errorf("gRPC connection is nil")
+	}
+
+	req, err := structpb.NewStruct(args)
+	if err != nil {
+		return nil, fmt.Errorf("encode args: %w", err)
+	}
+
+	callCtx := ctx
+	if ge.config.Timeout != "" {
+		timeout := parseDuration(ge.config.Timeout, 10*time.Second)
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	if len(ge.config.Metadata) > 0 {
+		md := metadata.New(ge.config.Metadata)
+		callCtx = metadata.NewOutgoingContext(callCtx, md)
+	}
+
+	var resp structpb.Struct
+	result, err := executeWithRetry(callCtx, ge.config.RetryPolicy, func() (interface{}, error) {
+		if err := grpc.Invoke(callCtx, ge.config.Method, req, &resp, ge.conn); err != nil {
+			return nil, err
+		}
+		return resp.AsMap(), nil
+	})
+	return result, err
+}
+
+type MessageExecutor struct {
+	config    *compiler.MessageExecutorConfig
+	publisher messagePublisher
+}
 
 func (me *MessageExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	// TODO: Implement message queue execution
+	if me.publisher == nil {
+		return nil, fmt.Errorf("message publisher not configured")
+	}
+
+	payload, err := json.Marshal(args)
+	if err != nil {
+		return nil, fmt.Errorf("encode args: %w", err)
+	}
+
+	if _, err := executeWithRetry(ctx, me.config.RetryPolicy, func() (interface{}, error) {
+		return nil, me.publisher.Publish(ctx, payload)
+	}); err != nil {
+		return nil, err
+	}
+
 	return map[string]interface{}{
-		"status": "message_success",
-		"args":   args,
+		"status": "queued",
+		"target": messageTarget(me.config),
 	}, nil
 }
 
@@ -419,4 +584,158 @@ func (me *MockExecutor) Execute(ctx context.Context, args map[string]interface{}
 		"status": "mock_success",
 		"args":   args,
 	}, nil
+}
+
+type messagePublisher interface {
+	Publish(ctx context.Context, payload []byte) error
+}
+
+type httpPublisher struct {
+	url     string
+	headers map[string]string
+	client  *http.Client
+}
+
+func (hp *httpPublisher) Publish(ctx context.Context, payload []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hp.url, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for key, value := range hp.headers {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := hp.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("publisher status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+type kafkaPublisher struct {
+	writer *kafka.Writer
+	key    []byte
+}
+
+func (kp *kafkaPublisher) Publish(ctx context.Context, payload []byte) error {
+	return kp.writer.WriteMessages(ctx, kafka.Message{
+		Key:   kp.key,
+		Value: payload,
+		Time:  time.Now(),
+	})
+}
+
+func newMessageExecutor(config *compiler.MessageExecutorConfig) (*MessageExecutor, error) {
+	timeout := parseDuration(config.Timeout, 10*time.Second)
+
+	switch strings.ToLower(strings.TrimSpace(config.Publisher)) {
+	case "http":
+		client := &http.Client{Timeout: timeout}
+		return &MessageExecutor{
+			config: config,
+			publisher: &httpPublisher{
+				url:     config.URL,
+				headers: config.Headers,
+				client:  client,
+			},
+		}, nil
+	case "kafka":
+		writer := kafka.NewWriter(kafka.WriterConfig{
+			Brokers:  config.Brokers,
+			Topic:    config.Topic,
+			Balancer: &kafka.LeastBytes{},
+		})
+		return &MessageExecutor{
+			config: config,
+			publisher: &kafkaPublisher{
+				writer: writer,
+				key:    []byte(config.RoutingKey),
+			},
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported publisher: %s", config.Publisher)
+	}
+}
+
+func messageTarget(config *compiler.MessageExecutorConfig) string {
+	if config == nil {
+		return ""
+	}
+	if config.Publisher == "http" {
+		return config.URL
+	}
+	if config.Publisher == "kafka" {
+		return config.Topic
+	}
+	if config.Topic != "" {
+		return config.Topic
+	}
+	if config.Queue != "" {
+		return config.Queue
+	}
+	return ""
+}
+
+func executeWithRetry(ctx context.Context, policy *compiler.RetryPolicy, fn func() (interface{}, error)) (interface{}, error) {
+	if policy == nil || policy.MaxRetries <= 0 {
+		return fn()
+	}
+
+	delay := parseDuration(policy.InitialDelay, 250*time.Millisecond)
+	if delay <= 0 {
+		delay = 250 * time.Millisecond
+	}
+
+	maxDelay := parseDuration(policy.MaxDelay, 5*time.Second)
+	if maxDelay <= 0 {
+		maxDelay = 5 * time.Second
+	}
+
+	backoff := policy.BackoffFactor
+	if backoff <= 0 {
+		backoff = 2
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= policy.MaxRetries; attempt++ {
+		result, err := fn()
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if attempt == policy.MaxRetries {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+
+		delay = time.Duration(float64(delay) * backoff)
+		if delay > maxDelay {
+			delay = maxDelay
+		}
+	}
+
+	return nil, lastErr
+}
+
+func parseDuration(raw string, fallback time.Duration) time.Duration {
+	if strings.TrimSpace(raw) == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }

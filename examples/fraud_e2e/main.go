@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
-	"path/filepath"
-	"strings"
+	"time"
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/compiler"
@@ -58,10 +61,9 @@ func (s *typeSystemSchema) ValidatePath(path string) bool {
 
 // Simple verb executor.
 type loggingExecutor struct {
-	name    string
-	result  interface{}
-	fail    bool
-	traceID string
+	name   string
+	result interface{}
+	fail   bool
 }
 
 func (e *loggingExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -75,6 +77,60 @@ func (e *loggingExecutor) Execute(ctx context.Context, args map[string]interface
 	return true, nil
 }
 
+type httpExecutor struct {
+	name      string
+	url       string
+	method    string
+	resultKey string
+	fail      bool
+	client    *http.Client
+}
+
+func (e *httpExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	payload, err := json.Marshal(args)
+	if err != nil {
+		return nil, fmt.Errorf("%s marshal args: %w", e.name, err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, e.method, e.url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("%s build request: %w", e.name, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if e.fail {
+		req.Header.Set("X-Fail", "true")
+	}
+
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s request: %w", e.name, err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("%s failed: status %d: %s", e.name, resp.StatusCode, string(body))
+	}
+
+	if len(body) == 0 {
+		return true, nil
+	}
+
+	var decoded interface{}
+	if err := json.Unmarshal(body, &decoded); err == nil {
+		if e.resultKey != "" {
+			if obj, ok := decoded.(map[string]interface{}); ok {
+				if val, exists := obj[e.resultKey]; exists {
+					return val, nil
+				}
+			}
+		}
+		return decoded, nil
+	}
+
+	return string(body), nil
+}
+
 func main() {
 	ctx := context.Background()
 
@@ -84,7 +140,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	registry := buildVerbRegistry(os.Getenv("FAIL_NOTIFY") != "")
+	verbConfig := verbConfig{
+		riskURL:    os.Getenv("RISK_URL"),
+		notifyURL:  os.Getenv("NOTIFY_URL"),
+		failNotify: os.Getenv("FAIL_NOTIFY") != "",
+	}
+	registry := buildVerbRegistry(verbConfig)
 	registerVerbTypes(typeSystem)
 
 	// Compile + execute list rules
@@ -101,15 +162,13 @@ func main() {
 }
 
 func loadFactsAndSchema() (*exampleFacts, *types.TypeSystem, error) {
-	loader := pathutil.NewJSONLoader(readFileBytes(factsFile))
-	provider, err := loader.Load()
-	if err != nil {
+	rawFacts := readFileBytes(factsFile)
+	var data map[string]interface{}
+	if err := json.Unmarshal(rawFacts, &data); err != nil {
 		return nil, nil, err
 	}
 
-	// Get root data map for EvaluatePredicatesWithFacts.
-	dataAny, _ := provider.Get("")
-	data, _ := dataAny.(map[string]interface{})
+	provider := pathutil.NewRegistryFactProviderFromMap(data)
 
 	ts := types.NewTypeSystem()
 	if err := ts.LoadSchemaFile(schemaFile); err != nil {
@@ -120,8 +179,36 @@ func loadFactsAndSchema() (*exampleFacts, *types.TypeSystem, error) {
 	return &exampleFacts{data: data, provider: provider, schema: schemaInfo}, ts, nil
 }
 
-func buildVerbRegistry(failNotify bool) *verb.Registry {
+type verbConfig struct {
+	riskURL    string
+	notifyURL  string
+	failNotify bool
+}
+
+func buildVerbRegistry(cfg verbConfig) *verb.Registry {
 	registry := verb.NewRegistry(nil)
+
+	openCaseExecutor := verb.Executor(&loggingExecutor{name: "OpenCase", result: "case-001"})
+	if cfg.riskURL != "" {
+		openCaseExecutor = &httpExecutor{
+			name:      "OpenCase",
+			url:       cfg.riskURL,
+			method:    http.MethodPost,
+			resultKey: "caseId",
+			client:    &http.Client{Timeout: 5 * time.Second},
+		}
+	}
+
+	notifyExecutor := verb.Executor(&loggingExecutor{name: "NotifyRisk", fail: cfg.failNotify})
+	if cfg.notifyURL != "" {
+		notifyExecutor = &httpExecutor{
+			name:   "NotifyRisk",
+			url:    cfg.notifyURL,
+			method: http.MethodPost,
+			fail:   cfg.failNotify,
+			client: &http.Client{Timeout: 5 * time.Second},
+		}
+	}
 
 	mustRegister(registry, &verb.Spec{
 		Name:         "FlagFraud",
@@ -177,7 +264,7 @@ func buildVerbRegistry(failNotify bool) *verb.Registry {
 		ArgTypes:     map[string]string{"orderId": "string", "risk": "int"},
 		RequiredArgs: []string{"orderId", "risk"},
 		ReturnType:   "string",
-		Executor:     &loggingExecutor{name: "OpenCase", result: "case-001"},
+		Executor:     openCaseExecutor,
 	})
 
 	mustRegister(registry, &verb.Spec{
@@ -199,7 +286,7 @@ func buildVerbRegistry(failNotify bool) *verb.Registry {
 		ArgTypes:     map[string]string{"orderId": "string", "channel": "string"},
 		RequiredArgs: []string{"orderId", "channel"},
 		ReturnType:   "bool",
-		Executor:     &loggingExecutor{name: "NotifyRisk", fail: failNotify},
+		Executor:     notifyExecutor,
 	})
 
 	return registry
@@ -318,8 +405,4 @@ func readFileBytes(path string) []byte {
 		os.Exit(1)
 	}
 	return data
-}
-
-func trimPath(path string) string {
-	return strings.TrimPrefix(path, filepath.Clean("./"))
 }

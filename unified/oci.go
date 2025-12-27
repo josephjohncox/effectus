@@ -185,45 +185,51 @@ func NewOCIBundlePuller(outputDir string) *OCIBundlePuller {
 
 // Pull pulls a bundle from an OCI registry
 func (p *OCIBundlePuller) Pull(imageRef string) (*Bundle, error) {
+	bundle, _, err := p.PullWithData(imageRef)
+	return bundle, err
+}
+
+// PullWithData pulls a bundle and returns the raw bundle metadata bytes.
+func (p *OCIBundlePuller) PullWithData(imageRef string) (*Bundle, []byte, error) {
 	// Parse the reference
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
-		return nil, fmt.Errorf("parsing reference: %w", err)
+		return nil, nil, fmt.Errorf("parsing reference: %w", err)
 	}
 
 	// Pull the image
 	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 	if err != nil {
-		return nil, fmt.Errorf("pulling image: %w", err)
+		return nil, nil, fmt.Errorf("pulling image: %w", err)
 	}
 
 	// Get the layers
 	layers, err := img.Layers()
 	if err != nil {
-		return nil, fmt.Errorf("getting layers: %w", err)
+		return nil, nil, fmt.Errorf("getting layers: %w", err)
 	}
 
 	// Ensure the image has layers
 	if len(layers) == 0 {
-		return nil, fmt.Errorf("image has no layers")
+		return nil, nil, fmt.Errorf("image has no layers")
 	}
 
 	// Extract the bundle metadata from the last layer
 	bundleLayer := layers[len(layers)-1]
 	bundleContent, err := bundleLayer.Uncompressed()
 	if err != nil {
-		return nil, fmt.Errorf("getting bundle layer: %w", err)
+		return nil, nil, fmt.Errorf("getting bundle layer: %w", err)
 	}
 	defer bundleContent.Close()
 
 	bundleData, err := io.ReadAll(bundleContent)
 	if err != nil {
-		return nil, fmt.Errorf("reading bundle data: %w", err)
+		return nil, nil, fmt.Errorf("reading bundle data: %w", err)
 	}
 
 	var bundle Bundle
 	if err := json.Unmarshal(bundleData, &bundle); err != nil {
-		return nil, fmt.Errorf("unmarshaling bundle: %w", err)
+		return nil, nil, fmt.Errorf("unmarshaling bundle: %w", err)
 	}
 
 	// Extract content layers if outputDir is specified
@@ -233,7 +239,7 @@ func (p *OCIBundlePuller) Pull(imageRef string) (*Bundle, error) {
 		for _, dir := range dirs {
 			dirPath := filepath.Join(p.outputDir, dir)
 			if err := os.MkdirAll(dirPath, 0755); err != nil {
-				return nil, fmt.Errorf("creating directory %s: %w", dir, err)
+				return nil, nil, fmt.Errorf("creating directory %s: %w", dir, err)
 			}
 		}
 
@@ -247,14 +253,14 @@ func (p *OCIBundlePuller) Pull(imageRef string) (*Bundle, error) {
 			// Get the uncompressed layer content
 			rc, err := layer.Uncompressed()
 			if err != nil {
-				return nil, fmt.Errorf("getting layer %d: %w", i, err)
+				return nil, nil, fmt.Errorf("getting layer %d: %w", i, err)
 			}
 
 			// Extract the layer contents manually
 			targetDir := filepath.Join(p.outputDir, dirs[i])
 			if err := extractTarLayer(rc, targetDir); err != nil {
 				rc.Close()
-				return nil, fmt.Errorf("extracting layer %d: %w", i, err)
+				return nil, nil, fmt.Errorf("extracting layer %d: %w", i, err)
 			}
 			rc.Close()
 		}
@@ -262,11 +268,11 @@ func (p *OCIBundlePuller) Pull(imageRef string) (*Bundle, error) {
 		// Save bundle metadata as JSON file
 		bundleFile := filepath.Join(p.outputDir, "bundle.json")
 		if err := os.WriteFile(bundleFile, bundleData, 0644); err != nil {
-			return nil, fmt.Errorf("writing bundle file: %w", err)
+			return nil, nil, fmt.Errorf("writing bundle file: %w", err)
 		}
 	}
 
-	return &bundle, nil
+	return &bundle, bundleData, nil
 }
 
 // extractTarLayer extracts files from a tar stream to the target directory

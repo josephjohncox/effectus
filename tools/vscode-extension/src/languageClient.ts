@@ -94,7 +94,9 @@ export class EffectusLanguageClient {
             },
             initializationOptions: {
                 schemaPath: vscode.workspace.getConfiguration('effectus').get('schemaPath'),
+                verbSchemaPath: vscode.workspace.getConfiguration('effectus').get('verbSchemaPath'),
                 examplesPath: vscode.workspace.getConfiguration('effectus').get('factExamplesPath'),
+                unsafeMode: vscode.workspace.getConfiguration('effectus').get('lint.unsafe'),
                 validation: {
                     realtime: vscode.workspace.getConfiguration('effectus').get('validation.realtime')
                 }

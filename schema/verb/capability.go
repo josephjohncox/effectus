@@ -122,6 +122,11 @@ func ResourceConflict(a, b ResourceCapability) bool {
 		return false
 	}
 
+	// Exclusive access conflicts with anything on the same resource
+	if a.Cap.IsExclusive() || b.Cap.IsExclusive() {
+		return true
+	}
+
 	// If both are commutative, no conflict
 	if a.Cap.IsCommutativeWith(b.Cap) {
 		return false

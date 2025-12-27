@@ -1,0 +1,22 @@
+{
+  "FreezeAccount": {
+    "arg_types": {
+      "accountId": "string",
+      "reason": "string"
+    },
+    "return_type": "bool",
+    "capability": 2,
+    "required_args": ["accountId", "reason"],
+    "inverse": "UnfreezeAccount",
+    "description": "Freeze an account"
+  },
+  "UnfreezeAccount": {
+    "arg_types": {
+      "accountId": "string"
+    },
+    "return_type": "bool",
+    "capability": 2,
+    "required_args": ["accountId"],
+    "description": "Unfreeze an account"
+  }
+}

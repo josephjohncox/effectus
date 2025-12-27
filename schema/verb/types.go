@@ -39,6 +39,12 @@ type Spec struct {
 
 	// Executor is the implementation of the verb
 	Executor Executor `json:"-"`
+
+	// StrictArgs enforces argument presence and type checks at runtime.
+	StrictArgs *bool `json:"strict_args,omitempty"`
+
+	// StrictReturn enforces return type checks at runtime.
+	StrictReturn *bool `json:"strict_return,omitempty"`
 }
 
 // NewSpec creates a new verb specification
@@ -78,6 +84,25 @@ func (s *Spec) WithResources(resources ResourceSet) *Spec {
 // WithExecutor adds an executor to the specification
 func (s *Spec) WithExecutor(executor Executor) *Spec {
 	s.Executor = executor
+	return s
+}
+
+// WithStrictArgs configures strict argument validation for this verb.
+func (s *Spec) WithStrictArgs(strict bool) *Spec {
+	s.StrictArgs = &strict
+	return s
+}
+
+// WithStrictReturn configures strict return validation for this verb.
+func (s *Spec) WithStrictReturn(strict bool) *Spec {
+	s.StrictReturn = &strict
+	return s
+}
+
+// WithStrictTypes configures strict argument + return validation for this verb.
+func (s *Spec) WithStrictTypes(strict bool) *Spec {
+	s.StrictArgs = &strict
+	s.StrictReturn = &strict
 	return s
 }
 

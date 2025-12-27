@@ -23,6 +23,8 @@ func (r *Registry) LoadFromJSON(filepath string) error {
 		Resources    ResourceSet       `json:"resources,omitempty"`
 		Inverse      string            `json:"inverse,omitempty"`
 		Description  string            `json:"description,omitempty"`
+		StrictArgs   *bool             `json:"strict_args,omitempty"`
+		StrictReturn *bool             `json:"strict_return,omitempty"`
 	}
 
 	if err := json.Unmarshal(content, &verbSpecs); err != nil {
@@ -41,6 +43,8 @@ func (r *Registry) LoadFromJSON(filepath string) error {
 			Resources:    jsonSpec.Resources,
 			Inverse:      jsonSpec.Inverse,
 			Description:  jsonSpec.Description,
+			StrictArgs:   jsonSpec.StrictArgs,
+			StrictReturn: jsonSpec.StrictReturn,
 		}
 
 		// Register the verb
@@ -65,6 +69,8 @@ func (r *Registry) SaveToJSON(filepath string) error {
 		Resources    ResourceSet       `json:"resources,omitempty"`
 		Inverse      string            `json:"inverse,omitempty"`
 		Description  string            `json:"description,omitempty"`
+		StrictArgs   *bool             `json:"strict_args,omitempty"`
+		StrictReturn *bool             `json:"strict_return,omitempty"`
 	})
 
 	// Populate the map
@@ -77,6 +83,8 @@ func (r *Registry) SaveToJSON(filepath string) error {
 			Resources    ResourceSet       `json:"resources,omitempty"`
 			Inverse      string            `json:"inverse,omitempty"`
 			Description  string            `json:"description,omitempty"`
+			StrictArgs   *bool             `json:"strict_args,omitempty"`
+			StrictReturn *bool             `json:"strict_return,omitempty"`
 		}{
 			ArgTypes:     spec.ArgTypes,
 			ReturnType:   spec.ReturnType,
@@ -85,6 +93,8 @@ func (r *Registry) SaveToJSON(filepath string) error {
 			Resources:    spec.Resources,
 			Inverse:      spec.Inverse,
 			Description:  spec.Description,
+			StrictArgs:   spec.StrictArgs,
+			StrictReturn: spec.StrictReturn,
 		}
 	}
 
