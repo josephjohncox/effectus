@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // RegisterStandardLibrary registers built-in expression functions.
@@ -173,6 +174,22 @@ func StandardLibrary() []*FunctionSpec {
 			Func:       func(value float64) float64 { return math.Sqrt(value) },
 			ArgTypes:   []string{"float"},
 			ReturnType: "float",
+		},
+		{
+			Name:        "now",
+			Func:        func() time.Time { return time.Now() },
+			ArgTypes:    []string{},
+			ReturnType:  "time",
+			Unsafe:      true,
+			Description: "Current time (nondeterministic; prefer injected clocks)",
+		},
+		{
+			Name:        "nowUTC",
+			Func:        func() time.Time { return time.Now().UTC() },
+			ArgTypes:    []string{},
+			ReturnType:  "time",
+			Unsafe:      true,
+			Description: "Current UTC time (nondeterministic; prefer injected clocks)",
 		},
 		{
 			Name:        "regexMatch",

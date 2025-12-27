@@ -73,6 +73,7 @@ Options:
   --format       Output format: text or json (default: text)
   --fail-on-warn Return non-zero exit code when warnings are present
   --unsafe       Unsafe expression policy: warn, error, ignore (default: warn)
+  --verbs        Verb lint policy: error, warn, ignore (default: error)
   --verbose      Show detailed output
 ```
 
@@ -128,6 +129,25 @@ Options:
 **Example:**
 ```bash
 effectusc graph --schema schemas/ --format dot rules/*.eff
+```
+
+#### facts
+
+Emits a fact coverage report (used/unknown/unused) across rules and flows.
+
+```bash
+effectusc facts [options] file1.eff [file2.effx ...]
+
+Options:
+  --schema  Comma-separated list of schema files or directories
+  --format  Output format: text or json (default: text)
+  --output  Output file for the report (defaults to stdout)
+  --verbose Show detailed output
+```
+
+**Example:**
+```bash
+effectusc facts --schema schemas/ rules/*.eff
 ```
 
 #### compile

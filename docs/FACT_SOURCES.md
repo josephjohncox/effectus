@@ -35,6 +35,12 @@ Mappings: []adapters.FactMapping{
 - **Proto:** `TypeSystem.RegisterProtoTypes(...)`
 - **Versioned registry:** see `schema/buf_integration.go`
 
+Versioned facts can be registered explicitly:
+
+```go
+typeSystem.RegisterFactTypeVersion(\"acme.facts.Customer\", \"v2\", customerType, true)
+```
+
 ### 4b) External schema registries (optional)
 If your facts include schema IDs from an external registry (Confluent, Glue, custom), resolve them to Effectus
 schema name + version at the adapter boundary. Allow overrides in config/env for local runs.
@@ -55,6 +61,17 @@ schema_registry:
 Use namespaces + aliases for clean composition:
 - `pathutil.NamespacedLoader`
 - `pathutil.NewAliasedFacts(...)`
+
+For overlapping paths from multiple sources, use a merge provider with an explicit strategy:
+
+```go
+merged := pathutil.NewMergedFactProvider([]pathutil.SourceProvider{
+  {Name: "stream", Provider: streamFacts, Priority: 100},
+  {Name: "warehouse", Provider: warehouseFacts, Priority: 10},
+}, pathutil.MergeFirst) // or MergeLast / MergeError
+```
+
+When conflicts occur, `GetWithContext` reports all sources that had values.
 
 ---
 

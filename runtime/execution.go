@@ -13,8 +13,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/effectus/effectus-go/common"
 	"github.com/effectus/effectus-go/compiler"
 	"github.com/effectus/effectus-go/loader"
+	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -126,8 +128,8 @@ func (er *ExecutionRuntime) ExecuteVerb(ctx context.Context, verbName string, ar
 		return nil, fmt.Errorf("verb not found: %s", verbName)
 	}
 
-	// Validate arguments
-	if err := er.validateVerbArgs(verbSpec, args); err != nil {
+	// Validate arguments (strict mode only)
+	if err := common.ValidateVerbArgs(verbSpec.Spec, args, runtimeVerbRegistry{specs: er.compiledUnit.VerbSpecs}); err != nil {
 		return nil, fmt.Errorf("argument validation failed: %w", err)
 	}
 
@@ -146,6 +148,10 @@ func (er *ExecutionRuntime) ExecuteVerb(ctx context.Context, verbName string, ar
 	result, err := executor.Execute(ctx, args)
 	if err != nil {
 		return nil, fmt.Errorf("verb execution failed: %w", err)
+	}
+
+	if err := common.ValidateVerbReturn(verbSpec.Spec, result, runtimeVerbRegistry{specs: er.compiledUnit.VerbSpecs}); err != nil {
+		return nil, fmt.Errorf("return validation failed: %w", err)
 	}
 
 	return result, nil
@@ -203,15 +209,33 @@ func (er *ExecutionRuntime) GetRuntimeInfo() *RuntimeInfo {
 func (er *ExecutionRuntime) HotReload(ctx context.Context) error {
 	log.Println("Starting hot reload...")
 
-	// Reset state
 	er.mu.Lock()
-	er.compiledUnit = nil
-	er.state = StateInitializing
+	er.state = StateCompiling
 	er.mu.Unlock()
 
-	// Recompile
-	if err := er.CompileAndValidate(ctx); err != nil {
+	result, err := er.compiler.Compile(ctx, er.extensionManager)
+	if err != nil {
+		er.mu.Lock()
+		er.state = StateReady
+		er.mu.Unlock()
 		return fmt.Errorf("hot reload failed: %w", err)
+	}
+	if !result.Success {
+		er.mu.Lock()
+		er.state = StateReady
+		er.mu.Unlock()
+		return fmt.Errorf("hot reload failed: %v", result.Errors)
+	}
+
+	er.mu.Lock()
+	er.compiledUnit = result.CompiledUnit
+	er.state = StateReady
+	er.mu.Unlock()
+
+	if len(result.Warnings) > 0 {
+		for _, warning := range result.Warnings {
+			log.Printf("Warning: %s in %s: %s", warning.Type, warning.Location, warning.Message)
+		}
 	}
 
 	log.Println("Hot reload completed successfully")
@@ -220,50 +244,19 @@ func (er *ExecutionRuntime) HotReload(ctx context.Context) error {
 
 // Helper methods
 
-func (er *ExecutionRuntime) validateVerbArgs(verbSpec *compiler.CompiledVerbSpec, args map[string]interface{}) error {
-	// Check required arguments
-	for _, required := range verbSpec.Spec.RequiredArgs {
-		if _, exists := args[required]; !exists {
-			return fmt.Errorf("missing required argument: %s", required)
-		}
-	}
-
-	// Validate argument types
-	for argName, argValue := range args {
-		expectedType, exists := verbSpec.TypeSignature.InputTypes[argName]
-		if !exists {
-			return fmt.Errorf("unexpected argument: %s", argName)
-		}
-
-		if err := er.validateArgumentType(argName, argValue, expectedType); err != nil {
-			return err
-		}
-	}
-
-	return nil
+type runtimeVerbRegistry struct {
+	specs map[string]*compiler.CompiledVerbSpec
 }
 
-func (er *ExecutionRuntime) validateArgumentType(name string, value interface{}, expectedType string) error {
-	// Basic type validation (could be expanded)
-	switch expectedType {
-	case "string":
-		if _, ok := value.(string); !ok {
-			return fmt.Errorf("argument %s expected string, got %T", name, value)
-		}
-	case "int", "integer":
-		if _, ok := value.(int); !ok {
-			return fmt.Errorf("argument %s expected integer, got %T", name, value)
-		}
-	case "float", "number":
-		if _, ok := value.(float64); !ok {
-			return fmt.Errorf("argument %s expected float, got %T", name, value)
-		}
-	case "bool", "boolean":
-		if _, ok := value.(bool); !ok {
-			return fmt.Errorf("argument %s expected boolean, got %T", name, value)
-		}
+func (r runtimeVerbRegistry) GetVerb(name string) (*verb.Spec, bool) {
+	if r.specs == nil {
+		return nil, false
 	}
-	return nil
+	compiled, ok := r.specs[name]
+	if !ok || compiled == nil {
+		return nil, false
+	}
+	return compiled.Spec, true
 }
 
 func (er *ExecutionRuntime) executePhase(ctx context.Context, phase compiler.ExecutionPhase, facts map[string]interface{}) error {

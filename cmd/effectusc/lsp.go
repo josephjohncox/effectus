@@ -26,6 +26,7 @@ type lspServer struct {
 	schemaFiles []string
 	verbSchemas []string
 	unsafeMode  lint.UnsafeMode
+	verbMode    lint.VerbMode
 }
 
 type rpcMessage struct {
@@ -123,6 +124,11 @@ func (s *lspServer) initialize(msg rpcMessage) {
 					s.unsafeMode = parsed
 				}
 			}
+			if rawVerbMode, ok := options["verbMode"].(string); ok {
+				if parsed, err := lint.ParseVerbMode(rawVerbMode); err == nil {
+					s.verbMode = parsed
+				}
+			}
 		}
 	}
 
@@ -142,6 +148,16 @@ func (s *lspServer) initialize(msg rpcMessage) {
 	}
 	if s.unsafeMode == "" {
 		s.unsafeMode = lint.UnsafeWarn
+	}
+	if s.verbMode == "" {
+		if envMode := os.Getenv("EFFECTUS_VERB_LINT"); envMode != "" {
+			if parsed, err := lint.ParseVerbMode(envMode); err == nil {
+				s.verbMode = parsed
+			}
+		}
+	}
+	if s.verbMode == "" {
+		s.verbMode = lint.VerbError
 	}
 
 	capabilities := map[string]interface{}{
@@ -321,7 +337,10 @@ func (s *lspServer) checkText(uri string, text string) []lint.Issue {
 	}
 
 	registry := loadVerbRegistry(s.verbSchemas, false)
-	return lint.LintFileWithOptions(parsed, path, registry, lint.LintOptions{UnsafeMode: s.unsafeMode})
+	return lint.LintFileWithOptions(parsed, path, registry, lint.LintOptions{
+		UnsafeMode: s.unsafeMode,
+		VerbMode:   s.verbMode,
+	})
 }
 
 type completionItem struct {

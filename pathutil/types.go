@@ -61,8 +61,10 @@ func (p Path) Child(segment string) Path {
 
 // ResolutionResult contains details about path resolution
 type ResolutionResult struct {
-	Path   string      // The original path
-	Exists bool        // Whether the path exists
-	Value  interface{} // The resolved value (if exists)
-	Error  error       // Error that occurred during resolution (if any)
+	Path    string      // The original path
+	Exists  bool        // Whether the path exists
+	Value   interface{} // The resolved value (if exists)
+	Error   error       // Error that occurred during resolution (if any)
+	Source  string      // Source/provider that resolved the value
+	Sources []string    // All sources that contained the value
 }

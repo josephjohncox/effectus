@@ -24,6 +24,7 @@ func newCheckCommand() *Command {
 	format := checkCmd.FlagSet.String("format", "text", "Output format: text or json")
 	failOnWarn := checkCmd.FlagSet.Bool("fail-on-warn", false, "Return non-zero exit code when warnings are present")
 	unsafeMode := checkCmd.FlagSet.String("unsafe", "warn", "Unsafe expression policy: warn, error, ignore")
+	verbMode := checkCmd.FlagSet.String("verbs", "error", "Verb lint policy: error, warn, ignore")
 	verbose := checkCmd.FlagSet.Bool("verbose", false, "Show detailed output")
 
 	checkCmd.Run = func() error {
@@ -58,6 +59,10 @@ func newCheckCommand() *Command {
 		if err != nil {
 			return err
 		}
+		verbPolicy, err := lint.ParseVerbMode(*verbMode)
+		if err != nil {
+			return err
+		}
 
 		issues := make([]lint.Issue, 0)
 		hadWarn := false
@@ -75,7 +80,10 @@ func newCheckCommand() *Command {
 				continue
 			}
 
-			fileIssues := lint.LintFileWithOptions(parsed, filename, registry, lint.LintOptions{UnsafeMode: mode})
+			fileIssues := lint.LintFileWithOptions(parsed, filename, registry, lint.LintOptions{
+				UnsafeMode: mode,
+				VerbMode:   verbPolicy,
+			})
 			for _, issue := range fileIssues {
 				if issue.Severity == "warning" {
 					hadWarn = true

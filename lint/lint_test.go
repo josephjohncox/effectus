@@ -59,6 +59,63 @@ rule "Unsafe" priority 1 {
 	assert.True(t, hasIssue(issues, CodeUnsafeExpression))
 }
 
+func TestLintDetectsDivisionByZero(t *testing.T) {
+	content := `
+rule "Divide" priority 1 {
+  when { order.total / 0 > 1 }
+  then { Noop() }
+}
+`
+
+	file := parseTempRuleFile(t, content)
+	issues := LintFile(file, "test.eff", nil)
+	assert.True(t, hasIssue(issues, CodeDivisionByZero))
+}
+
+func TestLintDetectsMissingConcurrencyFlags(t *testing.T) {
+	content := `
+rule "Mutate" priority 1 {
+  when { true }
+  then { UpdateAccount(accountId: "cust-1") }
+}
+`
+
+	file := parseTempRuleFile(t, content)
+
+	registry := verb.NewRegistry(nil)
+	assert.NoError(t, registry.RegisterVerb(&verb.Spec{
+		Name:       "UpdateAccount",
+		Capability: verb.CapWrite,
+		ArgTypes:   map[string]string{"accountId": "string"},
+		ReturnType: "bool",
+	}))
+
+	issues := LintFile(file, "test.eff", registry)
+	assert.True(t, hasIssue(issues, CodeMissingConcurrency))
+}
+
+func TestLintDetectsOverbroadCapability(t *testing.T) {
+	content := `
+rule "Broad" priority 1 {
+  when { true }
+  then { AdminAction() }
+}
+`
+
+	file := parseTempRuleFile(t, content)
+
+	registry := verb.NewRegistry(nil)
+	assert.NoError(t, registry.RegisterVerb(&verb.Spec{
+		Name:       "AdminAction",
+		Capability: verb.CapAll,
+		ArgTypes:   map[string]string{},
+		ReturnType: "bool",
+	}))
+
+	issues := LintFile(file, "test.eff", registry)
+	assert.True(t, hasIssue(issues, CodeOverbroadCapability))
+}
+
 func TestLintDetectsMissingResources(t *testing.T) {
 	content := `
 rule "Mutate" priority 1 {

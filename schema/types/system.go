@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/effectus/effectus-go"
@@ -14,6 +15,10 @@ import (
 type TypeSystem struct {
 	// Facts type registry - maps paths to types
 	factTypes map[string]*Type
+	// factVersions maps base paths to versioned types
+	factVersions map[string]map[string]*Type
+	// factDefaults tracks default version for a fact path
+	factDefaults map[string]string
 
 	// Verb specifications
 	verbSpecs map[string]*VerbSpec
@@ -57,12 +62,14 @@ type VerbInfo struct {
 // NewTypeSystem creates a new type system
 func NewTypeSystem() *TypeSystem {
 	ts := &TypeSystem{
-		factTypes: make(map[string]*Type),
-		verbSpecs: make(map[string]*VerbSpec),
-		types:     make(map[string]*Type),
-		verbTypes: make(map[string]*VerbInfo),
-		functions: make(map[string]*FunctionSpec),
-		aliases:   make(map[string]string),
+		factTypes:    make(map[string]*Type),
+		factVersions: make(map[string]map[string]*Type),
+		factDefaults: make(map[string]string),
+		verbSpecs:    make(map[string]*VerbSpec),
+		types:        make(map[string]*Type),
+		verbTypes:    make(map[string]*VerbInfo),
+		functions:    make(map[string]*FunctionSpec),
+		aliases:      make(map[string]string),
 	}
 	ts.RegisterStandardLibrary()
 	return ts
@@ -98,9 +105,82 @@ func (ts *TypeSystem) RegisterFactType(path string, typ *Type) {
 	ts.factTypes[path] = typ
 }
 
+// RegisterFactTypeVersion registers a versioned type for a fact path.
+func (ts *TypeSystem) RegisterFactTypeVersion(path, version string, typ *Type, setDefault bool) {
+	if path == "" || strings.TrimSpace(version) == "" || typ == nil {
+		return
+	}
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	if ts.factVersions == nil {
+		ts.factVersions = make(map[string]map[string]*Type)
+	}
+	if ts.factDefaults == nil {
+		ts.factDefaults = make(map[string]string)
+	}
+	versions := ts.factVersions[path]
+	if versions == nil {
+		versions = make(map[string]*Type)
+		ts.factVersions[path] = versions
+	}
+	versions[version] = typ
+	if setDefault {
+		ts.factDefaults[path] = version
+		ts.factTypes[path] = typ
+	}
+}
+
+// SetDefaultFactVersion sets the default version for a fact path.
+func (ts *TypeSystem) SetDefaultFactVersion(path, version string) {
+	if path == "" || strings.TrimSpace(version) == "" {
+		return
+	}
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	if ts.factDefaults == nil {
+		ts.factDefaults = make(map[string]string)
+	}
+	ts.factDefaults[path] = version
+	if versions, ok := ts.factVersions[path]; ok {
+		if typ, ok := versions[version]; ok {
+			ts.factTypes[path] = typ
+		}
+	}
+}
+
+// GetFactTypeVersion retrieves a versioned fact type.
+func (ts *TypeSystem) GetFactTypeVersion(path, version string) (*Type, error) {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+	if ts.factVersions == nil {
+		return nil, fmt.Errorf("no versions registered for path: %s", path)
+	}
+	versions, ok := ts.factVersions[path]
+	if !ok {
+		return nil, fmt.Errorf("no versions registered for path: %s", path)
+	}
+	typ, ok := versions[version]
+	if !ok {
+		return nil, fmt.Errorf("no type registered for path %s version %s", path, version)
+	}
+	return typ, nil
+}
+
 // GetFactType retrieves the type for a fact path
 func (ts *TypeSystem) GetFactType(path string) (*Type, error) {
 	resolved := resolveAliasPath(path, ts.aliases)
+	if base, version, ok := splitVersionedPath(resolved); ok {
+		return ts.GetFactTypeVersion(base, version)
+	}
+
+	if ts.factDefaults != nil {
+		if version, ok := ts.factDefaults[resolved]; ok {
+			if typ, err := ts.GetFactTypeVersion(resolved, version); err == nil {
+				return typ, nil
+			}
+		}
+	}
+
 	typ, exists := ts.factTypes[resolved]
 	if !exists {
 		return nil, fmt.Errorf("no type registered for path: %s", path)
@@ -110,11 +190,36 @@ func (ts *TypeSystem) GetFactType(path string) (*Type, error) {
 
 // GetAllFactPaths returns all registered fact paths
 func (ts *TypeSystem) GetAllFactPaths() []string {
-	paths := make([]string, 0, len(ts.factTypes))
+	paths := make(map[string]struct{})
 	for path := range ts.factTypes {
-		paths = append(paths, path)
+		paths[path] = struct{}{}
 	}
-	return paths
+	for path, versions := range ts.factVersions {
+		if _, ok := paths[path]; !ok {
+			paths[path] = struct{}{}
+		}
+		for version := range versions {
+			paths[path+"@"+version] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(paths))
+	for path := range paths {
+		result = append(result, path)
+	}
+	return result
+}
+
+func splitVersionedPath(path string) (string, string, bool) {
+	idx := strings.LastIndex(path, "@")
+	if idx == -1 {
+		return "", "", false
+	}
+	base := strings.TrimSpace(path[:idx])
+	version := strings.TrimSpace(path[idx+1:])
+	if base == "" || version == "" {
+		return "", "", false
+	}
+	return base, version, true
 }
 
 // RegisterVerb registers a verb with full control over which arguments are required
@@ -216,6 +321,25 @@ func (ts *TypeSystem) MergeTypeSystem(other *TypeSystem) {
 	// Merge fact types
 	for path, typ := range other.factTypes {
 		ts.factTypes[path] = typ
+	}
+	for path, versions := range other.factVersions {
+		if ts.factVersions == nil {
+			ts.factVersions = make(map[string]map[string]*Type)
+		}
+		target := ts.factVersions[path]
+		if target == nil {
+			target = make(map[string]*Type)
+			ts.factVersions[path] = target
+		}
+		for version, typ := range versions {
+			target[version] = typ
+		}
+	}
+	for path, version := range other.factDefaults {
+		if ts.factDefaults == nil {
+			ts.factDefaults = make(map[string]string)
+		}
+		ts.factDefaults[path] = version
 	}
 
 	// Merge verb specs

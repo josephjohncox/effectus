@@ -10,6 +10,8 @@ import (
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/schema/types"
 	"github.com/expr-lang/expr"
+	exprast "github.com/expr-lang/expr/ast"
+	"github.com/expr-lang/expr/parser"
 	"github.com/expr-lang/expr/vm"
 )
 
@@ -19,14 +21,19 @@ type Registry struct {
 	data      map[string]interface{}
 	functions map[string]interface{}
 	programs  map[string]*vm.Program // Compiled expressions cache
+
+	predicatePrograms map[string]*vm.Program
+	clock             func() time.Time
 }
 
 // NewRegistry creates a new empty registry
 func NewRegistry() *Registry {
 	registry := &Registry{
-		data:      make(map[string]interface{}),
-		functions: make(map[string]interface{}),
-		programs:  make(map[string]*vm.Program),
+		data:              make(map[string]interface{}),
+		functions:         make(map[string]interface{}),
+		programs:          make(map[string]*vm.Program),
+		predicatePrograms: make(map[string]*vm.Program),
+		clock:             time.Now,
 	}
 
 	for _, spec := range types.StandardLibrary() {
@@ -44,8 +51,29 @@ func NewRegistry() *Registry {
 // registerTemporalFunctions registers basic time-based functions
 func (r *Registry) registerTemporalFunctions() {
 	r.functions["now"] = func() time.Time {
-		return time.Now()
+		if r.clock == nil {
+			return time.Now()
+		}
+		return r.clock()
 	}
+	r.functions["nowUTC"] = func() time.Time {
+		if r.clock == nil {
+			return time.Now().UTC()
+		}
+		return r.clock().UTC()
+	}
+}
+
+// SetClock overrides the time source for temporal functions like now().
+func (r *Registry) SetClock(clock func() time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.clock = clock
+}
+
+// SetNow sets a fixed timestamp for temporal functions.
+func (r *Registry) SetNow(now time.Time) {
+	r.SetClock(func() time.Time { return now })
 }
 
 // Set stores a value at the given path
@@ -319,6 +347,7 @@ func (r *Registry) Clear() {
 
 	r.data = make(map[string]interface{})
 	r.programs = make(map[string]*vm.Program)
+	r.predicatePrograms = make(map[string]*vm.Program)
 }
 
 // ClearAll removes everything including functions
@@ -329,6 +358,7 @@ func (r *Registry) ClearAll() {
 	r.data = make(map[string]interface{})
 	r.functions = make(map[string]interface{})
 	r.programs = make(map[string]*vm.Program)
+	r.predicatePrograms = make(map[string]*vm.Program)
 }
 
 // === Predicate Functionality (simplified to use expr directly) ===
@@ -338,6 +368,7 @@ type Predicate struct {
 	Expression string
 	registry   *Registry
 	program    *vm.Program
+	constant   *bool
 }
 
 // NewPredicate creates a new predicate using the registry
@@ -347,13 +378,33 @@ func (r *Registry) NewPredicate(expression string) (*Predicate, error) {
 		return nil, fmt.Errorf("invalid predicate expression: %w", err)
 	}
 
+	if constant, ok := constantBool(expression); ok {
+		return &Predicate{
+			Expression: expression,
+			registry:   r,
+			constant:   &constant,
+		}, nil
+	}
+
 	r.mu.RLock()
+	if program, exists := r.predicatePrograms[expression]; exists {
+		r.mu.RUnlock()
+		return &Predicate{
+			Expression: expression,
+			registry:   r,
+			program:    program,
+		}, nil
+	}
 	env := r.buildEnvironment()
 	r.mu.RUnlock()
 	program, err := expr.Compile(expression, expr.Env(env), expr.AllowUndefinedVariables())
 	if err != nil {
 		return nil, fmt.Errorf("compiling predicate expression: %w", err)
 	}
+
+	r.mu.Lock()
+	r.predicatePrograms[expression] = program
+	r.mu.Unlock()
 
 	return &Predicate{
 		Expression: expression,
@@ -366,6 +417,10 @@ func (r *Registry) NewPredicate(expression string) (*Predicate, error) {
 func (p *Predicate) Evaluate() (bool, error) {
 	if p.registry == nil {
 		return false, fmt.Errorf("predicate registry is nil")
+	}
+
+	if p.constant != nil {
+		return *p.constant, nil
 	}
 
 	if p.program != nil {
@@ -440,4 +495,36 @@ func (r *Registry) CompileLogicalExpression(expression string, schemaInfo effect
 	pathsMap := ExtractFactPaths(expression)
 
 	return []*Predicate{predicate}, pathsMap, nil
+}
+
+func constantBool(expression string) (bool, bool) {
+	tree, err := parser.Parse(expression)
+	if err != nil {
+		return false, false
+	}
+
+	visitor := &variableVisitor{}
+	node := tree.Node
+	exprast.Walk(&node, visitor)
+	if visitor.hasVariables {
+		return false, false
+	}
+
+	result, err := expr.Eval(expression, map[string]interface{}{})
+	if err != nil {
+		return false, false
+	}
+	value, ok := result.(bool)
+	return value, ok
+}
+
+type variableVisitor struct {
+	hasVariables bool
+}
+
+func (v *variableVisitor) Visit(node *exprast.Node) {
+	switch (*node).(type) {
+	case *exprast.IdentifierNode, *exprast.MemberNode, *exprast.PointerNode, *exprast.VariableDeclaratorNode:
+		v.hasVariables = true
+	}
 }

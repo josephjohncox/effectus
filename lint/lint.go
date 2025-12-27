@@ -17,12 +17,16 @@ const (
 	SeverityWarning = "warning"
 	SeverityError   = "error"
 
-	CodeDeadRule          = "dead-rule"
-	CodeDeadFlow          = "dead-flow"
-	CodeMissingInverse    = "missing-inverse"
-	CodeMissingCapability = "missing-capability"
-	CodeMissingResources  = "missing-resources"
-	CodeUnsafeExpression  = "unsafe-expression"
+	CodeDeadRule            = "dead-rule"
+	CodeDeadFlow            = "dead-flow"
+	CodeMissingInverse      = "missing-inverse"
+	CodeMissingConcurrency  = "missing-concurrency"
+	CodeMissingCapability   = "missing-capability"
+	CodeOverbroadCapability = "overbroad-capability"
+	CodeMissingResources    = "missing-resources"
+	CodeUnsafeExpression    = "unsafe-expression"
+	CodeDivisionByZero      = "division-by-zero"
+	CodeEmptyFactPath       = "empty-fact-path"
 )
 
 // UnsafeMode controls how unsafe expression usage is reported.
@@ -34,14 +38,24 @@ const (
 	UnsafeError  UnsafeMode = "error"
 )
 
+// VerbMode controls how verb-related lint issues are reported.
+type VerbMode string
+
+const (
+	VerbIgnore VerbMode = "ignore"
+	VerbWarn   VerbMode = "warn"
+	VerbError  VerbMode = "error"
+)
+
 // LintOptions configures lint behavior.
 type LintOptions struct {
 	UnsafeMode UnsafeMode
+	VerbMode   VerbMode
 }
 
 // DefaultOptions returns the default lint options.
 func DefaultOptions() LintOptions {
-	return LintOptions{UnsafeMode: UnsafeWarn}
+	return LintOptions{UnsafeMode: UnsafeWarn, VerbMode: VerbError}
 }
 
 // ParseUnsafeMode parses a string into UnsafeMode.
@@ -56,6 +70,21 @@ func ParseUnsafeMode(raw string) (UnsafeMode, error) {
 		return UnsafeIgnore, nil
 	default:
 		return UnsafeWarn, fmt.Errorf("unknown unsafe mode: %s", raw)
+	}
+}
+
+// ParseVerbMode parses a string into VerbMode.
+func ParseVerbMode(raw string) (VerbMode, error) {
+	trimmed := strings.TrimSpace(strings.ToLower(raw))
+	switch trimmed {
+	case "", "error", "err":
+		return VerbError, nil
+	case "warn", "warning":
+		return VerbWarn, nil
+	case "ignore", "off", "none":
+		return VerbIgnore, nil
+	default:
+		return VerbError, fmt.Errorf("unknown verb mode: %s", raw)
 	}
 }
 
@@ -86,18 +115,26 @@ func LintFileWithOptions(file *ast.File, path string, verbs VerbLookup, options 
 
 	issues := make([]Issue, 0)
 	mode := normalizeUnsafeMode(options.UnsafeMode)
+	verbMode := normalizeVerbMode(options.VerbMode)
+	verbSeverity, verbEnabled := verbSeverity(verbMode)
 
 	for _, rule := range file.Rules {
 		for _, block := range rule.Blocks {
 			if block.When != nil {
 				issues = append(issues, lintDeadExpression(path, block.When.Pos, rule.Name, "rule", block.When.Expression)...)
 				issues = append(issues, lintUnsafeExpression(path, block.When.Pos, rule.Name, "rule", block.When.Expression, mode)...)
+				issues = append(issues, lintDivisionByZero(path, block.When.Pos, rule.Name, "rule", block.When.Expression)...)
 			}
 			if block.Then != nil {
 				for _, effect := range block.Then.Effects {
-					issues = append(issues, lintMissingInverse(path, effect.Pos, effect.Verb, verbs)...)
-					issues = append(issues, lintMissingCapability(path, effect.Pos, effect.Verb, verbs)...)
-					issues = append(issues, lintMissingResources(path, effect.Pos, effect.Verb, verbs)...)
+					issues = append(issues, lintEmptyArgPath(path, effect.Pos, effect.Args)...)
+					if verbEnabled {
+						issues = append(issues, lintMissingInverse(path, effect.Pos, effect.Verb, verbs, verbSeverity)...)
+						issues = append(issues, lintMissingCapability(path, effect.Pos, effect.Verb, verbs, verbSeverity)...)
+						issues = append(issues, lintMissingResources(path, effect.Pos, effect.Verb, verbs, verbSeverity)...)
+						issues = append(issues, lintMissingConcurrency(path, effect.Pos, effect.Verb, verbs, verbSeverity)...)
+						issues = append(issues, lintOverbroadCapability(path, effect.Pos, effect.Verb, verbs, verbSeverity)...)
+					}
 				}
 			}
 		}
@@ -107,12 +144,18 @@ func LintFileWithOptions(file *ast.File, path string, verbs VerbLookup, options 
 		if flow.When != nil {
 			issues = append(issues, lintDeadExpression(path, flow.When.Pos, flow.Name, "flow", flow.When.Expression)...)
 			issues = append(issues, lintUnsafeExpression(path, flow.When.Pos, flow.Name, "flow", flow.When.Expression, mode)...)
+			issues = append(issues, lintDivisionByZero(path, flow.When.Pos, flow.Name, "flow", flow.When.Expression)...)
 		}
 		if flow.Steps != nil {
 			for _, step := range flow.Steps.Steps {
-				issues = append(issues, lintMissingInverse(path, step.Pos, step.Verb, verbs)...)
-				issues = append(issues, lintMissingCapability(path, step.Pos, step.Verb, verbs)...)
-				issues = append(issues, lintMissingResources(path, step.Pos, step.Verb, verbs)...)
+				issues = append(issues, lintEmptyArgPath(path, step.Pos, step.Args)...)
+				if verbEnabled {
+					issues = append(issues, lintMissingInverse(path, step.Pos, step.Verb, verbs, verbSeverity)...)
+					issues = append(issues, lintMissingCapability(path, step.Pos, step.Verb, verbs, verbSeverity)...)
+					issues = append(issues, lintMissingResources(path, step.Pos, step.Verb, verbs, verbSeverity)...)
+					issues = append(issues, lintMissingConcurrency(path, step.Pos, step.Verb, verbs, verbSeverity)...)
+					issues = append(issues, lintOverbroadCapability(path, step.Pos, step.Verb, verbs, verbSeverity)...)
+				}
 			}
 		}
 	}
@@ -149,7 +192,7 @@ func deadCodeForKind(kind string) string {
 	return CodeDeadRule
 }
 
-func lintMissingInverse(path string, pos lexer.Position, verbName string, verbs VerbLookup) []Issue {
+func lintMissingInverse(path string, pos lexer.Position, verbName string, verbs VerbLookup, severity string) []Issue {
 	if verbs == nil {
 		return nil
 	}
@@ -171,14 +214,14 @@ func lintMissingInverse(path string, pos lexer.Position, verbName string, verbs 
 		{
 			File:     path,
 			Pos:      pos,
-			Severity: SeverityWarning,
+			Severity: severity,
 			Code:     CodeMissingInverse,
 			Message:  fmt.Sprintf("verb %q mutates state but has no inverse defined", verbName),
 		},
 	}
 }
 
-func lintMissingCapability(path string, pos lexer.Position, verbName string, verbs VerbLookup) []Issue {
+func lintMissingCapability(path string, pos lexer.Position, verbName string, verbs VerbLookup, severity string) []Issue {
 	if verbs == nil {
 		return nil
 	}
@@ -196,14 +239,14 @@ func lintMissingCapability(path string, pos lexer.Position, verbName string, ver
 		{
 			File:     path,
 			Pos:      pos,
-			Severity: SeverityWarning,
+			Severity: severity,
 			Code:     CodeMissingCapability,
 			Message:  fmt.Sprintf("verb %q has no capability declared", verbName),
 		},
 	}
 }
 
-func lintMissingResources(path string, pos lexer.Position, verbName string, verbs VerbLookup) []Issue {
+func lintMissingResources(path string, pos lexer.Position, verbName string, verbs VerbLookup, severity string) []Issue {
 	if verbs == nil {
 		return nil
 	}
@@ -225,11 +268,83 @@ func lintMissingResources(path string, pos lexer.Position, verbName string, verb
 		{
 			File:     path,
 			Pos:      pos,
-			Severity: SeverityWarning,
+			Severity: severity,
 			Code:     CodeMissingResources,
 			Message:  fmt.Sprintf("verb %q mutates state but declares no resources", verbName),
 		},
 	}
+}
+
+func lintMissingConcurrency(path string, pos lexer.Position, verbName string, verbs VerbLookup, severity string) []Issue {
+	if verbs == nil {
+		return nil
+	}
+
+	spec, ok := verbs.GetVerb(verbName)
+	if !ok || spec == nil {
+		return nil
+	}
+
+	if !requiresInverse(spec) {
+		return nil
+	}
+
+	if hasConcurrencyFlag(spec.Capability) {
+		return nil
+	}
+
+	for _, resource := range spec.Resources {
+		if hasConcurrencyFlag(resource.Cap) {
+			return nil
+		}
+	}
+
+	return []Issue{
+		{
+			File:     path,
+			Pos:      pos,
+			Severity: severity,
+			Code:     CodeMissingConcurrency,
+			Message:  fmt.Sprintf("verb %q lacks concurrency semantics; set idempotent, commutative, or exclusive capability", verbName),
+		},
+	}
+}
+
+func lintOverbroadCapability(path string, pos lexer.Position, verbName string, verbs VerbLookup, severity string) []Issue {
+	if verbs == nil {
+		return nil
+	}
+
+	spec, ok := verbs.GetVerb(verbName)
+	if !ok || spec == nil {
+		return nil
+	}
+
+	issues := make([]Issue, 0)
+
+	if spec.Capability&verb.CapAll == verb.CapAll {
+		issues = append(issues, Issue{
+			File:     path,
+			Pos:      pos,
+			Severity: severity,
+			Code:     CodeOverbroadCapability,
+			Message:  fmt.Sprintf("verb %q declares broad capabilities; prefer minimal or resource-scoped caps", verbName),
+		})
+	}
+
+	for _, resource := range spec.Resources {
+		if resource.Cap&verb.CapAll == verb.CapAll {
+			issues = append(issues, Issue{
+				File:     path,
+				Pos:      pos,
+				Severity: severity,
+				Code:     CodeOverbroadCapability,
+				Message:  fmt.Sprintf("verb %q resource %q declares broad capabilities", verbName, resource.Resource),
+			})
+		}
+	}
+
+	return issues
 }
 
 func lintUnsafeExpression(path string, pos lexer.Position, name, kind, expression string, mode UnsafeMode) []Issue {
@@ -265,6 +380,27 @@ func lintUnsafeExpression(path string, pos lexer.Position, name, kind, expressio
 	}
 }
 
+func lintDivisionByZero(path string, pos lexer.Position, name, kind, expression string) []Issue {
+	exprText := strings.TrimSpace(expression)
+	if exprText == "" {
+		return nil
+	}
+
+	if !hasDivisionByZero(exprText) {
+		return nil
+	}
+
+	return []Issue{
+		{
+			File:     path,
+			Pos:      pos,
+			Severity: SeverityError,
+			Code:     CodeDivisionByZero,
+			Message:  fmt.Sprintf("%s %q divides by zero in expression", kind, name),
+		},
+	}
+}
+
 func normalizeUnsafeMode(mode UnsafeMode) UnsafeMode {
 	switch strings.ToLower(strings.TrimSpace(string(mode))) {
 	case string(UnsafeError):
@@ -276,6 +412,28 @@ func normalizeUnsafeMode(mode UnsafeMode) UnsafeMode {
 	}
 }
 
+func normalizeVerbMode(mode VerbMode) VerbMode {
+	switch strings.ToLower(strings.TrimSpace(string(mode))) {
+	case string(VerbWarn):
+		return VerbWarn
+	case string(VerbIgnore):
+		return VerbIgnore
+	default:
+		return VerbError
+	}
+}
+
+func verbSeverity(mode VerbMode) (string, bool) {
+	switch mode {
+	case VerbIgnore:
+		return "", false
+	case VerbWarn:
+		return SeverityWarning, true
+	default:
+		return SeverityError, true
+	}
+}
+
 func unsafeFunctionNames() map[string]struct{} {
 	funcs := make(map[string]struct{})
 	for _, spec := range types.StandardLibrary() {
@@ -284,6 +442,92 @@ func unsafeFunctionNames() map[string]struct{} {
 		}
 	}
 	return funcs
+}
+
+func hasDivisionByZero(expression string) bool {
+	tree, err := parser.Parse(expression)
+	if err != nil {
+		return false
+	}
+
+	found := false
+	var visit func(node exprast.Node)
+	visit = func(node exprast.Node) {
+		if node == nil || found {
+			return
+		}
+
+		switch n := node.(type) {
+		case *exprast.BinaryNode:
+			if n.Operator == "/" && isZeroLiteral(n.Right) {
+				found = true
+				return
+			}
+			visit(n.Left)
+			visit(n.Right)
+		case *exprast.CallNode:
+			visit(n.Callee)
+			for _, arg := range n.Arguments {
+				visit(arg)
+			}
+		case *exprast.MemberNode:
+			visit(n.Node)
+			visit(n.Property)
+		case *exprast.UnaryNode:
+			visit(n.Node)
+		case *exprast.ChainNode:
+			visit(n.Node)
+		case *exprast.SliceNode:
+			visit(n.Node)
+			if n.From != nil {
+				visit(n.From)
+			}
+			if n.To != nil {
+				visit(n.To)
+			}
+		case *exprast.BuiltinNode:
+			for _, arg := range n.Arguments {
+				visit(arg)
+			}
+		case *exprast.PredicateNode:
+			visit(n.Node)
+		case *exprast.SequenceNode:
+			for _, child := range n.Nodes {
+				visit(child)
+			}
+		case *exprast.ConditionalNode:
+			visit(n.Cond)
+			visit(n.Exp1)
+			visit(n.Exp2)
+		case *exprast.ArrayNode:
+			for _, child := range n.Nodes {
+				visit(child)
+			}
+		case *exprast.MapNode:
+			for _, pair := range n.Pairs {
+				visit(pair)
+			}
+		case *exprast.PairNode:
+			visit(n.Key)
+			visit(n.Value)
+		}
+	}
+
+	visit(tree.Node)
+	return found
+}
+
+func isZeroLiteral(node exprast.Node) bool {
+	switch n := node.(type) {
+	case *exprast.IntegerNode:
+		return n.Value == 0
+	case *exprast.FloatNode:
+		return n.Value == 0
+	case *exprast.UnaryNode:
+		return n.Operator == "-" && isZeroLiteral(n.Node)
+	default:
+		return false
+	}
 }
 
 func findUnsafeOps(expression string, unsafeFuncs map[string]struct{}) []string {
@@ -408,6 +652,34 @@ func requiresInverse(spec *verb.Spec) bool {
 	}
 
 	return false
+}
+
+func hasConcurrencyFlag(cap verb.Capability) bool {
+	return cap&(verb.CapIdempotent|verb.CapCommutative|verb.CapExclusive) != 0
+}
+
+func lintEmptyArgPath(path string, pos lexer.Position, args []*ast.StepArg) []Issue {
+	if len(args) == 0 {
+		return nil
+	}
+
+	issues := make([]Issue, 0)
+	for _, arg := range args {
+		if arg == nil || arg.Value == nil || arg.Value.PathExpr == nil {
+			continue
+		}
+		if strings.TrimSpace(arg.Value.PathExpr.Path) != "" {
+			continue
+		}
+		issues = append(issues, Issue{
+			File:     path,
+			Pos:      pos,
+			Severity: SeverityError,
+			Code:     CodeEmptyFactPath,
+			Message:  "empty fact path used in argument expression",
+		})
+	}
+	return issues
 }
 
 func constantBool(expression string) (bool, bool) {

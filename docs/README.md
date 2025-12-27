@@ -7,9 +7,11 @@ Welcome to the Effectus documentation! This directory contains comprehensive doc
 Start here if you're new to Effectus:
 
 1. **[Project README](../README.md)** - Overview, quick start, and installation
-2. **[Basics](BASICS.md)** - Core concepts: Facts, Verbs, Effects, and rules
-3. **[Commands](COMMANDS.md)** - CLI tools reference
-4. **[Quick Tutorials](TUTORIALS.md)** - Short walkthroughs for common tasks
+2. **[System Intent](SYSTEM_INTENT.md)** - Design intent and correctness criteria
+3. **[Glossary](GLOSSARY.md)** - Shared vocabulary for contributors
+4. **[Basics](BASICS.md)** - Core concepts: Facts, Verbs, Effects, and rules
+5. **[Commands](COMMANDS.md)** - CLI tools reference
+6. **[Quick Tutorials](TUTORIALS.md)** - Short walkthroughs for common tasks
 
 ## Core Documentation
 

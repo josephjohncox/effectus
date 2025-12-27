@@ -243,6 +243,8 @@ See [docs/theory/](docs/theory/) for detailed mathematical foundations.
 | Document | Purpose |
 |----------|---------|
 | [Architecture](docs/ARCHITECTURE.md) | High-level system design |
+| [System Intent](docs/SYSTEM_INTENT.md) | Design intent and correctness criteria |
+| [Glossary](docs/GLOSSARY.md) | Shared vocabulary |
 | [Coherent Flow](docs/coherent_flow.md) | Extension → Compilation → Execution flow |
 | [Basics](docs/BASICS.md) | Core concepts: Facts, Verbs, Effects |
 | [Verb System](docs/VERB_SYSTEM.md) | Verb specifications and executors |

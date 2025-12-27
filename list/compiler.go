@@ -69,12 +69,11 @@ func compileRule(rule *ast.Rule, schemaInfo effectus.SchemaInfo) (*CompiledRule,
 	if len(rule.Blocks) > 0 {
 		predicates := []*schema.Predicate{}
 		factPaths := make(map[string]struct{})
+		registry := schema.NewRegistry()
 
 		// Go through each block and extract predicates
 		for _, block := range rule.Blocks {
 			if block.When != nil && block.When.Expression != "" {
-				// Create a registry for compilation
-				registry := schema.NewRegistry()
 				preds, paths, err := registry.CompileLogicalExpression(block.When.Expression, schemaInfo)
 				if err != nil {
 					return nil, err

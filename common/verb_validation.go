@@ -128,3 +128,13 @@ func validateVerbReturn(spec *verb.Spec, result interface{}, registry VerbRegist
 
 	return nil
 }
+
+// ValidateVerbArgs enforces runtime argument validation based on strict settings.
+func ValidateVerbArgs(spec *verb.Spec, args map[string]interface{}, registry VerbRegistry) error {
+	return validateVerbArgs(spec, args, registry)
+}
+
+// ValidateVerbReturn enforces runtime return validation based on strict settings.
+func ValidateVerbReturn(spec *verb.Spec, result interface{}, registry VerbRegistry) error {
+	return validateVerbReturn(spec, result, registry)
+}

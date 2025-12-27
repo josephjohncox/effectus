@@ -47,11 +47,20 @@ func (r *Registry) GetWithContext(path string) (interface{}, *ResolutionResult) 
 	if provider, ok := r.providers[namespace]; ok {
 		// Extract the rest of the path without the namespace
 		restPath := extractPathWithoutNamespace(path, namespace)
-		return provider.GetWithContext(restPath)
+		value, result := provider.GetWithContext(restPath)
+		if result == nil {
+			return nil, &ResolutionResult{Path: path, Exists: false, Source: namespace}
+		}
+		result.Path = path
+		if result.Source == "" {
+			result.Source = namespace
+		}
+		return value, result
 	}
 	return nil, &ResolutionResult{
 		Path:   path,
 		Exists: false,
+		Source: "",
 		Error:  nil,
 	}
 }

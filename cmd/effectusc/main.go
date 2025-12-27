@@ -473,6 +473,7 @@ func defineCommands() {
 	commands["check"] = newCheckCommand()
 	commands["lsp"] = newLSPCommand()
 	commands["graph"] = newGraphCommand()
+	commands["facts"] = newFactsCommand()
 	commands["format"] = newFormatCommand()
 	commands["resolve"] = newResolveCommand()
 }
