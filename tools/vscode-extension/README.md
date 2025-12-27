@@ -19,8 +19,8 @@ This extension provides comprehensive language support for Effectus rule files (
 
 ### 🔄 **Hot Reload Development**
 - **Live Updates** - Automatic rule reloading during development
-- **Development Server** - Built-in server for rapid iteration
-- **WebSocket Connection** - Real-time communication with Effectus runtime
+- **Runtime Hotload** - Push changes directly to `effectusd` via `/api/rules/hotload`
+- **Development Server** - Optional local dev server for rapid iteration
 - **Status Indicators** - Visual feedback for compilation and testing
 
 ### 🕸️ **Schema Lineage**
@@ -76,6 +76,8 @@ The extension will automatically detect Effectus workspaces and provide enhanced
   "effectus.validation.realtime": true,
   "effectus.hotReload.enabled": false,
   "effectus.hotReload.port": 9090,
+  "effectus.runtime.apiUrl": "http://localhost:8080",
+  "effectus.runtime.apiToken": "devtoken",
   "effectus.lineage.showInHover": true,
   "effectus.performance.showMetrics": true
 }
@@ -139,10 +141,10 @@ As you type, the extension provides:
 
 ### Hot Reload Development
 
-1. Start development server: `Ctrl+Shift+P` → `Effectus: Start Development Server`
-2. Edit rule files - changes are automatically compiled and tested
-3. View real-time feedback in status bar
-4. WebSocket connection provides immediate error reporting
+1. Start `effectusd` with hotload enabled: `effectusd --bundle bundle.json --rules-hotload --api-token devtoken`
+2. Configure `effectus.runtime.apiUrl` + `effectus.runtime.apiToken` in VS Code settings
+3. Start hot reload: `Ctrl+Shift+P` → `Effectus: Start Development Server`
+4. Edit rule files - changes are pushed via `/api/rules/hotload`
 
 ### Schema Lineage Visualization
 

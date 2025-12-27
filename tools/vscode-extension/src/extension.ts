@@ -246,8 +246,20 @@ function isEffectusFile(document: vscode.TextDocument): boolean {
 }
 
 async function validateRule(document: vscode.TextDocument): Promise<vscode.Diagnostic[]> {
-    // TODO: Implement rule validation logic
-    // This would call the Effectus compiler or LSP
+    if (hotReloadManager) {
+        const diagnostics = await hotReloadManager.validateRule(document);
+        if (diagnostics && diagnostics.length) {
+            return diagnostics.map((diag: any) => {
+                const line = Math.max((diag.line || 1) - 1, 0);
+                const col = Math.max((diag.column || 1) - 1, 0);
+                const range = new vscode.Range(line, col, line, col + 1);
+                const severity = (diag.severity || '').toLowerCase() === 'error'
+                    ? vscode.DiagnosticSeverity.Error
+                    : vscode.DiagnosticSeverity.Warning;
+                return new vscode.Diagnostic(range, diag.message || 'Rule issue', severity);
+            });
+        }
+    }
     return [];
 }
 

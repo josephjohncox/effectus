@@ -27,6 +27,7 @@ api:
   read_token: "read-token"
   rate_limit: 120
   rate_burst: 60
+  hotload_rules: false
 
 facts:
   store: "file"
@@ -123,6 +124,7 @@ Then list the OCI reference under `extensions.oci`.
 
 - CLI flags override config values when both are provided.
 - `/api/*` endpoints require a token; `/healthz` and `/readyz` are open by default.
+- Set `api.hotload_rules` to enable `/api/rules/validate` and `/api/rules/hotload` (UI rule editor + VS Code hot reload).
 - If you need in‑process Go executors, use `verbs.plugin_dirs` or embed via library mode.
 - Extension reloading re-reads `*.verbs.json` / `*.schema.json` from disk or OCI; Go plugins are not hot-reloadable.
 - Schema sources are loaded in-memory at startup; set `extensions.reload_interval` (or `bundle.reload_interval`) to poll for updates.

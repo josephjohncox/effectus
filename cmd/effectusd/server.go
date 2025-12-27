@@ -22,6 +22,7 @@ import (
 	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/schema/types"
+	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/effectus/effectus-go/unified"
 )
 
@@ -40,6 +41,8 @@ type serverState struct {
 	updatedAt  time.Time
 	typeSystem *types.TypeSystem
 	sources    []adapters.SchemaSourceConfig
+	verbReg    *verb.Registry
+	rulesOn    bool
 	factStore  factStore
 	factConfig factStoreConfig
 	factCh     chan<- factEnvelope
@@ -48,13 +51,15 @@ type serverState struct {
 	acl        *aclMatcher
 }
 
-func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store factStore, config factStoreConfig, auth apiAuth, limiter *rateLimiter, acl *aclMatcher, typeSystem *types.TypeSystem, sources []adapters.SchemaSourceConfig) *serverState {
+func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store factStore, config factStoreConfig, auth apiAuth, limiter *rateLimiter, acl *aclMatcher, typeSystem *types.TypeSystem, sources []adapters.SchemaSourceConfig, verbReg *verb.Registry, rulesHotload bool) *serverState {
 	return &serverState{
 		bundle:     bundle,
 		startedAt:  time.Now(),
 		updatedAt:  time.Now(),
 		typeSystem: typeSystem,
 		sources:    sources,
+		verbReg:    verbReg,
+		rulesOn:    rulesHotload,
 		factStore:  store,
 		factConfig: config,
 		factCh:     factCh,
@@ -337,6 +342,8 @@ func startHTTPServer(ctx context.Context, addr string, state *serverState) {
 	mux.HandleFunc("/api/status", state.handleStatus)
 	mux.HandleFunc("/api/rules", state.handleRules)
 	mux.HandleFunc("/api/rules/source", state.handleRuleSources)
+	mux.HandleFunc("/api/rules/validate", state.handleRuleValidate)
+	mux.HandleFunc("/api/rules/hotload", state.handleRuleHotload)
 	mux.HandleFunc("/api/flows", state.handleFlows)
 	mux.HandleFunc("/api/graph", state.handleGraph)
 	mux.HandleFunc("/api/verbs", state.handleVerbs)
@@ -862,6 +869,7 @@ type statusResponse struct {
 	FactCount        int                     `json:"fact_count"`
 	BundleFactCount  int                     `json:"bundle_fact_count"`
 	RuntimeFactCount int                     `json:"runtime_fact_count"`
+	RulesHotload     bool                    `json:"rules_hotload"`
 	SchemaSources    []schemaSourceSummary   `json:"schema_sources,omitempty"`
 }
 
@@ -945,6 +953,7 @@ func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 		FactCount:        len(combinedFacts),
 		BundleFactCount:  len(bundle.FactTypes),
 		RuntimeFactCount: len(runtimeFacts),
+		RulesHotload:     s.rulesOn,
 		SchemaSources:    summarizeSchemaSources(s.sources),
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -1547,6 +1556,10 @@ const uiHTML = `<!doctype html>
       overflow-x: auto;
       border: 1px solid #eee7df;
     }
+    .code {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
     .muted {
       color: var(--muted);
       font-size: 12px;
@@ -1558,7 +1571,7 @@ const uiHTML = `<!doctype html>
     .sources-grid {
       display: grid;
       gap: 16px;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
       align-items: start;
     }
     .list-item {
@@ -1597,6 +1610,26 @@ const uiHTML = `<!doctype html>
       border-radius: 12px;
       background: #fffdf9;
     }
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 10px 0;
+    }
+    .editor-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      align-items: start;
+    }
+    .highlight {
+      min-height: 220px;
+      background: #f9f7f3;
+    }
+    .hl-key { color: var(--accent); font-weight: 600; }
+    .hl-num { color: var(--accent-2); }
+    .hl-comment { color: #8b7d6b; font-style: italic; }
+    .line-error { background: rgba(217, 119, 6, 0.16); display: block; margin: 0 -8px; padding: 0 8px; border-radius: 6px; }
+    .line-warning { background: rgba(13, 107, 107, 0.12); display: block; margin: 0 -8px; padding: 0 8px; border-radius: 6px; }
     button {
       border: none;
       padding: 10px 16px;
@@ -1738,11 +1771,56 @@ const uiHTML = `<!doctype html>
           <summary class="muted">Raw JSON</summary>
           <pre id="dry-run-raw">Dry run output appears here.</pre>
         </details>
+        <div class="divider"></div>
+        <div class="row" style="justify-content: space-between;">
+          <strong>Rule Editor</strong>
+          <span class="pill" id="rule-hotload-status">hotload disabled</span>
+        </div>
+        <div id="rule-hotload-note" class="muted"></div>
+        <div class="editor-grid">
+          <div class="stack">
+            <div class="row">
+              <div style="flex: 1;">
+                <label>Rule Path (optional)</label>
+                <input id="rule-path" placeholder="rules/playground.eff" />
+              </div>
+              <div style="width: 140px;">
+                <label>Format</label>
+                <select id="rule-format">
+                  <option value="eff">.eff</option>
+                  <option value="effx">.effx</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label>Rule Source</label>
+              <textarea id="rule-editor" rows="10" placeholder="rule &quot;Example&quot; {&#10;  when { customer.tier == &quot;gold&quot; }&#10;  then { Flag(orderId: transaction.id) }&#10;}"></textarea>
+            </div>
+            <div class="row">
+              <label class="muted"><input type="checkbox" id="rule-replace" /> Replace existing rules</label>
+              <button id="rule-validate-btn" class="secondary" onclick="validateRuleEditor()">Typecheck</button>
+              <button id="rule-hotload-btn" onclick="hotloadRuleEditor()">Hot Load</button>
+              <span class="pill" id="rule-editor-status">Idle</span>
+            </div>
+          </div>
+          <div class="stack">
+            <div>
+              <label>Preview</label>
+              <pre id="rule-preview" class="highlight code">Type in the editor to preview.</pre>
+            </div>
+            <div>
+              <label>Diagnostics</label>
+              <div id="rule-diagnostics" class="list"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </section>
   <script>
     const TOKEN_KEY = "effectus_api_token";
+    let hotloadEnabled = false;
+    let currentRuleDiagnostics = [];
 
     const render = (id, data) => {
       const el = document.getElementById(id);
@@ -1913,6 +1991,98 @@ const uiHTML = `<!doctype html>
       results.innerHTML = html;
     };
 
+    const setRuleHotloadState = (enabled) => {
+      hotloadEnabled = !!enabled;
+      const status = document.getElementById("rule-hotload-status");
+      const note = document.getElementById("rule-hotload-note");
+      const typecheckBtn = document.getElementById("rule-validate-btn");
+      const hotloadBtn = document.getElementById("rule-hotload-btn");
+      const statusText = enabled ? "hotload enabled" : "hotload disabled";
+      if (status) {
+        status.textContent = statusText;
+        status.className = "pill " + (enabled ? "good" : "bad");
+      }
+      if (note) {
+        note.textContent = enabled
+          ? "Typecheck and hot-load rules against the active schema + verbs."
+          : "Enable with --rules-hotload (or api.hotload_rules in config) to use the editor.";
+      }
+      if (typecheckBtn) typecheckBtn.disabled = !enabled;
+      if (hotloadBtn) hotloadBtn.disabled = !enabled;
+    };
+
+    const highlightRuleLine = (line) => {
+      const parts = line.split("//");
+      let code = escapeHtml(parts[0] || "");
+      code = code.replace(/\b(rule|flow|when|then|step|include|let|emit|do|priority)\b/g, '<span class="hl-key">$1</span>');
+      code = code.replace(/\b\d+(\.\d+)?\b/g, '<span class="hl-num">$&</span>');
+      if (parts.length > 1) {
+        const comment = escapeHtml("//" + parts.slice(1).join("//"));
+        return code + '<span class="hl-comment">' + comment + '</span>';
+      }
+      return code;
+    };
+
+    const updateRulePreview = (diagnostics) => {
+      const editor = document.getElementById("rule-editor");
+      const preview = document.getElementById("rule-preview");
+      if (!editor || !preview) return;
+      const diags = diagnostics || currentRuleDiagnostics || [];
+      const errorLines = new Set();
+      const warnLines = new Set();
+      diags.forEach(diag => {
+        const line = diag.line || 0;
+        if (!line) return;
+        if ((diag.severity || "").toLowerCase() === "error") {
+          errorLines.add(line);
+        } else {
+          warnLines.add(line);
+        }
+      });
+      const lines = editor.value.split(/\r?\n/);
+      const output = lines.map((line, idx) => {
+        let rendered = highlightRuleLine(line);
+        const lineNo = idx + 1;
+        if (errorLines.has(lineNo)) {
+          rendered = '<span class="line-error">' + rendered + '</span>';
+        } else if (warnLines.has(lineNo)) {
+          rendered = '<span class="line-warning">' + rendered + '</span>';
+        }
+        return rendered;
+      });
+      preview.innerHTML = output.join("\n") || "Type in the editor to preview.";
+    };
+
+    const renderRuleDiagnostics = (diagnostics) => {
+      currentRuleDiagnostics = diagnostics || [];
+      updateRulePreview(currentRuleDiagnostics);
+      const container = document.getElementById("rule-diagnostics");
+      if (!container) return;
+      if (!currentRuleDiagnostics.length) {
+        container.innerHTML = '<div class="muted">No diagnostics.</div>';
+        return;
+      }
+      const sorted = currentRuleDiagnostics.slice().sort((a, b) => {
+        if ((a.file || "") !== (b.file || "")) return (a.file || "").localeCompare(b.file || "");
+        if ((a.line || 0) !== (b.line || 0)) return (a.line || 0) - (b.line || 0);
+        return (a.column || 0) - (b.column || 0);
+      });
+      let html = '';
+      sorted.forEach(diag => {
+        const sev = (diag.severity || "warning").toLowerCase();
+        const klass = sev === "error" ? "unmatched" : "matched";
+        const location = (diag.file || "rule") + ":" + (diag.line || 1) + ":" + (diag.column || 1);
+        html += '<div class="list-item ' + klass + '">' +
+          '<div class="row">' +
+            '<strong>' + escapeHtml(location) + '</strong>' +
+            '<span class="pill ' + (sev === "error" ? "bad" : "good") + '">' + escapeHtml(sev) + '</span>' +
+          '</div>' +
+          '<div class="muted">' + escapeHtml(diag.message || '') + '</div>' +
+        '</div>';
+      });
+      container.innerHTML = html;
+    };
+
     const populateUniverseOptions = (status) => {
       const select = document.getElementById("facts-universe");
       if (!select) return;
@@ -1995,7 +2165,7 @@ const uiHTML = `<!doctype html>
               '<strong>' + escapeHtml(path) + '</strong>' +
               (format ? '<span class="pill">' + escapeHtml(format) + '</span>' : '') +
             '</summary>' +
-            '<pre>' + escapeHtml(source.content || '') + '</pre>' +
+            '<pre class="code">' + escapeHtml(source.content || '') + '</pre>' +
           '</details>';
         });
         container.innerHTML = html;
@@ -2073,6 +2243,7 @@ const uiHTML = `<!doctype html>
         renderStatus(status);
         populateUniverseOptions(status);
         renderFactsMergeConfig(status);
+        setRuleHotloadState(status.rules_hotload);
       } catch (err) {
         render("status", { error: err.message });
       }
@@ -2220,10 +2391,81 @@ const uiHTML = `<!doctype html>
       }
     }
 
+    const buildRulePayload = () => {
+      const content = (document.getElementById("rule-editor") || {}).value || "";
+      const path = (document.getElementById("rule-path") || {}).value || "";
+      const format = (document.getElementById("rule-format") || {}).value || "eff";
+      const replace = (document.getElementById("rule-replace") || {}).checked || false;
+      return { path: path.trim(), content: content, format: format, replace: replace };
+    };
+
+    async function validateRuleEditor() {
+      const statusEl = document.getElementById("rule-editor-status");
+      if (!hotloadEnabled) {
+        if (statusEl) statusEl.textContent = "Disabled";
+        return;
+      }
+      const payload = buildRulePayload();
+      if (!payload.content.trim()) {
+        if (statusEl) statusEl.textContent = "Add rule text";
+        return;
+      }
+      if (statusEl) statusEl.textContent = "Checking...";
+      try {
+        const res = await fetch("/api/rules/validate", {
+          method: "POST",
+          headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+          body: JSON.stringify(payload)
+        });
+        const body = await res.json();
+        renderRuleDiagnostics(body.diagnostics || []);
+        if (statusEl) statusEl.textContent = body.ok ? "OK" : "Errors";
+      } catch (err) {
+        renderRuleDiagnostics([{ severity: "error", message: err.message }]);
+        if (statusEl) statusEl.textContent = "Error";
+      }
+    }
+
+    async function hotloadRuleEditor() {
+      const statusEl = document.getElementById("rule-editor-status");
+      if (!hotloadEnabled) {
+        if (statusEl) statusEl.textContent = "Disabled";
+        return;
+      }
+      const payload = buildRulePayload();
+      if (!payload.content.trim()) {
+        if (statusEl) statusEl.textContent = "Add rule text";
+        return;
+      }
+      if (statusEl) statusEl.textContent = "Loading...";
+      try {
+        const res = await fetch("/api/rules/hotload", {
+          method: "POST",
+          headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+          body: JSON.stringify(payload)
+        });
+        const body = await res.json();
+        renderRuleDiagnostics(body.diagnostics || []);
+        if (statusEl) statusEl.textContent = body.ok ? "Loaded" : "Errors";
+        if (body.ok) {
+          refreshAll();
+        }
+      } catch (err) {
+        renderRuleDiagnostics([{ severity: "error", message: err.message }]);
+        if (statusEl) statusEl.textContent = "Error";
+      }
+    }
+
     const tokenInput = document.getElementById("api-token");
     if (tokenInput) {
       tokenInput.value = localStorage.getItem(TOKEN_KEY) || "";
     }
+    const ruleEditor = document.getElementById("rule-editor");
+    if (ruleEditor) {
+      ruleEditor.addEventListener("input", () => updateRulePreview());
+    }
+    updateRulePreview();
+    setRuleHotloadState(false);
     refreshAll();
   </script>
 </body>

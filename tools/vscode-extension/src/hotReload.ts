@@ -1,5 +1,11 @@
 import * as vscode from 'vscode';
+import axios from 'axios';
 import WebSocket from 'ws';
+
+type RuntimeConfig = {
+    url: string;
+    token?: string;
+};
 
 export class HotReloadManager {
     private context: vscode.ExtensionContext;
@@ -24,17 +30,21 @@ export class HotReloadManager {
         }
 
         const config = vscode.workspace.getConfiguration('effectus');
+        const runtime = this.getRuntimeConfig();
         const port = config.get<number>('hotReload.port', 9090);
 
         try {
-            await this.startEffectusDevServer(port);
-            await this.connectWebSocket(port);
+            if (runtime) {
+                await this.pingRuntime(runtime);
+            } else {
+                await this.startEffectusDevServer(port);
+                await this.connectWebSocket(port);
+            }
             this.isServerRunning = true;
             this.updateStatusBar();
             
-            vscode.window.showInformationMessage(
-                `Effectus development server started on port ${port}`
-            );
+            const label = runtime ? 'Effectus runtime hot reload enabled' : `Effectus development server started on port ${port}`;
+            vscode.window.showInformationMessage(label);
         } catch (error) {
             this.isServerRunning = false;
             this.updateStatusBar();
@@ -61,7 +71,8 @@ export class HotReloadManager {
             this.isServerRunning = false;
             this.updateStatusBar();
             
-            vscode.window.showInformationMessage('Effectus development server stopped');
+            const runtime = this.getRuntimeConfig();
+            vscode.window.showInformationMessage(runtime ? 'Effectus runtime hot reload stopped' : 'Effectus development server stopped');
         } catch (error) {
             console.error('Error stopping development server:', error);
         }
@@ -72,6 +83,16 @@ export class HotReloadManager {
     }
 
     async notifyRuleChange(uri: vscode.Uri): Promise<void> {
+        if (!this.isServerRunning) {
+            return;
+        }
+
+        const runtime = this.getRuntimeConfig();
+        if (runtime) {
+            await this.pushRuleToRuntime(uri, runtime);
+            return;
+        }
+
         if (!this.webSocket || this.webSocket.readyState !== WebSocket.OPEN) {
             return;
         }
@@ -268,18 +289,85 @@ export class HotReloadManager {
     }
 
     private updateStatusBar(): void {
+        const runtime = this.getRuntimeConfig();
         if (this.isServerRunning) {
-            this.statusBarItem.text = '$(server-process) Effectus Dev';
-            this.statusBarItem.tooltip = 'Effectus development server is running';
+            const mode = runtime ? 'Runtime' : 'Dev';
+            this.statusBarItem.text = `$(server-process) Effectus ${mode}`;
+            this.statusBarItem.tooltip = runtime
+                ? 'Effectus runtime hot reload is active'
+                : 'Effectus development server is running';
             this.statusBarItem.command = 'effectus.dev.stopServer';
             this.statusBarItem.backgroundColor = undefined;
         } else {
-            this.statusBarItem.text = '$(server-environment) Effectus Dev';
-            this.statusBarItem.tooltip = 'Start Effectus development server';
+            const label = runtime ? 'Runtime' : 'Dev';
+            this.statusBarItem.text = `$(server-environment) Effectus ${label}`;
+            this.statusBarItem.tooltip = runtime
+                ? 'Enable hot reload against effectusd'
+                : 'Start Effectus development server';
             this.statusBarItem.command = 'effectus.dev.startServer';
             this.statusBarItem.backgroundColor = undefined;
         }
         this.statusBarItem.show();
+    }
+
+    public async validateRule(document: vscode.TextDocument): Promise<any[]> {
+        const runtime = this.getRuntimeConfig();
+        if (!runtime) {
+            return [];
+        }
+        const payload = this.buildRulePayload(document.uri, document.getText(), false);
+        const response = await this.postRule(runtime, '/api/rules/validate', payload);
+        return response?.diagnostics || [];
+    }
+
+    private getRuntimeConfig(): RuntimeConfig | undefined {
+        const config = vscode.workspace.getConfiguration('effectus');
+        const url = (config.get<string>('runtime.apiUrl') || '').trim();
+        if (!url) {
+            return undefined;
+        }
+        const token = (config.get<string>('runtime.apiToken') || '').trim();
+        return { url, token };
+    }
+
+    private async pingRuntime(runtime: RuntimeConfig): Promise<void> {
+        await this.postRule(runtime, '/api/status', undefined, 'get');
+    }
+
+    private async pushRuleToRuntime(uri: vscode.Uri, runtime: RuntimeConfig): Promise<void> {
+        try {
+            const document = await vscode.workspace.openTextDocument(uri);
+            const payload = this.buildRulePayload(uri, document.getText(), false);
+            await this.postRule(runtime, '/api/rules/hotload', payload);
+        } catch (error) {
+            console.error('Failed to hotload rule:', error);
+        }
+    }
+
+    private buildRulePayload(uri: vscode.Uri, content: string, replace: boolean): any {
+        const path = uri.fsPath;
+        const ext = path.toLowerCase().endsWith('.effx') ? 'effx' : 'eff';
+        return {
+            path,
+            format: ext,
+            content,
+            replace
+        };
+    }
+
+    private async postRule(runtime: RuntimeConfig, endpoint: string, payload?: any, method?: 'post' | 'get'): Promise<any> {
+        const base = runtime.url.replace(/\/+$/, '');
+        const url = `${base}${endpoint}`;
+        const headers: Record<string, string> = {};
+        if (runtime.token) {
+            headers['Authorization'] = `Bearer ${runtime.token}`;
+        }
+        if (method === 'get') {
+            const response = await axios.get(url, { headers });
+            return response.data;
+        }
+        const response = await axios.post(url, payload, { headers });
+        return response.data;
     }
 
     private findEffectuscBinary(): string | undefined {

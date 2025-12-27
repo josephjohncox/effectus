@@ -345,6 +345,7 @@ effectusd [options]
 --api-acl-file         Path to API ACL file (YAML/JSON)
 --api-rate-limit       Requests per minute per client (0 to disable)
 --api-rate-burst       Burst size (0 to use rate limit)
+--rules-hotload        Enable /api/rules/validate and /api/rules/hotload
 ```
 
 Example ACL file: `docs/acl.example.yml`.
@@ -402,6 +403,12 @@ effectusd \
 ```bash
 effectusd --bundle ./bundle.json --http-addr :8080 --api-token devtoken
 # open http://localhost:8080/ui
+```
+
+Enable rule editing + hotload from the UI:
+
+```bash
+effectusd --bundle ./bundle.json --api-token devtoken --rules-hotload
 ```
 
 Post facts for a universe snapshot:

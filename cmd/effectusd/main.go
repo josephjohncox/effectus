@@ -130,6 +130,7 @@ var (
 	apiACLFile    = flag.String("api-acl-file", "", "Path to API ACL file (YAML/JSON)")
 	apiRateLimit  = flag.Int("api-rate-limit", 120, "API requests per minute per client (0 to disable)")
 	apiRateBurst  = flag.Int("api-rate-burst", 60, "API burst size (0 to use rate limit)")
+	rulesHotload  = flag.Bool("rules-hotload", false, "Enable /api/rules/validate and /api/rules/hotload")
 	factsStore    = flag.String("facts-store", "file", "Facts store (file, memory)")
 	factsPath     = flag.String("facts-path", "./data/facts.json", "Facts store path (file store)")
 	factsMergeDef = flag.String("facts-merge-default", "last", "Default merge strategy (first, last, error)")
@@ -354,7 +355,7 @@ func main() {
 	var wg sync.WaitGroup
 
 	factCh := make(chan factEnvelope, 32)
-	state := newServerState(bundle, factCh, store, storeConfig, auth, limiter, acl, typeSystem, schemaSources)
+	state := newServerState(bundle, factCh, store, storeConfig, auth, limiter, acl, typeSystem, schemaSources, verbReg, *rulesHotload)
 
 	// Start fact source (non-HTTP)
 	wg.Add(1)

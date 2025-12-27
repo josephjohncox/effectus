@@ -41,6 +41,7 @@ type apiConfig struct {
 	ACLFile   string `yaml:"acl_file" json:"acl_file"`
 	RateLimit *int   `yaml:"rate_limit" json:"rate_limit"`
 	RateBurst *int   `yaml:"rate_burst" json:"rate_burst"`
+	Hotload   *bool  `yaml:"hotload_rules" json:"hotload_rules"`
 }
 
 type factsConfig struct {
@@ -137,6 +138,9 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 	}
 	if cfg.API.RateBurst != nil && !setFlags["api-rate-burst"] {
 		*apiRateBurst = *cfg.API.RateBurst
+	}
+	if cfg.API.Hotload != nil && !setFlags["rules-hotload"] {
+		*rulesHotload = *cfg.API.Hotload
 	}
 
 	if cfg.Facts.Store != "" && !setFlags["facts-store"] {

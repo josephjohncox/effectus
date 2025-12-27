@@ -108,6 +108,16 @@
           "default": 9090,
           "description": "Port for hot reload development server"
         },
+        "effectus.runtime.apiUrl": {
+          "type": "string",
+          "default": "",
+          "description": "effectusd base URL for rule validation/hotload (e.g. http://localhost:8080)"
+        },
+        "effectus.runtime.apiToken": {
+          "type": "string",
+          "default": "",
+          "description": "API token for effectusd when using runtime hot reload"
+        },
         "effectus.lineage.showInHover": {
           "type": "boolean",
           "default": true,

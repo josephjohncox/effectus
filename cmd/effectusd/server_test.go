@@ -6,9 +6,12 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/effectus/effectus-go/pathutil"
+	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/unified"
 	"github.com/stretchr/testify/require"
 )
@@ -166,7 +169,7 @@ func TestHealthAndReadyEndpoints(t *testing.T) {
 	auth, _, err := buildAPIAuth("token", "", "")
 	require.NoError(t, err)
 
-	state := newServerState(nil, nil, nil, factStoreConfig{}, auth, nil, nil, nil, nil)
+	state := newServerState(nil, nil, nil, factStoreConfig{}, auth, nil, nil, nil, nil, nil, false)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", state.handleHealth)
@@ -197,4 +200,68 @@ func TestHealthAndReadyEndpoints(t *testing.T) {
 	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &ready))
 	require.Equal(t, "ready", ready["status"])
 	require.Equal(t, "demo", ready["bundle"])
+}
+
+func TestRulesHotloadRequiresEnable(t *testing.T) {
+	auth, _, err := buildAPIAuth("disabled", "", "")
+	require.NoError(t, err)
+
+	bundle := &unified.Bundle{Name: "demo", Version: "1.0.0"}
+	state := newServerState(bundle, nil, nil, factStoreConfig{}, auth, nil, nil, nil, nil, nil, false)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/rules/hotload", state.handleRuleHotload)
+	handler := state.withAPIMiddleware(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/rules/hotload", strings.NewReader(`{"content":"rule \"demo\" { when { true } then { Noop() } }"}`))
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	require.Equal(t, http.StatusForbidden, resp.Code)
+}
+
+func TestRulesHotloadAppliesBundle(t *testing.T) {
+	auth, _, err := buildAPIAuth("disabled", "", "")
+	require.NoError(t, err)
+
+	bundle := &unified.Bundle{
+		Name:    "demo",
+		Version: "1.0.0",
+		FactTypes: []unified.FactTypeSummary{
+			{Path: "transaction.amount", Type: "int"},
+			{Path: "transaction.id", Type: "string"},
+		},
+		VerbSpecs: []unified.VerbSpecSummary{
+			{
+				Name:         "FlagFraud",
+				ArgTypes:     map[string]string{"orderId": "string"},
+				RequiredArgs: []string{"orderId"},
+				ReturnType:   "bool",
+			},
+		},
+	}
+
+	state := newServerState(bundle, nil, nil, factStoreConfig{}, auth, nil, nil, types.NewTypeSystem(), nil, nil, true)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/rules/hotload", state.handleRuleHotload)
+	handler := state.withAPIMiddleware(mux)
+
+	rule := `rule "HighValue" priority 1 {
+  when { transaction.amount > 100 }
+  then { FlagFraud(orderId: transaction.id) }
+}`
+	req := httptest.NewRequest(http.MethodPost, "/api/rules/hotload", strings.NewReader(`{"path":"rules/high_value.eff","format":"eff","content":`+strconv.Quote(rule)+`, "replace": true}`))
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	var payload ruleCheckResponse
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &payload))
+	require.True(t, payload.OK, "diagnostics: %+v", payload.Diagnostics)
+	require.True(t, payload.Applied)
+
+	updated := state.Bundle()
+	require.NotNil(t, updated)
+	require.Len(t, updated.Rules, 1)
+	require.Len(t, updated.RuleSources, 1)
 }

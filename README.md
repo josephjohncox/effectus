@@ -90,6 +90,7 @@ See `docs/EXTENSION_SYSTEM.md` for full manifest schema and OCI publishing.
 
 `effectusd` ships a lightweight status UI with rules, flows, schema summaries, a dependency graph, and a dry-run playground.
 `/api/*` endpoints are token-protected by default; `/ui`, `/healthz`, and `/readyz` are open.
+Enable `/api/rules/validate` + `/api/rules/hotload` (and the in-UI rule editor) with `--rules-hotload` or `api.hotload_rules`.
 
 ```bash
 effectusd --bundle bundle.json --api-token devtoken
