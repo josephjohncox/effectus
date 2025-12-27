@@ -46,3 +46,4 @@ coverage.html
 
 # Buf Generated
 **/clients/
+.gocache/

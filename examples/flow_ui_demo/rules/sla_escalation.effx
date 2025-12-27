@@ -1,0 +1,12 @@
+flow "SLAEscalation" priority 15 {
+  when {
+    order.state == "pending" &&
+    clock.current_epoch - order.created_at_epoch > 3600 &&
+    customer.priority >= 2
+  }
+  steps {
+    OpenEscalation(orderId: order.id, reason: "sla_breach")
+    ScheduleCallback(orderId: order.id, atEpoch: clock.current_epoch)
+    EmitAlert(channel: "pager", message: "SLA breach for pending order")
+  }
+}

@@ -5,11 +5,17 @@
       "reason": "string"
     },
     "return_type": "bool",
-    "capability": 18,
-    "required_args": ["orderId", "reason"],
+    "capability": 76,
+    "required_args": [
+      "orderId",
+      "reason"
+    ],
     "inverse": "UnflagFraud",
     "resources": [
-      {"resource": "fraud_case", "cap": 18}
+      {
+        "resource": "fraud_case",
+        "cap": 76
+      }
     ],
     "description": "Flag a transaction for fraud review"
   },
@@ -19,11 +25,16 @@
       "reason": "string"
     },
     "return_type": "bool",
-    "capability": 24,
-    "required_args": ["orderId"],
+    "capability": 52,
+    "required_args": [
+      "orderId"
+    ],
     "inverse": "FlagFraud",
     "resources": [
-      {"resource": "fraud_case", "cap": 24}
+      {
+        "resource": "fraud_case",
+        "cap": 52
+      }
     ],
     "description": "Remove a fraud flag"
   },
@@ -33,11 +44,17 @@
       "channel": "string"
     },
     "return_type": "bool",
-    "capability": 18,
-    "required_args": ["orderId", "channel"],
+    "capability": 36,
+    "required_args": [
+      "orderId",
+      "channel"
+    ],
     "inverse": "UnnotifyRisk",
     "resources": [
-      {"resource": "notification", "cap": 18}
+      {
+        "resource": "notification",
+        "cap": 36
+      }
     ],
     "description": "Notify risk operations"
   },
@@ -47,11 +64,16 @@
       "channel": "string"
     },
     "return_type": "bool",
-    "capability": 24,
-    "required_args": ["orderId"],
+    "capability": 52,
+    "required_args": [
+      "orderId"
+    ],
     "inverse": "NotifyRisk",
     "resources": [
-      {"resource": "notification", "cap": 24}
+      {
+        "resource": "notification",
+        "cap": 52
+      }
     ],
     "description": "Withdraw a risk notification"
   },
@@ -61,11 +83,17 @@
       "reason": "string"
     },
     "return_type": "bool",
-    "capability": 34,
-    "required_args": ["accountId", "reason"],
+    "capability": 68,
+    "required_args": [
+      "accountId",
+      "reason"
+    ],
     "inverse": "UnfreezeAccount",
     "resources": [
-      {"resource": "account", "cap": 34}
+      {
+        "resource": "account",
+        "cap": 68
+      }
     ],
     "description": "Freeze an account due to risk"
   },
@@ -75,11 +103,16 @@
       "reason": "string"
     },
     "return_type": "bool",
-    "capability": 18,
-    "required_args": ["accountId"],
+    "capability": 36,
+    "required_args": [
+      "accountId"
+    ],
     "inverse": "FreezeAccount",
     "resources": [
-      {"resource": "account", "cap": 18}
+      {
+        "resource": "account",
+        "cap": 36
+      }
     ],
     "description": "Unfreeze a previously frozen account"
   }

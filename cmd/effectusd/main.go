@@ -302,7 +302,7 @@ func main() {
 	var wg sync.WaitGroup
 
 	factCh := make(chan factEnvelope, 32)
-	state := newServerState(bundle, factCh, store, auth, limiter, acl)
+	state := newServerState(bundle, factCh, store, storeConfig, auth, limiter, acl)
 
 	// Start fact source (non-HTTP)
 	wg.Add(1)

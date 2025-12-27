@@ -297,9 +297,28 @@ func (ts *TypeSystem) LoadVerbSpecs(filename string) error {
 		return fmt.Errorf("failed to parse verb specs: %w", err)
 	}
 
-	// Merge with existing specs
+	// Merge with existing specs and populate verbTypes for flow checks.
 	for name, spec := range specs {
 		ts.verbSpecs[name] = spec
+		if spec == nil {
+			continue
+		}
+		argTypes := make(map[string]*Type, len(spec.ArgTypes))
+		for argName, argType := range spec.ArgTypes {
+			if argType == nil {
+				argTypes[argName] = nil
+				continue
+			}
+			argTypes[argName] = argType.Clone()
+		}
+		var returnType *Type
+		if spec.ReturnType != nil {
+			returnType = spec.ReturnType.Clone()
+		}
+		ts.verbTypes[name] = &VerbInfo{
+			ArgTypes:   argTypes,
+			ReturnType: returnType,
+		}
 	}
 
 	return nil
@@ -357,6 +376,26 @@ func (ts *TypeSystem) MergeTypeSystem(other *TypeSystem) {
 	// Merge verb specs
 	for name, spec := range other.verbSpecs {
 		ts.verbSpecs[name] = spec
+	}
+	// Merge verb type info (needed for flow step type checks).
+	for name, info := range other.verbTypes {
+		if info == nil {
+			continue
+		}
+		cloned := &VerbInfo{
+			ArgTypes: make(map[string]*Type, len(info.ArgTypes)),
+		}
+		for argName, argType := range info.ArgTypes {
+			if argType == nil {
+				cloned.ArgTypes[argName] = nil
+				continue
+			}
+			cloned.ArgTypes[argName] = argType.Clone()
+		}
+		if info.ReturnType != nil {
+			cloned.ReturnType = info.ReturnType.Clone()
+		}
+		ts.verbTypes[name] = cloned
 	}
 
 	// Merge function specs

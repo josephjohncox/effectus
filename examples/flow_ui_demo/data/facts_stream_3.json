@@ -1,0 +1,14 @@
+{
+  "universe": "default",
+  "facts": {
+    "payment": {
+      "state": "captured"
+    },
+    "order": {
+      "state": "shipped"
+    },
+    "clock": {
+      "current_epoch": 1735282000
+    }
+  }
+}

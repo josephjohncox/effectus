@@ -1,0 +1,14 @@
+flow "RiskTriageHighValue" priority 20 {
+  when {
+    order.amount > 1500 &&
+    (customer.risk_score > 70 || risk.stream_score > 80)
+  }
+  steps {
+    ScoreRisk(orderId: order.id, deviceId: device.id)
+    OpenCase(orderId: order.id, reason: "high_value_risk", score: customer.risk_score)
+    HoldPayment(authId: payment.authorization_id, amount: order.amount)
+    QueueForReview(orderId: order.id, queue: "fraud-high")
+    UpdateCase(orderId: order.id, status: "held")
+    NotifyRisk(orderId: order.id, channel: "slack")
+  }
+}

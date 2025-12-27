@@ -1,0 +1,14 @@
+{
+  "universe": "default",
+  "facts": {
+    "risk": {
+      "stream_score": 95
+    },
+    "chargeback": {
+      "open": true
+    },
+    "clock": {
+      "current_epoch": 1735278000
+    }
+  }
+}

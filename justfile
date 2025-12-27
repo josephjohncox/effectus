@@ -13,6 +13,14 @@ UI_DEMO_VERB_DIR := "examples/fraud_e2e/verbs"
 UI_DEMO_BUNDLE := "out/ui_demo/bundle.json"
 UI_DEMO_FACTS := "examples/fraud_e2e/data/facts_payload.json"
 UI_DEMO_TOKEN := "demo-token"
+UI_FLOW_DEMO_RULES := "examples/flow_ui_demo/rules"
+UI_FLOW_DEMO_SCHEMA := "examples/flow_ui_demo/schema"
+UI_FLOW_DEMO_VERBS := "examples/flow_ui_demo/schema/flow_verbs.json"
+UI_FLOW_DEMO_VERB_DIR := "examples/flow_ui_demo/verbs"
+UI_FLOW_DEMO_BUNDLE := "out/flow_ui_demo/bundle.json"
+UI_FLOW_DEMO_FACTS := "examples/flow_ui_demo/data/facts_payload.json"
+UI_FLOW_DEMO_STREAM := "examples/flow_ui_demo/scripts/stream_facts.sh"
+UI_FLOW_DEMO_TOKEN := "flow-demo-token"
 
 # Default recipe
 default:
@@ -225,6 +233,68 @@ ui-demo-open:
 ui-demo-down:
 	@echo "Stopping UI demo... (use Ctrl+C in the ui-demo terminal if it's running)"
 	@rm -rf out/ui_demo
+
+# === UI Flow Demo ===
+
+# Build a flow-heavy demo bundle and start the status UI/runtime.
+ui-flow-demo:
+	@mkdir -p out/flow_ui_demo
+	go run ./cmd/effectusc bundle \
+		--name flow-ui-demo \
+		--version 1.0.0 \
+		--schema-dir {{UI_FLOW_DEMO_SCHEMA}} \
+		--verb-dir {{UI_FLOW_DEMO_VERB_DIR}} \
+		--verbschema {{UI_FLOW_DEMO_VERBS}} \
+		--rules-dir {{UI_FLOW_DEMO_RULES}} \
+		--output {{UI_FLOW_DEMO_BUNDLE}}
+	@echo "Starting effectusd UI..."
+	@echo "Token: {{UI_FLOW_DEMO_TOKEN}}"
+	@echo "Open http://localhost:8080/ui"
+	@echo "Saga compensation enabled (inverse verbs in {{UI_FLOW_DEMO_VERB_DIR}})"
+	@echo ""
+	@echo "Example ingest (baseline facts):"
+	@echo "curl -X POST http://localhost:8080/api/facts \\"
+	@echo "  -H \"Authorization: Bearer {{UI_FLOW_DEMO_TOKEN}}\" \\"
+	@echo "  -H \"Content-Type: application/json\" \\"
+	@echo "  -d @{{UI_FLOW_DEMO_FACTS}}"
+	@echo ""
+	@echo "Example dry run (use stored facts):"
+	@echo "curl -X POST http://localhost:8080/api/playground/dry-run \\"
+	@echo "  -H \"Authorization: Bearer {{UI_FLOW_DEMO_TOKEN}}\" \\"
+	@echo "  -H \"Content-Type: application/json\" \\"
+	@echo "  -d '{\"universe\":\"default\",\"mode\":\"flow\",\"use_stored\":true}'"
+	@echo ""
+	@echo "Streaming facts (simulate updates):"
+	@echo "{{UI_FLOW_DEMO_STREAM}}"
+	go run ./cmd/effectusd \
+		--bundle {{UI_FLOW_DEMO_BUNDLE}} \
+		--http-addr :8080 \
+		--api-token {{UI_FLOW_DEMO_TOKEN}} \
+		--saga \
+		--facts-store file \
+		--facts-path out/flow_ui_demo/facts.json
+
+# Seed the flow demo facts into the running UI instance.
+ui-flow-demo-seed:
+	curl -X POST http://localhost:8080/api/facts \
+		-H "Authorization: Bearer {{UI_FLOW_DEMO_TOKEN}}" \
+		-H "Content-Type: application/json" \
+		-d @{{UI_FLOW_DEMO_FACTS}}
+
+# Stream fact updates (simulated streaming sources).
+ui-flow-demo-stream:
+	EFFECTUS_URL="http://localhost:8080" EFFECTUS_TOKEN="{{UI_FLOW_DEMO_TOKEN}}" {{UI_FLOW_DEMO_STREAM}}
+
+# Open the flow demo UI in a browser (macOS/Linux).
+ui-flow-demo-open:
+	@if command -v open >/dev/null 2>&1; then open http://localhost:8080/ui; \
+	elif command -v xdg-open >/dev/null 2>&1; then xdg-open http://localhost:8080/ui; \
+	else echo "Open http://localhost:8080/ui"; fi
+
+# Clean flow demo artifacts (stop the running process with Ctrl+C in its terminal).
+ui-flow-demo-down:
+	@echo "Stopping flow UI demo... (use Ctrl+C in the ui-flow-demo terminal if it's running)"
+	@rm -rf out/flow_ui_demo
 
 # Test migrations up and down
 test-migrate:

@@ -32,27 +32,29 @@ type factEnvelope struct {
 }
 
 type serverState struct {
-	mu        sync.RWMutex
-	bundle    *unified.Bundle
-	startedAt time.Time
-	updatedAt time.Time
-	factStore factStore
-	factCh    chan<- factEnvelope
-	auth      apiAuth
-	limiter   *rateLimiter
-	acl       *aclMatcher
+	mu         sync.RWMutex
+	bundle     *unified.Bundle
+	startedAt  time.Time
+	updatedAt  time.Time
+	factStore  factStore
+	factConfig factStoreConfig
+	factCh     chan<- factEnvelope
+	auth       apiAuth
+	limiter    *rateLimiter
+	acl        *aclMatcher
 }
 
-func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store factStore, auth apiAuth, limiter *rateLimiter, acl *aclMatcher) *serverState {
+func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store factStore, config factStoreConfig, auth apiAuth, limiter *rateLimiter, acl *aclMatcher) *serverState {
 	return &serverState{
-		bundle:    bundle,
-		startedAt: time.Now(),
-		updatedAt: time.Now(),
-		factStore: store,
-		factCh:    factCh,
-		auth:      auth,
-		limiter:   limiter,
-		acl:       acl,
+		bundle:     bundle,
+		startedAt:  time.Now(),
+		updatedAt:  time.Now(),
+		factStore:  store,
+		factConfig: config,
+		factCh:     factCh,
+		auth:       auth,
+		limiter:    limiter,
+		acl:        acl,
 	}
 }
 
@@ -820,17 +822,36 @@ func summariesOrEmpty(store factStore) []universeSummary {
 	return store.Summaries()
 }
 
+func factConfigSummary(config factStoreConfig) *factStoreConfigSummary {
+	summary := &factStoreConfigSummary{
+		DefaultMerge: string(config.defaultStrategy),
+		Cache: factCacheSummary{
+			Policy:        config.cache.policy,
+			MaxUniverses:  config.cache.maxUniverses,
+			MaxNamespaces: config.cache.maxNamespaces,
+		},
+	}
+	if len(config.perNamespace) > 0 {
+		summary.NamespaceMerge = make(map[string]string, len(config.perNamespace))
+		for namespace, strategy := range config.perNamespace {
+			summary.NamespaceMerge[namespace] = string(strategy)
+		}
+	}
+	return summary
+}
+
 type statusResponse struct {
-	Bundle       *bundleSummary    `json:"bundle"`
-	Counts       bundleCounts      `json:"counts"`
-	StartedAt    time.Time         `json:"started_at"`
-	LastReload   time.Time         `json:"last_reload"`
-	UptimeSec    int64             `json:"uptime_sec"`
-	Universes    []universeSummary `json:"universes"`
-	RequiredFact []string          `json:"required_facts"`
-	FactStore    string            `json:"fact_store"`
-	VerbCount    int               `json:"verb_count"`
-	FactCount    int               `json:"fact_count"`
+	Bundle          *bundleSummary          `json:"bundle"`
+	Counts          bundleCounts            `json:"counts"`
+	StartedAt       time.Time               `json:"started_at"`
+	LastReload      time.Time               `json:"last_reload"`
+	UptimeSec       int64                   `json:"uptime_sec"`
+	Universes       []universeSummary       `json:"universes"`
+	RequiredFact    []string                `json:"required_facts"`
+	FactStore       string                  `json:"fact_store"`
+	FactStoreConfig *factStoreConfigSummary `json:"fact_store_config,omitempty"`
+	VerbCount       int                     `json:"verb_count"`
+	FactCount       int                     `json:"fact_count"`
 }
 
 type bundleSummary struct {
@@ -847,6 +868,18 @@ type bundleSummary struct {
 type bundleCounts struct {
 	Rules int `json:"rules"`
 	Flows int `json:"flows"`
+}
+
+type factStoreConfigSummary struct {
+	DefaultMerge   string            `json:"default_merge"`
+	NamespaceMerge map[string]string `json:"namespace_merge,omitempty"`
+	Cache          factCacheSummary  `json:"cache"`
+}
+
+type factCacheSummary struct {
+	Policy        string `json:"policy"`
+	MaxUniverses  int    `json:"max_universes"`
+	MaxNamespaces int    `json:"max_namespaces"`
 }
 
 func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -874,14 +907,15 @@ func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 			Rules: countRules(bundle),
 			Flows: countFlows(bundle),
 		},
-		StartedAt:    s.startedAt,
-		LastReload:   s.updatedAt,
-		UptimeSec:    int64(time.Since(s.startedAt).Seconds()),
-		Universes:    summariesOrEmpty(s.factStore),
-		RequiredFact: bundle.RequiredFacts,
-		FactStore:    storeTypeOrUnknown(s.factStore),
-		VerbCount:    len(bundle.VerbSpecs),
-		FactCount:    len(bundle.FactTypes),
+		StartedAt:       s.startedAt,
+		LastReload:      s.updatedAt,
+		UptimeSec:       int64(time.Since(s.startedAt).Seconds()),
+		Universes:       summariesOrEmpty(s.factStore),
+		RequiredFact:    bundle.RequiredFacts,
+		FactStore:       storeTypeOrUnknown(s.factStore),
+		FactStoreConfig: factConfigSummary(s.factConfig),
+		VerbCount:       len(bundle.VerbSpecs),
+		FactCount:       len(bundle.FactTypes),
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -1619,6 +1653,30 @@ const uiHTML = `<!doctype html>
       return { "Authorization": "Bearer " + token };
     };
 
+    const formatMergeConfig = (config) => {
+      if (!config) return null;
+      const defaultMerge = config.default_merge || "-";
+      const nsConfig = config.namespace_merge || {};
+      const nsEntries = Object.keys(nsConfig)
+        .sort()
+        .map(key => key + "=" + nsConfig[key]);
+      const nsText = nsEntries.length ? nsEntries.join(", ") : "none";
+      const cache = config.cache || {};
+      const policy = cache.policy || "none";
+      let cacheText = policy;
+      if (policy !== "none") {
+        const maxU = cache.max_universes || 0;
+        const maxN = cache.max_namespaces || 0;
+        const maxUText = maxU > 0 ? maxU : "unlimited";
+        const maxNText = maxN > 0 ? maxN : "unlimited";
+        cacheText += " (universes " + maxUText + ", namespaces " + maxNText + ")";
+      }
+      return {
+        merge: "default " + defaultMerge + ", namespaces " + nsText,
+        cache: cacheText
+      };
+    };
+
     function saveToken() {
       const input = document.getElementById("api-token");
       if (!input) return;
@@ -1635,6 +1693,11 @@ const uiHTML = `<!doctype html>
       const el = document.getElementById("status");
       if (!el) return;
       const bundle = status.bundle || {};
+      const mergeConfig = formatMergeConfig(status.fact_store_config);
+      const mergeHTML = mergeConfig
+        ? '<div class="muted">merge: ' + escapeHtml(mergeConfig.merge) + '</div>' +
+          '<div class="muted">cache: ' + escapeHtml(mergeConfig.cache) + '</div>'
+        : "";
       el.innerHTML =
         '<div class="row">' +
           '<span class="pill">' + escapeHtml(bundle.name || '-') + '</span>' +
@@ -1649,6 +1712,7 @@ const uiHTML = `<!doctype html>
           '<span class="pill">uptime: ' + status.uptime_sec + 's</span>' +
           '<span class="pill">universes: ' + (status.universes ? status.universes.length : 0) + '</span>' +
         '</div>' +
+        mergeHTML +
         '<div style="color: var(--muted); font-size: 12px;">' + escapeHtml(bundle.description || '') + '</div>';
     };
 
