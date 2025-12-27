@@ -1,5 +1,7 @@
 # Effectus - Typed, Deterministic Rule Engine
 
+![Effectus logo](./effectus.png)
+
 Effectus is a strongly-typed rule engine that turns live Facts into safe, deterministic Effects. It enforces types at compile time, supports dynamic extensions, and runs as a library or a daemon with hot-reloadable bundles.
 
 ## Highlights
