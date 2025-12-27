@@ -261,7 +261,8 @@ func (f *FileWatcherSource) shouldProcessEvent(event fsnotify.Event) bool {
 		filename := filepath.Base(event.Name)
 		matched := false
 		for _, pattern := range f.patterns {
-			if matched, _ := filepath.Match(pattern, filename); matched {
+			ok, _ := filepath.Match(pattern, filename)
+			if ok {
 				matched = true
 				break
 			}

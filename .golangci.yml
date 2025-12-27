@@ -1,14 +1,21 @@
+version: 2
+
 run:
   timeout: 5m
   tests: false
 
 linters:
-  disable-all: true
   enable:
     - govet
-    - gofmt
     - ineffassign
-    - typecheck
+  disable:
+    - errcheck
+    - staticcheck
+    - unused
+
+formatters:
+  enable:
+    - gofmt
 
 issues:
   max-issues-per-linter: 0

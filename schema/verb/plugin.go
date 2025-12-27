@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"plugin"
-
 )
 
 // Plugin is the interface that plugins must implement
