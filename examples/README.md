@@ -68,7 +68,7 @@ em.AddLoader(loader.NewJSONSchemaLoader("config", "schema.json"))
 
 // Load all extensions
 registry := schema.NewRegistry()
-verbRegistry := verb.NewVerbRegistry()
+verbRegistry := verb.NewRegistry(nil)
 schema.LoadExtensionsIntoRegistries(em, registry, verbRegistry)
 ```
 
@@ -87,15 +87,15 @@ if err != nil {
 schema.LoadExtensionsIntoRegistries(em, registry, verbRegistry)
 ```
 
-### 3. **Registry-First Pattern** (Legacy)
+### 3. **Registry-First Pattern**
 ```go
 // Direct registry manipulation (less flexible)
 registry := schema.NewRegistry()
 registry.RegisterFunction("validateCustomer", myValidationFunc)
 registry.LoadFromMap(myBusinessData)
 
-verbRegistry := verb.NewVerbRegistry()
-verbRegistry.Register(&verb.StandardVerbSpec{...})
+verbRegistry := verb.NewRegistry(nil)
+verbRegistry.RegisterVerb(&verb.Spec{...})
 ```
 
 ### 4. **Fact Provider Pattern**
@@ -128,8 +128,8 @@ if value, exists := factProvider.Get("customer.vip"); exists {
 
 ## See Also
 
-- [Extension System Documentation](../effectus-go/loader/README.md) ⭐
+- [Extension System Documentation](../loader/README.md) ⭐
 - [Core Architecture](../docs/ARCHITECTURE.md)
 - [Design Principles](../docs/design.md)  
-- [Verb System Documentation](../effectus-go/schema/verb/)
-- [Expression Registry](../effectus-go/schema/) 
+- [Verb System Documentation](../schema/verb/)
+- [Expression Registry](../schema/) 

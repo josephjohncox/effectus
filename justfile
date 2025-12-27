@@ -27,32 +27,32 @@ install-sql-tools:
 # Build the project
 build:
 	just buf-generate
-	go build -o bin/effectusc ./effectus-go/cmd/effectusc
-	go build -o bin/effectusd ./effectus-go/cmd/effectusd
+	go build -o bin/effectusc ./cmd/effectusc
+	go build -o bin/effectusd ./cmd/effectusd
 
 # Run all tests
 test:
-	go test -v ./effectus-go/...
+	go test -v ./...
 
 # Run tests with coverage
 test-coverage:
-	go test -v -coverprofile=coverage.out ./effectus-go/...
+	go test -v -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
 
 # Lint the codebase
 lint:
-	golangci-lint run ./effectus-go/...
+	golangci-lint run ./...
 	just buf-lint
 
 # Format code
 fmt:
-	go fmt ./effectus-go/...
+	go fmt ./...
 	just buf-format
 
 # Clean build artifacts
 clean:
 	rm -rf bin/
-	rm -rf effectus-go/gen/
+	rm -rf gen/
 	rm -rf clients/
 	rm -f coverage.out coverage.html
 
@@ -101,41 +101,41 @@ setup-test-db:
 # Generate Go code from SQL queries
 sql-generate:
 	@echo "Generating Go code from SQL queries..."
-	cd effectus-go/runtime && sqlc generate
+	cd runtime && sqlc generate
 	@echo "✅ Code generated in internal/db/"
 
 # Check if generated code is up to date
 sql-generate-check:
 	@echo "Checking if generated code is up to date..."
-	@git diff --quiet effectus-go/runtime/internal/db/ || (echo "❌ Generated code is out of date. Run 'just sql-generate'" && exit 1)
+	@git diff --quiet runtime/internal/db/ || (echo "❌ Generated code is out of date. Run 'just sql-generate'" && exit 1)
 	@echo "✅ Generated code is up to date"
 
 # Run all pending migrations
 migrate-up:
 	@echo "Running migrations..."
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
 	@echo "✅ Migrations complete"
 
 # Rollback last migration
 migrate-down:
 	@echo "Rolling back last migration..."
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" down
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" down
 	@echo "✅ Rollback complete"
 
 # Show migration status
 migrate-status:
 	@echo "Migration status:"
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" status
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" status
 
 # Show current migration version
 migrate-version:
 	@echo "Current migration version:"
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" version
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" version
 
 # Create a new migration
 migrate-create name:
 	@echo "Creating migration: {{name}}"
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} create {{name}} sql
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} create {{name}} sql
 	@echo "✅ Migration created"
 
 # Reset database (⚠️ DESTROYS ALL DATA)
@@ -143,7 +143,7 @@ migrate-reset:
 	@echo "⚠️  This will destroy all data. Continue? (Press Enter to continue, Ctrl+C to cancel)"
 	@read
 	@echo "Resetting database..."
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
 	@echo "✅ Database reset"
 
 # Reset and run all migrations (⚠️ DESTROYS ALL DATA)  
@@ -151,21 +151,21 @@ migrate-fresh:
 	@echo "⚠️  This will destroy all data. Continue? (Press Enter to continue, Ctrl+C to cancel)"
 	@read
 	@echo "Fresh migration..."
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
 	@echo "✅ Fresh migration complete"
 
 # Run integration tests with database
 test-integration: setup-test-db
 	@echo "Running integration tests..."
-	DB_DSN="postgres://effectus:effectus@localhost/effectus_test?sslmode=disable" go test -v -tags=integration ./effectus-go/runtime/...
+	DB_DSN="postgres://effectus:effectus@localhost/effectus_test?sslmode=disable" go test -v -tags=integration ./runtime/...
 
 # Test migrations up and down
 test-migrate:
 	@echo "Testing migrations..."
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
 	@echo "✅ Migration tests complete"
 
 # Complete development setup for SQL
@@ -179,7 +179,7 @@ dev-sql-reset: migrate-fresh sql-generate
 # Validate all SQL and generated code
 sql-validate: sql-generate-check
 	@echo "Validating SQL queries..."
-	cd effectus-go/runtime && sqlc vet
+	cd runtime && sqlc vet
 	@echo "✅ Validation complete"
 
 # Lint SQL files (requires sqlfluff)
@@ -195,15 +195,15 @@ sql-format:
 # Generate schema documentation
 schema-docs:
 	@echo "Generating schema documentation..."
-	@echo "Database Schema Documentation" > effectus-go/runtime/SCHEMA.md
-	@echo "============================" >> effectus-go/runtime/SCHEMA.md
-	@psql "{{DB_DSN}}" -c "\dt" >> effectus-go/runtime/SCHEMA.md
+	@echo "Database Schema Documentation" > runtime/SCHEMA.md
+	@echo "============================" >> runtime/SCHEMA.md
+	@psql "{{DB_DSN}}" -c "\dt" >> runtime/SCHEMA.md
 	@echo "✅ Schema documentation generated"
 
 # Clean generated SQL files
 sql-clean:
 	@echo "Cleaning generated SQL files..."
-	rm -rf effectus-go/runtime/internal/db/*.go
+	rm -rf runtime/internal/db/*.go
 	@echo "✅ SQL clean complete"
 
 # Clean everything including database (⚠️ DESTROYS ALL DATA)
@@ -283,19 +283,19 @@ vscode-dev-setup: vscode-install vscode-compile
 
 # Register a new verb schema
 register-verb name input_schema output_schema:
-	go run ./effectus-go/cmd/effectusc schema register-verb --name={{name}} --input="{{input_schema}}" --output="{{output_schema}}"
+	go run ./cmd/effectusc schema register-verb --name={{name}} --input="{{input_schema}}" --output="{{output_schema}}"
 
 # Register a new fact schema
 register-fact name schema:
-	go run ./effectus-go/cmd/effectusc schema register-fact --name={{name}} --schema="{{schema}}"
+	go run ./cmd/effectusc schema register-fact --name={{name}} --schema="{{schema}}"
 
 # List all registered schemas
 list-schemas:
-	go run ./effectus-go/cmd/effectusc schema list
+	go run ./cmd/effectusc schema list
 
 # Validate schema compatibility
 validate-schemas:
-	go run ./effectus-go/cmd/effectusc schema validate
+	go run ./cmd/effectusc schema validate
 
 # Generate client code for all languages
 generate-clients:
@@ -321,7 +321,7 @@ watch:
 
 # Start development server
 serve:
-	go run ./effectus-go/cmd/effectusd
+	go run ./cmd/effectusd
 
 # === Docker Commands ===
 
@@ -355,7 +355,7 @@ example-modern-sql:
 
 # Generate documentation
 docs:
-	go doc -all ./effectus-go/... > docs/api.md
+	go doc -all ./... > docs/api.md
 
 # Serve documentation locally
 docs-serve:
@@ -371,6 +371,6 @@ release version:
 
 # Create release binaries
 release-build:
-	GOOS=linux GOARCH=amd64 go build -o bin/effectusc-linux-amd64 ./effectus-go/cmd/effectusc
-	GOOS=darwin GOARCH=amd64 go build -o bin/effectusc-darwin-amd64 ./effectus-go/cmd/effectusc
-	GOOS=windows GOARCH=amd64 go build -o bin/effectusc-windows-amd64.exe ./effectus-go/cmd/effectusc
+	GOOS=linux GOARCH=amd64 go build -o bin/effectusc-linux-amd64 ./cmd/effectusc
+	GOOS=darwin GOARCH=amd64 go build -o bin/effectusc-darwin-amd64 ./cmd/effectusc
+	GOOS=windows GOARCH=amd64 go build -o bin/effectusc-windows-amd64.exe ./cmd/effectusc

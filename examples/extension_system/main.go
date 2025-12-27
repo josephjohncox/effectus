@@ -319,7 +319,7 @@ func main() {
 	fmt.Println("\nExecuting Verbs:")
 	if spec, exists := verbRegistry.GetVerb("ProcessPayment"); exists {
 		ctx := context.Background()
-		result, err := spec.ExecutorImpl.Execute(ctx, map[string]interface{}{
+		result, err := spec.Executor.Execute(ctx, map[string]interface{}{
 			"amount": 99.99,
 			"method": "credit_card",
 		})

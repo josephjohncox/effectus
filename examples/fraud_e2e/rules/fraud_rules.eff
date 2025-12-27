@@ -1,0 +1,18 @@
+rule "HighRiskLargeTxn" priority 10 {
+  when {
+    transaction.amount > 1000 && customer.risk_score > 80
+  }
+  then {
+    FlagFraud(orderId: transaction.id, reason: "risk+amount")
+    NotifyRisk(orderId: transaction.id, channel: "pager")
+  }
+}
+
+rule "ExtremeAmountFreeze" priority 5 {
+  when {
+    transaction.amount > 5000
+  }
+  then {
+    FreezeAccount(accountId: customer.id, reason: "extreme_amount")
+  }
+}

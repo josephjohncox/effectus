@@ -38,3 +38,8 @@ bin/
 **/dist/
 **/build/
 **/.DS_Store
+
+# Generated assets
+gen/
+node_modules/
+coverage.html

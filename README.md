@@ -194,9 +194,9 @@ See [docs/theory/](docs/theory/) for detailed mathematical foundations.
 ## Project Structure
 
 ```
-effectus-go/
+.
 ├── compiler/       ← Extension compilation & validation
-├── runtime/        ← Execution runtime with coherent flow  
+├── runtime/        ← Execution runtime with coherent flow
 ├── loader/         ← Extension loading (static/dynamic/OCI)
 ├── schema/         ← Type system & registries
 ├── cmd/
@@ -263,9 +263,8 @@ Effectus is under active development. Current focus areas:
 
 ## Contributing
 
-We welcome contributions! Please see our contributing guidelines and feel free to open issues or pull requests.
+We welcome contributions! Please see `CONTRIBUTING.md` for workflow details and `SECURITY.md` for vulnerability reporting.
 
 ## License
 
 [MIT License](LICENSE) - see LICENSE file for details.
-

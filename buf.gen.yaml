@@ -9,11 +9,11 @@ managed:
 plugins:
   # Go generation
   - plugin: buf.build/protocolbuffers/go
-    out: effectus-go/gen
+    out: gen
     opt:
       - paths=source_relative
   - plugin: buf.build/grpc/go
-    out: effectus-go/gen
+    out: gen
     opt:
       - paths=source_relative
 
