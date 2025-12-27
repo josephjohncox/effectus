@@ -49,6 +49,21 @@ flow "BindingFail" priority 1 {
 			shouldPass:  false,
 			errContains: "variable $riskScore has type",
 		},
+		{
+			name: "invalid_binding_missing",
+			flowContent: `
+flow "BindingMissing" priority 1 {
+  when {
+    customer.status == "active"
+  }
+  steps {
+    UpdateCase(caseId: $missing, status: "held")
+  }
+}
+`,
+			shouldPass:  false,
+			errContains: "unknown variable reference",
+		},
 	}
 
 	for _, tc := range tests {
