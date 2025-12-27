@@ -1,118 +1,43 @@
 # Effectus Documentation
 
-Welcome to the Effectus documentation! This directory contains comprehensive documentation for the Effectus typed rule engine.
+This directory contains the documentation for Effectus. Start here and follow the paths that match your role.
 
-## Getting Started
+## Start here
 
-Start here if you're new to Effectus:
+1. `../README.md` - project overview and quick start
+2. `SYSTEM_INTENT.md` - design intent and correctness criteria
+3. `GLOSSARY.md` - shared vocabulary
+4. `BASICS.md` - facts, verbs, rules, flows
+5. `TUTORIALS.md` - short walkthroughs
+6. `COMMANDS.md` - CLI reference
 
-1. **[Project README](../README.md)** - Overview, quick start, and installation
-2. **[System Intent](SYSTEM_INTENT.md)** - Design intent and correctness criteria
-3. **[Glossary](GLOSSARY.md)** - Shared vocabulary for contributors
-4. **[Basics](BASICS.md)** - Core concepts: Facts, Verbs, Effects, and rules
-5. **[Commands](COMMANDS.md)** - CLI tools reference
-6. **[Quick Tutorials](TUTORIALS.md)** - Short walkthroughs for common tasks
+## Runtime operations
 
-## Core Documentation
+- `RUNTIME_CONFIG.md` - YAML config for non-library deployments
+- `FACT_SOURCES.md` - adapters for Kafka/CDC/SQL/S3/Iceberg/AMQP/gRPC
+- `GRPC_EXECUTION.md` - gRPC execution interface
+- `charts/effectusd/` - Helm chart (OCI)
 
-### Architecture & Design
-- **[Architecture](ARCHITECTURE.md)** - Complete system architecture and production deployment
-- **[Design Document](design.md)** - Comprehensive technical design (advanced)
-- **[Mathematical Foundations](theory/)** - Category theory, formal semantics, and proofs
+## Extension system
 
-### Extension System
-- **[Extension System](EXTENSION_SYSTEM.md)** - Unified verb, schema, and bundle system
-- **[Coherent Flow](coherent_flow.md)** - Extension loading -> compilation -> execution
+- `EXTENSION_SYSTEM.md` - JSON and OCI verb schemas and executors
+- `coherent_flow.md` - extension to compile to execution flow
 
-### Integration & Deployment
-- **[gRPC Execution Interface](GRPC_EXECUTION.md)** - Standard Facts -> Effects interface with rulesets
-- **[Client Examples](CLIENT_EXAMPLES.md)** - Multi-language client integration examples
-- **[External Fact Sources](FACT_SOURCES.md)** - Streaming + batch tutorials for SQL/Kafka/S3/Iceberg adapters
-- **[Helm Chart](../charts/effectusd/)** - Deploy effectusd via OCI Helm chart
-- **[Runtime Config](RUNTIME_CONFIG.md)** - YAML config for non-library deployments
+## Architecture and theory
 
-## Learning Path
-
-### 1. **New Users**
-   - Read [Project README](../README.md)
-   - Read [Basics](BASICS.md)
-   - Try the [coherent flow example](../examples/coherent_flow/)
-
-### 2. **Developers**
-   - Read [Architecture](ARCHITECTURE.md) **START HERE**
-   - Study [Extension System](EXTENSION_SYSTEM.md)
-   - Review [coherent flow example](../examples/coherent_flow/)
-
-### 3. **System Integrators**
-   - Read [Commands](COMMANDS.md)
-   - Study [gRPC Execution Interface](GRPC_EXECUTION.md)
-   - Follow [External Fact Sources](FACT_SOURCES.md)
-   - Review [Client Examples](CLIENT_EXAMPLES.md)
-   - Study deployment patterns in [Architecture](ARCHITECTURE.md)
-
-### 4. **Advanced Users**
-   - Read [Design Document](design.md)
-   - Study [Theory](theory/) directory
-   - Contribute to the codebase
-
-## Key Features
-
-- **Protocol-First Development** - Schema as single source of truth with buf integration
-- **Multi-Source Data Ingestion** - Kafka, HTTP, SQL/Snowflake, S3, Iceberg, Postgres/MySQL CDC, AMQP, gRPC, Database, Redis, File adapters
-- **Static Validation** - All rules validated before runtime with comprehensive type checking
-- **VS Code Integration** - Full language support with IntelliSense and hot reload
-- **Modern SQL Storage** - Type-safe queries with sqlc and automatic migrations with goose
-- **Production-Ready** - OCI bundles, distributed locking, saga compensation, observability
+- `ARCHITECTURE.md` - system architecture
+- `design.md` - detailed design doc
+- `theory/` - mathematical foundations
 
 ## Examples
 
-Working examples demonstrating Effectus features:
+- `../examples/coherent_flow/`
+- `../examples/proto_driven_development/`
+- `../examples/cdc_all/`
+- `../examples/flow_ui_demo/`
 
-- **[Protocol-Driven Development](../examples/proto_driven_development/)** - Schema-first development workflow
-- **[Multi-Source Ingestion](../examples/multi_source_ingestion/)** - Universal data ingestion examples
-- **[Extension System](../examples/extension_system/)** - Static and dynamic extension loading
-- **[CDC Demos](../examples/cdc_all/)** - Postgres CDC + MySQL CDC + AMQP with a local docker stack
-- **[Warehouse Sources](../examples/warehouse_sources/)** - Snowflake + Iceberg configs and local devstack
-- **[Business Examples](../examples/)** - Domain-specific rule examples
+## Doc guidelines
 
-## CDC Stack and Integration Tests
-
-Start the local stack and run the CDC demos:
-
-```bash
-just cdc-up
-go run ./examples/cdc_all
-just cdc-down
-```
-
-Run the CDC integration tests (requires Docker):
-
-```bash
-just cdc-up
-just cdc-test
-just cdc-down
-```
-
-## Warehouse Devstack Smoke Test
-
-```bash
-just devstack-smoke-test
-```
-
-## Contributing to Documentation
-
-We welcome documentation improvements! Please:
-
-1. Keep documentation accurate to the actual implementation
-2. Follow the established structure and writing style
-3. Include practical examples where helpful
-4. Update this README if your changes affect the documentation structure
-
-## Need Help?
-
-- Check the [Project README](../README.md) for community links
-- Review [Commands](COMMANDS.md) for CLI help
-- Study working [examples](../examples/)
-- Read the [Architecture](ARCHITECTURE.md) for comprehensive system overview
-
-This documentation reflects the current implementation of Effectus and its production-ready architecture. 
+- Keep docs consistent with the current implementation.
+- Add runnable commands and expected outputs where useful.
+- Update this index when you add or remove major docs.
