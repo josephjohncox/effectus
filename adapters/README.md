@@ -139,6 +139,51 @@ config:
 - Automatic connection management
 - JSON serialization of database rows
 
+### PostgreSQL CDC (Logical Decoding)
+
+Stream logical changes using a replication slot (requires `wal2json` plugin).
+
+```yaml
+source_id: "orders_cdc"
+type: "postgres_cdc"
+config:
+  connection_string: "postgres://user:pass@localhost:5432/app_db"
+  slot_name: "effectus_orders"
+  plugin: "wal2json"
+  create_slot: true
+  poll_interval: "2s"
+  max_changes: 200
+  schema_mapping:
+    public.orders: "acme.v1.facts.OrderChange"
+```
+
+**Notes:**
+- Requires `wal2json` or another logical decoding plugin on the server.
+- Use `start_lsn` to resume from a known position.
+
+### MySQL CDC (Binlog Streaming)
+
+Stream row changes from MySQL or MariaDB binlogs.
+
+```yaml
+source_id: "mysql_cdc"
+type: "mysql_cdc"
+config:
+  host: "localhost"
+  port: 3306
+  user: "replicator"
+  password: "secret"
+  server_id: 100
+  flavor: "mysql"
+  tables: ["app.orders", "app.customers"]
+  schema_mapping:
+    app.orders: "acme.v1.facts.OrderChange"
+```
+
+**Notes:**
+- Ensure `binlog_format=ROW` and the user has REPLICATION privileges.
+- Use `start_file`/`start_pos` or `gtid` to resume from a known position.
+
 ### SQL / Snowflake (Generic SQL Adapter)
 
 Use the generic SQL adapter when your data source is queryable via `database/sql` drivers
@@ -263,6 +308,40 @@ config:
 - Configurable batch processing
 - Persistent stream consumption
 - Connection pooling and retry logic
+
+### AMQP (RabbitMQ)
+
+Consume messages from AMQP queues and emit facts.
+
+```yaml
+source_id: "amqp_events"
+type: "amqp"
+config:
+  url: "amqp://guest:guest@localhost:5672/"
+  queue: "events"
+  exchange: "events"
+  routing_key: "events.*"
+  format: "json"
+  schema_name: "acme.v1.facts.Event"
+```
+
+### gRPC Streaming
+
+Consume a server-streaming RPC that emits `google.protobuf.Struct`.
+
+```yaml
+source_id: "grpc_events"
+type: "grpc"
+config:
+  address: "localhost:9000"
+  method: "/acme.v1.Facts/StreamFacts"
+  tls: false
+  schema_name: "acme.v1.facts.Event"
+  fact_type_field: "type"    # optional: map per-event types
+```
+
+**Notes:**
+- The adapter sends a `google.protobuf.Struct` request and expects a stream of `google.protobuf.Struct`.
 
 ### File System Watcher
 
@@ -446,18 +525,18 @@ for fact := range factChan {
 
 | Type | Description | Status |
 |------|-------------|--------|
-| `http` | HTTP webhooks and REST APIs | ✅ Stable |
-| `kafka` | Kafka message streaming | ✅ Stable |
-| `postgres_poller` | PostgreSQL database polling | ✅ Stable |
-| `redis_streams` | Redis streams and consumer groups | ✅ Stable |
-| `file_watcher` | File system change monitoring | ✅ Stable |
-| `sql` | Generic SQL (Snowflake/Trino/Athena/MySQL) | ✅ Stable |
-| `s3` | S3 object storage (batch + stream) | ✅ Stable |
-| `iceberg` | Iceberg tables via SQL engines | ✅ Stable |
-| `postgres_cdc` | PostgreSQL change data capture | 📋 Planned |
-| `mysql_cdc` | MySQL binlog streaming | 📋 Planned |
-| `amqp` | RabbitMQ and AMQP | 📋 Planned |
-| `grpc` | gRPC streaming | 📋 Planned |
+| `http` | HTTP webhooks and REST APIs | Stable |
+| `kafka` | Kafka message streaming | Stable |
+| `postgres_poller` | PostgreSQL database polling | Stable |
+| `redis_streams` | Redis streams and consumer groups | Stable |
+| `file_watcher` | File system change monitoring | Stable |
+| `sql` | Generic SQL (Snowflake/Trino/Athena/MySQL) | Stable |
+| `s3` | S3 object storage (batch + stream) | Stable |
+| `iceberg` | Iceberg tables via SQL engines | Stable |
+| `postgres_cdc` | PostgreSQL change data capture | Stable |
+| `mysql_cdc` | MySQL binlog streaming | Stable |
+| `amqp` | RabbitMQ and AMQP | Stable |
+| `grpc` | gRPC streaming | Stable |
 
 ## **Best Practices**
 
@@ -478,6 +557,13 @@ for fact := range factChan {
 
 ### Observability
 - Export metrics for all sources
+
+### CDC Integration Tests
+Run with:
+```bash
+POSTGRES_DSN=... MYSQL_HOST=... MYSQL_USER=... MYSQL_PASSWORD=... MYSQL_DATABASE=... MYSQL_DSN=... \
+go test -tags=integration ./adapters/postgres ./adapters/mysql
+```
 - Include tracing headers for distributed systems
 - Log important events with structured data
 

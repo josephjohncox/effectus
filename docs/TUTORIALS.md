@@ -63,3 +63,37 @@ config:
 4. For Parquet objects, set `format: "parquet"`.
 
 See `examples/warehouse_sources/` for production-style config files.
+See `examples/warehouse_sources/s3_parquet_demo` for a runnable Parquet reader.
+
+## 4) Postgres CDC (wal2json)
+1. Ensure `wal2json` is installed and `wal_level=logical`.
+2. Create a source config:
+
+```yaml
+source_id: "orders_cdc"
+type: "postgres_cdc"
+config:
+  connection_string: "postgres://user:pass@localhost:5432/app_db"
+  slot_name: "effectus_orders"
+  plugin: "wal2json"
+  create_slot: true
+  poll_interval: "2s"
+  schema_mapping:
+    public.orders: "acme.v1.facts.OrderChange"
+```
+
+## 5) AMQP streaming
+1. Create a queue and exchange.
+2. Create a source config:
+
+```yaml
+source_id: "amqp_events"
+type: "amqp"
+config:
+  url: "amqp://guest:guest@localhost:5672/"
+  queue: "events"
+  exchange: "events"
+  routing_key: "events.*"
+  format: "json"
+  schema_name: "acme.v1.facts.Event"
+```

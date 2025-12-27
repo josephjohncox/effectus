@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/effectus/effectus-go/adapters"
 )
@@ -20,6 +21,8 @@ type CDCConfig struct {
 	ConnectionString     string                    `json:"connection_string" yaml:"connection_string"`
 	SlotName             string                    `json:"slot_name" yaml:"slot_name"`
 	PublicationName      string                    `json:"publication_name" yaml:"publication_name"`
+	Plugin               string                    `json:"plugin" yaml:"plugin"`
+	CreateSlot           bool                      `json:"create_slot" yaml:"create_slot"`
 	Tables               []string                  `json:"tables" yaml:"tables"`
 	Operations           []string                  `json:"operations" yaml:"operations"` // INSERT, UPDATE, DELETE
 	SchemaMapping        map[string]string         `json:"schema_mapping" yaml:"schema_mapping"`
@@ -27,6 +30,8 @@ type CDCConfig struct {
 	BatchSize            int                       `json:"batch_size" yaml:"batch_size"`
 	HeartbeatIntervalSec int                       `json:"heartbeat_interval_sec" yaml:"heartbeat_interval_sec"`
 	BufferSize           int                       `json:"buffer_size" yaml:"buffer_size"`
+	PollInterval         time.Duration             `json:"poll_interval" yaml:"poll_interval"`
+	MaxChanges           int                       `json:"max_changes" yaml:"max_changes"`
 	Transforms           []adapters.Transformation `json:"transforms" yaml:"transforms"`
 }
 
@@ -41,6 +46,7 @@ type CDCSource struct {
 	cancel      context.CancelFunc
 	schema      *adapters.Schema
 	running     bool
+	currentLSN  string
 }
 
 // ChangeEvent represents a database change event
@@ -67,6 +73,15 @@ func NewCDCSource(config *CDCConfig) (*CDCSource, error) {
 	}
 	if config.PublicationName == "" {
 		config.PublicationName = fmt.Sprintf("effectus_pub_%s", config.SourceID)
+	}
+	if config.Plugin == "" {
+		config.Plugin = "wal2json"
+	}
+	if config.PollInterval == 0 {
+		config.PollInterval = 2 * time.Second
+	}
+	if config.MaxChanges == 0 {
+		config.MaxChanges = 100
 	}
 	if config.BatchSize == 0 {
 		config.BatchSize = 100
@@ -146,8 +161,17 @@ func (c *CDCSource) Start(ctx context.Context) error {
 
 	c.running = true
 
-	// Start mock data generation (simplified for demonstration)
-	go c.generateMockChanges()
+	if c.config.CreateSlot {
+		if err := c.ensureSlot(ctx); err != nil {
+			return err
+		}
+	}
+
+	if c.config.StartLSN != "" {
+		c.currentLSN = c.config.StartLSN
+	}
+
+	go c.pollChanges()
 
 	return nil
 }
@@ -201,39 +225,155 @@ func (c *CDCSource) GetMetadata() adapters.SourceMetadata {
 	}
 }
 
-// generateMockChanges simulates database changes (for demonstration)
-func (c *CDCSource) generateMockChanges() {
-	ticker := time.NewTicker(5 * time.Second)
+func (c *CDCSource) pollChanges() {
+	ticker := time.NewTicker(c.config.PollInterval)
 	defer ticker.Stop()
 
-	counter := 1
+	if err := c.fetchChanges(); err != nil {
+		log.Printf("PostgreSQL CDC initial fetch failed: %v", err)
+	}
+
 	for {
 		select {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
-			// Generate mock change event
-			change := &ChangeEvent{
-				Operation: "INSERT",
-				Schema:    "public",
-				Table:     "events",
-				After: map[string]interface{}{
-					"id":         counter,
-					"event_type": "user_action",
-					"data":       fmt.Sprintf(`{"user_id": %d, "action": "demo"}`, counter),
-				},
-				LSN:       fmt.Sprintf("0/%08X", counter*1000),
-				Timestamp: time.Now(),
-				TxID:      uint32(counter),
+			if err := c.fetchChanges(); err != nil {
+				log.Printf("PostgreSQL CDC fetch failed: %v", err)
 			}
-
-			if err := c.processChangeEvent(change); err != nil {
-				log.Printf("Failed to process change: %v", err)
-			}
-
-			counter++
 		}
 	}
+}
+
+func (c *CDCSource) fetchChanges() error {
+	if c.pool == nil {
+		return fmt.Errorf("connection pool not initialized")
+	}
+
+	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+	defer cancel()
+
+	var startLSN interface{}
+	if c.currentLSN != "" {
+		startLSN = c.currentLSN
+	}
+
+	rows, err := c.pool.Query(ctx,
+		"SELECT lsn, xid, data FROM pg_logical_slot_get_changes($1, $2, $3)",
+		c.config.SlotName,
+		startLSN,
+		c.config.MaxChanges,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var lsn string
+		var xid uint32
+		var data string
+
+		if err := rows.Scan(&lsn, &xid, &data); err != nil {
+			return err
+		}
+		c.currentLSN = lsn
+
+		events, err := parseWal2JSON(data, xid, lsn)
+		if err != nil {
+			log.Printf("PostgreSQL CDC parse error: %v", err)
+			continue
+		}
+
+		for _, event := range events {
+			if err := c.processChangeEvent(event); err != nil {
+				log.Printf("PostgreSQL CDC process error: %v", err)
+			}
+		}
+	}
+
+	return rows.Err()
+}
+
+func (c *CDCSource) ensureSlot(ctx context.Context) error {
+	_, err := c.pool.Exec(ctx, "SELECT * FROM pg_create_logical_replication_slot($1, $2)", c.config.SlotName, c.config.Plugin)
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(err.Error(), "already exists") {
+		return nil
+	}
+	return err
+}
+
+type wal2jsonMessage struct {
+	Xid       uint32           `json:"xid"`
+	Timestamp string           `json:"timestamp"`
+	Change    []wal2jsonChange `json:"change"`
+}
+
+type wal2jsonChange struct {
+	Kind         string        `json:"kind"`
+	Schema       string        `json:"schema"`
+	Table        string        `json:"table"`
+	ColumnNames  []string      `json:"columnnames"`
+	ColumnValues []interface{} `json:"columnvalues"`
+	OldKeys      *wal2jsonKeys `json:"oldkeys"`
+}
+
+type wal2jsonKeys struct {
+	KeyNames  []string      `json:"keynames"`
+	KeyValues []interface{} `json:"keyvalues"`
+}
+
+func parseWal2JSON(payload string, xid uint32, lsn string) ([]*ChangeEvent, error) {
+	var msg wal2jsonMessage
+	if err := json.Unmarshal([]byte(payload), &msg); err != nil {
+		return nil, err
+	}
+
+	var ts time.Time
+	if msg.Timestamp != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, msg.Timestamp); err == nil {
+			ts = parsed
+		}
+	}
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+
+	var events []*ChangeEvent
+	for _, change := range msg.Change {
+		after := columnsToMap(change.ColumnNames, change.ColumnValues)
+		before := map[string]interface{}{}
+		if change.OldKeys != nil {
+			before = columnsToMap(change.OldKeys.KeyNames, change.OldKeys.KeyValues)
+		}
+
+		operation := strings.ToUpper(change.Kind)
+		events = append(events, &ChangeEvent{
+			Operation: operation,
+			Schema:    change.Schema,
+			Table:     change.Table,
+			Before:    before,
+			After:     after,
+			LSN:       lsn,
+			Timestamp: ts,
+			TxID:      xid,
+		})
+	}
+
+	return events, nil
+}
+
+func columnsToMap(names []string, values []interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+	for i, name := range names {
+		if i < len(values) {
+			result[name] = values[i]
+		}
+	}
+	return result
 }
 
 func (c *CDCSource) processChangeEvent(change *ChangeEvent) error {
@@ -296,13 +436,31 @@ func NewChangeTransformer(config *CDCConfig) *ChangeTransformer {
 
 func (t *ChangeTransformer) TransformChange(change *ChangeEvent) (*adapters.TypedFact, error) {
 	// Map table to schema if configured
-	schemaName := fmt.Sprintf("%s.%s", change.Schema, change.Table)
-	if mappedSchema, exists := t.config.SchemaMapping[change.Table]; exists {
+	schemaKey := fmt.Sprintf("%s.%s", change.Schema, change.Table)
+	schemaName := schemaKey
+	if mappedSchema, exists := t.config.SchemaMapping[schemaKey]; exists {
+		schemaName = mappedSchema
+	} else if mappedSchema, exists := t.config.SchemaMapping[change.Table]; exists {
 		schemaName = mappedSchema
 	}
 
-	// Serialize change event
-	data, err := json.Marshal(change)
+	payload := map[string]interface{}{
+		"operation": change.Operation,
+		"schema":    change.Schema,
+		"table":     change.Table,
+		"before":    change.Before,
+		"after":     change.After,
+		"lsn":       change.LSN,
+		"timestamp": change.Timestamp.Format(time.RFC3339Nano),
+		"tx_id":     change.TxID,
+	}
+
+	structData, err := structpb.NewStruct(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build struct payload: %w", err)
+	}
+
+	rawData, err := json.Marshal(change)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal change event: %w", err)
 	}
@@ -310,11 +468,11 @@ func (t *ChangeTransformer) TransformChange(change *ChangeEvent) (*adapters.Type
 	return &adapters.TypedFact{
 		SchemaName:    schemaName,
 		SchemaVersion: "v1.0.0",
-		Data:          nil, // Would contain proto message in real implementation
-		RawData:       data,
+		Data:          structData,
+		RawData:       rawData,
 		Timestamp:     change.Timestamp,
 		SourceID:      t.config.SourceID,
-		TraceID:       "", // Could extract from transaction context
+		TraceID:       "",
 		Metadata: map[string]string{
 			"pg.operation": change.Operation,
 			"pg.schema":    change.Schema,
@@ -382,6 +540,25 @@ func (f *CDCFactory) Create(config adapters.SourceConfig) (adapters.FactSource, 
 	if bufferSize, ok := config.Config["buffer_size"].(float64); ok {
 		cdcConfig.BufferSize = int(bufferSize)
 	}
+	if createSlot, ok := config.Config["create_slot"].(bool); ok {
+		cdcConfig.CreateSlot = createSlot
+	} else {
+		cdcConfig.CreateSlot = true
+	}
+	if plugin, ok := config.Config["plugin"].(string); ok {
+		cdcConfig.Plugin = plugin
+	}
+	if pollInterval, ok := config.Config["poll_interval"].(string); ok {
+		if parsed, err := time.ParseDuration(pollInterval); err == nil {
+			cdcConfig.PollInterval = parsed
+		}
+	}
+	if maxChanges, ok := config.Config["max_changes"].(float64); ok {
+		cdcConfig.MaxChanges = int(maxChanges)
+	}
+	if maxChanges, ok := config.Config["max_changes"].(int); ok {
+		cdcConfig.MaxChanges = maxChanges
+	}
 
 	return NewCDCSource(cdcConfig)
 }
@@ -404,6 +581,15 @@ func (f *CDCFactory) GetConfigSchema() adapters.ConfigSchema {
 			"slot_name": {
 				Type:        "string",
 				Description: "Logical replication slot name (auto-generated if not provided)",
+			},
+			"plugin": {
+				Type:        "string",
+				Description: "Logical decoding plugin (default: wal2json)",
+			},
+			"create_slot": {
+				Type:        "bool",
+				Description: "Create replication slot if missing",
+				Default:     true,
 			},
 			"publication_name": {
 				Type:        "string",
@@ -439,6 +625,15 @@ func (f *CDCFactory) GetConfigSchema() adapters.ConfigSchema {
 				Type:        "integer",
 				Description: "Heartbeat interval in seconds",
 				Default:     30,
+			},
+			"poll_interval": {
+				Type:        "string",
+				Description: "Polling interval for fetching changes (e.g., 2s, 5s)",
+			},
+			"max_changes": {
+				Type:        "integer",
+				Description: "Maximum changes to fetch per poll",
+				Default:     100,
 			},
 			"buffer_size": {
 				Type:        "integer",

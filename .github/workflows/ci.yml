@@ -38,3 +38,55 @@ jobs:
 
       - name: Buf lint
         run: buf lint
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Start CDC stack
+        run: docker compose -f examples/cdc_stack/docker-compose.yml up -d
+
+      - name: Wait for services
+        run: |
+          set -e
+          for i in $(seq 1 30); do
+            if docker compose -f examples/cdc_stack/docker-compose.yml exec -T postgres pg_isready -U effectus >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          for i in $(seq 1 30); do
+            if docker compose -f examples/cdc_stack/docker-compose.yml exec -T mysql mysqladmin ping -proot >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          for i in $(seq 1 30); do
+            if docker compose -f examples/cdc_stack/docker-compose.yml exec -T rabbitmq rabbitmq-diagnostics -q ping >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+
+      - name: CDC integration tests
+        env:
+          POSTGRES_DSN: postgres://effectus:effectus@localhost:5432/effectus_cdc?sslmode=disable
+          MYSQL_HOST: localhost
+          MYSQL_PORT: "3306"
+          MYSQL_USER: effectus
+          MYSQL_PASSWORD: effectus
+          MYSQL_DATABASE: effectus_cdc
+          MYSQL_DSN: effectus:effectus@tcp(localhost:3306)/effectus_cdc?parseTime=true
+        run: go test -tags=integration ./adapters/postgres ./adapters/mysql
+
+      - name: Stop CDC stack
+        if: always()
+        run: docker compose -f examples/cdc_stack/docker-compose.yml down -v

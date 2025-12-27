@@ -38,5 +38,20 @@ services:
     volumes:
       - ./trino/etc:/etc/trino:ro
 
+  trino-cli:
+    image: trinodb/trino:471
+    depends_on:
+      - trino
+    entrypoint:
+      - trino
+      - --server
+      - http://trino:8080
+      - --catalog
+      - lakehouse
+      - --schema
+      - sales
+    stdin_open: true
+    tty: true
+
 volumes:
   minio-data: {}

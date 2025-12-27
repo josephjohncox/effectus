@@ -8,6 +8,8 @@ These files are ready to drop into your config loader or adapt to your runtime.
 - `trino_iceberg.yaml` - streaming Iceberg table via Trino
 - `sources.yaml` - both sources in one file
 - `env.example` - required environment variables
+- `devstack/` - Trino + Iceberg + MinIO local stack
+- `s3_parquet_demo/` - Parquet reader example for the S3 adapter
 
 ## Quick Start
 1. Copy `env.example` -> `.env` and set your DSNs.
@@ -30,4 +32,33 @@ Use `devstack/` to run Trino + Iceberg + MinIO locally:
 cd examples/warehouse_sources/devstack
 docker compose up -d
 ./scripts/seed-iceberg.sh
+```
+
+Or use just targets from repo root:
+```bash
+just devstack-up
+just devstack-seed-iceberg
+```
+
+Open the Trino CLI:
+```bash
+./scripts/trino-cli.sh
+```
+
+Seed S3 Parquet data:
+```bash
+./scripts/seed-parquet.sh
+```
+
+## Demo: S3 Parquet Reader
+Use the demo to read Parquet facts from the devstack bucket:
+
+```bash
+S3_ENDPOINT="http://localhost:9000" \
+S3_REGION="us-east-1" \
+S3_BUCKET="exports" \
+S3_PREFIX="parquet/" \
+S3_ACCESS_KEY="minioadmin" \
+S3_SECRET_KEY="minioadmin" \
+go run ./examples/warehouse_sources/s3_parquet_demo
 ```

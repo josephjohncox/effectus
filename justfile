@@ -4,6 +4,7 @@
 DB_DSN := env_var_or_default("DB_DSN", "postgres://effectus:effectus@localhost/effectus_dev?sslmode=disable")
 MIGRATIONS_DIR := "migrations"
 DOCKER_COMPOSE := "docker-compose -f docker-compose.yml"
+WAREHOUSE_DEVSTACK := "examples/warehouse_sources/devstack"
 
 # Default recipe
 default:
@@ -22,7 +23,7 @@ install-sql-tools:
 	@echo "Installing SQL tooling..."
 	go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.25.0
 	go install github.com/pressly/goose/v3/cmd/goose@v3.17.0
-	@echo "✅ Tools installed"
+	@echo "OK Tools installed"
 
 # Build the project
 build:
@@ -90,37 +91,37 @@ setup-db:
 	{{DOCKER_COMPOSE}} up -d postgres
 	@echo "Waiting for database to be ready..."
 	sleep 5
-	@echo "✅ Database ready"
+	@echo "OK Database ready"
 
 # Setup test database
 setup-test-db:
 	@echo "Creating test database..."
 	-createdb effectus_test
-	@echo "✅ Test database ready"
+	@echo "OK Test database ready"
 
 # Generate Go code from SQL queries
 sql-generate:
 	@echo "Generating Go code from SQL queries..."
 	cd runtime && sqlc generate
-	@echo "✅ Code generated in internal/db/"
+	@echo "OK Code generated in internal/db/"
 
 # Check if generated code is up to date
 sql-generate-check:
 	@echo "Checking if generated code is up to date..."
-	@git diff --quiet runtime/internal/db/ || (echo "❌ Generated code is out of date. Run 'just sql-generate'" && exit 1)
-	@echo "✅ Generated code is up to date"
+	@git diff --quiet runtime/internal/db/ || (echo "ERROR Generated code is out of date. Run 'just sql-generate'" && exit 1)
+	@echo "OK Generated code is up to date"
 
 # Run all pending migrations
 migrate-up:
 	@echo "Running migrations..."
 	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
-	@echo "✅ Migrations complete"
+	@echo "OK Migrations complete"
 
 # Rollback last migration
 migrate-down:
 	@echo "Rolling back last migration..."
 	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" down
-	@echo "✅ Rollback complete"
+	@echo "OK Rollback complete"
 
 # Show migration status
 migrate-status:
@@ -136,24 +137,24 @@ migrate-version:
 migrate-create name:
 	@echo "Creating migration: {{name}}"
 	cd runtime && goose -dir {{MIGRATIONS_DIR}} create {{name}} sql
-	@echo "✅ Migration created"
+	@echo "OK Migration created"
 
-# Reset database (⚠️ DESTROYS ALL DATA)
+# Reset database (WARN DESTROYS ALL DATA)
 migrate-reset:
-	@echo "⚠️  This will destroy all data. Continue? (Press Enter to continue, Ctrl+C to cancel)"
+	@echo "WARN  This will destroy all data. Continue? (Press Enter to continue, Ctrl+C to cancel)"
 	@read
 	@echo "Resetting database..."
 	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
-	@echo "✅ Database reset"
+	@echo "OK Database reset"
 
-# Reset and run all migrations (⚠️ DESTROYS ALL DATA)  
+# Reset and run all migrations (WARN DESTROYS ALL DATA)  
 migrate-fresh:
-	@echo "⚠️  This will destroy all data. Continue? (Press Enter to continue, Ctrl+C to cancel)"
+	@echo "WARN  This will destroy all data. Continue? (Press Enter to continue, Ctrl+C to cancel)"
 	@read
 	@echo "Fresh migration..."
 	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
 	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
-	@echo "✅ Fresh migration complete"
+	@echo "OK Fresh migration complete"
 
 # Run integration tests with database
 test-integration: setup-test-db
@@ -166,31 +167,31 @@ test-migrate:
 	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
 	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
 	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
-	@echo "✅ Migration tests complete"
+	@echo "OK Migration tests complete"
 
 # Complete development setup for SQL
 dev-sql-setup: install-sql-tools setup-db migrate-up sql-generate
-	@echo "✅ SQL development environment ready!"
+	@echo "OK SQL development environment ready!"
 
 # Reset SQL development environment
 dev-sql-reset: migrate-fresh sql-generate
-	@echo "✅ SQL development environment reset!"
+	@echo "OK SQL development environment reset!"
 
 # Validate all SQL and generated code
 sql-validate: sql-generate-check
 	@echo "Validating SQL queries..."
 	cd runtime && sqlc vet
-	@echo "✅ Validation complete"
+	@echo "OK Validation complete"
 
 # Lint SQL files (requires sqlfluff)
 sql-lint:
 	@echo "Linting SQL files..."
-	@if command -v sqlfluff >/dev/null 2>&1; then sqlfluff lint {{MIGRATIONS_DIR}}; else echo "⚠️  sqlfluff not installed. Install with: pip install sqlfluff"; fi
+	@if command -v sqlfluff >/dev/null 2>&1; then sqlfluff lint {{MIGRATIONS_DIR}}; else echo "WARN  sqlfluff not installed. Install with: pip install sqlfluff"; fi
 
 # Format SQL files (requires sqlfluff)
 sql-format:
 	@echo "Formatting SQL files..."
-	@if command -v sqlfluff >/dev/null 2>&1; then sqlfluff format {{MIGRATIONS_DIR}} --dialect postgres; else echo "⚠️  sqlfluff not installed. Install with: pip install sqlfluff"; fi
+	@if command -v sqlfluff >/dev/null 2>&1; then sqlfluff format {{MIGRATIONS_DIR}} --dialect postgres; else echo "WARN  sqlfluff not installed. Install with: pip install sqlfluff"; fi
 
 # Generate schema documentation
 schema-docs:
@@ -198,20 +199,43 @@ schema-docs:
 	@echo "Database Schema Documentation" > runtime/SCHEMA.md
 	@echo "============================" >> runtime/SCHEMA.md
 	@psql "{{DB_DSN}}" -c "\dt" >> runtime/SCHEMA.md
-	@echo "✅ Schema documentation generated"
+
+# === Warehouse Devstack (Trino + Iceberg + MinIO) ===
+
+devstack-up:
+	docker compose -f {{WAREHOUSE_DEVSTACK}}/docker-compose.yml up -d
+
+devstack-down:
+	docker compose -f {{WAREHOUSE_DEVSTACK}}/docker-compose.yml down
+
+devstack-logs:
+	docker compose -f {{WAREHOUSE_DEVSTACK}}/docker-compose.yml logs -f
+
+devstack-seed-iceberg:
+	{{WAREHOUSE_DEVSTACK}}/scripts/seed-iceberg.sh
+
+devstack-seed-s3:
+	{{WAREHOUSE_DEVSTACK}}/scripts/seed-s3.sh
+
+devstack-seed-parquet:
+	{{WAREHOUSE_DEVSTACK}}/scripts/seed-parquet.sh
+
+devstack-trino-cli:
+	{{WAREHOUSE_DEVSTACK}}/scripts/trino-cli.sh
+	@echo "OK Schema documentation generated"
 
 # Clean generated SQL files
 sql-clean:
 	@echo "Cleaning generated SQL files..."
 	rm -rf runtime/internal/db/*.go
-	@echo "✅ SQL clean complete"
+	@echo "OK SQL clean complete"
 
-# Clean everything including database (⚠️ DESTROYS ALL DATA)
+# Clean everything including database (WARN DESTROYS ALL DATA)
 sql-clean-all: sql-clean
-	@echo "⚠️  This will destroy database. Continue? (Press Enter to continue, Ctrl+C to cancel)"
+	@echo "WARN  This will destroy database. Continue? (Press Enter to continue, Ctrl+C to cancel)"
 	@read
 	{{DOCKER_COMPOSE}} down -v postgres
-	@echo "✅ Complete SQL cleanup done"
+	@echo "OK Complete SQL cleanup done"
 
 # Open database shell
 db-shell:
@@ -222,15 +246,15 @@ db-shell:
 db-dump:
 	@echo "Dumping database..."
 	pg_dump "{{DB_DSN}}" > effectus_dump_$(date +%Y%m%d_%H%M%S).sql
-	@echo "✅ Database dumped"
+	@echo "OK Database dumped"
 
 # Restore database from dump
 db-restore dump:
-	@echo "⚠️  This will overwrite the database. Continue? (Press Enter to continue, Ctrl+C to cancel)"
+	@echo "WARN  This will overwrite the database. Continue? (Press Enter to continue, Ctrl+C to cancel)"
 	@read
 	@echo "Restoring database from {{dump}}..."
 	psql "{{DB_DSN}}" < {{dump}}
-	@echo "✅ Database restored"
+	@echo "OK Database restored"
 
 # === VS Code Extension Commands ===
 
@@ -238,13 +262,13 @@ db-restore dump:
 vscode-install:
 	@echo "Installing VS Code extension dependencies..."
 	cd tools/vscode-extension && npm install
-	@echo "✅ VS Code extension dependencies installed"
+	@echo "OK VS Code extension dependencies installed"
 
 # Compile TypeScript for VS Code extension  
 vscode-compile:
 	@echo "Compiling VS Code extension..."
 	cd tools/vscode-extension && npm run compile
-	@echo "✅ VS Code extension compiled"
+	@echo "OK VS Code extension compiled"
 
 # Watch mode for VS Code extension development
 vscode-watch:
@@ -255,13 +279,13 @@ vscode-watch:
 vscode-package:
 	@echo "Packaging VS Code extension..."
 	cd tools/vscode-extension && npm run package
-	@echo "✅ VS Code extension packaged as .vsix file"
+	@echo "OK VS Code extension packaged as .vsix file"
 
 # Install packaged VS Code extension locally
 vscode-install-local:
 	@echo "Installing VS Code extension locally..."
 	cd tools/vscode-extension && code --install-extension effectus-language-support-*.vsix
-	@echo "✅ VS Code extension installed locally"
+	@echo "OK VS Code extension installed locally"
 
 # Lint VS Code extension
 vscode-lint:
@@ -275,7 +299,7 @@ vscode-test:
 
 # Complete VS Code extension development setup
 vscode-dev-setup: vscode-install vscode-compile
-	@echo "✅ VS Code extension development environment ready!"
+	@echo "OK VS Code extension development environment ready!"
 	@echo "Use 'just vscode-watch' for development"
 	@echo "Use 'just vscode-package' to create .vsix file"
 
@@ -313,7 +337,7 @@ dev:
 
 # Complete development workflow with SQL and VS Code extension
 dev-full: dev dev-sql-setup vscode-dev-setup
-	@echo "✅ Complete development environment ready!"
+	@echo "OK Complete development environment ready!"
 
 # Watch for changes and rebuild (requires entr)
 watch:

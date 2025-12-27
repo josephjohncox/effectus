@@ -9,9 +9,39 @@ cd examples/warehouse_sources/devstack
 docker compose up -d
 ```
 
+Or from the repo root:
+```bash
+just devstack-up
+```
+
+## Stop the stack
+```bash
+docker compose down
+```
+
+Or:
+```bash
+just devstack-down
+```
+
 ## Seed a sample Iceberg table
 ```bash
 ./scripts/seed-iceberg.sh
+```
+
+Or:
+```bash
+just devstack-seed-iceberg
+```
+
+## Open the Trino CLI
+```bash
+./scripts/trino-cli.sh
+```
+
+Or:
+```bash
+just devstack-trino-cli
 ```
 
 Verify via Trino:
@@ -26,6 +56,21 @@ curl -s -X POST http://localhost:8080/v1/statement \
 ## Seed S3 JSON data (optional)
 ```bash
 ./scripts/seed-s3.sh
+```
+
+Or:
+```bash
+just devstack-seed-s3
+```
+
+## Seed S3 Parquet data (optional)
+```bash
+./scripts/seed-parquet.sh
+```
+
+Or:
+```bash
+just devstack-seed-parquet
 ```
 
 Use these configs:

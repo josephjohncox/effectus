@@ -1,25 +1,25 @@
-# External Fact Sources — Streaming + Batch Tutorials
+# External Fact Sources - Streaming + Batch Tutorials
 
-This guide explains how to ingest facts from external systems (SQL/Snowflake, Kafka, S3/Iceberg, etc.) using the Effectus **adapters** layer. It includes end‑to‑end patterns, config examples, and a step‑by‑step for creating new adapters.
+This guide explains how to ingest facts from external systems (SQL/Snowflake, Kafka, S3/Iceberg, etc.) using the Effectus **adapters** layer. It includes end-to-end patterns, config examples, and a step-by-step for creating new adapters.
 
 ---
 
 ## Short Answer (TL;DR)
-Use the **adapters layer** for external fact sources. We already ship **Kafka + Postgres poller/CDC + Redis streams + file watcher + HTTP webhook + SQL + S3 + Iceberg**; new sources implement `adapters.FactSource` and register via `adapters.RegisterSourceType(...)`.
+Use the **adapters layer** for external fact sources. We already ship **Kafka + Postgres poller/CDC + MySQL CDC + Redis streams + file watcher + HTTP webhook + SQL + S3 + Iceberg + AMQP + gRPC**; new sources implement `adapters.FactSource` and register via `adapters.RegisterSourceType(...)`.
 
 ---
 
 ## Core Pattern (Applies to All Sources)
 
 ### 1) Pick ingestion mode
-- **Streaming:** Kafka, Postgres CDC, Redis Streams → `adapters/kafka`, `adapters/postgres/cdc`, `adapters/redis`
-- **Polling / batch:** SQL/Snowflake → `adapters/sql`; S3/Iceberg → dedicated adapters (`adapters/s3`, `adapters/iceberg`)
+- **Streaming:** Kafka, Postgres CDC, MySQL CDC, Redis Streams, AMQP, gRPC -> `adapters/kafka`, `adapters/postgres/cdc`, `adapters/mysql`, `adapters/redis`, `adapters/amqp`, `adapters/grpc`
+- **Polling / batch:** SQL/Snowflake -> `adapters/sql`; S3/Iceberg -> dedicated adapters (`adapters/s3`, `adapters/iceberg`)
 
 ### 2) Implement a `FactSource`
 Create `adapters/<source>/` with:
 - `Create(config) (FactSource, error)`
 - `Start / Stop / Subscribe / GetSourceSchema / HealthCheck`
-- Convert raw records → `adapters.TypedFact` (includes schema name + version)
+- Convert raw records -> `adapters.TypedFact` (includes schema name + version)
 
 ### 3) Map external identifiers to Effectus fact types
 Use `FactMapping` to map source IDs (topic/table/schema ID) to your Effectus fact type:
@@ -130,7 +130,65 @@ config:
     public.orders: "acme.v1.facts.OrderChange"
 ```
 
-Use CDC when you need near‑real‑time updates without polling.
+Use CDC when you need near-real-time updates without polling.
+
+Notes:
+- Requires a logical decoding plugin like `wal2json`.
+- Use `create_slot: true` to have Effectus create the slot automatically.
+
+---
+
+### MySQL CDC (Streaming)
+`adapters/mysql` streams binlog row events.
+
+```yaml
+source_id: "mysql_cdc"
+type: "mysql_cdc"
+config:
+  host: "localhost"
+  port: 3306
+  user: "replicator"
+  password: "secret"
+  server_id: 100
+  flavor: "mysql"
+  tables: ["app.orders"]
+  schema_mapping:
+    app.orders: "acme.v1.facts.OrderChange"
+```
+
+---
+
+### AMQP (Streaming)
+Consume RabbitMQ or AMQP queues.
+
+```yaml
+source_id: "amqp_events"
+type: "amqp"
+config:
+  url: "amqp://guest:guest@localhost:5672/"
+  queue: "events"
+  exchange: "events"
+  routing_key: "events.*"
+  format: "json"
+  schema_name: "acme.v1.facts.Event"
+```
+
+---
+
+### gRPC Streaming
+Consume a server-streaming RPC that emits `google.protobuf.Struct`.
+
+```yaml
+source_id: "grpc_events"
+type: "grpc"
+config:
+  address: "localhost:9000"
+  method: "/acme.v1.Facts/StreamFacts"
+  tls: false
+  schema_name: "acme.v1.facts.Event"
+```
+
+Note: the adapter expects both request and response types to be `google.protobuf.Struct`.
 
 ---
 
@@ -217,7 +275,7 @@ config:
 
 ---
 
-## Building Your Own Adapter (Step‑by‑Step)
+## Building Your Own Adapter (Step-by-Step)
 
 1) **Create the package** `adapters/<source>/` and implement `adapters.FactSource`.
 2) **Parse config** in a `Factory` and register it in `init()`.
@@ -269,10 +327,13 @@ This keeps your rules stable even if sources change.
 - Kafka: `adapters/kafka`
 - Postgres poller: `adapters/postgres/poller.go`
 - Postgres CDC: `adapters/postgres/cdc.go`
+- MySQL CDC: `adapters/mysql`
 - Redis streams, file watcher, HTTP webhook
 - SQL adapter (batch + streaming): `adapters/sql`
 - S3 adapter (batch + streaming): `adapters/s3`
 - Iceberg adapter (batch + streaming): `adapters/iceberg`
+- AMQP adapter: `adapters/amqp`
+- gRPC adapter: `adapters/grpc`
 
 Example configs: `examples/warehouse_sources/` (devstack in `examples/warehouse_sources/devstack/`)
 
@@ -281,9 +342,9 @@ Example configs: `examples/warehouse_sources/` (devstack in `examples/warehouse_
 ## FAQ / Best Practices
 
 - **Use batch for large, infrequent snapshots** (S3 exports, nightly warehouse dumps).
-- **Use streaming or CDC for near‑real‑time decisions.**
+- **Use streaming or CDC for near-real-time decisions.**
 - **Keep schemas versioned** and enforce compatibility (see `schema/buf_integration.go`).
 - **Accept multiple schema sources** (proto, JSON schema, registry IDs) and normalize via mappings.
-- **Normalize names** with aliases so rule files don’t change when sources change.
+- **Normalize names** with aliases so rule files don't change when sources change.
 
 ---

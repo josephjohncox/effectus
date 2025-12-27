@@ -180,6 +180,18 @@ effectusd --oci-ref ghcr.io/myorg/rules:v1.0.0
 effectusd --oci-ref ghcr.io/myorg/rules:latest --reload-interval 60s
 ```
 
+## Warehouse Devstack
+
+Run a local Trino + Iceberg + MinIO stack for warehouse adapters and Parquet ingestion.
+
+```bash
+just devstack-up
+just devstack-seed-iceberg
+just devstack-seed-parquet
+just devstack-trino-cli
+just devstack-down
+```
+
 ## Mathematical Foundations
 
 Effectus is built on solid mathematical principles:

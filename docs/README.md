@@ -14,16 +14,16 @@ Start here if you're new to Effectus:
 ## Core Documentation
 
 ### Architecture & Design
-- **[Architecture](ARCHITECTURE.md)** - Complete system architecture and production deployment ⭐
+- **[Architecture](ARCHITECTURE.md)** - Complete system architecture and production deployment
 - **[Design Document](design.md)** - Comprehensive technical design (advanced)
 - **[Mathematical Foundations](theory/)** - Category theory, formal semantics, and proofs
 
 ### Extension System
 - **[Extension System](EXTENSION_SYSTEM.md)** - Unified verb, schema, and bundle system
-- **[Coherent Flow](coherent_flow.md)** - Extension loading → compilation → execution
+- **[Coherent Flow](coherent_flow.md)** - Extension loading -> compilation -> execution
 
 ### Integration & Deployment
-- **[gRPC Execution Interface](GRPC_EXECUTION.md)** - Standard Facts → Effects interface with rulesets
+- **[gRPC Execution Interface](GRPC_EXECUTION.md)** - Standard Facts -> Effects interface with rulesets
 - **[Client Examples](CLIENT_EXAMPLES.md)** - Multi-language client integration examples
 - **[External Fact Sources](FACT_SOURCES.md)** - Streaming + batch tutorials for SQL/Kafka/S3/Iceberg adapters
 
@@ -35,7 +35,7 @@ Start here if you're new to Effectus:
    - Try the [coherent flow example](../examples/coherent_flow/)
 
 ### 2. **Developers**
-   - Read [Architecture](ARCHITECTURE.md) ⭐ **START HERE**
+   - Read [Architecture](ARCHITECTURE.md) **START HERE**
    - Study [Extension System](EXTENSION_SYSTEM.md)
    - Review [coherent flow example](../examples/coherent_flow/)
 
@@ -53,12 +53,12 @@ Start here if you're new to Effectus:
 
 ## Key Features
 
-- ✅ **Protocol-First Development** - Schema as single source of truth with buf integration
-- ✅ **Multi-Source Data Ingestion** - Kafka, HTTP, SQL/Snowflake, S3, Iceberg, Database, Redis, File adapters
-- ✅ **Static Validation** - All rules validated before runtime with comprehensive type checking
-- ✅ **VS Code Integration** - Full language support with IntelliSense and hot reload
-- ✅ **Modern SQL Storage** - Type-safe queries with sqlc and automatic migrations with goose
-- ✅ **Production-Ready** - OCI bundles, distributed locking, saga compensation, observability
+- **Protocol-First Development** - Schema as single source of truth with buf integration
+- **Multi-Source Data Ingestion** - Kafka, HTTP, SQL/Snowflake, S3, Iceberg, Postgres/MySQL CDC, AMQP, gRPC, Database, Redis, File adapters
+- **Static Validation** - All rules validated before runtime with comprehensive type checking
+- **VS Code Integration** - Full language support with IntelliSense and hot reload
+- **Modern SQL Storage** - Type-safe queries with sqlc and automatic migrations with goose
+- **Production-Ready** - OCI bundles, distributed locking, saga compensation, observability
 
 ## Examples
 
@@ -67,6 +67,7 @@ Working examples demonstrating Effectus features:
 - **[Protocol-Driven Development](../examples/proto_driven_development/)** - Schema-first development workflow
 - **[Multi-Source Ingestion](../examples/multi_source_ingestion/)** - Universal data ingestion examples
 - **[Extension System](../examples/extension_system/)** - Static and dynamic extension loading
+- **[Warehouse Sources](../examples/warehouse_sources/)** - Snowflake + Iceberg configs and local devstack
 - **[Business Examples](../examples/)** - Domain-specific rule examples
 
 ## Contributing to Documentation
