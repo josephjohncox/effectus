@@ -306,7 +306,7 @@
   },
   "dependencies": {
     "axios": "^0.27.2",
-    "protobufjs": "^7.1.1",
+    "protobufjs": "^8.0.0",
     "vscode-languageclient": "^8.1.0",
     "ws": "^8.8.1",
     "yaml": "^2.1.1"
