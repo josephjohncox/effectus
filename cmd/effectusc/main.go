@@ -254,6 +254,7 @@ func defineCommands() {
 	bDesc := bundleCmd.FlagSet.String("desc", "", "Bundle description")
 	bSchemaDir := bundleCmd.FlagSet.String("schema-dir", "", "Directory containing schema files")
 	bVerbDir := bundleCmd.FlagSet.String("verb-dir", "", "Directory containing verb files")
+	bVerbSchemas := bundleCmd.FlagSet.String("verbschema", "", "Comma-separated list of verb schema files to load")
 	bRulesDir := bundleCmd.FlagSet.String("rules-dir", "", "Directory containing rule files")
 	bOutput := bundleCmd.FlagSet.String("output", "bundle.json", "Output file for bundle")
 	bOciRef := bundleCmd.FlagSet.String("oci-ref", "", "OCI reference to push bundle to (e.g., ghcr.io/user/bundle:v1)")
@@ -279,6 +280,20 @@ func defineCommands() {
 				fmt.Printf("Using schema directory: %s\n", *bSchemaDir)
 			}
 			builder.WithSchemaDir(*bSchemaDir)
+		}
+
+		if *bVerbSchemas != "" {
+			paths := expandSchemaPaths(strings.Split(*bVerbSchemas, ","))
+			verbSpecFiles := make([]string, 0, len(paths))
+			for _, path := range paths {
+				if filepath.Ext(path) == ".json" {
+					verbSpecFiles = append(verbSpecFiles, path)
+				}
+			}
+			if *bVerbose {
+				fmt.Printf("Loading %d verb spec files\n", len(verbSpecFiles))
+			}
+			builder.WithVerbSpecFiles(verbSpecFiles)
 		}
 
 		if *bVerbDir != "" {

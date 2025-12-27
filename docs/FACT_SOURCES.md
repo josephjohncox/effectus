@@ -73,6 +73,25 @@ merged := pathutil.NewMergedFactProvider([]pathutil.SourceProvider{
 
 When conflicts occur, `GetWithContext` reports all sources that had values.
 
+### 6) Universes + namespaces (scoping rules)
+Use universes to isolate facts per tenant, environment, or domain while keeping the same rule bundle.
+
+```go
+registry := pathutil.NewUniverseRegistry()
+
+// Register a merged provider for the \"customer\" namespace in two universes.
+registry.RegisterMerged(\"prod\", \"customer\", []pathutil.SourceProvider{
+  {Name: \"stream\", Provider: streamFacts, Priority: 100},
+  {Name: \"warehouse\", Provider: warehouseFacts, Priority: 10},
+}, pathutil.MergeFirst)
+
+registry.Register(\"staging\", \"customer\", stagingFacts)
+
+facts := pathutil.NewUniverseFacts(registry, \"prod\", typeSystem)
+```
+
+Namespace-based rules (ex: `customer.tier == \"gold\"`) now resolve within the selected universe.
+
 ---
 
 ## Using Adapters (Quick Start)

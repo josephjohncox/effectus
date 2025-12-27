@@ -303,6 +303,29 @@ effectusd [options]
 --pprof-addr       Address to expose pprof (default: :6060)
 ```
 
+#### API Security + Rate Limits
+```bash
+--api-auth             API auth mode (token, disabled)
+--api-token            Write token for /api endpoints (comma-separated)
+--api-read-token       Read-only token for /api endpoints (comma-separated)
+--api-acl-file         Path to API ACL file (YAML/JSON)
+--api-rate-limit       Requests per minute per client (0 to disable)
+--api-rate-burst       Burst size (0 to use rate limit)
+```
+
+Example ACL file: `docs/acl.example.yml`.
+
+#### Facts Store
+```bash
+--facts-store           Facts store (file, memory)
+--facts-path            Facts store path (file store)
+--facts-merge-default   Default merge strategy (first, last, error)
+--facts-merge-namespace Namespace-specific merge strategy (namespace=first|last|error)
+--facts-cache-policy    Facts cache policy (none, lru)
+--facts-cache-max-universes   Max universes to keep (0 for unlimited)
+--facts-cache-max-namespaces  Max namespaces per universe (0 for unlimited)
+```
+
 #### Debug Options
 ```bash
 --verbose          Enable verbose logging
@@ -338,6 +361,22 @@ effectusd \
   --oci-ref ghcr.io/myorg/customer-rules:latest \
   --reload-interval 60s \
   --verbose
+```
+
+#### Status UI and Playground
+
+```bash
+effectusd --bundle ./bundle.json --http-addr :8080 --api-token devtoken
+# open http://localhost:8080/ui
+```
+
+Post facts for a universe snapshot:
+
+```bash
+curl -X POST http://localhost:8080/api/facts \
+  -H 'Authorization: Bearer devtoken' \
+  -H 'Content-Type: application/json' \
+  -d '{"universe":"prod","facts":{"customer":{"tier":"gold"},"order":{"total":120}}}'
 ```
 
 #### Use Kafka as Fact Source

@@ -44,9 +44,3 @@ plugins:
     out: clients/rust
   - plugin: buf.build/community/neoeinstein-tonic
     out: clients/rust
-
-  # Documentation generation
-  - plugin: buf.build/bufbuild/doc
-    out: docs/proto
-    opt:
-      - html,index.html

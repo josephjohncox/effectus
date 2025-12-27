@@ -43,3 +43,6 @@ bin/
 gen/
 node_modules/
 coverage.html
+
+# Buf Generated
+**/clients/

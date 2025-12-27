@@ -26,6 +26,18 @@ func (r *Registry) Register(namespace string, provider FactProvider) {
 	r.providers[namespace] = provider
 }
 
+// Providers returns a shallow copy of registered providers keyed by namespace.
+func (r *Registry) Providers() map[string]FactProvider {
+	if r == nil {
+		return nil
+	}
+	copyMap := make(map[string]FactProvider, len(r.providers))
+	for name, provider := range r.providers {
+		copyMap[name] = provider
+	}
+	return copyMap
+}
+
 // Get retrieves a value by routing the request to the appropriate provider
 func (r *Registry) Get(path string) (interface{}, bool) {
 	// Extract namespace from the path

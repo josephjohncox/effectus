@@ -6,6 +6,12 @@ MIGRATIONS_DIR := "migrations"
 DOCKER_COMPOSE := "docker-compose -f docker-compose.yml"
 WAREHOUSE_DEVSTACK := "examples/warehouse_sources/devstack"
 CDC_STACK := "examples/cdc_stack"
+UI_DEMO_RULES := "examples/fraud_e2e/rules"
+UI_DEMO_SCHEMA := "examples/fraud_e2e/schema"
+UI_DEMO_VERBS := "examples/fraud_e2e/schema/fraud_verbs.json"
+UI_DEMO_BUNDLE := "out/ui_demo/bundle.json"
+UI_DEMO_FACTS := "examples/fraud_e2e/data/facts_payload.json"
+UI_DEMO_TOKEN := "demo-token"
 
 # Default recipe
 default:
@@ -71,6 +77,10 @@ buf-format:
 # Generate code from protobuf definitions
 buf-generate:
 	buf generate
+
+# Generate proto docs (optional; requires doc plugin)
+buf-generate-docs:
+	buf generate --template buf.gen.docs.yaml
 
 # Build protobuf modules
 buf-build:
@@ -161,6 +171,46 @@ migrate-fresh:
 test-integration: setup-test-db
 	@echo "Running integration tests..."
 	DB_DSN="postgres://effectus:effectus@localhost/effectus_test?sslmode=disable" go test -v -tags=integration ./runtime/...
+
+# === UI Demo ===
+
+# Build a demo bundle (fraud rules) and start the status UI/runtime.
+ui-demo:
+	@mkdir -p out/ui_demo
+	go run ./cmd/effectusc bundle \
+		--name fraud-ui-demo \
+		--version 1.0.0 \
+		--schema-dir {{UI_DEMO_SCHEMA}} \
+		--verbschema {{UI_DEMO_VERBS}} \
+		--rules-dir {{UI_DEMO_RULES}} \
+		--output {{UI_DEMO_BUNDLE}}
+	@echo "Starting effectusd UI..."
+	@echo "Token: {{UI_DEMO_TOKEN}}"
+	@echo "Open http://localhost:8080/ui"
+	go run ./cmd/effectusd \
+		--bundle {{UI_DEMO_BUNDLE}} \
+		--http-addr :8080 \
+		--api-token {{UI_DEMO_TOKEN}} \
+		--facts-store file \
+		--facts-path out/ui_demo/facts.json
+
+# Seed the demo facts into the running UI instance.
+ui-demo-seed:
+	curl -X POST http://localhost:8080/api/facts \
+		-H "Authorization: Bearer {{UI_DEMO_TOKEN}}" \
+		-H "Content-Type: application/json" \
+		-d @{{UI_DEMO_FACTS}}
+
+# Open the demo UI in a browser (macOS/Linux).
+ui-demo-open:
+	@if command -v open >/dev/null 2>&1; then open http://localhost:8080/ui; \
+	elif command -v xdg-open >/dev/null 2>&1; then xdg-open http://localhost:8080/ui; \
+	else echo "Open http://localhost:8080/ui"; fi
+
+# Clean demo artifacts (stop the running process with Ctrl+C in its terminal).
+ui-demo-down:
+	@echo "Stopping UI demo... (use Ctrl+C in the ui-demo terminal if it's running)"
+	@rm -rf out/ui_demo
 
 # Test migrations up and down
 test-migrate:

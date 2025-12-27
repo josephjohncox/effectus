@@ -38,6 +38,8 @@ type Bundle struct {
 type BundleBuilder struct {
 	bundle          *Bundle
 	schemaDir       string
+	schemaPaths     []string
+	verbSpecPaths   []string
 	verbDir         string
 	rulesDir        string
 	schemaRegistry  *schema.Registry
@@ -68,6 +70,12 @@ func (bb *BundleBuilder) RegisterSchemaLoader(loader interface{}) *BundleBuilder
 // WithSchemaDir specifies the directory for schema files
 func (bb *BundleBuilder) WithSchemaDir(dir string) *BundleBuilder {
 	bb.schemaDir = dir
+	return bb
+}
+
+// WithVerbSpecFiles registers verb spec schema files for type checking.
+func (bb *BundleBuilder) WithVerbSpecFiles(paths []string) *BundleBuilder {
+	bb.verbSpecPaths = append(bb.verbSpecPaths, paths...)
 	return bb
 }
 
@@ -113,6 +121,12 @@ func (bb *BundleBuilder) Build() (*Bundle, error) {
 
 	// Create a type system
 	typeSystem := types.NewTypeSystem()
+	if err := bb.loadSchemasIntoTypeSystem(typeSystem); err != nil {
+		return nil, fmt.Errorf("loading schema types: %w", err)
+	}
+	if err := bb.loadVerbSpecsIntoTypeSystem(typeSystem); err != nil {
+		return nil, fmt.Errorf("loading verb specs: %w", err)
+	}
 
 	// Create verb registry with proper type system
 	bb.verbRegistry = verb.NewRegistry(typeSystem)
@@ -133,8 +147,7 @@ func (bb *BundleBuilder) Build() (*Bundle, error) {
 	// Use our type system and verb registry
 	typeSystem2 := bb.compiler.GetTypeSystem()
 	if typeSystem2 != nil {
-		// Merge type systems if needed - this depends on your implementation
-		// typeSystem2.MergeTypeSystem(typeSystem)
+		typeSystem2.MergeTypeSystem(typeSystem)
 	}
 
 	// Load and compile rules
@@ -170,19 +183,46 @@ func (bb *BundleBuilder) loadSchemas() error {
 
 		// Record in bundle
 		bb.bundle.SchemaFiles = append(bb.bundle.SchemaFiles, relPath)
-
-		// LoadFile is no longer available, so we need a different approach
-		// This is a simplified version
-		if ext == ".json" {
-			// Record that we would have loaded this file
-			fmt.Printf("Would load JSON schema file: %s\n", path)
-		} else if ext == ".proto" {
-			// Record that we would have loaded this file
-			fmt.Printf("Would load Proto schema file: %s\n", path)
-		}
+		bb.schemaPaths = append(bb.schemaPaths, path)
 
 		return nil
 	})
+}
+
+func (bb *BundleBuilder) loadSchemasIntoTypeSystem(typeSystem *types.TypeSystem) error {
+	if typeSystem == nil || len(bb.schemaPaths) == 0 {
+		return nil
+	}
+	for _, path := range bb.schemaPaths {
+		switch filepath.Ext(path) {
+		case ".json":
+			if err := typeSystem.LoadSchemaFile(path); err != nil {
+				if jsonErr := typeSystem.LoadJSONSchemaFile(path); jsonErr != nil {
+					return fmt.Errorf("loading schema file %s: %w", path, err)
+				}
+			}
+		case ".proto":
+			if err := typeSystem.RegisterProtoTypes(path); err != nil {
+				return fmt.Errorf("loading proto schema %s: %w", path, err)
+			}
+		}
+	}
+	return nil
+}
+
+func (bb *BundleBuilder) loadVerbSpecsIntoTypeSystem(typeSystem *types.TypeSystem) error {
+	if typeSystem == nil || len(bb.verbSpecPaths) == 0 {
+		return nil
+	}
+	for _, path := range bb.verbSpecPaths {
+		if filepath.Ext(path) != ".json" {
+			continue
+		}
+		if err := typeSystem.LoadVerbSpecs(path); err != nil {
+			return fmt.Errorf("loading verb specs from %s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 // loadVerbs loads verb files from the verb directory

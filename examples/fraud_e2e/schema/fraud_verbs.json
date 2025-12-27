@@ -1,0 +1,29 @@
+{
+  "FlagFraud": {
+    "Name": "FlagFraud",
+    "Description": "Flag a transaction for fraud review",
+    "ArgTypes": {
+      "orderId": {"PrimType": 4, "Name": "string"},
+      "reason": {"PrimType": 4, "Name": "string"}
+    },
+    "RequiredArgs": ["orderId", "reason"]
+  },
+  "NotifyRisk": {
+    "Name": "NotifyRisk",
+    "Description": "Notify risk operations",
+    "ArgTypes": {
+      "orderId": {"PrimType": 4, "Name": "string"},
+      "channel": {"PrimType": 4, "Name": "string"}
+    },
+    "RequiredArgs": ["orderId", "channel"]
+  },
+  "FreezeAccount": {
+    "Name": "FreezeAccount",
+    "Description": "Freeze an account due to risk",
+    "ArgTypes": {
+      "accountId": {"PrimType": 4, "Name": "string"},
+      "reason": {"PrimType": 4, "Name": "string"}
+    },
+    "RequiredArgs": ["accountId", "reason"]
+  }
+}

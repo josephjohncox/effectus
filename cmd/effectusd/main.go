@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/effectus/effectus-go/unified"
@@ -56,6 +58,37 @@ func newPostgresSagaStore(opts map[string]string) sagaStoreInterface {
 	return &struct{}{}
 }
 
+type namespaceStrategyFlag struct {
+	values map[string]pathutil.MergeStrategy
+}
+
+func (n *namespaceStrategyFlag) String() string {
+	if n == nil || len(n.values) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(n.values))
+	for namespace, strategy := range n.values {
+		parts = append(parts, namespace+"="+string(strategy))
+	}
+	return strings.Join(parts, ",")
+}
+
+func (n *namespaceStrategyFlag) Set(value string) error {
+	parts := strings.SplitN(value, "=", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("expected namespace=strategy, got %q", value)
+	}
+	strategy, err := parseMergeStrategy(parts[1])
+	if err != nil {
+		return err
+	}
+	if n.values == nil {
+		n.values = make(map[string]pathutil.MergeStrategy)
+	}
+	n.values[strings.TrimSpace(parts[0])] = strategy
+	return nil
+}
+
 var (
 	// Configuration flags
 	bundleFile     = flag.String("bundle", "", "Path to bundle file")
@@ -79,11 +112,28 @@ var (
 	// HTTP server flags
 	httpAddr = flag.String("http-addr", ":8080", "HTTP server address")
 
+	// API auth + rate limit flags
+	apiAuthMode   = flag.String("api-auth", "token", "API auth mode (token, disabled)")
+	apiToken      = flag.String("api-token", "", "Write token for /api endpoints (comma-separated)")
+	apiReadToken  = flag.String("api-read-token", "", "Read-only token for /api endpoints (comma-separated)")
+	apiACLFile    = flag.String("api-acl-file", "", "Path to API ACL file (YAML/JSON)")
+	apiRateLimit  = flag.Int("api-rate-limit", 120, "API requests per minute per client (0 to disable)")
+	apiRateBurst  = flag.Int("api-rate-burst", 60, "API burst size (0 to use rate limit)")
+	factsStore    = flag.String("facts-store", "file", "Facts store (file, memory)")
+	factsPath     = flag.String("facts-path", "./data/facts.json", "Facts store path (file store)")
+	factsMergeDef = flag.String("facts-merge-default", "last", "Default merge strategy (first, last, error)")
+	factsCache    = flag.String("facts-cache-policy", "none", "Facts cache policy (none, lru)")
+	factsCacheMax = flag.Int("facts-cache-max-universes", 0, "Max universes to keep in cache (0 for unlimited)")
+	factsCacheNs  = flag.Int("facts-cache-max-namespaces", 0, "Max namespaces per universe to keep (0 for unlimited)")
+
 	// Debug flags
 	verbose = flag.Bool("verbose", false, "Enable verbose logging")
 )
 
+var factsMergeNs namespaceStrategyFlag
+
 func main() {
+	flag.Var(&factsMergeNs, "facts-merge-namespace", "Namespace-specific merge strategy (namespace=first|last|error)")
 	flag.Parse()
 
 	if *bundleFile == "" && *ociRef == "" {
@@ -200,22 +250,72 @@ func main() {
 	executor := newListExecutor(verbReg, execOpts...)
 	_ = executor // Use the executor variable to avoid unused variable warning
 
+	mergeDefault, err := parseMergeStrategy(*factsMergeDef)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid facts merge strategy: %v\n", err)
+		os.Exit(1)
+	}
+	storeConfig := factStoreConfig{
+		defaultStrategy: mergeDefault,
+		perNamespace:    factsMergeNs.values,
+		cache: factCacheConfig{
+			policy:        strings.ToLower(*factsCache),
+			maxUniverses:  *factsCacheMax,
+			maxNamespaces: *factsCacheNs,
+		},
+	}
+
+	var store factStore
+	switch strings.ToLower(*factsStore) {
+	case "memory":
+		store = newMemoryFactStore(storeConfig)
+	case "file":
+		fileStore, err := newFileFactStore(*factsPath, storeConfig)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading fact store: %v\n", err)
+			os.Exit(1)
+		}
+		store = fileStore
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown facts store: %s\n", *factsStore)
+		os.Exit(1)
+	}
+
+	auth, generatedToken, err := buildAPIAuth(*apiAuthMode, *apiToken, *apiReadToken)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error configuring API auth: %v\n", err)
+		os.Exit(1)
+	}
+	if generatedToken != "" {
+		fmt.Printf("Generated API token: %s\n", generatedToken)
+	}
+
+	acl, err := loadACL(*apiACLFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading API ACL: %v\n", err)
+		os.Exit(1)
+	}
+
+	limiter := newRateLimiter(*apiRateLimit, *apiRateBurst)
+
 	// Create a WaitGroup to synchronize goroutines
 	var wg sync.WaitGroup
 
-	// Start fact source
-	factCh := make(chan interface{})
+	factCh := make(chan factEnvelope, 32)
+	state := newServerState(bundle, factCh, store, auth, limiter, acl)
+
+	// Start fact source (non-HTTP)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		startFactSource(ctx, factCh)
+		startFactSource(ctx, state)
 	}()
 
 	// Start HTTP server for API
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		startHTTPServer(ctx, *httpAddr)
+		startHTTPServer(ctx, *httpAddr, state)
 	}()
 
 	// Start metrics server
@@ -258,7 +358,7 @@ func main() {
 					if newBundle.Version != bundle.Version {
 						fmt.Printf("Updated bundle from %s to %s\n", bundle.Version, newBundle.Version)
 						bundle = newBundle
-						// In a real implementation, you would update the runtime with the new bundle
+						state.SetBundle(newBundle)
 					}
 				}
 			}
@@ -273,11 +373,12 @@ func main() {
 			wg.Wait()
 			return
 		case receivedFacts := <-factCh:
+			bundle = state.Bundle()
 			// Process facts with rules
 			if bundle.ListSpec != nil {
 				for _, rule := range bundle.ListSpec.Rules {
 					// Process the received facts with each rule
-					fmt.Printf("Executing rule: %s with facts\n", rule.Name)
+					fmt.Printf("Executing rule: %s with facts (universe=%s)\n", rule.Name, receivedFacts.Universe)
 					_ = receivedFacts // Use the facts variable to avoid unused variable warning
 				}
 			}
@@ -295,17 +396,15 @@ func main() {
 }
 
 // startFactSource starts the appropriate fact source
-func startFactSource(ctx context.Context, factCh chan<- interface{}) {
+func startFactSource(ctx context.Context, state *serverState) {
 	if *factSource == "kafka" {
-		startKafkaConsumer(ctx, factCh)
-	} else {
-		// Default to HTTP server
-		startHTTPServer(ctx, *httpAddr)
+		startKafkaConsumer(ctx, state)
+		return
 	}
 }
 
 // startKafkaConsumer starts a Kafka consumer for facts
-func startKafkaConsumer(ctx context.Context, factCh chan<- interface{}) {
+func startKafkaConsumer(ctx context.Context, state *serverState) {
 	// Placeholder for Kafka consumer implementation
 	fmt.Println("Starting Kafka consumer...")
 	fmt.Printf("Brokers: %s\n", *kafkaBrokers)
@@ -315,16 +414,6 @@ func startKafkaConsumer(ctx context.Context, factCh chan<- interface{}) {
 	// and read messages into the factCh
 	<-ctx.Done()
 	fmt.Println("Stopping Kafka consumer...")
-}
-
-// startHTTPServer starts the HTTP API server
-func startHTTPServer(ctx context.Context, addr string) {
-	fmt.Printf("Starting HTTP server on %s\n", addr)
-
-	// In a real implementation, you would initialize the HTTP server here
-	// For now, just a placeholder
-	<-ctx.Done()
-	fmt.Println("Shutting down HTTP server")
 }
 
 // startMetricsServer starts the metrics server

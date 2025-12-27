@@ -180,6 +180,30 @@ effectusd --oci-ref ghcr.io/myorg/rules:v1.0.0
 effectusd --oci-ref ghcr.io/myorg/rules:latest --reload-interval 60s
 ```
 
+## Status UI and Playground
+
+Effectus includes a lightweight status UI with rule listing, dependency graph, and dry-run playground. By default,
+`effectusd` enables token auth for `/api/*` endpoints (it prints a generated token if you don’t provide one). You can
+override per-endpoint roles via `--api-acl-file`.
+
+Example ACL: `docs/acl.example.yml`.
+
+The fact store is treated as a cache; use `--facts-cache-policy lru` with size limits to prevent unbounded growth.
+
+```bash
+effectusd --bundle compiled.json --http-addr :8080 --api-token devtoken
+# open http://localhost:8080/ui
+```
+
+Post facts for a live universe snapshot:
+
+```bash
+curl -X POST http://localhost:8080/api/facts \\
+  -H 'Authorization: Bearer devtoken' \\
+  -H 'Content-Type: application/json' \\
+  -d '{"universe":"prod","facts":{"customer":{"tier":"gold"},"order":{"total":120}}}'
+```
+
 ## Adapters Quick Start
 
 1. Define fact schemas (Proto or JSON) and register them with the type system.
