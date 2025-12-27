@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/compiler"
+	"github.com/effectus/effectus-go/internal/schemasources"
 	"github.com/effectus/effectus-go/lint"
 	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema/types"
@@ -83,6 +85,7 @@ func defineCommands() {
 	}
 
 	tcSchemaFiles := typeCheckCmd.FlagSet.String("schema", "", "Comma-separated list of schema files to load")
+	tcSchemaSources := typeCheckCmd.FlagSet.String("schema-sources", "", "Path to schema sources config (YAML/JSON)")
 	tcVerbSchemas := typeCheckCmd.FlagSet.String("verbschema", "", "Comma-separated list of verb schema files to load")
 	tcOutput := typeCheckCmd.FlagSet.String("output", "", "Output file for reports (defaults to stdout)")
 	tcReport := typeCheckCmd.FlagSet.Bool("report", false, "Generate type report")
@@ -119,6 +122,15 @@ func defineCommands() {
 
 		// Create facts for type checking
 		facts, typeSystem := createEmptyFacts(*tcSchemaFiles, *tcVerbose)
+		if strings.TrimSpace(*tcSchemaSources) != "" {
+			sources, err := schemasources.LoadFromFile(*tcSchemaSources)
+			if err != nil {
+				return err
+			}
+			if err := schemasources.Apply(context.Background(), typeSystem, sources, *tcVerbose); err != nil {
+				return err
+			}
+		}
 
 		// Get the compiler's type checker and merge our type system with it
 		typeChecker := comp.GetTypeSystem()
@@ -171,6 +183,7 @@ func defineCommands() {
 	}
 
 	cSchemaFiles := compileCmd.FlagSet.String("schema", "", "Comma-separated list of schema files to load")
+	cSchemaSources := compileCmd.FlagSet.String("schema-sources", "", "Path to schema sources config (YAML/JSON)")
 	cVerbSchemas := compileCmd.FlagSet.String("verbschema", "", "Comma-separated list of verb schema files to load")
 	cOutput := compileCmd.FlagSet.String("output", "spec.json", "Output file for compiled spec")
 	cVerbose := compileCmd.FlagSet.Bool("verbose", false, "Show detailed output")
@@ -206,6 +219,15 @@ func defineCommands() {
 
 		// Create facts for compilation
 		facts, typeSystem := createEmptyFacts(*cSchemaFiles, *cVerbose)
+		if strings.TrimSpace(*cSchemaSources) != "" {
+			sources, err := schemasources.LoadFromFile(*cSchemaSources)
+			if err != nil {
+				return err
+			}
+			if err := schemasources.Apply(context.Background(), typeSystem, sources, *cVerbose); err != nil {
+				return err
+			}
+		}
 
 		// Get the compiler's type checker and merge our type system with it
 		typeChecker := comp.GetTypeSystem()
@@ -255,6 +277,7 @@ func defineCommands() {
 	bVersion := bundleCmd.FlagSet.String("version", "1.0.0", "Bundle version")
 	bDesc := bundleCmd.FlagSet.String("desc", "", "Bundle description")
 	bSchemaDir := bundleCmd.FlagSet.String("schema-dir", "", "Directory containing schema files")
+	bSchemaSources := bundleCmd.FlagSet.String("schema-sources", "", "Path to schema sources config (YAML/JSON)")
 	bVerbDir := bundleCmd.FlagSet.String("verb-dir", "", "Directory containing verb files")
 	bVerbSchemas := bundleCmd.FlagSet.String("verbschema", "", "Comma-separated list of verb schema files to load")
 	bRulesDir := bundleCmd.FlagSet.String("rules-dir", "", "Directory containing rule files")
@@ -350,7 +373,8 @@ func defineCommands() {
 						UnsafeMode: unsafeMode,
 						VerbMode:   verbMode,
 					},
-					verbose: *bVerbose,
+					verbose:       *bVerbose,
+					schemaSources: strings.TrimSpace(*bSchemaSources),
 				})
 				if err != nil {
 					return err

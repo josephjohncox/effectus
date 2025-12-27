@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/effectus/effectus-go/analysis"
 	"github.com/effectus/effectus-go/compiler"
+	"github.com/effectus/effectus-go/internal/schemasources"
 )
 
 type factsReport struct {
@@ -32,6 +34,7 @@ func newFactsCommand() *Command {
 	}
 
 	schemaFiles := factsCmd.FlagSet.String("schema", "", "Comma-separated list of schema files to load")
+	schemaSources := factsCmd.FlagSet.String("schema-sources", "", "Path to schema sources config (YAML/JSON)")
 	format := factsCmd.FlagSet.String("format", "text", "Output format: text or json")
 	output := factsCmd.FlagSet.String("output", "", "Output file (defaults to stdout)")
 	verbose := factsCmd.FlagSet.Bool("verbose", false, "Show detailed output")
@@ -43,6 +46,15 @@ func newFactsCommand() *Command {
 		}
 
 		_, typeSystem := createEmptyFacts(*schemaFiles, *verbose)
+		if strings.TrimSpace(*schemaSources) != "" {
+			sources, err := schemasources.LoadFromFile(*schemaSources)
+			if err != nil {
+				return err
+			}
+			if err := schemasources.Apply(context.Background(), typeSystem, sources, *verbose); err != nil {
+				return err
+			}
+		}
 		knownFacts := make(map[string]struct{})
 		for _, path := range typeSystem.GetAllFactPaths() {
 			knownFacts[path] = struct{}{}

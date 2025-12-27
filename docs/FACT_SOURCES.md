@@ -58,14 +58,14 @@ schema_registry:
 ```
 
 ### 4c) Buf registry + SQL catalogs (hot reload)
-Effectus reloads schemas when `*.schema.json` files change in `extensions.dirs` or OCI bundles. For Buf or SQL‑backed
-schemas, run a sync job that:
+Use **schema providers** to load schemas directly from external systems at startup:
 
-1) Pulls the latest schema source (e.g., `buf export`, SQL catalog introspection).  
-2) Emits `*.schema.json` into your configured extensions directory or OCI bundle.  
-3) Lets `effectusd` reload on the next interval.
+- Runtime: `effectusd --schema-sources schema_sources.yaml`
+- Compiler: `effectusc typecheck --schema-sources schema_sources.yaml ...`
 
-This keeps schema governance external while still allowing hot‑loaded updates inside the runtime.
+`schema_sources.yaml` can include `sql_introspect` and `buf` providers (see `docs/RUNTIME_CONFIG.md` for examples).
+If you still prefer pre-generated files, drop `*.schema.json` into `extensions.dirs` or OCI bundles and let the
+extension reload interval pick them up.
 
 ### 5) Merge multiple sources into one facts provider
 Use namespaces + aliases for clean composition:

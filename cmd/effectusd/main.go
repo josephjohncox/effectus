@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/effectus/effectus-go/adapters"
+	"github.com/effectus/effectus-go/internal/schemasources"
 	"github.com/effectus/effectus-go/loader"
 	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema"
@@ -101,6 +104,7 @@ var (
 	extensionsDir            = flag.String("extensions-dir", "", "Directory containing extension manifests (*.verbs.json, *.schema.json)")
 	extensionsOCI            = flag.String("extensions-oci", "", "OCI references for extension bundles (comma-separated)")
 	extensionsReloadInterval = flag.Duration("extensions-reload-interval", 0, "Interval for reloading extension manifests (0 to disable)")
+	schemaSourcesFile        = flag.String("schema-sources", "", "Path to schema sources config (YAML/JSON)")
 	reloadInterval           = flag.Duration("reload-interval", 30*time.Second, "Interval for hot-reloading")
 
 	// Runtime flags
@@ -138,6 +142,7 @@ var (
 )
 
 var factsMergeNs namespaceStrategyFlag
+var schemaSources []adapters.SchemaSourceConfig
 
 func main() {
 	flag.Var(&factsMergeNs, "facts-merge-namespace", "Namespace-specific merge strategy (namespace=first|last|error)")
@@ -158,6 +163,23 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error applying config: %v\n", err)
 			os.Exit(1)
 		}
+		if len(schemaSources) > 0 {
+			baseDir := filepath.Dir(*configPath)
+			for i := range schemaSources {
+				if schemaSources[i].BaseDir == "" {
+					schemaSources[i].BaseDir = baseDir
+				}
+			}
+		}
+	}
+
+	if strings.TrimSpace(*schemaSourcesFile) != "" {
+		sources, err := schemasources.LoadFromFile(*schemaSourcesFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading schema sources: %v\n", err)
+			os.Exit(1)
+		}
+		schemaSources = sources
 	}
 
 	if *bundleFile == "" && *ociRef == "" {
@@ -181,6 +203,15 @@ func main() {
 
 	// Create type system
 	typeSystem := types.NewTypeSystem()
+	if len(schemaSources) > 0 {
+		if *verbose {
+			fmt.Printf("Loading %d schema source(s)\n", len(schemaSources))
+		}
+		if err := schemasources.Apply(context.Background(), typeSystem, schemaSources, *verbose); err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading schema sources: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
 	// Load bundle
 	var bundle *unified.Bundle
@@ -410,6 +441,37 @@ func main() {
 					}
 					if err := loadVerbsAndExtensions(typeSystem, verbReg, extensionDirs, extensionOCIs); err != nil {
 						fmt.Fprintf(os.Stderr, "Error reloading extensions: %v\n", err)
+					}
+				}
+			}
+		}()
+	}
+
+	schemaReloadInterval := *extensionsReloadInterval
+	if schemaReloadInterval == 0 && *reloadInterval > 0 && len(schemaSources) > 0 {
+		schemaReloadInterval = *reloadInterval
+	}
+	if schemaReloadInterval > 0 && len(schemaSources) > 0 {
+		if *verbose {
+			fmt.Printf("Enabling schema source reload every %s\n", schemaReloadInterval)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ticker := time.NewTicker(schemaReloadInterval)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if *verbose {
+						fmt.Println("Reloading schema sources...")
+					}
+					typeSystem.ResetFactTypes()
+					if err := schemasources.Apply(context.Background(), typeSystem, schemaSources, *verbose); err != nil {
+						fmt.Fprintf(os.Stderr, "Error reloading schema sources: %v\n", err)
 					}
 				}
 			}

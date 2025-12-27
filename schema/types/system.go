@@ -105,6 +105,15 @@ func (ts *TypeSystem) RegisterFactType(path string, typ *Type) {
 	ts.factTypes[path] = typ
 }
 
+// ResetFactTypes clears all fact type registrations while keeping verbs/functions intact.
+func (ts *TypeSystem) ResetFactTypes() {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	ts.factTypes = make(map[string]*Type)
+	ts.factVersions = make(map[string]map[string]*Type)
+	ts.factDefaults = make(map[string]string)
+}
+
 // RegisterFactTypeVersion registers a versioned type for a fact path.
 func (ts *TypeSystem) RegisterFactTypeVersion(path, version string, typ *Type, setDefault bool) {
 	if path == "" || strings.TrimSpace(version) == "" || typ == nil {

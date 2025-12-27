@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/effectus/effectus-go/analysis"
 	"github.com/effectus/effectus-go/compiler"
+	"github.com/effectus/effectus-go/internal/schemasources"
 )
 
 func newGraphCommand() *Command {
@@ -20,6 +22,7 @@ func newGraphCommand() *Command {
 	}
 
 	schemaFiles := graphCmd.FlagSet.String("schema", "", "Comma-separated list of schema files to load")
+	schemaSources := graphCmd.FlagSet.String("schema-sources", "", "Path to schema sources config (YAML/JSON)")
 	format := graphCmd.FlagSet.String("format", "json", "Output format: json or dot")
 	output := graphCmd.FlagSet.String("output", "", "Output file (defaults to stdout)")
 	verbose := graphCmd.FlagSet.Bool("verbose", false, "Show detailed output")
@@ -31,6 +34,15 @@ func newGraphCommand() *Command {
 		}
 
 		facts, typeSystem := createEmptyFacts(*schemaFiles, *verbose)
+		if strings.TrimSpace(*schemaSources) != "" {
+			sources, err := schemasources.LoadFromFile(*schemaSources)
+			if err != nil {
+				return err
+			}
+			if err := schemasources.Apply(context.Background(), typeSystem, sources, *verbose); err != nil {
+				return err
+			}
+		}
 		knownFacts := make(map[string]struct{})
 		for _, path := range typeSystem.GetAllFactPaths() {
 			knownFacts[path] = struct{}{}

@@ -39,6 +39,26 @@ facts:
     max_universes: 200
     max_namespaces: 50
 
+schema_sources:
+  - name: "fraud-db"
+    type: "sql_introspect"
+    namespace: "fraud"
+    version: "v1"
+    config:
+      driver: "postgres"
+      dsn: "postgres://user:pass@localhost:5432/fraud?sslmode=disable"
+      schema: "public"
+      table: "transactions"
+      schema_name: "transaction"
+
+  - name: "buf-registry"
+    type: "buf"
+    namespace: "acme"
+    version: "v2"
+    config:
+      module: "buf.build/acme/facts"
+      schema_dir: "schemas"
+
 extensions:
   # Local extension manifests (HTTP/stream/gRPC targets)
   dirs:
@@ -105,20 +125,19 @@ Then list the OCI reference under `extensions.oci`.
 - `/api/*` endpoints require a token; `/healthz` and `/readyz` are open by default.
 - If you need in‑process Go executors, use `verbs.plugin_dirs` or embed via library mode.
 - Extension reloading re-reads `*.verbs.json` / `*.schema.json` from disk or OCI; Go plugins are not hot-reloadable.
+- Schema sources are loaded in-memory at startup; set `extensions.reload_interval` (or `bundle.reload_interval`) to poll for updates.
 
 ## External Schema Sources (Buf, SQL, Catalogs)
 
-`effectusd` reloads schema manifests when they land in `extensions.dirs` or `extensions.oci`. For external schema
-registries (Buf/Proto) or SQL catalogs, run a small “schema sync” job that writes `*.schema.json` into those locations.
+Use `schema_sources` to load schemas directly at startup (and optionally on reload). The built-in providers are:
 
-Recommended patterns:
+- `sql_introspect`: Reads `information_schema` (Postgres/MySQL) or `PRAGMA table_info` (SQLite drivers) and emits a
+  JSON schema from table columns.
+- `buf`: Runs `buf export` and reads generated `*.schema.json` / `*.jsonschema` files (or `schema_dir`/`schema_files`
+  you provide).
 
-- **Buf schema registry**: `buf export` the module, run a generator that emits `*.schema.json`, then publish to OCI or
-  copy into `extensions/`. On each sync, `effectusd` reloads the new schema definitions.
-- **SQL schemas**: introspect table/column metadata and emit `*.schema.json` (or map to existing Effectus types). Drop
-  the output in `extensions/` on a schedule. Hot reload picks up column additions or type changes.
-
-This keeps the runtime simple: Effectus only needs local/OCI schema manifests, while sync jobs handle registry access.
+If your registry only exposes protobuf, add a generator that outputs JSON schemas and point `schema_dir` at the results.
+This keeps the runtime simple while still allowing schemas to be sourced dynamically from SQL catalogs or Buf registries.
 
 ## Kubernetes (ConfigMap)
 

@@ -483,6 +483,35 @@ func init() {
 }
 ```
 
+## **Schema Providers**
+
+Schema providers let you load fact schemas from external systems (SQL catalogs, Buf registries) without bundling
+static files. Implement `adapters.SchemaProvider` and register it with `adapters.RegisterSchemaProvider(...)`.
+
+```go
+package schemacustom
+
+import (
+    "context"
+    "github.com/effectus/effectus-go/adapters"
+)
+
+type Provider struct{}
+
+func (p *Provider) LoadSchemas(ctx context.Context) ([]adapters.SchemaDefinition, error) {
+    // Return JSON schema payloads or Effectus schema entries
+    return []adapters.SchemaDefinition{
+        {Name: "acme.v1.facts.Customer", Format: adapters.SchemaFormatJSONSchema, Data: []byte(`{...}`)},
+    }, nil
+}
+
+func (p *Provider) Close() error { return nil }
+
+func init() {
+    adapters.RegisterSchemaProvider("custom_schema", &Factory{})
+}
+```
+
 ## **Observability**
 
 The library provides comprehensive metrics and logging:

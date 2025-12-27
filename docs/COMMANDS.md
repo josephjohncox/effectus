@@ -45,6 +45,7 @@ effectusc typecheck [options] file1.eff [file2.eff ...]
 
 Options:
   --schema       Comma-separated list of schema files to load
+  --schema-sources Path to schema sources config (YAML/JSON)
   --verbschema   Comma-separated list of verb schema files to load
   --output       Output file for reports (defaults to stdout)
   --report       Generate type report
@@ -69,6 +70,7 @@ effectusc check [options] file1.eff [file2.eff ...]
 
 Options:
   --schema       Comma-separated list of schema files to load
+  --schema-sources Path to schema sources config (YAML/JSON)
   --verbschema   Comma-separated list of verb schema files to load
   --format       Output format: text or json (default: text)
   --fail-on-warn Return non-zero exit code when warnings are present
@@ -143,10 +145,11 @@ Emits a dependency graph (rules/flows → facts/verbs) plus fact coverage.
 effectusc graph [options] file1.eff [file2.effx ...]
 
 Options:
-  --schema  Comma-separated list of schema files or directories
-  --format  Output format: json or dot (default: json)
-  --output  Output file for the graph (defaults to stdout)
-  --verbose Show detailed output
+  --schema         Comma-separated list of schema files or directories
+  --schema-sources Path to schema sources config (YAML/JSON)
+  --format         Output format: json or dot (default: json)
+  --output         Output file for the graph (defaults to stdout)
+  --verbose        Show detailed output
 ```
 
 **Example:**
@@ -162,10 +165,11 @@ Emits a fact coverage report (used/unknown/unused) across rules and flows.
 effectusc facts [options] file1.eff [file2.effx ...]
 
 Options:
-  --schema  Comma-separated list of schema files or directories
-  --format  Output format: text or json (default: text)
-  --output  Output file for the report (defaults to stdout)
-  --verbose Show detailed output
+  --schema         Comma-separated list of schema files or directories
+  --schema-sources Path to schema sources config (YAML/JSON)
+  --format         Output format: text or json (default: text)
+  --output         Output file for the report (defaults to stdout)
+  --verbose        Show detailed output
 ```
 
 **Example:**
@@ -182,6 +186,7 @@ effectusc compile [options] file1.eff [file2.eff ...]
 
 Options:
   --schema       Comma-separated list of schema files to load
+  --schema-sources Path to schema sources config (YAML/JSON)
   --verbschema   Comma-separated list of verb schema files to load
   --output       Output file for compiled spec (default: spec.json)
   --verbose      Show detailed output
@@ -208,6 +213,7 @@ Options:
   --version      Bundle version (default: 1.0.0)
   --desc         Bundle description
   --schema-dir   Directory containing schema files
+  --schema-sources Path to schema sources config (YAML/JSON)
   --verb-dir     Directory containing verb files
   --rules-dir    Directory containing rule files
   --output       Output file for bundle (default: bundle.json)
@@ -306,6 +312,7 @@ effectusd [options]
 --extensions-dir   Directory containing extension manifests (*.verbs.json, *.schema.json)
 --extensions-oci   OCI references for extension bundles (comma-separated)
 --extensions-reload-interval Interval for reloading extension manifests (0 to disable)
+--schema-sources   Path to schema sources config (YAML/JSON)
 --config           Path to YAML/JSON config file
 --reload-interval  Interval for hot-reloading (default: 30s)
 ```

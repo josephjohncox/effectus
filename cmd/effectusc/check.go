@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/effectus/effectus-go/compiler"
+	"github.com/effectus/effectus-go/internal/schemasources"
 	"github.com/effectus/effectus-go/lint"
 	"github.com/effectus/effectus-go/schema/verb"
 )
@@ -20,6 +22,7 @@ func newCheckCommand() *Command {
 	}
 
 	schemaFiles := checkCmd.FlagSet.String("schema", "", "Comma-separated list of schema files to load")
+	schemaSources := checkCmd.FlagSet.String("schema-sources", "", "Path to schema sources config (YAML/JSON)")
 	verbSchemas := checkCmd.FlagSet.String("verbschema", "", "Comma-separated list of verb schema files to load")
 	format := checkCmd.FlagSet.String("format", "text", "Output format: text or json")
 	failOnWarn := checkCmd.FlagSet.Bool("fail-on-warn", false, "Return non-zero exit code when warnings are present")
@@ -43,10 +46,11 @@ func newCheckCommand() *Command {
 		}
 
 		issues, hadWarn, hadError, err := runCheck(runCheckOptions{
-			files:       files,
-			schemaFiles: *schemaFiles,
-			verbSchemas: splitCommaList(*verbSchemas),
-			registry:    loadVerbRegistry(splitCommaList(*verbSchemas), *verbose),
+			files:         files,
+			schemaFiles:   *schemaFiles,
+			schemaSources: strings.TrimSpace(*schemaSources),
+			verbSchemas:   splitCommaList(*verbSchemas),
+			registry:      loadVerbRegistry(splitCommaList(*verbSchemas), *verbose),
 			lintOptions: lint.LintOptions{
 				UnsafeMode: mode,
 				VerbMode:   verbPolicy,
@@ -83,12 +87,13 @@ func newCheckCommand() *Command {
 }
 
 type runCheckOptions struct {
-	files       []string
-	schemaFiles string
-	verbSchemas []string
-	registry    *verb.Registry
-	lintOptions lint.LintOptions
-	verbose     bool
+	files         []string
+	schemaFiles   string
+	schemaSources string
+	verbSchemas   []string
+	registry      *verb.Registry
+	lintOptions   lint.LintOptions
+	verbose       bool
 }
 
 func runCheck(opts runCheckOptions) ([]lint.Issue, bool, bool, error) {
@@ -108,6 +113,15 @@ func runCheck(opts runCheckOptions) ([]lint.Issue, bool, bool, error) {
 	}
 
 	facts, typeSystem := createEmptyFacts(opts.schemaFiles, opts.verbose)
+	if strings.TrimSpace(opts.schemaSources) != "" {
+		sources, err := schemasources.LoadFromFile(opts.schemaSources)
+		if err != nil {
+			return nil, false, false, err
+		}
+		if err := schemasources.Apply(context.Background(), typeSystem, sources, opts.verbose); err != nil {
+			return nil, false, false, err
+		}
+	}
 	compTS := comp.GetTypeSystem()
 	compTS.MergeTypeSystem(typeSystem)
 

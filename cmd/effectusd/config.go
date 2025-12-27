@@ -8,18 +8,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/effectus/effectus-go/adapters"
 	"gopkg.in/yaml.v3"
 )
 
 type runtimeConfig struct {
-	Bundle     bundleConfig    `yaml:"bundle" json:"bundle"`
-	HTTP       httpConfig      `yaml:"http" json:"http"`
-	Metrics    httpConfig      `yaml:"metrics" json:"metrics"`
-	API        apiConfig       `yaml:"api" json:"api"`
-	Facts      factsConfig     `yaml:"facts" json:"facts"`
-	Saga       sagaConfig      `yaml:"saga" json:"saga"`
-	Verbs      verbConfig      `yaml:"verbs" json:"verbs"`
-	Extensions extensionConfig `yaml:"extensions" json:"extensions"`
+	Bundle        bundleConfig                  `yaml:"bundle" json:"bundle"`
+	HTTP          httpConfig                    `yaml:"http" json:"http"`
+	Metrics       httpConfig                    `yaml:"metrics" json:"metrics"`
+	API           apiConfig                     `yaml:"api" json:"api"`
+	Facts         factsConfig                   `yaml:"facts" json:"facts"`
+	Saga          sagaConfig                    `yaml:"saga" json:"saga"`
+	Verbs         verbConfig                    `yaml:"verbs" json:"verbs"`
+	Extensions    extensionConfig               `yaml:"extensions" json:"extensions"`
+	SchemaSources []adapters.SchemaSourceConfig `yaml:"schema_sources" json:"schema_sources"`
 }
 
 type bundleConfig struct {
@@ -189,6 +191,10 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 			return fmt.Errorf("extensions.reload_interval: %w", err)
 		}
 		*extensionsReloadInterval = interval
+	}
+
+	if len(cfg.SchemaSources) > 0 && !setFlags["schema-sources"] {
+		schemaSources = cfg.SchemaSources
 	}
 
 	return nil
