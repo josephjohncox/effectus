@@ -152,6 +152,10 @@ func main() {
 }
 ```
 
+When to choose each loader:
+- Use `loader.NewStaticVerbLoader` for in-process Go executors.
+- Use JSON/OCI loaders for HTTP/gRPC/stream targets or cross-team verb distribution.
+
 ## 7) Bundle-only run (OCI + hot reload)
 Create a bundle, push to a registry, and run `effectusd` using only the OCI reference.
 

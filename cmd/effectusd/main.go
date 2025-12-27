@@ -12,7 +12,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/effectus/effectus-go/loader"
 	"github.com/effectus/effectus-go/pathutil"
+	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/effectus/effectus-go/unified"
@@ -91,11 +93,15 @@ func (n *namespaceStrategyFlag) Set(value string) error {
 
 var (
 	// Configuration flags
-	bundleFile     = flag.String("bundle", "", "Path to bundle file")
-	ociRef         = flag.String("oci-ref", "", "OCI reference for bundle (e.g., ghcr.io/user/bundle:v1)")
-	pluginDir      = flag.String("plugin-dir", "", "Directory containing verb plugins")
-	verbDir        = flag.String("verb-dir", "", "Directory containing JSON verb specs")
-	reloadInterval = flag.Duration("reload-interval", 30*time.Second, "Interval for hot-reloading")
+	configPath               = flag.String("config", "", "Path to YAML/JSON config file")
+	bundleFile               = flag.String("bundle", "", "Path to bundle file")
+	ociRef                   = flag.String("oci-ref", "", "OCI reference for bundle (e.g., ghcr.io/user/bundle:v1)")
+	pluginDir                = flag.String("plugin-dir", "", "Directory containing verb plugins")
+	verbDir                  = flag.String("verb-dir", "", "Directory containing JSON verb specs")
+	extensionsDir            = flag.String("extensions-dir", "", "Directory containing extension manifests (*.verbs.json, *.schema.json)")
+	extensionsOCI            = flag.String("extensions-oci", "", "OCI references for extension bundles (comma-separated)")
+	extensionsReloadInterval = flag.Duration("extensions-reload-interval", 0, "Interval for reloading extension manifests (0 to disable)")
+	reloadInterval           = flag.Duration("reload-interval", 30*time.Second, "Interval for hot-reloading")
 
 	// Runtime flags
 	sagaEnabled   = flag.Bool("saga", false, "Enable saga-style compensation")
@@ -136,6 +142,23 @@ var factsMergeNs namespaceStrategyFlag
 func main() {
 	flag.Var(&factsMergeNs, "facts-merge-namespace", "Namespace-specific merge strategy (namespace=first|last|error)")
 	flag.Parse()
+
+	setFlags := map[string]bool{}
+	flag.CommandLine.Visit(func(f *flag.Flag) {
+		setFlags[f.Name] = true
+	})
+
+	if strings.TrimSpace(*configPath) != "" {
+		cfg, err := loadRuntimeConfig(*configPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := applyRuntimeConfig(cfg, setFlags); err != nil {
+			fmt.Fprintf(os.Stderr, "Error applying config: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
 	if *bundleFile == "" && *ociRef == "" {
 		fmt.Fprintln(os.Stderr, "Either -bundle or -oci-ref must be specified")
@@ -193,36 +216,11 @@ func main() {
 
 	// Create verb registry
 	verbReg := verb.NewRegistry(typeSystem)
-
-	if *verbDir != "" && *pluginDir != "" {
-		fmt.Fprintln(os.Stderr, "Use either -verb-dir or -plugin-dir, not both")
+	extensionDirs := splitCommaList(*extensionsDir)
+	extensionOCIs := splitCommaList(*extensionsOCI)
+	if err := loadVerbsAndExtensions(typeSystem, verbReg, extensionDirs, extensionOCIs); err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading verbs/extensions: %v\n", err)
 		os.Exit(1)
-	}
-
-	if *verbDir != "" {
-		for _, dir := range splitCommaList(*verbDir) {
-			if dir == "" {
-				continue
-			}
-			if *verbose {
-				fmt.Printf("Loading verb specs from directory: %s\n", dir)
-			}
-			if err := verbReg.RegisterDirectory(dir); err != nil {
-				fmt.Fprintf(os.Stderr, "Error loading verb specs: %v\n", err)
-				os.Exit(1)
-			}
-		}
-	}
-
-	// Load verb plugins
-	if *pluginDir != "" {
-		if *verbose {
-			fmt.Printf("Loading verb plugins from directory: %s\n", *pluginDir)
-		}
-		if err := verbReg.LoadPlugins(*pluginDir); err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading verb plugins: %v\n", err)
-			os.Exit(1)
-		}
 	}
 
 	// Verify verb hash
@@ -388,6 +386,36 @@ func main() {
 		}()
 	}
 
+	extReloadInterval := *extensionsReloadInterval
+	if extReloadInterval == 0 && *reloadInterval > 0 && (len(extensionDirs) > 0 || len(extensionOCIs) > 0) {
+		extReloadInterval = *reloadInterval
+	}
+	if extReloadInterval > 0 && (len(extensionDirs) > 0 || len(extensionOCIs) > 0) {
+		if *verbose {
+			fmt.Printf("Enabling extension reload every %s\n", extReloadInterval)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ticker := time.NewTicker(extReloadInterval)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if *verbose {
+						fmt.Println("Reloading extension manifests...")
+					}
+					if err := loadVerbsAndExtensions(typeSystem, verbReg, extensionDirs, extensionOCIs); err != nil {
+						fmt.Fprintf(os.Stderr, "Error reloading extensions: %v\n", err)
+					}
+				}
+			}
+		}()
+	}
+
 	// Main processing loop
 	for {
 		select {
@@ -416,6 +444,77 @@ func main() {
 			}
 		}
 	}
+}
+
+func loadVerbsAndExtensions(typeSystem *types.TypeSystem, verbReg *verb.Registry, extensionDirs []string, extensionOCIs []string) error {
+	if verbReg == nil {
+		return nil
+	}
+
+	verbReg.Reset()
+
+	if *verbDir != "" && *pluginDir != "" {
+		return fmt.Errorf("use either -verb-dir or -plugin-dir, not both")
+	}
+
+	if *verbDir != "" {
+		for _, dir := range splitCommaList(*verbDir) {
+			if dir == "" {
+				continue
+			}
+			if *verbose {
+				fmt.Printf("Loading verb specs from directory: %s\n", dir)
+			}
+			if err := verbReg.RegisterDirectory(dir); err != nil {
+				return fmt.Errorf("loading verb specs from %s: %w", dir, err)
+			}
+		}
+	}
+
+	if *pluginDir != "" {
+		if *verbose {
+			fmt.Printf("Loading verb plugins from directory: %s\n", *pluginDir)
+		}
+		if err := verbReg.LoadPlugins(*pluginDir); err != nil {
+			return fmt.Errorf("loading verb plugins: %w", err)
+		}
+	}
+
+	if len(extensionDirs) == 0 && len(extensionOCIs) == 0 {
+		return nil
+	}
+
+	if *verbose {
+		fmt.Printf("Loading extensions from %d dirs and %d OCI bundle(s)\n", len(extensionDirs), len(extensionOCIs))
+	}
+
+	em := loader.NewExtensionManager()
+	for _, dir := range extensionDirs {
+		if dir == "" {
+			continue
+		}
+		loaders, err := loader.LoadFromDirectory(dir)
+		if err != nil {
+			return fmt.Errorf("loading extensions from %s: %w", dir, err)
+		}
+		for _, l := range loaders {
+			em.AddLoader(l)
+		}
+	}
+
+	for i, ref := range extensionOCIs {
+		if ref == "" {
+			continue
+		}
+		name := fmt.Sprintf("oci-%d", i+1)
+		em.AddLoader(loader.NewOCIBundleLoader(name, ref))
+	}
+
+	registry := schema.NewRegistry()
+	if err := schema.LoadExtensionsIntoRegistries(em, registry, verbReg); err != nil {
+		return fmt.Errorf("loading extension manifests: %w", err)
+	}
+	return nil
 }
 
 func splitCommaList(value string) []string {

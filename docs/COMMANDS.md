@@ -303,6 +303,10 @@ effectusd [options]
 --bundle           Path to bundle file
 --oci-ref          OCI reference for bundle (e.g., ghcr.io/user/bundle:v1)
 --plugin-dir       Directory containing verb plugins
+--extensions-dir   Directory containing extension manifests (*.verbs.json, *.schema.json)
+--extensions-oci   OCI references for extension bundles (comma-separated)
+--extensions-reload-interval Interval for reloading extension manifests (0 to disable)
+--config           Path to YAML/JSON config file
 --reload-interval  Interval for hot-reloading (default: 30s)
 ```
 
@@ -493,6 +497,10 @@ GET /readyz
 # API status (requires token when auth is enabled)
 GET /api/status
 ```
+
+Notes:
+- `/healthz` and `/readyz` are unauthenticated by default.
+- `/api/*` endpoints are protected and rate-limited when auth is enabled.
 
 ## Error Handling
 

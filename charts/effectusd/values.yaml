@@ -30,3 +30,10 @@ service:
   metricsPort: 9090
 
 resources: {}
+
+config:
+  enabled: false
+  name: ""
+  key: "effectusd.yaml"
+  mountPath: "/etc/effectus"
+  contents: ""

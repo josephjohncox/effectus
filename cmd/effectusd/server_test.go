@@ -1,11 +1,16 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"testing"
 
 	"github.com/effectus/effectus-go/pathutil"
+	"github.com/effectus/effectus-go/unified"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFileFactStorePersists(t *testing.T) {
@@ -155,4 +160,41 @@ func TestFileFactStoreMergeStrategies(t *testing.T) {
 			t.Fatalf("expected default merge last for order")
 		}
 	})
+}
+
+func TestHealthAndReadyEndpoints(t *testing.T) {
+	auth, _, err := buildAPIAuth("token", "", "")
+	require.NoError(t, err)
+
+	state := newServerState(nil, nil, nil, factStoreConfig{}, auth, nil, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", state.handleHealth)
+	mux.HandleFunc("/readyz", state.handleReady)
+	handler := state.withAPIMiddleware(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	var health map[string]string
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &health))
+	require.Equal(t, "ok", health["status"])
+
+	req = httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	resp = httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	require.Equal(t, http.StatusServiceUnavailable, resp.Code)
+
+	state.SetBundle(&unified.Bundle{Name: "demo", Version: "1.0.0"})
+	req = httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	resp = httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	var ready map[string]string
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &ready))
+	require.Equal(t, "ready", ready["status"])
+	require.Equal(t, "demo", ready["bundle"])
 }

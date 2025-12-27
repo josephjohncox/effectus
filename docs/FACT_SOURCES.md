@@ -57,6 +57,16 @@ schema_registry:
     "schema-id-123": "acme.v1.facts.Transaction@v1"
 ```
 
+### 4c) Buf registry + SQL catalogs (hot reload)
+Effectus reloads schemas when `*.schema.json` files change in `extensions.dirs` or OCI bundles. For Buf or SQL‑backed
+schemas, run a sync job that:
+
+1) Pulls the latest schema source (e.g., `buf export`, SQL catalog introspection).  
+2) Emits `*.schema.json` into your configured extensions directory or OCI bundle.  
+3) Lets `effectusd` reload on the next interval.
+
+This keeps schema governance external while still allowing hot‑loaded updates inside the runtime.
+
 ### 5) Merge multiple sources into one facts provider
 Use namespaces + aliases for clean composition:
 - `pathutil.NamespacedLoader`

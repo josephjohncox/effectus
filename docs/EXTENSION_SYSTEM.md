@@ -91,6 +91,38 @@ EOF
 mgr.LoadFromDirectory("./verbs")
 ```
 
+For the current JSON verb manifest format (used by `*.verbs.json` loaders), define capabilities, resources, and required
+args explicitly:
+
+```json
+{
+  "name": "ExternalAPI",
+  "version": "1.0.0",
+  "description": "HTTP-backed validators",
+  "verbs": [
+    {
+      "name": "ValidateAccount",
+      "description": "Calls external validation service",
+      "capabilities": ["write", "idempotent"],
+      "resources": [
+        { "resource": "account_validation", "capabilities": ["write", "idempotent"] }
+      ],
+      "argTypes": { "accountId": "string" },
+      "requiredArgs": ["accountId"],
+      "returnType": "ValidationResult",
+      "target": {
+        "type": "http",
+        "config": {
+          "url": "https://api.validation.com/check",
+          "method": "POST",
+          "timeout": "5s"
+        }
+      }
+    }
+  ]
+}
+```
+
 #### Protocol Buffer-based
 ```protobuf
 // verb_spec.proto

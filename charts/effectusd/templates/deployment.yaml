@@ -19,6 +19,9 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
+            {{- if .Values.config.enabled }}
+            - "--config={{ .Values.config.mountPath }}/{{ .Values.config.key }}"
+            {{- end }}
             - "--http-addr=:{{ .Values.service.port }}"
             - "--metrics-addr=:{{ .Values.service.metricsPort }}"
             - "--oci-ref={{ required \"bundle.ociRef is required\" .Values.bundle.ociRef }}"
@@ -56,6 +59,16 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            {{- if .Values.config.enabled }}
+            - name: config
+              mountPath: {{ .Values.config.mountPath }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: data
           emptyDir: {}
+        {{- if .Values.config.enabled }}
+        - name: config
+          configMap:
+            name: {{ default (printf "%s-config" (include "effectusd.fullname" .)) .Values.config.name }}
+        {{- end }}

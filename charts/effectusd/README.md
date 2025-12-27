@@ -19,3 +19,19 @@ Key values in `values.yaml`:
 - `bundle.reloadInterval`
 - `api.*` (auth, ACLs, rate limits)
 - `facts.*` (store path, merge strategy, cache limits)
+- `config.*` (mount a config map and pass `--config`)
+
+### ConfigMap usage
+
+```yaml
+config:
+  enabled: true
+  contents: |
+    bundle:
+      oci: "ghcr.io/myorg/bundles/fraud-demo:1.0.0"
+    http:
+      addr: ":8080"
+    api:
+      auth: "token"
+      token: "write-token"
+```

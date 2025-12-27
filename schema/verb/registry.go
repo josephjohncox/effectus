@@ -64,6 +64,14 @@ func (r *Registry) RegisterVerb(spec *Spec) error {
 	return nil
 }
 
+// Reset clears all registered verbs while preserving registry settings.
+func (r *Registry) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.verbs = make(map[string]*Spec)
+	r.verbHash = ""
+}
+
 // SetStrictArgs sets the registry-level strict argument validation setting.
 func (r *Registry) SetStrictArgs(value *bool) {
 	r.mu.Lock()
