@@ -65,12 +65,15 @@ rule "welcome_new_customer" {
 }
 ```
 
-### 4. Create Runtime
+### 4. Run as a Library
 
 ```go
 package main
 
 import (
+    "context"
+    "log"
+
     "github.com/effectus/effectus-go/runtime"
     "github.com/effectus/effectus-go/loader"
 )
@@ -79,19 +82,27 @@ func main() {
     // Create runtime with coherent flow
     rt := runtime.NewExecutionRuntime()
     
-    // Register extensions (static or dynamic)
-    rt.RegisterExtensionLoader(staticLoader)
-    rt.RegisterExtensionLoader(dynamicLoader)
+    // Register extensions (static, JSON, Proto, OCI)
+    rt.RegisterExtensionLoader(loader.NewJSONSchemaLoader("core", "schemas/core.schema.json"))
+    rt.RegisterExtensionLoader(loader.NewJSONVerbLoader("core", "verbs/core.verbs.json"))
     
     // Compile and validate BEFORE starting daemon
-    if err := rt.CompileAndValidate(ctx); err != nil {
+    if err := rt.CompileAndValidate(context.Background()); err != nil {
         log.Fatal("Compilation failed:", err)
     }
     
     // Execute rules
-    result, err := rt.ExecuteVerb(ctx, "SendEmail", args)
+    result, err := rt.ExecuteVerb(context.Background(), "SendEmail", map[string]interface{}{
+        "to": "user@example.com",
+        "subject": "Welcome!",
+        "template": "welcome",
+    })
+    _ = result
+    _ = err
 }
 ```
+
+For compile‑time Go executors, use `loader.NewStaticVerbLoader(...)` instead of JSON loaders.
 
 ## Architecture Overview
 
@@ -168,19 +179,36 @@ runtime.RegisterExtensionLoader(loader)
 
 If `target` is omitted, verbs default to **stream** emission (stdout publisher).
 
+### Load Bundles (CLI or Library)
+
+```bash
+# Run with local bundle
+effectusd --bundle bundle.json
+
+# Run with OCI registry
+effectusd --oci-ref ghcr.io/myorg/rules:v1.0.0
+```
+
+```go
+// Load bundles directly in Go (metadata + summaries)
+import "github.com/effectus/effectus-go/unified"
+
+bundle, _ := unified.LoadBundle("bundle.json")
+puller := unified.NewOCIBundlePuller("./bundles")
+bundle, _ = puller.Pull("ghcr.io/myorg/rules:v1.0.0")
+_ = bundle
+```
+
 ## CLI Usage
 
 ```bash
 # Compile and validate rules
 effectusc compile rules/ --output compiled.json
 
-# Run with local bundle
-effectusd --bundle compiled.json
+# Create a bundle (local or OCI)
+effectusc bundle --name fraud --version 1.0.0 --schema-dir schemas --verb-dir verbs --rules-dir rules --output bundle.json
 
-# Run with OCI registry
-effectusd --oci-ref ghcr.io/myorg/rules:v1.0.0
-
-# Hot reload from registry
+# Run with OCI registry + hot reload
 effectusd --oci-ref ghcr.io/myorg/rules:latest --reload-interval 60s
 ```
 
