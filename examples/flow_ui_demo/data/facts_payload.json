@@ -1,0 +1,39 @@
+{
+  "universe": "default",
+  "facts": {
+    "order": {
+      "id": "ord-9001",
+      "amount": 2450.75,
+      "currency": "USD",
+      "state": "pending",
+      "created_at_epoch": 1735270000,
+      "priority": "expedite",
+      "sku": "sku-rocket"
+    },
+    "customer": {
+      "id": "cust-77",
+      "risk_score": 82,
+      "priority": 2,
+      "tenure_days": 45
+    },
+    "payment": {
+      "authorization_id": "auth-abc-123",
+      "state": "authorized"
+    },
+    "inventory": {
+      "available": true
+    },
+    "clock": {
+      "current_epoch": 1735274000
+    },
+    "risk": {
+      "stream_score": 88
+    },
+    "chargeback": {
+      "open": false
+    },
+    "device": {
+      "id": "dev-44"
+    }
+  }
+}

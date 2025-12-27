@@ -1,0 +1,5 @@
+[
+  {"path": "customer.id", "type": {"PrimType": 4, "Name": "string"}},
+  {"path": "customer.vip", "type": {"PrimType": 1, "Name": "bool"}},
+  {"path": "customer.tier", "type": {"PrimType": 4, "Name": "string"}}
+]

@@ -1,85 +1,85 @@
 {
   "reserve_material": {
     "arg_types": {
-      "qty": {"PrimType": 2, "Name": "int"},
-      "lot": {"PrimType": 1, "Name": "string"}
+      "qty": "int",
+      "lot": "string"
     },
-    "return_type": {"PrimType": 0, "Name": "Material"}
+    "return_type": "material"
   },
   "allocate_machine": {
     "arg_types": {
-      "group": {"PrimType": 1, "Name": "string"},
-      "input": {"PrimType": 0, "Name": "unknown"}
+      "group": "string",
+      "input": "unknown"
     },
-    "return_type": {"PrimType": 0, "Name": "Machine"}
+    "return_type": "machine"
   },
   "set_cut_params": {
     "arg_types": {
-      "machine": {"PrimType": 0, "Name": "unknown"},
-      "sfm": {"PrimType": 2, "Name": "int"}
+      "machine": "unknown",
+      "sfm": "int"
     },
-    "return_type": {"PrimType": 0, "Name": "CutParams"}
+    "return_type": "cutparams"
   },
   "generate_setup_sheet": {
     "arg_types": {
-      "machine": {"PrimType": 0, "Name": "unknown"},
-      "params": {"PrimType": 0, "Name": "unknown"}
+      "machine": "unknown",
+      "params": "unknown"
     },
-    "return_type": {"PrimType": 0, "Name": "SetupSheet"}
+    "return_type": "setupsheet"
   },
   "require_cert": {
     "arg_types": {
-      "type": {"PrimType": 1, "Name": "string"},
-      "doc": {"PrimType": 0, "Name": "unknown"}
+      "type": "string",
+      "doc": "unknown"
     },
-    "return_type": {"PrimType": 4, "Name": "bool"}
+    "return_type": "bool"
   },
   "release_job": {
     "arg_types": {
-      "sheet": {"PrimType": 0, "Name": "unknown"}
+      "sheet": "unknown"
     },
-    "return_type": {"PrimType": 0, "Name": "Job"}
+    "return_type": "job"
   },
   "schedule_inspection": {
     "arg_types": {
-      "job": {"PrimType": 0, "Name": "unknown"},
-      "stage": {"PrimType": 1, "Name": "string"}
+      "job": "unknown",
+      "stage": "string"
     },
-    "return_type": {"PrimType": 4, "Name": "bool"}
+    "return_type": "bool"
   },
   "analyze_requirements": {
     "arg_types": {
-      "order_id": {"PrimType": 1, "Name": "string"},
-      "specs": {"PrimType": 0, "Name": "unknown"}
+      "order_id": "string",
+      "specs": "unknown"
     },
-    "return_type": {"PrimType": 0, "Name": "Requirements"}
+    "return_type": "requirements"
   },
   "create_timeline": {
     "arg_types": {
-      "requirements": {"PrimType": 0, "Name": "unknown"},
-      "milestone": {"PrimType": 1, "Name": "string"}
+      "requirements": "unknown",
+      "milestone": "string"
     },
-    "return_type": {"PrimType": 0, "Name": "Timeline"}
+    "return_type": "timeline"
   },
   "notify_engineering": {
     "arg_types": {
-      "timeline": {"PrimType": 0, "Name": "unknown"},
-      "reason": {"PrimType": 1, "Name": "string"}
+      "timeline": "unknown",
+      "reason": "string"
     },
-    "return_type": {"PrimType": 4, "Name": "bool"}
+    "return_type": "bool"
   },
   "LogInfo": {
     "arg_types": {
-      "message": {"PrimType": 1, "Name": "string"},
-      "part": {"PrimType": 1, "Name": "string"}
+      "message": "string",
+      "part": "string"
     },
-    "return_type": {"PrimType": 4, "Name": "bool"}
+    "return_type": "bool"
   },
   "RequestQualityInspection": {
     "arg_types": {
-      "part": {"PrimType": 1, "Name": "string"},
-      "type": {"PrimType": 1, "Name": "string"}
+      "part": "string",
+      "type": "string"
     },
-    "return_type": {"PrimType": 4, "Name": "bool"}
+    "return_type": "bool"
   }
-} 
+}

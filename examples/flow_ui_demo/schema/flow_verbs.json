@@ -1,0 +1,336 @@
+{
+  "ScoreRisk": {
+    "Name": "ScoreRisk",
+    "Description": "Compute a composite risk score from streaming signals",
+    "ArgTypes": {
+      "orderId": {
+        "PrimType": 4,
+        "Name": "string"
+      },
+      "deviceId": {
+        "PrimType": 4,
+        "Name": "string"
+      }
+    },
+    "RequiredArgs": [
+      "orderId",
+      "deviceId"
+    ],
+    "ReturnType": {
+      "PrimType": 2,
+      "Name": "int"
+    }
+  },
+  "OpenCase": {
+    "Name": "OpenCase",
+    "Description": "Open an investigation case",
+    "ArgTypes": {
+      "orderId": {
+        "PrimType": 4,
+        "Name": "string"
+      },
+      "reason": {
+        "PrimType": 4,
+        "Name": "string"
+      },
+      "score": {
+        "PrimType": 2,
+        "Name": "int"
+      }
+    },
+    "RequiredArgs": [
+      "orderId",
+      "reason"
+    ],
+    "ReturnType": {
+      "PrimType": 4,
+      "Name": "string"
+    }
+  },
+  "UpdateCase": {
+    "Name": "UpdateCase",
+    "Description": "Update case status",
+    "ArgTypes": {
+      "status": {
+        "PrimType": 4,
+        "Name": "string"
+      },
+      "caseId": {
+        "PrimType": 4,
+        "Name": "string"
+      }
+    },
+    "RequiredArgs": [
+      "caseId",
+      "status"
+    ],
+    "ReturnType": {
+      "PrimType": 1,
+      "Name": "bool"
+    }
+  },
+  "HoldPayment": {
+    "Name": "HoldPayment",
+    "Description": "Place a hold on an authorization",
+    "ArgTypes": {
+      "authId": {
+        "PrimType": 4,
+        "Name": "string"
+      },
+      "amount": {
+        "PrimType": 3,
+        "Name": "float"
+      }
+    },
+    "RequiredArgs": [
+      "authId",
+      "amount"
+    ],
+    "ReturnType": {
+      "PrimType": 4,
+      "Name": "string"
+    }
+  },
+  "QueueForReview": {
+    "Name": "QueueForReview",
+    "Description": "Queue a case for manual review",
+    "ArgTypes": {
+      "orderId": {
+        "PrimType": 4,
+        "Name": "string"
+      },
+      "queue": {
+        "PrimType": 4,
+        "Name": "string"
+      }
+    },
+    "RequiredArgs": [
+      "orderId",
+      "queue"
+    ],
+    "ReturnType": {
+      "PrimType": 1,
+      "Name": "bool"
+    }
+  },
+  "NotifyRisk": {
+    "Name": "NotifyRisk",
+    "Description": "Notify risk operations",
+    "ArgTypes": {
+      "orderId": {
+        "PrimType": 4,
+        "Name": "string"
+      },
+      "channel": {
+        "PrimType": 4,
+        "Name": "string"
+      }
+    },
+    "RequiredArgs": [
+      "orderId",
+      "channel"
+    ],
+    "ReturnType": {
+      "PrimType": 1,
+      "Name": "bool"
+    }
+  },
+  "OpenEscalation": {
+    "Name": "OpenEscalation",
+    "Description": "Open an SLA escalation",
+    "ArgTypes": {
+      "orderId": {
+        "PrimType": 4,
+        "Name": "string"
+      },
+      "reason": {
+        "PrimType": 4,
+        "Name": "string"
+      }
+    },
+    "RequiredArgs": [
+      "orderId",
+      "reason"
+    ],
+    "ReturnType": {
+      "PrimType": 4,
+      "Name": "string"
+    }
+  },
+  "ScheduleCallback": {
+    "Name": "ScheduleCallback",
+    "Description": "Schedule a follow-up callback",
+    "ArgTypes": {
+      "orderId": {
+        "PrimType": 4,
+        "Name": "string"
+      },
+      "atEpoch": {
+        "PrimType": 2,
+        "Name": "int"
+      }
+    },
+    "RequiredArgs": [
+      "orderId",
+      "atEpoch"
+    ],
+    "ReturnType": {
+      "PrimType": 1,
+      "Name": "bool"
+    }
+  },
+  "EmitAlert": {
+    "Name": "EmitAlert",
+    "Description": "Emit an alert to on-call",
+    "ArgTypes": {
+      "channel": {
+        "PrimType": 4,
+        "Name": "string"
+      },
+      "message": {
+        "PrimType": 4,
+        "Name": "string"
+      }
+    },
+    "RequiredArgs": [
+      "channel",
+      "message"
+    ],
+    "ReturnType": {
+      "PrimType": 1,
+      "Name": "bool"
+    }
+  },
+  "ReserveInventory": {
+    "Name": "ReserveInventory",
+    "Description": "Reserve inventory for an order",
+    "ArgTypes": {
+      "orderId": {
+        "PrimType": 4,
+        "Name": "string"
+      },
+      "sku": {
+        "PrimType": 4,
+        "Name": "string"
+      }
+    },
+    "RequiredArgs": [
+      "orderId",
+      "sku"
+    ],
+    "ReturnType": {
+      "PrimType": 4,
+      "Name": "string"
+    }
+  },
+  "CreateShipment": {
+    "Name": "CreateShipment",
+    "Description": "Create a shipment",
+    "ArgTypes": {
+      "orderId": {
+        "PrimType": 4,
+        "Name": "string"
+      },
+      "carrier": {
+        "PrimType": 4,
+        "Name": "string"
+      }
+    },
+    "RequiredArgs": [
+      "orderId",
+      "carrier"
+    ],
+    "ReturnType": {
+      "PrimType": 4,
+      "Name": "string"
+    }
+  },
+  "MarkOrderReady": {
+    "Name": "MarkOrderReady",
+    "Description": "Mark order ready for fulfillment",
+    "ArgTypes": {
+      "orderId": {
+        "PrimType": 4,
+        "Name": "string"
+      },
+      "status": {
+        "PrimType": 4,
+        "Name": "string"
+      }
+    },
+    "RequiredArgs": [
+      "orderId",
+      "status"
+    ],
+    "ReturnType": {
+      "PrimType": 1,
+      "Name": "bool"
+    }
+  },
+  "EmitEvent": {
+    "Name": "EmitEvent",
+    "Description": "Emit an event to downstream systems",
+    "ArgTypes": {
+      "topic": {
+        "PrimType": 4,
+        "Name": "string"
+      },
+      "orderId": {
+        "PrimType": 4,
+        "Name": "string"
+      }
+    },
+    "RequiredArgs": [
+      "topic",
+      "orderId"
+    ],
+    "ReturnType": {
+      "PrimType": 1,
+      "Name": "bool"
+    }
+  },
+  "HoldPayout": {
+    "Name": "HoldPayout",
+    "Description": "Hold payout while chargeback is open",
+    "ArgTypes": {
+      "orderId": {
+        "PrimType": 4,
+        "Name": "string"
+      },
+      "amount": {
+        "PrimType": 3,
+        "Name": "float"
+      }
+    },
+    "RequiredArgs": [
+      "orderId",
+      "amount"
+    ],
+    "ReturnType": {
+      "PrimType": 4,
+      "Name": "string"
+    }
+  },
+  "StartInvestigation": {
+    "Name": "StartInvestigation",
+    "Description": "Start a deeper investigation workflow",
+    "ArgTypes": {
+      "orderId": {
+        "PrimType": 4,
+        "Name": "string"
+      },
+      "reason": {
+        "PrimType": 4,
+        "Name": "string"
+      }
+    },
+    "RequiredArgs": [
+      "orderId",
+      "reason"
+    ],
+    "ReturnType": {
+      "PrimType": 4,
+      "Name": "string"
+    }
+  }
+}

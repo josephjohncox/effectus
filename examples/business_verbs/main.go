@@ -41,52 +41,58 @@ func (e *BusinessVerbExecutor) Execute(ctx context.Context, args map[string]inte
 }
 
 // RegisterBusinessVerbs shows how to register domain-specific verbs
-func RegisterBusinessVerbs(registry *verb.VerbRegistry) {
+func RegisterBusinessVerbs(registry *verb.Registry) {
 	// Example: E-commerce verbs
 
 	// Read customer verb (read-only, idempotent, commutative)
-	registry.Register(&verb.StandardVerbSpec{
+	if err := registry.RegisterVerb(&verb.Spec{
 		Name:         "ReadCustomer",
 		Description:  "Reads customer information",
-		Cap:          verb.CapRead | verb.CapIdempotent | verb.CapCommutative,
+		Capability:   verb.CapRead | verb.CapIdempotent | verb.CapCommutative,
 		Resources:    verb.ResourceSet{{Resource: "customer", Cap: verb.CapRead}},
 		ArgTypes:     map[string]string{"customerId": "string"},
 		RequiredArgs: []string{"customerId"},
 		ReturnType:   "Customer",
-		ExecutorImpl: &BusinessVerbExecutor{Name: "ReadCustomer"},
-	})
+		Executor:     &BusinessVerbExecutor{Name: "ReadCustomer"},
+	}); err != nil {
+		log.Fatalf("Register ReadCustomer: %v", err)
+	}
 
 	// Update customer verb (read-write, idempotent)
-	registry.Register(&verb.StandardVerbSpec{
+	if err := registry.RegisterVerb(&verb.Spec{
 		Name:         "UpdateCustomer",
 		Description:  "Updates customer information",
-		Cap:          verb.CapReadWrite | verb.CapIdempotent,
+		Capability:   verb.CapReadWrite | verb.CapIdempotent,
 		Resources:    verb.ResourceSet{{Resource: "customer", Cap: verb.CapReadWrite}},
 		ArgTypes:     map[string]string{"customerId": "string", "data": "object"},
 		RequiredArgs: []string{"customerId", "data"},
 		ReturnType:   "bool",
-		InverseVerb:  "RollbackCustomerUpdate",
-		ExecutorImpl: &BusinessVerbExecutor{Name: "UpdateCustomer"},
-	})
+		Inverse:      "RollbackCustomerUpdate",
+		Executor:     &BusinessVerbExecutor{Name: "UpdateCustomer"},
+	}); err != nil {
+		log.Fatalf("Register UpdateCustomer: %v", err)
+	}
 
 	// Create order verb (create, not idempotent)
-	registry.Register(&verb.StandardVerbSpec{
+	if err := registry.RegisterVerb(&verb.Spec{
 		Name:         "CreateOrder",
 		Description:  "Creates a new order",
-		Cap:          verb.CapCreate,
+		Capability:   verb.CapCreate,
 		Resources:    verb.ResourceSet{{Resource: "order", Cap: verb.CapCreate}},
 		ArgTypes:     map[string]string{"customerId": "string", "items": "array"},
 		RequiredArgs: []string{"customerId", "items"},
 		ReturnType:   "Order",
-		InverseVerb:  "CancelOrder",
-		ExecutorImpl: &BusinessVerbExecutor{Name: "CreateOrder"},
-	})
+		Inverse:      "CancelOrder",
+		Executor:     &BusinessVerbExecutor{Name: "CreateOrder"},
+	}); err != nil {
+		log.Fatalf("Register CreateOrder: %v", err)
+	}
 
 	// Process payment verb (read-write, exclusive - must only run once)
-	registry.Register(&verb.StandardVerbSpec{
+	if err := registry.RegisterVerb(&verb.Spec{
 		Name:        "ProcessPayment",
 		Description: "Processes a payment for an order",
-		Cap:         verb.CapReadWrite | verb.CapExclusive,
+		Capability:  verb.CapReadWrite | verb.CapExclusive,
 		Resources: verb.ResourceSet{
 			{Resource: "order", Cap: verb.CapRead},
 			{Resource: "payment", Cap: verb.CapReadWrite},
@@ -94,21 +100,25 @@ func RegisterBusinessVerbs(registry *verb.VerbRegistry) {
 		ArgTypes:     map[string]string{"orderId": "string", "amount": "float", "method": "string"},
 		RequiredArgs: []string{"orderId", "amount", "method"},
 		ReturnType:   "PaymentResult",
-		InverseVerb:  "RefundPayment",
-		ExecutorImpl: &BusinessVerbExecutor{Name: "ProcessPayment"},
-	})
+		Inverse:      "RefundPayment",
+		Executor:     &BusinessVerbExecutor{Name: "ProcessPayment"},
+	}); err != nil {
+		log.Fatalf("Register ProcessPayment: %v", err)
+	}
 
 	// Send notification verb (write-only, idempotent)
-	registry.Register(&verb.StandardVerbSpec{
+	if err := registry.RegisterVerb(&verb.Spec{
 		Name:         "SendNotification",
 		Description:  "Sends a notification to a user",
-		Cap:          verb.CapWrite | verb.CapIdempotent,
+		Capability:   verb.CapWrite | verb.CapIdempotent,
 		Resources:    verb.ResourceSet{{Resource: "notification", Cap: verb.CapCreate}},
 		ArgTypes:     map[string]string{"to": "string", "message": "string", "type": "string"},
 		RequiredArgs: []string{"to", "message"},
 		ReturnType:   "bool",
-		ExecutorImpl: &BusinessVerbExecutor{Name: "SendNotification"},
-	})
+		Executor:     &BusinessVerbExecutor{Name: "SendNotification"},
+	}); err != nil {
+		log.Fatalf("Register SendNotification: %v", err)
+	}
 }
 
 // Example of how to set up business verbs in your application
@@ -116,7 +126,7 @@ func main() {
 	fmt.Println("=== Business Verbs Example ===")
 
 	// Create verb registry
-	registry := verb.NewVerbRegistry()
+	registry := verb.NewRegistry(nil)
 
 	// Register your business-specific verbs
 	RegisterBusinessVerbs(registry)
@@ -132,7 +142,7 @@ func main() {
 
 	// Example: Execute a verb
 	if customerVerb, exists := registry.GetVerb("ReadCustomer"); exists {
-		result, err := customerVerb.ExecutorImpl.Execute(context.Background(), map[string]interface{}{
+		result, err := customerVerb.Executor.Execute(context.Background(), map[string]interface{}{
 			"customerId": "cust-123",
 		})
 		if err != nil {

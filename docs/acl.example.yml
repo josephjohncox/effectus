@@ -1,0 +1,9 @@
+default_role: read
+rules:
+  - path: /api/facts
+    methods: [POST]
+    role: write
+  - path: /api/playground/*
+    role: read
+  - path: /api/status
+    role: read

@@ -1,0 +1,31 @@
+sources:
+  - source_id: "crm_customers_scrape"
+    type: "sql"
+    config:
+      driver: "postgres"
+      dsn: "${CRM_DSN}"
+      mode: "batch"
+      query: "SELECT id, email, status, updated_at FROM customers"
+      poll_interval: "15m"
+      timeout: "30s"
+      max_rows: 5000
+      schema_name: "acme.v1.facts.Customer"
+      schema_version: "v1"
+      source_key: "crm.customers"
+
+  - source_id: "orders_incremental"
+    type: "sql"
+    config:
+      driver: "postgres"
+      dsn: "${ORDERS_DSN}"
+      mode: "stream"
+      table: "orders"
+      watermark_column: "updated_at"
+      watermark_type: "time"
+      start_watermark: "2025-01-01T00:00:00Z"
+      poll_interval: "30s"
+      timeout: "20s"
+      max_rows: 2000
+      schema_name: "acme.v1.facts.Order"
+      schema_version: "v1"
+      source_key: "orders.incremental"

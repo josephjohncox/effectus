@@ -1,0 +1,17 @@
+{
+  "transaction": {
+    "id": "txn-1001",
+    "amount": 1250.50,
+    "currency": "USD",
+    "channel": "card_not_present"
+  },
+  "customer": {
+    "id": "cust-99",
+    "risk_score": 87,
+    "vip": false
+  },
+  "device": {
+    "ip": "203.0.113.42",
+    "velocity": 12
+  }
+}

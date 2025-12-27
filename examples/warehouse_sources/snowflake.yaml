@@ -1,0 +1,11 @@
+sources:
+  - source_id: "snowflake_customers"
+    type: "sql"
+    config:
+      driver: "snowflake"
+      dsn: "${SNOWFLAKE_DSN}"
+      mode: "batch"
+      query: "SELECT id, email, updated_at FROM CUSTOMERS"
+      poll_interval: "10m"
+      schema_name: "acme.v1.facts.Customer"
+      schema_version: "v1"

@@ -1,0 +1,7 @@
+version: v1
+plugins:
+  # Documentation generation (optional)
+  - plugin: buf.build/bufbuild/protoc-gen-doc
+    out: docs/proto
+    opt:
+      - html,index.html

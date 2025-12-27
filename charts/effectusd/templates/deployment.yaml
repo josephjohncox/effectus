@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "effectusd.fullname" . }}
+  labels:
+    {{- include "effectusd.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "effectusd.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "effectusd.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: effectusd
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            {{- if .Values.config.enabled }}
+            - "--config={{ .Values.config.mountPath }}/{{ .Values.config.key }}"
+            {{- end }}
+            - "--http-addr=:{{ .Values.service.port }}"
+            - "--metrics-addr=:{{ .Values.service.metricsPort }}"
+            - "--oci-ref={{ required \"bundle.ociRef is required\" .Values.bundle.ociRef }}"
+            {{- if .Values.bundle.reloadInterval }}
+            - "--reload-interval={{ .Values.bundle.reloadInterval }}"
+            {{- end }}
+            - "--facts-store={{ .Values.facts.store }}"
+            - "--facts-path={{ .Values.facts.path }}"
+            - "--facts-merge-default={{ .Values.facts.mergeDefault }}"
+            {{- range .Values.facts.mergeNamespace }}
+            - "--facts-merge-namespace={{ . }}"
+            {{- end }}
+            - "--facts-cache-policy={{ .Values.facts.cachePolicy }}"
+            - "--facts-cache-max-universes={{ .Values.facts.cacheMaxUniverses }}"
+            - "--facts-cache-max-namespaces={{ .Values.facts.cacheMaxNamespaces }}"
+            - "--api-auth={{ .Values.api.authMode }}"
+            - "--api-rate-limit={{ .Values.api.rateLimit }}"
+            - "--api-rate-burst={{ .Values.api.rateBurst }}"
+            {{- if .Values.api.token }}
+            - "--api-token={{ .Values.api.token }}"
+            {{- end }}
+            {{- if .Values.api.readToken }}
+            - "--api-read-token={{ .Values.api.readToken }}"
+            {{- end }}
+            {{- if .Values.api.aclFile }}
+            - "--api-acl-file={{ .Values.api.aclFile }}"
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+            - name: metrics
+              containerPort: {{ .Values.service.metricsPort }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            {{- if .Values.config.enabled }}
+            - name: config
+              mountPath: {{ .Values.config.mountPath }}
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: data
+          emptyDir: {}
+        {{- if .Values.config.enabled }}
+        - name: config
+          configMap:
+            name: {{ default (printf "%s-config" (include "effectusd.fullname" .)) .Values.config.name }}
+        {{- end }}

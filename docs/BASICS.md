@@ -25,6 +25,26 @@ This document explains the fundamental concepts of Effectus: Facts, Verbs, Effec
 - **Ordered** based on dependencies and capabilities
 - **Compensatable** for saga-style transaction rollback
 
+### Flow Bindings (effx)
+Flows can bind verb results to variables and reuse them downstream:
+
+```effx
+flow "CaseHold" priority 5 {
+  when {
+    order.amount > 1000
+  }
+  steps {
+    caseId = OpenCase(orderId: order.id, reason: "risk")
+    UpdateCase(caseId: $caseId, status: "held")
+  }
+}
+```
+
+**Type rules:**
+- Bound variables carry the **return type** of the verb.
+- Using an **undefined** variable (e.g. `$missing`) fails type checking.
+- Passing a variable to an incompatible argument type fails type checking.
+
 ## Coherent Flow Architecture
 
 Effectus follows a coherent flow from extension loading through compilation to execution:
@@ -76,6 +96,8 @@ message InventoryItem {
   bool low_stock = 4;
 }
 ```
+
+If `target` is omitted, verbs default to stream emission (stdout).
 
 ### Schema Composition
 
@@ -152,11 +174,13 @@ runtime.RegisterExtensionLoader(loader)
       },
       "returnType": "ValidationResult",
       "capabilities": ["read", "idempotent"],
-      "executorType": "http",
-      "executorConfig": {
-        "url": "https://api.validation.com/check",
-        "method": "POST",
-        "timeout": "5s"
+      "target": {
+        "type": "http",
+        "config": {
+          "url": "https://api.validation.com/check",
+          "method": "POST",
+          "timeout": "5s"
+        }
       }
     }
   ]

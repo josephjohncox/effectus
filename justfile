@@ -4,6 +4,25 @@
 DB_DSN := env_var_or_default("DB_DSN", "postgres://effectus:effectus@localhost/effectus_dev?sslmode=disable")
 MIGRATIONS_DIR := "migrations"
 DOCKER_COMPOSE := "docker-compose -f docker-compose.yml"
+WAREHOUSE_DEVSTACK := "examples/warehouse_sources/devstack"
+CDC_STACK := "examples/cdc_stack"
+UI_DEMO_RULES := "examples/fraud_e2e/rules"
+UI_DEMO_SCHEMA := "examples/fraud_e2e/schema"
+UI_DEMO_VERBS := "examples/fraud_e2e/schema/fraud_verbs.json"
+UI_DEMO_VERB_DIR := "examples/fraud_e2e/verbs"
+UI_DEMO_BUNDLE := "out/ui_demo/bundle.json"
+UI_DEMO_FACTS := "examples/fraud_e2e/data/facts_payload.json"
+UI_DEMO_TOKEN := "demo-token"
+UI_FLOW_DEMO_RULES := "examples/flow_ui_demo/rules"
+UI_FLOW_DEMO_SCHEMA := "examples/flow_ui_demo/schema"
+UI_FLOW_DEMO_VERBS := "examples/flow_ui_demo/schema/flow_verbs.json"
+UI_FLOW_DEMO_VERB_DIR := "examples/flow_ui_demo/verbs"
+UI_FLOW_DEMO_BUNDLE := "out/flow_ui_demo/bundle.json"
+UI_FLOW_DEMO_FACTS := "examples/flow_ui_demo/data/facts_payload.json"
+UI_FLOW_DEMO_STREAM := "examples/flow_ui_demo/scripts/stream_facts.sh"
+UI_FLOW_DEMO_TOKEN := "flow-demo-token"
+UI_FLOW_SQL_STACK := "examples/flow_ui_demo/sql_scrape"
+UI_FLOW_SQL_DSN := "postgres://effectus:effectus@localhost:55432/effectus_ui_demo?sslmode=disable"
 
 # Default recipe
 default:
@@ -22,37 +41,37 @@ install-sql-tools:
 	@echo "Installing SQL tooling..."
 	go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.25.0
 	go install github.com/pressly/goose/v3/cmd/goose@v3.17.0
-	@echo "✅ Tools installed"
+	@echo "OK Tools installed"
 
 # Build the project
 build:
 	just buf-generate
-	go build -o bin/effectusc ./effectus-go/cmd/effectusc
-	go build -o bin/effectusd ./effectus-go/cmd/effectusd
+	go build -o bin/effectusc ./cmd/effectusc
+	go build -o bin/effectusd ./cmd/effectusd
 
 # Run all tests
 test:
-	go test -v ./effectus-go/...
+	go test -v ./...
 
 # Run tests with coverage
 test-coverage:
-	go test -v -coverprofile=coverage.out ./effectus-go/...
+	go test -v -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
 
 # Lint the codebase
 lint:
-	golangci-lint run ./effectus-go/...
+	golangci-lint run ./...
 	just buf-lint
 
 # Format code
 fmt:
-	go fmt ./effectus-go/...
+	go fmt ./...
 	just buf-format
 
 # Clean build artifacts
 clean:
 	rm -rf bin/
-	rm -rf effectus-go/gen/
+	rm -rf gen/
 	rm -rf clients/
 	rm -f coverage.out coverage.html
 
@@ -69,6 +88,10 @@ buf-format:
 # Generate code from protobuf definitions
 buf-generate:
 	buf generate
+
+# Generate proto docs (optional; requires doc plugin)
+buf-generate-docs:
+	buf generate --template buf.gen.docs.yaml
 
 # Build protobuf modules
 buf-build:
@@ -90,128 +113,313 @@ setup-db:
 	{{DOCKER_COMPOSE}} up -d postgres
 	@echo "Waiting for database to be ready..."
 	sleep 5
-	@echo "✅ Database ready"
+	@echo "OK Database ready"
 
 # Setup test database
 setup-test-db:
 	@echo "Creating test database..."
 	-createdb effectus_test
-	@echo "✅ Test database ready"
+	@echo "OK Test database ready"
 
 # Generate Go code from SQL queries
 sql-generate:
 	@echo "Generating Go code from SQL queries..."
-	cd effectus-go/runtime && sqlc generate
-	@echo "✅ Code generated in internal/db/"
+	cd runtime && sqlc generate
+	@echo "OK Code generated in internal/db/"
 
 # Check if generated code is up to date
 sql-generate-check:
 	@echo "Checking if generated code is up to date..."
-	@git diff --quiet effectus-go/runtime/internal/db/ || (echo "❌ Generated code is out of date. Run 'just sql-generate'" && exit 1)
-	@echo "✅ Generated code is up to date"
+	@git diff --quiet runtime/internal/db/ || (echo "ERROR Generated code is out of date. Run 'just sql-generate'" && exit 1)
+	@echo "OK Generated code is up to date"
 
 # Run all pending migrations
 migrate-up:
 	@echo "Running migrations..."
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
-	@echo "✅ Migrations complete"
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
+	@echo "OK Migrations complete"
 
 # Rollback last migration
 migrate-down:
 	@echo "Rolling back last migration..."
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" down
-	@echo "✅ Rollback complete"
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" down
+	@echo "OK Rollback complete"
 
 # Show migration status
 migrate-status:
 	@echo "Migration status:"
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" status
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" status
 
 # Show current migration version
 migrate-version:
 	@echo "Current migration version:"
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" version
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" version
 
 # Create a new migration
 migrate-create name:
 	@echo "Creating migration: {{name}}"
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} create {{name}} sql
-	@echo "✅ Migration created"
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} create {{name}} sql
+	@echo "OK Migration created"
 
-# Reset database (⚠️ DESTROYS ALL DATA)
+# Reset database (WARN DESTROYS ALL DATA)
 migrate-reset:
-	@echo "⚠️  This will destroy all data. Continue? (Press Enter to continue, Ctrl+C to cancel)"
+	@echo "WARN  This will destroy all data. Continue? (Press Enter to continue, Ctrl+C to cancel)"
 	@read
 	@echo "Resetting database..."
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
-	@echo "✅ Database reset"
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
+	@echo "OK Database reset"
 
-# Reset and run all migrations (⚠️ DESTROYS ALL DATA)  
+# Reset and run all migrations (WARN DESTROYS ALL DATA)  
 migrate-fresh:
-	@echo "⚠️  This will destroy all data. Continue? (Press Enter to continue, Ctrl+C to cancel)"
+	@echo "WARN  This will destroy all data. Continue? (Press Enter to continue, Ctrl+C to cancel)"
 	@read
 	@echo "Fresh migration..."
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
-	@echo "✅ Fresh migration complete"
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
+	@echo "OK Fresh migration complete"
 
 # Run integration tests with database
 test-integration: setup-test-db
 	@echo "Running integration tests..."
-	DB_DSN="postgres://effectus:effectus@localhost/effectus_test?sslmode=disable" go test -v -tags=integration ./effectus-go/runtime/...
+	DB_DSN="postgres://effectus:effectus@localhost/effectus_test?sslmode=disable" go test -v -tags=integration ./runtime/...
+
+# === UI Demo ===
+
+# Build a demo bundle (fraud rules) and start the status UI/runtime.
+ui-demo:
+	@mkdir -p out/ui_demo
+	go run ./cmd/effectusc bundle \
+		--name fraud-ui-demo \
+		--version 1.0.0 \
+		--schema-dir {{UI_DEMO_SCHEMA}} \
+		--verb-dir {{UI_DEMO_VERB_DIR}} \
+		--verbschema {{UI_DEMO_VERBS}} \
+		--rules-dir {{UI_DEMO_RULES}} \
+		--output {{UI_DEMO_BUNDLE}}
+	@echo "Starting effectusd UI..."
+	@echo "Token: {{UI_DEMO_TOKEN}}"
+	@echo "Open http://localhost:8080/ui"
+	@echo ""
+	@echo "Example ingest (new facts):"
+	@echo "curl -X POST http://localhost:8080/api/facts \\"
+	@echo "  -H \"Authorization: Bearer {{UI_DEMO_TOKEN}}\" \\"
+	@echo "  -H \"Content-Type: application/json\" \\"
+	@echo "  -d @{{UI_DEMO_FACTS}}"
+	@echo ""
+	@echo "Example dry run (use stored facts):"
+	@echo "curl -X POST http://localhost:8080/api/playground/dry-run \\"
+	@echo "  -H \"Authorization: Bearer {{UI_DEMO_TOKEN}}\" \\"
+	@echo "  -H \"Content-Type: application/json\" \\"
+	@echo "  -d '{\"universe\":\"default\",\"mode\":\"both\",\"use_stored\":true}'"
+	go run ./cmd/effectusd \
+		--bundle {{UI_DEMO_BUNDLE}} \
+		--http-addr :8080 \
+		--api-token {{UI_DEMO_TOKEN}} \
+		--verb-dir {{UI_DEMO_VERB_DIR}} \
+		--facts-store file \
+		--facts-path out/ui_demo/facts.json
+
+# Seed the demo facts into the running UI instance.
+ui-demo-seed:
+	curl -X POST http://localhost:8080/api/facts \
+		-H "Authorization: Bearer {{UI_DEMO_TOKEN}}" \
+		-H "Content-Type: application/json" \
+		-d @{{UI_DEMO_FACTS}}
+
+# Open the demo UI in a browser (macOS/Linux).
+ui-demo-open:
+	@if command -v open >/dev/null 2>&1; then open http://localhost:8080/ui; \
+	elif command -v xdg-open >/dev/null 2>&1; then xdg-open http://localhost:8080/ui; \
+	else echo "Open http://localhost:8080/ui"; fi
+
+# Clean demo artifacts (stop the running process with Ctrl+C in its terminal).
+ui-demo-down:
+	@echo "Stopping UI demo... (use Ctrl+C in the ui-demo terminal if it's running)"
+	@rm -rf out/ui_demo
+
+# === UI Flow Demo ===
+
+# Build a flow-heavy demo bundle and start the status UI/runtime.
+ui-flow-demo:
+	@mkdir -p out/flow_ui_demo
+	go run ./cmd/effectusc bundle \
+		--name flow-ui-demo \
+		--version 1.0.0 \
+		--schema-dir {{UI_FLOW_DEMO_SCHEMA}} \
+		--verb-dir {{UI_FLOW_DEMO_VERB_DIR}} \
+		--verbschema {{UI_FLOW_DEMO_VERBS}} \
+		--rules-dir {{UI_FLOW_DEMO_RULES}} \
+		--output {{UI_FLOW_DEMO_BUNDLE}}
+	@echo "Starting effectusd UI..."
+	@echo "Token: {{UI_FLOW_DEMO_TOKEN}}"
+	@echo "Open http://localhost:8080/ui"
+	@echo "Saga compensation enabled (inverse verbs in {{UI_FLOW_DEMO_VERB_DIR}})"
+	@echo ""
+	@echo "Example ingest (baseline facts):"
+	@echo "curl -X POST http://localhost:8080/api/facts \\"
+	@echo "  -H \"Authorization: Bearer {{UI_FLOW_DEMO_TOKEN}}\" \\"
+	@echo "  -H \"Content-Type: application/json\" \\"
+	@echo "  -d @{{UI_FLOW_DEMO_FACTS}}"
+	@echo ""
+	@echo "Example dry run (use stored facts):"
+	@echo "curl -X POST http://localhost:8080/api/playground/dry-run \\"
+	@echo "  -H \"Authorization: Bearer {{UI_FLOW_DEMO_TOKEN}}\" \\"
+	@echo "  -H \"Content-Type: application/json\" \\"
+	@echo "  -d '{\"universe\":\"default\",\"mode\":\"flow\",\"use_stored\":true}'"
+	@echo ""
+	@echo "Streaming facts (simulate updates):"
+	@echo "{{UI_FLOW_DEMO_STREAM}}"
+	@echo ""
+	@echo "SQL scrape mock (Postgres):"
+	@echo "just ui-flow-demo-sql-up"
+	@echo "just ui-flow-demo-sql-scrape"
+	@echo "just ui-flow-demo-sql-bump  # insert a new row"
+	go run ./cmd/effectusd \
+		--bundle {{UI_FLOW_DEMO_BUNDLE}} \
+		--http-addr :8080 \
+		--api-token {{UI_FLOW_DEMO_TOKEN}} \
+		--verb-dir {{UI_FLOW_DEMO_VERB_DIR}} \
+		--saga \
+		--facts-store file \
+		--facts-path out/flow_ui_demo/facts.json
+
+# Seed the flow demo facts into the running UI instance.
+ui-flow-demo-seed:
+	curl -X POST http://localhost:8080/api/facts \
+		-H "Authorization: Bearer {{UI_FLOW_DEMO_TOKEN}}" \
+		-H "Content-Type: application/json" \
+		-d @{{UI_FLOW_DEMO_FACTS}}
+
+# Stream fact updates (simulated streaming sources).
+ui-flow-demo-stream:
+	EFFECTUS_URL="http://localhost:8080" EFFECTUS_TOKEN="{{UI_FLOW_DEMO_TOKEN}}" {{UI_FLOW_DEMO_STREAM}}
+
+# Start the SQL scrape mock (Postgres).
+ui-flow-demo-sql-up:
+	docker compose -f {{UI_FLOW_SQL_STACK}}/docker-compose.yml up -d
+
+# Run the SQL scrape poller and forward facts into the UI demo.
+ui-flow-demo-sql-scrape:
+	EFFECTUS_URL="http://localhost:8080" EFFECTUS_TOKEN="{{UI_FLOW_DEMO_TOKEN}}" SQL_SCRAPE_DSN="{{UI_FLOW_SQL_DSN}}" go run ./examples/flow_ui_demo/sql_scrape
+
+# Insert an update row in the SQL scrape mock.
+ui-flow-demo-sql-bump:
+	docker compose -f {{UI_FLOW_SQL_STACK}}/docker-compose.yml exec -T postgres psql -U effectus -d effectus_ui_demo -f /seed/insert_update.sql
+
+# Stop the SQL scrape mock.
+ui-flow-demo-sql-down:
+	docker compose -f {{UI_FLOW_SQL_STACK}}/docker-compose.yml down -v
+
+# Open the flow demo UI in a browser (macOS/Linux).
+ui-flow-demo-open:
+	@if command -v open >/dev/null 2>&1; then open http://localhost:8080/ui; \
+	elif command -v xdg-open >/dev/null 2>&1; then xdg-open http://localhost:8080/ui; \
+	else echo "Open http://localhost:8080/ui"; fi
+
+# Clean flow demo artifacts (stop the running process with Ctrl+C in its terminal).
+ui-flow-demo-down:
+	@echo "Stopping flow UI demo... (use Ctrl+C in the ui-flow-demo terminal if it's running)"
+	@rm -rf out/flow_ui_demo
 
 # Test migrations up and down
 test-migrate:
 	@echo "Testing migrations..."
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
-	cd effectus-go/runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
-	@echo "✅ Migration tests complete"
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" reset
+	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
+	@echo "OK Migration tests complete"
 
 # Complete development setup for SQL
 dev-sql-setup: install-sql-tools setup-db migrate-up sql-generate
-	@echo "✅ SQL development environment ready!"
+	@echo "OK SQL development environment ready!"
 
 # Reset SQL development environment
 dev-sql-reset: migrate-fresh sql-generate
-	@echo "✅ SQL development environment reset!"
+	@echo "OK SQL development environment reset!"
 
 # Validate all SQL and generated code
 sql-validate: sql-generate-check
 	@echo "Validating SQL queries..."
-	cd effectus-go/runtime && sqlc vet
-	@echo "✅ Validation complete"
+	cd runtime && sqlc vet
+	@echo "OK Validation complete"
 
 # Lint SQL files (requires sqlfluff)
 sql-lint:
 	@echo "Linting SQL files..."
-	@if command -v sqlfluff >/dev/null 2>&1; then sqlfluff lint {{MIGRATIONS_DIR}}; else echo "⚠️  sqlfluff not installed. Install with: pip install sqlfluff"; fi
+	@if command -v sqlfluff >/dev/null 2>&1; then sqlfluff lint {{MIGRATIONS_DIR}}; else echo "WARN  sqlfluff not installed. Install with: pip install sqlfluff"; fi
 
 # Format SQL files (requires sqlfluff)
 sql-format:
 	@echo "Formatting SQL files..."
-	@if command -v sqlfluff >/dev/null 2>&1; then sqlfluff format {{MIGRATIONS_DIR}} --dialect postgres; else echo "⚠️  sqlfluff not installed. Install with: pip install sqlfluff"; fi
+	@if command -v sqlfluff >/dev/null 2>&1; then sqlfluff format {{MIGRATIONS_DIR}} --dialect postgres; else echo "WARN  sqlfluff not installed. Install with: pip install sqlfluff"; fi
 
 # Generate schema documentation
 schema-docs:
 	@echo "Generating schema documentation..."
-	@echo "Database Schema Documentation" > effectus-go/runtime/SCHEMA.md
-	@echo "============================" >> effectus-go/runtime/SCHEMA.md
-	@psql "{{DB_DSN}}" -c "\dt" >> effectus-go/runtime/SCHEMA.md
-	@echo "✅ Schema documentation generated"
+	@echo "Database Schema Documentation" > runtime/SCHEMA.md
+	@echo "============================" >> runtime/SCHEMA.md
+	@psql "{{DB_DSN}}" -c "\dt" >> runtime/SCHEMA.md
+
+# === Warehouse Devstack (Trino + Iceberg + MinIO) ===
+
+devstack-up:
+	docker compose -f {{WAREHOUSE_DEVSTACK}}/docker-compose.yml up -d
+
+devstack-down:
+	docker compose -f {{WAREHOUSE_DEVSTACK}}/docker-compose.yml down
+
+devstack-logs:
+	docker compose -f {{WAREHOUSE_DEVSTACK}}/docker-compose.yml logs -f
+
+devstack-seed-iceberg:
+	{{WAREHOUSE_DEVSTACK}}/scripts/seed-iceberg.sh
+
+devstack-seed-s3:
+	{{WAREHOUSE_DEVSTACK}}/scripts/seed-s3.sh
+
+devstack-seed-parquet:
+	{{WAREHOUSE_DEVSTACK}}/scripts/seed-parquet.sh
+
+devstack-trino-cli:
+	{{WAREHOUSE_DEVSTACK}}/scripts/trino-cli.sh
+	@echo "OK Schema documentation generated"
+
+devstack-smoke-test:
+	{{WAREHOUSE_DEVSTACK}}/scripts/smoke-test.sh
+
+# === CDC Stack (Postgres + MySQL + RabbitMQ) ===
+
+cdc-up:
+	docker compose -f {{CDC_STACK}}/docker-compose.yml up -d
+
+cdc-down:
+	docker compose -f {{CDC_STACK}}/docker-compose.yml down
+
+cdc-logs:
+	docker compose -f {{CDC_STACK}}/docker-compose.yml logs -f
+
+cdc-test:
+	POSTGRES_DSN="postgres://effectus:effectus@localhost:5432/effectus_cdc?sslmode=disable" \
+	MYSQL_HOST=127.0.0.1 \
+	MYSQL_PORT=3306 \
+	MYSQL_USER=effectus \
+	MYSQL_PASSWORD=effectus \
+	MYSQL_DATABASE=effectus_cdc \
+	MYSQL_DSN="effectus:effectus@tcp(127.0.0.1:3306)/effectus_cdc?parseTime=true&multiStatements=true" \
+	go test -tags=integration ./adapters/postgres ./adapters/mysql
 
 # Clean generated SQL files
 sql-clean:
 	@echo "Cleaning generated SQL files..."
-	rm -rf effectus-go/runtime/internal/db/*.go
-	@echo "✅ SQL clean complete"
+	rm -rf runtime/internal/db/*.go
+	@echo "OK SQL clean complete"
 
-# Clean everything including database (⚠️ DESTROYS ALL DATA)
+# Clean everything including database (WARN DESTROYS ALL DATA)
 sql-clean-all: sql-clean
-	@echo "⚠️  This will destroy database. Continue? (Press Enter to continue, Ctrl+C to cancel)"
+	@echo "WARN  This will destroy database. Continue? (Press Enter to continue, Ctrl+C to cancel)"
 	@read
 	{{DOCKER_COMPOSE}} down -v postgres
-	@echo "✅ Complete SQL cleanup done"
+	@echo "OK Complete SQL cleanup done"
 
 # Open database shell
 db-shell:
@@ -222,15 +430,15 @@ db-shell:
 db-dump:
 	@echo "Dumping database..."
 	pg_dump "{{DB_DSN}}" > effectus_dump_$(date +%Y%m%d_%H%M%S).sql
-	@echo "✅ Database dumped"
+	@echo "OK Database dumped"
 
 # Restore database from dump
 db-restore dump:
-	@echo "⚠️  This will overwrite the database. Continue? (Press Enter to continue, Ctrl+C to cancel)"
+	@echo "WARN  This will overwrite the database. Continue? (Press Enter to continue, Ctrl+C to cancel)"
 	@read
 	@echo "Restoring database from {{dump}}..."
 	psql "{{DB_DSN}}" < {{dump}}
-	@echo "✅ Database restored"
+	@echo "OK Database restored"
 
 # === VS Code Extension Commands ===
 
@@ -238,13 +446,13 @@ db-restore dump:
 vscode-install:
 	@echo "Installing VS Code extension dependencies..."
 	cd tools/vscode-extension && npm install
-	@echo "✅ VS Code extension dependencies installed"
+	@echo "OK VS Code extension dependencies installed"
 
 # Compile TypeScript for VS Code extension  
 vscode-compile:
 	@echo "Compiling VS Code extension..."
 	cd tools/vscode-extension && npm run compile
-	@echo "✅ VS Code extension compiled"
+	@echo "OK VS Code extension compiled"
 
 # Watch mode for VS Code extension development
 vscode-watch:
@@ -255,13 +463,13 @@ vscode-watch:
 vscode-package:
 	@echo "Packaging VS Code extension..."
 	cd tools/vscode-extension && npm run package
-	@echo "✅ VS Code extension packaged as .vsix file"
+	@echo "OK VS Code extension packaged as .vsix file"
 
 # Install packaged VS Code extension locally
 vscode-install-local:
 	@echo "Installing VS Code extension locally..."
 	cd tools/vscode-extension && code --install-extension effectus-language-support-*.vsix
-	@echo "✅ VS Code extension installed locally"
+	@echo "OK VS Code extension installed locally"
 
 # Lint VS Code extension
 vscode-lint:
@@ -275,7 +483,7 @@ vscode-test:
 
 # Complete VS Code extension development setup
 vscode-dev-setup: vscode-install vscode-compile
-	@echo "✅ VS Code extension development environment ready!"
+	@echo "OK VS Code extension development environment ready!"
 	@echo "Use 'just vscode-watch' for development"
 	@echo "Use 'just vscode-package' to create .vsix file"
 
@@ -283,19 +491,19 @@ vscode-dev-setup: vscode-install vscode-compile
 
 # Register a new verb schema
 register-verb name input_schema output_schema:
-	go run ./effectus-go/cmd/effectusc schema register-verb --name={{name}} --input="{{input_schema}}" --output="{{output_schema}}"
+	go run ./cmd/effectusc schema register-verb --name={{name}} --input="{{input_schema}}" --output="{{output_schema}}"
 
 # Register a new fact schema
 register-fact name schema:
-	go run ./effectus-go/cmd/effectusc schema register-fact --name={{name}} --schema="{{schema}}"
+	go run ./cmd/effectusc schema register-fact --name={{name}} --schema="{{schema}}"
 
 # List all registered schemas
 list-schemas:
-	go run ./effectus-go/cmd/effectusc schema list
+	go run ./cmd/effectusc schema list
 
 # Validate schema compatibility
 validate-schemas:
-	go run ./effectus-go/cmd/effectusc schema validate
+	go run ./cmd/effectusc schema validate
 
 # Generate client code for all languages
 generate-clients:
@@ -313,7 +521,7 @@ dev:
 
 # Complete development workflow with SQL and VS Code extension
 dev-full: dev dev-sql-setup vscode-dev-setup
-	@echo "✅ Complete development environment ready!"
+	@echo "OK Complete development environment ready!"
 
 # Watch for changes and rebuild (requires entr)
 watch:
@@ -321,7 +529,7 @@ watch:
 
 # Start development server
 serve:
-	go run ./effectus-go/cmd/effectusd
+	go run ./cmd/effectusd
 
 # === Docker Commands ===
 
@@ -355,7 +563,7 @@ example-modern-sql:
 
 # Generate documentation
 docs:
-	go doc -all ./effectus-go/... > docs/api.md
+	go doc -all ./... > docs/api.md
 
 # Serve documentation locally
 docs-serve:
@@ -371,6 +579,6 @@ release version:
 
 # Create release binaries
 release-build:
-	GOOS=linux GOARCH=amd64 go build -o bin/effectusc-linux-amd64 ./effectus-go/cmd/effectusc
-	GOOS=darwin GOARCH=amd64 go build -o bin/effectusc-darwin-amd64 ./effectus-go/cmd/effectusc
-	GOOS=windows GOARCH=amd64 go build -o bin/effectusc-windows-amd64.exe ./effectus-go/cmd/effectusc
+	GOOS=linux GOARCH=amd64 go build -o bin/effectusc-linux-amd64 ./cmd/effectusc
+	GOOS=darwin GOARCH=amd64 go build -o bin/effectusc-darwin-amd64 ./cmd/effectusc
+	GOOS=windows GOARCH=amd64 go build -o bin/effectusc-windows-amd64.exe ./cmd/effectusc

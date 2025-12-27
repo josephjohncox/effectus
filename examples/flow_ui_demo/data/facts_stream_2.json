@@ -1,0 +1,14 @@
+{
+  "universe": "default",
+  "facts": {
+    "order": {
+      "state": "packed"
+    },
+    "inventory": {
+      "available": false
+    },
+    "clock": {
+      "current_epoch": 1735280000
+    }
+  }
+}

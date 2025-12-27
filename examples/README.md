@@ -8,7 +8,7 @@ Effectus core is designed to be a **clean slate** - it provides the mathematical
 
 ## Examples
 
-### 🔧 [Extension System](./extension_system/) **⭐ START HERE**
+### [Extension System](./extension_system/) **START HERE**
 Comprehensive demonstration of the unified extension loading system.
 
 ```bash
@@ -23,7 +23,7 @@ go run main.go
 - Unified interface for all extension types
 - Directory scanning for automatic discovery
 
-### 🏪 [Business Verbs](./business_verbs/)
+### [Business Verbs](./business_verbs/)
 Shows how to register domain-specific verbs for your business operations.
 
 ```bash
@@ -37,7 +37,7 @@ go run main.go
 - Setting up inverse verbs for compensation
 - Handling idempotent, commutative, and exclusive operations
 
-### 📊 [Business Facts](./business_facts/)  
+### [Business Facts](./business_facts/)
 Shows how to load business data and register domain-specific functions.
 
 ```bash
@@ -51,9 +51,112 @@ go run main.go
 - Using pathutil for fact access
 - Type introspection and validation
 
+### [Fraud E2E](./fraud_e2e/)
+End-to-end fraud workflow: list rules, flow execution, and saga compensation.
+
+```bash
+go run ./fraud_e2e
+```
+
+Convenience scripts:
+```bash
+./fraud_e2e/scripts/run-local.sh
+./fraud_e2e/scripts/run-compose.sh
+./fraud_e2e/scripts/run-compose-failure.sh
+```
+
+**What it demonstrates:**
+- Typed fact schemas and fact loading
+- Rule evaluation with list specs
+- Flow execution with saga compensation
+- Verb registry wiring with inverse verbs
+
+### [Flow UI Demo](./flow_ui_demo/)
+Flow-heavy UI demo with streaming facts and a SQL scrape mock.
+
+```bash
+just ui-flow-demo
+```
+
+SQL scrape mock (Postgres):
+```bash
+just ui-flow-demo-sql-up
+just ui-flow-demo-sql-scrape
+just ui-flow-demo-sql-bump
+```
+
+### [Multi-Bundle Runtime](./multi_bundle_runtime/)
+Manifest-driven bundle resolution, merged rule execution, and hot reload.
+
+```bash
+go run ./multi_bundle_runtime
+./multi_bundle_runtime/scripts/hot-reload.sh
+```
+
+**What it demonstrates:**
+- Resolving multiple bundles from a manifest
+- Loading schemas/verbs/rules across bundles
+- Hot reload by swapping bundle versions
+
+### [Postgres CDC](./postgres_cdc/)
+Stream logical changes from Postgres using wal2json.
+
+```bash
+go run ./postgres_cdc
+```
+
+### [MySQL CDC](./mysql_cdc/)
+Stream row changes from MySQL binlog.
+
+```bash
+go run ./mysql_cdc
+```
+
+### [AMQP Streaming](./amqp_streaming/)
+Consume RabbitMQ/AMQP messages as facts.
+
+```bash
+go run ./amqp_streaming
+```
+
+### [gRPC Streaming](./grpc_streaming/)
+Consume a server-streaming gRPC method that returns `Struct`.
+
+```bash
+go run ./grpc_streaming
+```
+
+### [CDC All-In-One](./cdc_all/)
+Run Postgres CDC, MySQL CDC, and AMQP adapters together.
+
+```bash
+go run ./cdc_all
+```
+
+### [CDC Stack](./cdc_stack/)
+Docker compose stack for Postgres CDC, MySQL CDC, and RabbitMQ.
+
+```bash
+docker compose -f ./cdc_stack/docker-compose.yml up -d
+```
+
+### [Warehouse Sources](./warehouse_sources/)
+Concrete configs for Snowflake (SQL adapter) and Iceberg via Trino (Iceberg adapter).
+
+```bash
+ls ./warehouse_sources
+```
+
+**What it demonstrates:**
+- Production-style config shapes for warehouse ingestion
+- Batch Snowflake snapshots and streaming Iceberg tables
+- Scheduled SQL polling via `warehouse_sources/sql_scheduled_scrape.yaml`
+- Local Trino + Iceberg + MinIO devstack in `warehouse_sources/devstack`
+- S3 Parquet reader demo in `warehouse_sources/s3_parquet_demo`
+
 ## Integration Patterns
 
-### 1. **Unified Extension Pattern** ⭐ **RECOMMENDED**
+### 1. **Unified Extension Pattern** **RECOMMENDED**
 ```go
 // Create extension manager
 em := loader.NewExtensionManager()
@@ -68,7 +171,7 @@ em.AddLoader(loader.NewJSONSchemaLoader("config", "schema.json"))
 
 // Load all extensions
 registry := schema.NewRegistry()
-verbRegistry := verb.NewVerbRegistry()
+verbRegistry := verb.NewRegistry(nil)
 schema.LoadExtensionsIntoRegistries(em, registry, verbRegistry)
 ```
 
@@ -87,15 +190,15 @@ if err != nil {
 schema.LoadExtensionsIntoRegistries(em, registry, verbRegistry)
 ```
 
-### 3. **Registry-First Pattern** (Legacy)
+### 3. **Registry-First Pattern**
 ```go
 // Direct registry manipulation (less flexible)
 registry := schema.NewRegistry()
 registry.RegisterFunction("validateCustomer", myValidationFunc)
 registry.LoadFromMap(myBusinessData)
 
-verbRegistry := verb.NewVerbRegistry()
-verbRegistry.Register(&verb.StandardVerbSpec{...})
+verbRegistry := verb.NewRegistry(nil)
+verbRegistry.RegisterVerb(&verb.Spec{...})
 ```
 
 ### 4. **Fact Provider Pattern**
@@ -120,16 +223,16 @@ if value, exists := factProvider.Get("customer.vip"); exists {
 
 ## Key Benefits
 
-- ✅ **No vendor lock-in** - your business logic is separate from the framework
-- ✅ **Clean testing** - test your verbs and functions independently  
-- ✅ **Domain-driven** - use your own business terminology
-- ✅ **Flexible** - add new verbs and functions as your business evolves
-- ✅ **Composable** - mix and match capabilities as needed
+- OK **No vendor lock-in** - your business logic is separate from the framework
+- OK **Clean testing** - test your verbs and functions independently  
+- OK **Domain-driven** - use your own business terminology
+- OK **Flexible** - add new verbs and functions as your business evolves
+- OK **Composable** - mix and match capabilities as needed
 
 ## See Also
 
-- [Extension System Documentation](../effectus-go/loader/README.md) ⭐
+- [Extension System Documentation](../loader/README.md) *
 - [Core Architecture](../docs/ARCHITECTURE.md)
 - [Design Principles](../docs/design.md)  
-- [Verb System Documentation](../effectus-go/schema/verb/)
-- [Expression Registry](../effectus-go/schema/) 
+- [Verb System Documentation](../schema/verb/)
+- [Expression Registry](../schema/) 

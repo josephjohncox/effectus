@@ -1,0 +1,4 @@
+[
+  {"path": "transaction.amount", "type": {"PrimType": 3, "Name": "float"}},
+  {"path": "transaction.currency", "type": {"PrimType": 4, "Name": "string"}}
+]

@@ -1,0 +1,8 @@
+rule "HIGH_AMOUNT_FREEZE" priority 5 {
+  when {
+    transaction.amount > 1000
+  }
+  then {
+    FreezeAccount(accountId: customer.id, reason: "high_amount")
+  }
+}

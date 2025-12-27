@@ -1,0 +1,12 @@
+flow "ChargebackResponse" priority 25 {
+  when {
+    chargeback.open == true || risk.stream_score > 90
+  }
+  steps {
+    OpenCase(orderId: order.id, reason: "chargeback", score: risk.stream_score)
+    HoldPayout(orderId: order.id, amount: order.amount)
+    StartInvestigation(orderId: order.id, reason: "chargeback")
+    QueueForReview(orderId: order.id, queue: "chargeback")
+    NotifyRisk(orderId: order.id, channel: "pager")
+  }
+}

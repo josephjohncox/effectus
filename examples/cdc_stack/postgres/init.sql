@@ -1,0 +1,6 @@
+ALTER ROLE effectus WITH REPLICATION;
+CREATE TABLE IF NOT EXISTS cdc_events (
+  id SERIAL PRIMARY KEY,
+  name TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);

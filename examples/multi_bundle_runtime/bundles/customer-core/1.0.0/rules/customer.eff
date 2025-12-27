@@ -1,0 +1,8 @@
+rule "VIP_NOTIFY" priority 10 {
+  when {
+    customer.vip == true
+  }
+  then {
+    NotifyCustomer(customerId: customer.id, channel: "email", message: "Welcome VIP")
+  }
+}

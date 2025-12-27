@@ -1,0 +1,16 @@
+{
+  "name": "multi-bundle-demo",
+  "version": "0.2.0",
+  "registries": [
+    {
+      "name": "local",
+      "base": "./examples/multi_bundle_runtime/bundles",
+      "type": "file",
+      "default": true
+    }
+  ],
+  "bundles": [
+    {"name": "customer-core", "version": "1.1.0", "registry": "local"},
+    {"name": "risk-rules", "version": "1.0.0", "registry": "local"}
+  ]
+}

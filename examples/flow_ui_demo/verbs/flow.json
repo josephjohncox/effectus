@@ -1,0 +1,555 @@
+{
+  "ScoreRisk": {
+    "arg_types": {
+      "orderId": "string",
+      "deviceId": "string"
+    },
+    "return_type": "int",
+    "capability": 162,
+    "required_args": [
+      "orderId",
+      "deviceId"
+    ],
+    "description": "Compute a composite risk score"
+  },
+  "OpenCase": {
+    "arg_types": {
+      "orderId": "string",
+      "reason": "string",
+      "score": "int"
+    },
+    "return_type": "string",
+    "capability": 76,
+    "required_args": [
+      "orderId",
+      "reason"
+    ],
+    "inverse": "CloseCase",
+    "resources": [
+      {
+        "resource": "case",
+        "cap": 76
+      }
+    ],
+    "description": "Open an investigation case"
+  },
+  "CloseCase": {
+    "arg_types": {
+      "orderId": "string",
+      "reason": "string"
+    },
+    "return_type": "bool",
+    "capability": 52,
+    "required_args": [
+      "orderId"
+    ],
+    "inverse": "OpenCase",
+    "resources": [
+      {
+        "resource": "case",
+        "cap": 52
+      }
+    ],
+    "description": "Close an investigation case"
+  },
+  "UpdateCase": {
+    "arg_types": {
+      "status": "string",
+      "caseId": "string"
+    },
+    "return_type": "bool",
+    "capability": 68,
+    "required_args": [
+      "caseId",
+      "status"
+    ],
+    "inverse": "RevertCase",
+    "resources": [
+      {
+        "resource": "case",
+        "cap": 68
+      }
+    ],
+    "description": "Update case status"
+  },
+  "RevertCase": {
+    "arg_types": {
+      "status": "string",
+      "caseId": "string"
+    },
+    "return_type": "bool",
+    "capability": 68,
+    "required_args": [
+      "caseId",
+      "status"
+    ],
+    "inverse": "UpdateCase",
+    "resources": [
+      {
+        "resource": "case",
+        "cap": 68
+      }
+    ],
+    "description": "Revert case status"
+  },
+  "HoldPayment": {
+    "arg_types": {
+      "authId": "string",
+      "amount": "float"
+    },
+    "return_type": "string",
+    "capability": 76,
+    "required_args": [
+      "authId",
+      "amount"
+    ],
+    "inverse": "ReleasePayment",
+    "resources": [
+      {
+        "resource": "payment_hold",
+        "cap": 76
+      }
+    ],
+    "description": "Place a payment authorization on hold"
+  },
+  "ReleasePayment": {
+    "arg_types": {
+      "authId": "string"
+    },
+    "return_type": "bool",
+    "capability": 52,
+    "required_args": [
+      "authId"
+    ],
+    "inverse": "HoldPayment",
+    "resources": [
+      {
+        "resource": "payment_hold",
+        "cap": 52
+      }
+    ],
+    "description": "Release a payment hold"
+  },
+  "QueueForReview": {
+    "arg_types": {
+      "orderId": "string",
+      "queue": "string"
+    },
+    "return_type": "bool",
+    "capability": 76,
+    "required_args": [
+      "orderId",
+      "queue"
+    ],
+    "inverse": "DequeueReview",
+    "resources": [
+      {
+        "resource": "review_queue",
+        "cap": 76
+      }
+    ],
+    "description": "Queue a case for manual review"
+  },
+  "DequeueReview": {
+    "arg_types": {
+      "orderId": "string",
+      "queue": "string"
+    },
+    "return_type": "bool",
+    "capability": 52,
+    "required_args": [
+      "orderId",
+      "queue"
+    ],
+    "inverse": "QueueForReview",
+    "resources": [
+      {
+        "resource": "review_queue",
+        "cap": 52
+      }
+    ],
+    "description": "Remove a case from review queue"
+  },
+  "NotifyRisk": {
+    "arg_types": {
+      "orderId": "string",
+      "channel": "string"
+    },
+    "return_type": "bool",
+    "capability": 36,
+    "required_args": [
+      "orderId",
+      "channel"
+    ],
+    "inverse": "UnnotifyRisk",
+    "resources": [
+      {
+        "resource": "notification",
+        "cap": 36
+      }
+    ],
+    "description": "Notify risk operations"
+  },
+  "UnnotifyRisk": {
+    "arg_types": {
+      "orderId": "string",
+      "channel": "string"
+    },
+    "return_type": "bool",
+    "capability": 52,
+    "required_args": [
+      "orderId"
+    ],
+    "inverse": "NotifyRisk",
+    "resources": [
+      {
+        "resource": "notification",
+        "cap": 52
+      }
+    ],
+    "description": "Withdraw a risk notification"
+  },
+  "OpenEscalation": {
+    "arg_types": {
+      "orderId": "string",
+      "reason": "string"
+    },
+    "return_type": "string",
+    "capability": 76,
+    "required_args": [
+      "orderId",
+      "reason"
+    ],
+    "inverse": "CloseEscalation",
+    "resources": [
+      {
+        "resource": "escalation",
+        "cap": 76
+      }
+    ],
+    "description": "Open an SLA escalation"
+  },
+  "CloseEscalation": {
+    "arg_types": {
+      "orderId": "string",
+      "reason": "string"
+    },
+    "return_type": "bool",
+    "capability": 52,
+    "required_args": [
+      "orderId"
+    ],
+    "inverse": "OpenEscalation",
+    "resources": [
+      {
+        "resource": "escalation",
+        "cap": 52
+      }
+    ],
+    "description": "Close an escalation"
+  },
+  "ScheduleCallback": {
+    "arg_types": {
+      "orderId": "string",
+      "atEpoch": "int"
+    },
+    "return_type": "bool",
+    "capability": 76,
+    "required_args": [
+      "orderId",
+      "atEpoch"
+    ],
+    "inverse": "CancelCallback",
+    "resources": [
+      {
+        "resource": "callback",
+        "cap": 76
+      }
+    ],
+    "description": "Schedule a callback"
+  },
+  "CancelCallback": {
+    "arg_types": {
+      "orderId": "string"
+    },
+    "return_type": "bool",
+    "capability": 52,
+    "required_args": [
+      "orderId"
+    ],
+    "inverse": "ScheduleCallback",
+    "resources": [
+      {
+        "resource": "callback",
+        "cap": 52
+      }
+    ],
+    "description": "Cancel a callback"
+  },
+  "EmitAlert": {
+    "arg_types": {
+      "channel": "string",
+      "message": "string"
+    },
+    "return_type": "bool",
+    "capability": 36,
+    "required_args": [
+      "channel",
+      "message"
+    ],
+    "inverse": "ClearAlert",
+    "resources": [
+      {
+        "resource": "alert",
+        "cap": 36
+      }
+    ],
+    "description": "Emit an alert"
+  },
+  "ClearAlert": {
+    "arg_types": {
+      "orderId": "string"
+    },
+    "return_type": "bool",
+    "capability": 52,
+    "required_args": [
+      "orderId"
+    ],
+    "inverse": "EmitAlert",
+    "resources": [
+      {
+        "resource": "alert",
+        "cap": 52
+      }
+    ],
+    "description": "Clear an alert"
+  },
+  "ReserveInventory": {
+    "arg_types": {
+      "orderId": "string",
+      "sku": "string"
+    },
+    "return_type": "string",
+    "capability": 76,
+    "required_args": [
+      "orderId",
+      "sku"
+    ],
+    "inverse": "ReleaseInventory",
+    "resources": [
+      {
+        "resource": "inventory",
+        "cap": 76
+      }
+    ],
+    "description": "Reserve inventory"
+  },
+  "ReleaseInventory": {
+    "arg_types": {
+      "orderId": "string"
+    },
+    "return_type": "bool",
+    "capability": 52,
+    "required_args": [
+      "orderId"
+    ],
+    "inverse": "ReserveInventory",
+    "resources": [
+      {
+        "resource": "inventory",
+        "cap": 52
+      }
+    ],
+    "description": "Release inventory reservation"
+  },
+  "CreateShipment": {
+    "arg_types": {
+      "orderId": "string",
+      "carrier": "string"
+    },
+    "return_type": "string",
+    "capability": 76,
+    "required_args": [
+      "orderId",
+      "carrier"
+    ],
+    "inverse": "CancelShipment",
+    "resources": [
+      {
+        "resource": "shipment",
+        "cap": 76
+      }
+    ],
+    "description": "Create a shipment"
+  },
+  "CancelShipment": {
+    "arg_types": {
+      "orderId": "string"
+    },
+    "return_type": "bool",
+    "capability": 52,
+    "required_args": [
+      "orderId"
+    ],
+    "inverse": "CreateShipment",
+    "resources": [
+      {
+        "resource": "shipment",
+        "cap": 52
+      }
+    ],
+    "description": "Cancel a shipment"
+  },
+  "MarkOrderReady": {
+    "arg_types": {
+      "orderId": "string",
+      "status": "string"
+    },
+    "return_type": "bool",
+    "capability": 36,
+    "required_args": [
+      "orderId",
+      "status"
+    ],
+    "inverse": "RevertOrderReady",
+    "resources": [
+      {
+        "resource": "order",
+        "cap": 36
+      }
+    ],
+    "description": "Mark order ready"
+  },
+  "RevertOrderReady": {
+    "arg_types": {
+      "orderId": "string"
+    },
+    "return_type": "bool",
+    "capability": 36,
+    "required_args": [
+      "orderId"
+    ],
+    "inverse": "MarkOrderReady",
+    "resources": [
+      {
+        "resource": "order",
+        "cap": 36
+      }
+    ],
+    "description": "Revert order ready status"
+  },
+  "EmitEvent": {
+    "arg_types": {
+      "topic": "string",
+      "orderId": "string"
+    },
+    "return_type": "bool",
+    "capability": 132,
+    "required_args": [
+      "topic",
+      "orderId"
+    ],
+    "inverse": "RetractEvent",
+    "resources": [
+      {
+        "resource": "event",
+        "cap": 132
+      }
+    ],
+    "description": "Emit event to downstream systems"
+  },
+  "RetractEvent": {
+    "arg_types": {
+      "orderId": "string"
+    },
+    "return_type": "bool",
+    "capability": 52,
+    "required_args": [
+      "orderId"
+    ],
+    "inverse": "EmitEvent",
+    "resources": [
+      {
+        "resource": "event",
+        "cap": 52
+      }
+    ],
+    "description": "Retract event"
+  },
+  "HoldPayout": {
+    "arg_types": {
+      "orderId": "string",
+      "amount": "float"
+    },
+    "return_type": "string",
+    "capability": 76,
+    "required_args": [
+      "orderId",
+      "amount"
+    ],
+    "inverse": "ReleasePayout",
+    "resources": [
+      {
+        "resource": "payout",
+        "cap": 76
+      }
+    ],
+    "description": "Hold payout"
+  },
+  "ReleasePayout": {
+    "arg_types": {
+      "orderId": "string"
+    },
+    "return_type": "bool",
+    "capability": 52,
+    "required_args": [
+      "orderId"
+    ],
+    "inverse": "HoldPayout",
+    "resources": [
+      {
+        "resource": "payout",
+        "cap": 52
+      }
+    ],
+    "description": "Release payout hold"
+  },
+  "StartInvestigation": {
+    "arg_types": {
+      "orderId": "string",
+      "reason": "string"
+    },
+    "return_type": "string",
+    "capability": 76,
+    "required_args": [
+      "orderId",
+      "reason"
+    ],
+    "inverse": "AbortInvestigation",
+    "resources": [
+      {
+        "resource": "investigation",
+        "cap": 76
+      }
+    ],
+    "description": "Start an investigation"
+  },
+  "AbortInvestigation": {
+    "arg_types": {
+      "orderId": "string"
+    },
+    "return_type": "bool",
+    "capability": 52,
+    "required_args": [
+      "orderId"
+    ],
+    "inverse": "StartInvestigation",
+    "resources": [
+      {
+        "resource": "investigation",
+        "cap": 52
+      }
+    ],
+    "description": "Abort an investigation"
+  }
+}

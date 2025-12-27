@@ -1,0 +1,38 @@
+[
+  {
+    "path": "transaction.id",
+    "type": {"PrimType": 4, "Name": "string"}
+  },
+  {
+    "path": "transaction.amount",
+    "type": {"PrimType": 3, "Name": "float"}
+  },
+  {
+    "path": "transaction.currency",
+    "type": {"PrimType": 4, "Name": "string"}
+  },
+  {
+    "path": "transaction.channel",
+    "type": {"PrimType": 4, "Name": "string"}
+  },
+  {
+    "path": "customer.id",
+    "type": {"PrimType": 4, "Name": "string"}
+  },
+  {
+    "path": "customer.risk_score",
+    "type": {"PrimType": 2, "Name": "int"}
+  },
+  {
+    "path": "customer.vip",
+    "type": {"PrimType": 1, "Name": "bool"}
+  },
+  {
+    "path": "device.ip",
+    "type": {"PrimType": 4, "Name": "string"}
+  },
+  {
+    "path": "device.velocity",
+    "type": {"PrimType": 2, "Name": "int"}
+  }
+]

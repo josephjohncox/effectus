@@ -1,0 +1,11 @@
+flow "FraudInvestigation" priority 10 {
+  when {
+    transaction.amount > 1000 && customer.risk_score > 80
+  }
+  steps {
+    caseId = OpenCase(orderId: transaction.id, risk: customer.risk_score)
+    FreezeAccount(accountId: customer.id, reason: "investigation")
+    UpdateCase(caseId: $caseId, status: "frozen")
+    NotifyRisk(orderId: transaction.id, channel: "slack")
+  }
+}

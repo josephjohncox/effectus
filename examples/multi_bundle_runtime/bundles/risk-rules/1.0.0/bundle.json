@@ -1,0 +1,11 @@
+{
+  "name": "risk-rules",
+  "version": "1.0.0",
+  "description": "Risk threshold rules",
+  "verb_hash": "",
+  "created_at": "2025-01-01T00:00:00Z",
+  "schema_files": ["risk.json"],
+  "verb_files": ["risk.json"],
+  "rule_files": ["risk.eff"],
+  "required_facts": ["transaction.amount", "transaction.currency"]
+}

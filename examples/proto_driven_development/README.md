@@ -137,6 +137,8 @@ buf generate
 ### 4. Use Generated Types in Your Service
 
 **Go Service Implementation**:
+Note: `company_example/service_implementation.go` is build-tagged with `proto_demo` and assumes generated packages at
+`acme.com/gen/...`. Generate your protos and run with `-tags=proto_demo` in a real service repo.
 ```go
 package main
 
