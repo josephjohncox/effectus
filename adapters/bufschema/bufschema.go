@@ -20,6 +20,8 @@ type Config struct {
 	ExportDir     string   `json:"export_dir" yaml:"export_dir"`
 	SchemaDir     string   `json:"schema_dir" yaml:"schema_dir"`
 	SchemaFiles   []string `json:"schema_files" yaml:"schema_files"`
+	IncludePkgs   []string `json:"include_packages" yaml:"include_packages"`
+	ExcludePkgs   []string `json:"exclude_packages" yaml:"exclude_packages"`
 	SchemaName    string   `json:"schema_name" yaml:"schema_name"`
 	SchemaVersion string   `json:"schema_version" yaml:"schema_version"`
 }
@@ -82,6 +84,14 @@ func (f *Factory) GetConfigSchema() adapters.ConfigSchema {
 				Type:        "array",
 				Description: "explicit JSON schema files to load",
 			},
+			"include_packages": {
+				Type:        "array",
+				Description: "only include proto packages with these prefixes",
+			},
+			"exclude_packages": {
+				Type:        "array",
+				Description: "exclude proto packages with these prefixes",
+			},
 			"schema_name": {
 				Type:        "string",
 				Description: "override schema name when loading a single file",
@@ -111,7 +121,7 @@ func (p *Provider) LoadSchemas(ctx context.Context) ([]adapters.SchemaDefinition
 		return nil, err
 	}
 	if len(schemaPaths) == 0 {
-		return nil, fmt.Errorf("no schema files found (generate JSON schema outputs or configure schema_dir/schema_files)")
+		return p.generateSchemasFromProto(ctx)
 	}
 
 	defs := make([]adapters.SchemaDefinition, 0, len(schemaPaths))

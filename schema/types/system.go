@@ -102,6 +102,8 @@ func (ts *TypeSystem) GetType(name string) (*Type, bool) {
 
 // RegisterFactType registers a type for a fact path
 func (ts *TypeSystem) RegisterFactType(path string, typ *Type) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
 	ts.factTypes[path] = typ
 }
 
@@ -177,15 +179,31 @@ func (ts *TypeSystem) GetFactTypeVersion(path, version string) (*Type, error) {
 
 // GetFactType retrieves the type for a fact path
 func (ts *TypeSystem) GetFactType(path string) (*Type, error) {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+
 	resolved := resolveAliasPath(path, ts.aliases)
 	if base, version, ok := splitVersionedPath(resolved); ok {
-		return ts.GetFactTypeVersion(base, version)
+		if ts.factVersions == nil {
+			return nil, fmt.Errorf("no versions registered for path: %s", base)
+		}
+		versions, ok := ts.factVersions[base]
+		if !ok {
+			return nil, fmt.Errorf("no versions registered for path: %s", base)
+		}
+		typ, ok := versions[version]
+		if !ok {
+			return nil, fmt.Errorf("no type registered for path %s version %s", base, version)
+		}
+		return typ, nil
 	}
 
 	if ts.factDefaults != nil {
 		if version, ok := ts.factDefaults[resolved]; ok {
-			if typ, err := ts.GetFactTypeVersion(resolved, version); err == nil {
-				return typ, nil
+			if versions := ts.factVersions[resolved]; versions != nil {
+				if typ, ok := versions[version]; ok {
+					return typ, nil
+				}
 			}
 		}
 	}
@@ -199,6 +217,8 @@ func (ts *TypeSystem) GetFactType(path string) (*Type, error) {
 
 // GetAllFactPaths returns all registered fact paths
 func (ts *TypeSystem) GetAllFactPaths() []string {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
 	paths := make(map[string]struct{})
 	for path := range ts.factTypes {
 		paths[path] = struct{}{}

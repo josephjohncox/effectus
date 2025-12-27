@@ -2,6 +2,8 @@
 
 *Production-grade rule execution with mathematical foundations*
 
+![Effectus logo](./effectus.png)
+
 ## ✨ What is Effectus?
 
 Effectus is a strongly-typed rule engine that transforms live data (Facts) into safe, deterministic actions (Effects). Built on category theory foundations, it provides **static validation** and **coherent execution flow** from extension loading through compilation to runtime.
@@ -81,16 +83,16 @@ import (
 func main() {
     // Create runtime with coherent flow
     rt := runtime.NewExecutionRuntime()
-    
+
     // Register extensions (static, JSON, Proto, OCI)
     rt.RegisterExtensionLoader(loader.NewJSONSchemaLoader("core", "schemas/core.schema.json"))
     rt.RegisterExtensionLoader(loader.NewJSONVerbLoader("core", "verbs/core.verbs.json"))
-    
+
     // Compile and validate BEFORE starting daemon
     if err := rt.CompileAndValidate(context.Background()); err != nil {
         log.Fatal("Compilation failed:", err)
     }
-    
+
     // Execute rules
     result, err := rt.ExecuteVerb(context.Background(), "SendEmail", map[string]interface{}{
         "to": "user@example.com",
@@ -117,7 +119,7 @@ For compile‑time Go executors, use `loader.NewStaticVerbLoader(...)` instead o
 
 **Static Validation Before Runtime**:
 - Type checking for all verbs and arguments
-- Dependency resolution and validation  
+- Dependency resolution and validation
 - Capability verification and security checks
 - Execution plan optimization
 
@@ -358,7 +360,7 @@ See [docs/theory/](docs/theory/) for detailed mathematical foundations.
 - No runtime surprises from configuration issues
 - Clear error messages with suggestions
 
-### 🔧 **Flexible Execution**  
+### 🔧 **Flexible Execution**
 - Same verb can run locally or remotely
 - Easy testing with mock executors
 - Support for distributed systems
@@ -389,7 +391,7 @@ Check out [examples/coherent_flow/](examples/coherent_flow/) for a complete work
 Effectus is under active development. Current focus areas:
 
 - ✅ Core execution engine and type system
-- ✅ Extension loading and compilation system  
+- ✅ Extension loading and compilation system
 - ✅ Basic CLI tools and runtime daemon
 - 🚧 OCI bundle distribution system
 - 🚧 Advanced execution policies and saga compensation

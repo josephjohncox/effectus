@@ -134,10 +134,11 @@ Use `schema_sources` to load schemas directly at startup (and optionally on relo
 - `sql_introspect`: Reads `information_schema` (Postgres/MySQL) or `PRAGMA table_info` (SQLite drivers) and emits a
   JSON schema from table columns.
 - `buf`: Runs `buf export` and reads generated `*.schema.json` / `*.jsonschema` files (or `schema_dir`/`schema_files`
-  you provide).
+  you provide). If no JSON schemas are present, it falls back to `buf build` to derive JSON schemas from proto
+  descriptors (requires `buf` on PATH).
 
-If your registry only exposes protobuf, add a generator that outputs JSON schemas and point `schema_dir` at the results.
-This keeps the runtime simple while still allowing schemas to be sourced dynamically from SQL catalogs or Buf registries.
+If your registry only exposes protobuf, the `buf` provider can now generate JSON schemas from descriptors; you can
+still supply a custom generator and point `schema_dir` at the output if you need tighter control.
 
 ## Kubernetes (ConfigMap)
 

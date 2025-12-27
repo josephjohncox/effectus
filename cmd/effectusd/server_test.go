@@ -166,7 +166,7 @@ func TestHealthAndReadyEndpoints(t *testing.T) {
 	auth, _, err := buildAPIAuth("token", "", "")
 	require.NoError(t, err)
 
-	state := newServerState(nil, nil, nil, factStoreConfig{}, auth, nil, nil)
+	state := newServerState(nil, nil, nil, factStoreConfig{}, auth, nil, nil, nil, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", state.handleHealth)

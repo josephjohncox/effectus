@@ -64,6 +64,7 @@ Use **schema providers** to load schemas directly from external systems at start
 - Compiler: `effectusc typecheck --schema-sources schema_sources.yaml ...`
 
 `schema_sources.yaml` can include `sql_introspect` and `buf` providers (see `docs/RUNTIME_CONFIG.md` for examples).
+The `buf` provider can derive JSON schemas directly from proto descriptors if no `*.schema.json` files are present.
 If you still prefer pre-generated files, drop `*.schema.json` into `extensions.dirs` or OCI bundles and let the
 extension reload interval pick them up.
 

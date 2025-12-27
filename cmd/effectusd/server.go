@@ -18,8 +18,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/effectus/effectus-go/adapters"
 	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/unified"
 )
 
@@ -36,6 +38,8 @@ type serverState struct {
 	bundle     *unified.Bundle
 	startedAt  time.Time
 	updatedAt  time.Time
+	typeSystem *types.TypeSystem
+	sources    []adapters.SchemaSourceConfig
 	factStore  factStore
 	factConfig factStoreConfig
 	factCh     chan<- factEnvelope
@@ -44,11 +48,13 @@ type serverState struct {
 	acl        *aclMatcher
 }
 
-func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store factStore, config factStoreConfig, auth apiAuth, limiter *rateLimiter, acl *aclMatcher) *serverState {
+func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store factStore, config factStoreConfig, auth apiAuth, limiter *rateLimiter, acl *aclMatcher, typeSystem *types.TypeSystem, sources []adapters.SchemaSourceConfig) *serverState {
 	return &serverState{
 		bundle:     bundle,
 		startedAt:  time.Now(),
 		updatedAt:  time.Now(),
+		typeSystem: typeSystem,
+		sources:    sources,
 		factStore:  store,
 		factConfig: config,
 		factCh:     factCh,
@@ -843,17 +849,27 @@ func factConfigSummary(config factStoreConfig) *factStoreConfigSummary {
 }
 
 type statusResponse struct {
-	Bundle          *bundleSummary          `json:"bundle"`
-	Counts          bundleCounts            `json:"counts"`
-	StartedAt       time.Time               `json:"started_at"`
-	LastReload      time.Time               `json:"last_reload"`
-	UptimeSec       int64                   `json:"uptime_sec"`
-	Universes       []universeSummary       `json:"universes"`
-	RequiredFact    []string                `json:"required_facts"`
-	FactStore       string                  `json:"fact_store"`
-	FactStoreConfig *factStoreConfigSummary `json:"fact_store_config,omitempty"`
-	VerbCount       int                     `json:"verb_count"`
-	FactCount       int                     `json:"fact_count"`
+	Bundle           *bundleSummary          `json:"bundle"`
+	Counts           bundleCounts            `json:"counts"`
+	StartedAt        time.Time               `json:"started_at"`
+	LastReload       time.Time               `json:"last_reload"`
+	UptimeSec        int64                   `json:"uptime_sec"`
+	Universes        []universeSummary       `json:"universes"`
+	RequiredFact     []string                `json:"required_facts"`
+	FactStore        string                  `json:"fact_store"`
+	FactStoreConfig  *factStoreConfigSummary `json:"fact_store_config,omitempty"`
+	VerbCount        int                     `json:"verb_count"`
+	FactCount        int                     `json:"fact_count"`
+	BundleFactCount  int                     `json:"bundle_fact_count"`
+	RuntimeFactCount int                     `json:"runtime_fact_count"`
+	SchemaSources    []schemaSourceSummary   `json:"schema_sources,omitempty"`
+}
+
+type schemaSourceSummary struct {
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Namespace string `json:"namespace,omitempty"`
+	Version   string `json:"version,omitempty"`
 }
 
 type bundleSummary struct {
@@ -884,6 +900,13 @@ type factCacheSummary struct {
 	MaxNamespaces int    `json:"max_namespaces"`
 }
 
+type schemaResponse struct {
+	Bundle   []unified.FactTypeSummary `json:"bundle"`
+	Runtime  []unified.FactTypeSummary `json:"runtime"`
+	Combined []unified.FactTypeSummary `json:"combined"`
+	Sources  []schemaSourceSummary     `json:"sources,omitempty"`
+}
+
 func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -894,6 +917,8 @@ func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
 		return
 	}
+	runtimeFacts := summarizeRuntimeFacts(s.typeSystem)
+	combinedFacts := mergeFactTypeSummaries(runtimeFacts, bundle.FactTypes)
 	resp := statusResponse{
 		Bundle: &bundleSummary{
 			Name:        bundle.Name,
@@ -909,17 +934,66 @@ func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 			Rules: countRules(bundle),
 			Flows: countFlows(bundle),
 		},
-		StartedAt:       s.startedAt,
-		LastReload:      s.updatedAt,
-		UptimeSec:       int64(time.Since(s.startedAt).Seconds()),
-		Universes:       summariesOrEmpty(s.factStore),
-		RequiredFact:    bundle.RequiredFacts,
-		FactStore:       storeTypeOrUnknown(s.factStore),
-		FactStoreConfig: factConfigSummary(s.factConfig),
-		VerbCount:       len(bundle.VerbSpecs),
-		FactCount:       len(bundle.FactTypes),
+		StartedAt:        s.startedAt,
+		LastReload:       s.updatedAt,
+		UptimeSec:        int64(time.Since(s.startedAt).Seconds()),
+		Universes:        summariesOrEmpty(s.factStore),
+		RequiredFact:     bundle.RequiredFacts,
+		FactStore:        storeTypeOrUnknown(s.factStore),
+		FactStoreConfig:  factConfigSummary(s.factConfig),
+		VerbCount:        len(bundle.VerbSpecs),
+		FactCount:        len(combinedFacts),
+		BundleFactCount:  len(bundle.FactTypes),
+		RuntimeFactCount: len(runtimeFacts),
+		SchemaSources:    summarizeSchemaSources(s.sources),
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func summarizeRuntimeFacts(typeSystem *types.TypeSystem) []unified.FactTypeSummary {
+	if typeSystem == nil {
+		return nil
+	}
+	return unified.SummarizeFactTypes(typeSystem)
+}
+
+func summarizeSchemaSources(sources []adapters.SchemaSourceConfig) []schemaSourceSummary {
+	if len(sources) == 0 {
+		return nil
+	}
+	out := make([]schemaSourceSummary, 0, len(sources))
+	for _, source := range sources {
+		out = append(out, schemaSourceSummary{
+			Name:      source.Name,
+			Type:      source.Type,
+			Namespace: source.Namespace,
+			Version:   source.Version,
+		})
+	}
+	return out
+}
+
+func mergeFactTypeSummaries(primary []unified.FactTypeSummary, secondary []unified.FactTypeSummary) []unified.FactTypeSummary {
+	if len(primary) == 0 && len(secondary) == 0 {
+		return nil
+	}
+	merged := make(map[string]unified.FactTypeSummary, len(primary)+len(secondary))
+	for _, entry := range secondary {
+		merged[entry.Path] = entry
+	}
+	for _, entry := range primary {
+		merged[entry.Path] = entry
+	}
+	paths := make([]string, 0, len(merged))
+	for path := range merged {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	result := make([]unified.FactTypeSummary, 0, len(paths))
+	for _, path := range paths {
+		result = append(result, merged[path])
+	}
+	return result
 }
 
 type effectInfo struct {
@@ -1095,11 +1169,14 @@ func (s *serverState) handleSchema(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
 		return
 	}
-	if len(bundle.FactTypes) == 0 {
-		writeJSON(w, http.StatusOK, []unified.FactTypeSummary{})
-		return
+	runtimeFacts := summarizeRuntimeFacts(s.typeSystem)
+	resp := schemaResponse{
+		Bundle:   bundle.FactTypes,
+		Runtime:  runtimeFacts,
+		Combined: mergeFactTypeSummaries(runtimeFacts, bundle.FactTypes),
+		Sources:  summarizeSchemaSources(s.sources),
 	}
-	writeJSON(w, http.StatusOK, bundle.FactTypes)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *serverState) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -1752,6 +1829,19 @@ const uiHTML = `<!doctype html>
         ? '<div class="muted">merge: ' + escapeHtml(mergeConfig.merge) + '</div>' +
           '<div class="muted">cache: ' + escapeHtml(mergeConfig.cache) + '</div>'
         : "";
+      const bundleFacts = status.bundle_fact_count || 0;
+      const runtimeFacts = status.runtime_fact_count || 0;
+      const factCount = status.fact_count || 0;
+      const factLabel = runtimeFacts > 0
+        ? 'facts: ' + factCount + ' (' + bundleFacts + '/' + runtimeFacts + ')'
+        : 'facts: ' + factCount;
+      const schemaSources = status.schema_sources || [];
+      const schemaPill = schemaSources.length
+        ? '<span class="pill">schema sources: ' + schemaSources.length + '</span>'
+        : '';
+      const schemaLine = schemaSources.length
+        ? '<div class="muted">schema sources: ' + escapeHtml(schemaSources.map(s => s.name || s.type || '-').join(', ')) + '</div>'
+        : '';
       el.innerHTML =
         '<div class="row">' +
           '<span class="pill">' + escapeHtml(bundle.name || '-') + '</span>' +
@@ -1759,14 +1849,16 @@ const uiHTML = `<!doctype html>
           '<span class="pill">rules: ' + (status.counts ? status.counts.rules : 0) + '</span>' +
           '<span class="pill">flows: ' + (status.counts ? status.counts.flows : 0) + '</span>' +
           '<span class="pill">verbs: ' + (status.verb_count || 0) + '</span>' +
-          '<span class="pill">facts: ' + (status.fact_count || 0) + '</span>' +
+          '<span class="pill">' + factLabel + '</span>' +
           '<span class="pill">store: ' + (status.fact_store || '-') + '</span>' +
+          schemaPill +
         '</div>' +
         '<div class="row">' +
           '<span class="pill">uptime: ' + status.uptime_sec + 's</span>' +
           '<span class="pill">universes: ' + (status.universes ? status.universes.length : 0) + '</span>' +
         '</div>' +
         mergeHTML +
+        schemaLine +
         '<div style="color: var(--muted); font-size: 12px;">' + escapeHtml(bundle.description || '') + '</div>';
     };
 
