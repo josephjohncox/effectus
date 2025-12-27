@@ -18,8 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/effectus/effectus-go/flow"
-	"github.com/effectus/effectus-go/list"
 	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/unified"
@@ -328,6 +326,7 @@ func startHTTPServer(ctx context.Context, addr string, state *serverState) {
 	mux.HandleFunc("/ui", state.handleUI)
 	mux.HandleFunc("/api/status", state.handleStatus)
 	mux.HandleFunc("/api/rules", state.handleRules)
+	mux.HandleFunc("/api/rules/source", state.handleRuleSources)
 	mux.HandleFunc("/api/flows", state.handleFlows)
 	mux.HandleFunc("/api/graph", state.handleGraph)
 	mux.HandleFunc("/api/verbs", state.handleVerbs)
@@ -887,16 +886,6 @@ func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-type ruleInfo struct {
-	Name       string        `json:"name"`
-	Priority   int           `json:"priority"`
-	Predicates []string      `json:"predicates"`
-	FactPaths  []string      `json:"fact_paths"`
-	Effects    []effectInfo  `json:"effects"`
-	Source     string        `json:"source,omitempty"`
-	Meta       []interface{} `json:"meta,omitempty"`
-}
-
 type effectInfo struct {
 	Verb string                 `json:"verb"`
 	Args map[string]interface{} `json:"args"`
@@ -919,12 +908,27 @@ func (s *serverState) handleRules(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rules)
 }
 
-type flowInfo struct {
-	Name       string   `json:"name"`
-	Priority   int      `json:"priority"`
-	Predicates []string `json:"predicates"`
-	FactPaths  []string `json:"fact_paths"`
-	Verbs      []string `json:"verbs"`
+func (s *serverState) handleRuleSources(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	bundle := s.Bundle()
+	if bundle == nil {
+		writeJSON(w, http.StatusOK, []unified.RuleSource{})
+		return
+	}
+	if path := strings.TrimSpace(r.URL.Query().Get("path")); path != "" {
+		for _, source := range bundle.RuleSources {
+			if source.Path == path {
+				writeJSON(w, http.StatusOK, source)
+				return
+			}
+		}
+		writeJSONError(w, http.StatusNotFound, "rule source not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, bundle.RuleSources)
 }
 
 func (s *serverState) handleFlows(w http.ResponseWriter, r *http.Request) {
@@ -1510,8 +1514,20 @@ const uiHTML = `<!doctype html>
       <pre id="rules">Loading...</pre>
     </div>
     <div class="card">
+      <h2>Rule Sources</h2>
+      <div id="rule-sources" class="list"></div>
+    </div>
+    <div class="card">
       <h2>Flows</h2>
       <pre id="flows">Loading...</pre>
+    </div>
+    <div class="card">
+      <h2>Verb Specs</h2>
+      <pre id="verbs">Loading...</pre>
+    </div>
+    <div class="card">
+      <h2>Schema</h2>
+      <pre id="schema">Loading...</pre>
     </div>
     <div class="card">
       <h2>Graph</h2>
@@ -1625,6 +1641,8 @@ const uiHTML = `<!doctype html>
           '<span class="pill">v' + escapeHtml(bundle.version || '-') + '</span>' +
           '<span class="pill">rules: ' + (status.counts ? status.counts.rules : 0) + '</span>' +
           '<span class="pill">flows: ' + (status.counts ? status.counts.flows : 0) + '</span>' +
+          '<span class="pill">verbs: ' + (status.verb_count || 0) + '</span>' +
+          '<span class="pill">facts: ' + (status.fact_count || 0) + '</span>' +
           '<span class="pill">store: ' + (status.fact_store || '-') + '</span>' +
         '</div>' +
         '<div class="row">' +
@@ -1733,6 +1751,29 @@ const uiHTML = `<!doctype html>
       container.innerHTML = html;
     };
 
+    const renderRuleSources = (sources) => {
+      const container = document.getElementById("rule-sources");
+      if (!container) return;
+      if (!sources || sources.length === 0) {
+        container.innerHTML = '<div class="muted">No rule sources stored in bundle.</div>';
+        return;
+      }
+      const sorted = sources.slice().sort((a, b) => (a.path || '').localeCompare(b.path || ''));
+      let html = '';
+      sorted.forEach(source => {
+        const path = source.path || 'rule';
+        const format = source.format || '';
+        html += '<details class="list-item">' +
+          '<summary class="row">' +
+            '<strong>' + escapeHtml(path) + '</strong>' +
+            (format ? '<span class="pill">' + escapeHtml(format) + '</span>' : '') +
+          '</summary>' +
+          '<pre>' + escapeHtml(source.content || '') + '</pre>' +
+        '</details>';
+      });
+      container.innerHTML = html;
+    };
+
     const renderGraphSvg = (graph) => {
       const svg = document.getElementById("graph-svg");
       if (!svg || !graph || !graph.nodes) {
@@ -1809,9 +1850,28 @@ const uiHTML = `<!doctype html>
         render("rules", { error: err.message });
       }
       try {
+        const sources = await fetchJSON("/api/rules/source");
+        renderRuleSources(sources);
+      } catch (err) {
+        const container = document.getElementById("rule-sources");
+        if (container) {
+          container.innerHTML = '<div class="muted">Error loading rule sources.</div>';
+        }
+      }
+      try {
         render("flows", await fetchJSON("/api/flows"));
       } catch (err) {
         render("flows", { error: err.message });
+      }
+      try {
+        render("verbs", await fetchJSON("/api/verbs"));
+      } catch (err) {
+        render("verbs", { error: err.message });
+      }
+      try {
+        render("schema", await fetchJSON("/api/schema"));
+      } catch (err) {
+        render("schema", { error: err.message });
       }
       try {
         const graph = await fetchJSON("/api/graph");

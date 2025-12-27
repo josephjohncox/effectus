@@ -9,6 +9,7 @@ CDC_STACK := "examples/cdc_stack"
 UI_DEMO_RULES := "examples/fraud_e2e/rules"
 UI_DEMO_SCHEMA := "examples/fraud_e2e/schema"
 UI_DEMO_VERBS := "examples/fraud_e2e/schema/fraud_verbs.json"
+UI_DEMO_VERB_DIR := "examples/fraud_e2e/verbs"
 UI_DEMO_BUNDLE := "out/ui_demo/bundle.json"
 UI_DEMO_FACTS := "examples/fraud_e2e/data/facts_payload.json"
 UI_DEMO_TOKEN := "demo-token"
@@ -181,12 +182,25 @@ ui-demo:
 		--name fraud-ui-demo \
 		--version 1.0.0 \
 		--schema-dir {{UI_DEMO_SCHEMA}} \
+		--verb-dir {{UI_DEMO_VERB_DIR}} \
 		--verbschema {{UI_DEMO_VERBS}} \
 		--rules-dir {{UI_DEMO_RULES}} \
 		--output {{UI_DEMO_BUNDLE}}
 	@echo "Starting effectusd UI..."
 	@echo "Token: {{UI_DEMO_TOKEN}}"
 	@echo "Open http://localhost:8080/ui"
+	@echo ""
+	@echo "Example ingest (new facts):"
+	@echo "curl -X POST http://localhost:8080/api/facts \\"
+	@echo "  -H \"Authorization: Bearer {{UI_DEMO_TOKEN}}\" \\"
+	@echo "  -H \"Content-Type: application/json\" \\"
+	@echo "  -d @{{UI_DEMO_FACTS}}"
+	@echo ""
+	@echo "Example dry run (use stored facts):"
+	@echo "curl -X POST http://localhost:8080/api/playground/dry-run \\"
+	@echo "  -H \"Authorization: Bearer {{UI_DEMO_TOKEN}}\" \\"
+	@echo "  -H \"Content-Type: application/json\" \\"
+	@echo "  -d '{\"universe\":\"default\",\"mode\":\"both\",\"use_stored\":true}'"
 	go run ./cmd/effectusd \
 		--bundle {{UI_DEMO_BUNDLE}} \
 		--http-addr :8080 \

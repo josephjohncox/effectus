@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/compiler"
+	"github.com/effectus/effectus-go/lint"
 	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/schema/verb"
@@ -256,6 +258,10 @@ func defineCommands() {
 	bVerbDir := bundleCmd.FlagSet.String("verb-dir", "", "Directory containing verb files")
 	bVerbSchemas := bundleCmd.FlagSet.String("verbschema", "", "Comma-separated list of verb schema files to load")
 	bRulesDir := bundleCmd.FlagSet.String("rules-dir", "", "Directory containing rule files")
+	bCheck := bundleCmd.FlagSet.Bool("check", true, "Run math/semantic checks before bundling")
+	bUnsafe := bundleCmd.FlagSet.String("unsafe", "error", "Unsafe expression policy: warn, error, ignore")
+	bVerbMode := bundleCmd.FlagSet.String("verbs", "error", "Verb lint policy: error, warn, ignore")
+	bFailOnWarn := bundleCmd.FlagSet.Bool("fail-on-warn", false, "Return non-zero exit code when warnings are present")
 	bOutput := bundleCmd.FlagSet.String("output", "bundle.json", "Output file for bundle")
 	bOciRef := bundleCmd.FlagSet.String("oci-ref", "", "OCI reference to push bundle to (e.g., ghcr.io/user/bundle:v1)")
 	bPiiMasks := bundleCmd.FlagSet.String("pii-masks", "", "Comma-separated list of PII paths to mask")
@@ -308,6 +314,54 @@ func defineCommands() {
 				fmt.Printf("Using rules directory: %s\n", *bRulesDir)
 			}
 			builder.WithRulesDir(*bRulesDir)
+		}
+
+		if *bCheck {
+			ruleFiles, err := collectRuleFiles(*bRulesDir)
+			if err != nil {
+				return fmt.Errorf("collecting rule files: %w", err)
+			}
+			if len(ruleFiles) > 0 {
+				unsafeMode, err := lint.ParseUnsafeMode(*bUnsafe)
+				if err != nil {
+					return err
+				}
+				verbMode, err := lint.ParseVerbMode(*bVerbMode)
+				if err != nil {
+					return err
+				}
+
+				var registry *verb.Registry
+				if *bVerbDir != "" {
+					verbFiles := expandSchemaPaths([]string{*bVerbDir})
+					registry = loadVerbRegistry(verbFiles, *bVerbose)
+				}
+
+				if verbMode != lint.VerbIgnore && registry == nil {
+					return fmt.Errorf("verb linting enabled but no verb registry loaded; provide --verb-dir or set --verbs=ignore")
+				}
+
+				issues, hadWarn, hadError, err := runCheck(runCheckOptions{
+					files:       ruleFiles,
+					schemaFiles: *bSchemaDir,
+					verbSchemas: splitCommaList(*bVerbSchemas),
+					registry:    registry,
+					lintOptions: lint.LintOptions{
+						UnsafeMode: unsafeMode,
+						VerbMode:   verbMode,
+					},
+					verbose: *bVerbose,
+				})
+				if err != nil {
+					return err
+				}
+				if len(issues) > 0 {
+					fmt.Println(formatIssuesText(issues))
+				}
+				if hadError || (*bFailOnWarn && hadWarn) {
+					return fmt.Errorf("bundle check failed")
+				}
+			}
 		}
 
 		// Add PII masks if specified
@@ -587,6 +641,31 @@ func expandSchemaPaths(paths []string) []string {
 	}
 
 	return expanded
+}
+
+func collectRuleFiles(dir string) ([]string, error) {
+	if strings.TrimSpace(dir) == "" {
+		return nil, nil
+	}
+	ruleFiles := make([]string, 0)
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		ext := filepath.Ext(path)
+		if ext == ".eff" || ext == ".effx" {
+			ruleFiles = append(ruleFiles, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(ruleFiles)
+	return ruleFiles, nil
 }
 
 // loadSchemaFile loads a schema file into the provided type system

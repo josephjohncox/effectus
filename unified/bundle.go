@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	eff "github.com/effectus/effectus-go"
@@ -21,22 +22,23 @@ import (
 
 // Bundle represents a compiled bundle of rules and schemas
 type Bundle struct {
-	Name          string             `json:"name"`
-	Version       string             `json:"version"`
-	Description   string             `json:"description"`
-	VerbHash      string             `json:"verb_hash"`
-	CreatedAt     time.Time          `json:"created_at"`
-	SchemaFiles   []string           `json:"schema_files"`
-	VerbFiles     []string           `json:"verb_files"`
-	RuleFiles     []string           `json:"rule_files"`
-	ListSpec      *list.Spec         `json:"-"`
-	FlowSpec      *fl.Spec           `json:"-"`
-	Rules         []RuleSummary      `json:"rules,omitempty"`
-	Flows         []FlowSummary      `json:"flows,omitempty"`
-	FactTypes     []FactTypeSummary  `json:"fact_types,omitempty"`
-	VerbSpecs     []VerbSpecSummary  `json:"verb_specs,omitempty"`
-	RequiredFacts []string           `json:"required_facts"`
-	PIIMasks      []string           `json:"pii_masks,omitempty"`
+	Name          string            `json:"name"`
+	Version       string            `json:"version"`
+	Description   string            `json:"description"`
+	VerbHash      string            `json:"verb_hash"`
+	CreatedAt     time.Time         `json:"created_at"`
+	SchemaFiles   []string          `json:"schema_files"`
+	VerbFiles     []string          `json:"verb_files"`
+	RuleFiles     []string          `json:"rule_files"`
+	ListSpec      *list.Spec        `json:"-"`
+	FlowSpec      *fl.Spec          `json:"-"`
+	Rules         []RuleSummary     `json:"rules,omitempty"`
+	Flows         []FlowSummary     `json:"flows,omitempty"`
+	RuleSources   []RuleSource      `json:"rule_sources,omitempty"`
+	FactTypes     []FactTypeSummary `json:"fact_types,omitempty"`
+	VerbSpecs     []VerbSpecSummary `json:"verb_specs,omitempty"`
+	RequiredFacts []string          `json:"required_facts"`
+	PIIMasks      []string          `json:"pii_masks,omitempty"`
 }
 
 // FactTypeSummary describes a fact path and its inferred type.
@@ -78,6 +80,13 @@ type FlowSummary struct {
 	Predicates []string `json:"predicates,omitempty"`
 	FactPaths  []string `json:"fact_paths,omitempty"`
 	Verbs      []string `json:"verbs,omitempty"`
+}
+
+// RuleSource carries the original rule file content.
+type RuleSource struct {
+	Path    string `json:"path"`
+	Format  string `json:"format"`
+	Content string `json:"content"`
 }
 
 // BundleBuilder helps construct a bundle
@@ -337,7 +346,19 @@ func (bb *BundleBuilder) loadRules() error {
 			listRuleFiles = append(listRuleFiles, path)
 		} else if ext == ".effx" {
 			flowRuleFiles = append(flowRuleFiles, path)
+		} else {
+			return nil
 		}
+
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("reading rule source %s: %w", path, err)
+		}
+		bb.bundle.RuleSources = append(bb.bundle.RuleSources, RuleSource{
+			Path:    relPath,
+			Format:  strings.TrimPrefix(ext, "."),
+			Content: string(content),
+		})
 
 		return nil
 	})
@@ -500,7 +521,7 @@ func SummarizeRules(spec *list.Spec) []RuleSummary {
 			})
 		}
 		summaries = append(summaries, RuleSummary{
-			Name:       rule.Name,
+			Name:       normalizeName(rule.Name),
 			Priority:   rule.Priority,
 			Predicates: predicates,
 			FactPaths:  append([]string(nil), rule.FactPaths...),
@@ -529,7 +550,7 @@ func SummarizeFlows(spec *fl.Spec) []FlowSummary {
 		}
 		verbs := collectProgramVerbs(flowSpec.Program)
 		summaries = append(summaries, FlowSummary{
-			Name:       flowSpec.Name,
+			Name:       normalizeName(flowSpec.Name),
 			Priority:   flowSpec.Priority,
 			Predicates: predicates,
 			FactPaths:  append([]string(nil), flowSpec.FactPaths...),
@@ -537,6 +558,13 @@ func SummarizeFlows(spec *fl.Spec) []FlowSummary {
 		})
 	}
 	return summaries
+}
+
+func normalizeName(name string) string {
+	if len(name) >= 2 && strings.HasPrefix(name, "\"") && strings.HasSuffix(name, "\"") {
+		return strings.Trim(name, "\"")
+	}
+	return name
 }
 
 func collectProgramVerbs(program *fl.Program) []string {

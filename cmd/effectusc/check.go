@@ -33,28 +33,6 @@ func newCheckCommand() *Command {
 			return fmt.Errorf("no input files specified")
 		}
 
-		comp := compiler.NewCompiler()
-
-		if *verbSchemas != "" {
-			for _, file := range splitCommaList(*verbSchemas) {
-				if *verbose {
-					fmt.Printf("Loading verb schemas from %s...\n", file)
-				}
-				if err := comp.LoadVerbSpecs(file); err != nil {
-					fmt.Fprintf(os.Stderr, "Error loading verb schema file %s: %v\n", file, err)
-				}
-			}
-		}
-
-		facts, typeSystem := createEmptyFacts(*schemaFiles, *verbose)
-		compTS := comp.GetTypeSystem()
-		compTS.MergeTypeSystem(typeSystem)
-
-		var registry *verb.Registry
-		if *verbSchemas != "" {
-			registry = loadVerbRegistry(splitCommaList(*verbSchemas), *verbose)
-		}
-
 		mode, err := lint.ParseUnsafeMode(*unsafeMode)
 		if err != nil {
 			return err
@@ -64,35 +42,19 @@ func newCheckCommand() *Command {
 			return err
 		}
 
-		issues := make([]lint.Issue, 0)
-		hadWarn := false
-		hadError := false
-
-		for _, filename := range files {
-			if *verbose {
-				fmt.Printf("Checking %s...\n", filename)
-			}
-
-			parsed, err := comp.ParseAndTypeCheck(filename, facts)
-			if err != nil {
-				hadError = true
-				issues = append(issues, issueFromError(filename, err))
-				continue
-			}
-
-			fileIssues := lint.LintFileWithOptions(parsed, filename, registry, lint.LintOptions{
+		issues, hadWarn, hadError, err := runCheck(runCheckOptions{
+			files:       files,
+			schemaFiles: *schemaFiles,
+			verbSchemas: splitCommaList(*verbSchemas),
+			registry:    loadVerbRegistry(splitCommaList(*verbSchemas), *verbose),
+			lintOptions: lint.LintOptions{
 				UnsafeMode: mode,
 				VerbMode:   verbPolicy,
-			})
-			for _, issue := range fileIssues {
-				if issue.Severity == "warning" {
-					hadWarn = true
-				}
-				if issue.Severity == "error" {
-					hadError = true
-				}
-			}
-			issues = append(issues, fileIssues...)
+			},
+			verbose: *verbose,
+		})
+		if err != nil {
+			return err
 		}
 
 		switch strings.ToLower(*format) {
@@ -118,4 +80,64 @@ func newCheckCommand() *Command {
 	}
 
 	return checkCmd
+}
+
+type runCheckOptions struct {
+	files       []string
+	schemaFiles string
+	verbSchemas []string
+	registry    *verb.Registry
+	lintOptions lint.LintOptions
+	verbose     bool
+}
+
+func runCheck(opts runCheckOptions) ([]lint.Issue, bool, bool, error) {
+	if len(opts.files) == 0 {
+		return nil, false, false, nil
+	}
+
+	comp := compiler.NewCompiler()
+
+	for _, file := range opts.verbSchemas {
+		if opts.verbose {
+			fmt.Printf("Loading verb schemas from %s...\n", file)
+		}
+		if err := comp.LoadVerbSpecs(file); err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading verb schema file %s: %v\n", file, err)
+		}
+	}
+
+	facts, typeSystem := createEmptyFacts(opts.schemaFiles, opts.verbose)
+	compTS := comp.GetTypeSystem()
+	compTS.MergeTypeSystem(typeSystem)
+
+	issues := make([]lint.Issue, 0)
+	hadWarn := false
+	hadError := false
+
+	for _, filename := range opts.files {
+		if opts.verbose {
+			fmt.Printf("Checking %s...\n", filename)
+		}
+
+		parsed, err := comp.ParseAndTypeCheck(filename, facts)
+		if err != nil {
+			hadError = true
+			issues = append(issues, issueFromError(filename, err))
+			continue
+		}
+
+		fileIssues := lint.LintFileWithOptions(parsed, filename, opts.registry, opts.lintOptions)
+		for _, issue := range fileIssues {
+			if issue.Severity == "warning" {
+				hadWarn = true
+			}
+			if issue.Severity == "error" {
+				hadError = true
+			}
+		}
+		issues = append(issues, fileIssues...)
+	}
+
+	return issues, hadWarn, hadError, nil
 }
