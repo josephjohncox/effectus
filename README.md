@@ -100,6 +100,20 @@ curl -X POST http://localhost:8080/api/facts \
   -d '{"universe":"prod","facts":{"customer":{"tier":"gold"}}}'
 ```
 
+## UI demos
+
+Run the demo bundles + UI locally:
+
+```bash
+just ui-demo
+just ui-flow-demo
+```
+
+## Screenshots & video
+
+![Flow UI demo placeholder](docs/media/ui-flow-demo.gif)
+
+
 ## Key docs
 
 - `docs/README.md` - documentation index

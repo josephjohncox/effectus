@@ -601,3 +601,7 @@ release-build:
 	GOOS=linux GOARCH=amd64 go build -o bin/effectusc-linux-amd64 ./cmd/effectusc
 	GOOS=darwin GOARCH=amd64 go build -o bin/effectusc-darwin-amd64 ./cmd/effectusc
 	GOOS=windows GOARCH=amd64 go build -o bin/effectusc-windows-amd64.exe ./cmd/effectusc
+
+# Create GitHub release (requires gh CLI)
+release-gh version:
+	gh release create v{{version}} --generate-notes
