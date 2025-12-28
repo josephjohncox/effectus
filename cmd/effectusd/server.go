@@ -223,25 +223,31 @@ func (s *serverState) withAPIMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if s.limiter != nil && !s.limiter.Allow(clientKey(r)) {
-			writeJSONError(w, http.StatusTooManyRequests, "rate limit exceeded")
+		start := time.Now()
+		recorder := newStatusRecorder(w)
+		reqID, req := withRequestID(r)
+		recorder.Header().Set("X-Request-ID", reqID)
+		defer logAPIRequest(req, recorder, time.Since(start), reqID)
+
+		if s.limiter != nil && !s.limiter.Allow(clientKey(req)) {
+			writeJSONError(recorder, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}
 
-		required := requiredRoleFor(r)
+		required := requiredRoleFor(req)
 		if s.acl != nil {
-			required = s.acl.requiredRole(r, required)
+			required = s.acl.requiredRole(req, required)
 		}
-		if ok, hasToken := s.auth.Authorize(r, required); !ok {
+		if ok, hasToken := s.auth.Authorize(req, required); !ok {
 			if !hasToken {
-				writeJSONError(w, http.StatusUnauthorized, "missing or invalid token")
+				writeJSONError(recorder, http.StatusUnauthorized, "missing or invalid token")
 				return
 			}
-			writeJSONError(w, http.StatusForbidden, "insufficient permissions")
+			writeJSONError(recorder, http.StatusForbidden, "insufficient permissions")
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(recorder, req)
 	})
 }
 
@@ -340,6 +346,7 @@ func startHTTPServer(ctx context.Context, addr string, state *serverState) {
 	mux.HandleFunc("/healthz", state.handleHealth)
 	mux.HandleFunc("/readyz", state.handleReady)
 	mux.HandleFunc("/api/status", state.handleStatus)
+	mux.HandleFunc("/api/bundle", state.handleBundle)
 	mux.HandleFunc("/api/rules", state.handleRules)
 	mux.HandleFunc("/api/rules/source", state.handleRuleSources)
 	mux.HandleFunc("/api/rules/validate", state.handleRuleValidate)
@@ -957,6 +964,19 @@ func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 		SchemaSources:    summarizeSchemaSources(s.sources),
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *serverState) handleBundle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	bundle := s.Bundle()
+	if bundle == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
+		return
+	}
+	writeJSON(w, http.StatusOK, bundle)
 }
 
 func summarizeRuntimeFacts(typeSystem *types.TypeSystem) []unified.FactTypeSummary {
@@ -1621,6 +1641,14 @@ const uiHTML = `<!doctype html>
       grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
       align-items: start;
     }
+    .diff-grid {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    }
+    .diff-added { border-color: rgba(13, 107, 107, 0.35); }
+    .diff-removed { border-color: rgba(185, 28, 28, 0.35); }
+    .diff-modified { border-color: rgba(217, 119, 6, 0.4); }
     .highlight {
       min-height: 220px;
       background: #f9f7f3;
@@ -1673,7 +1701,10 @@ const uiHTML = `<!doctype html>
     <div class="card">
       <div class="row" style="justify-content: space-between;">
         <h2>Overview</h2>
-        <button onclick="refreshAll()">Refresh</button>
+        <div class="row">
+          <button class="secondary" onclick="downloadBundle()">Download bundle</button>
+          <button onclick="refreshAll()">Refresh</button>
+        </div>
       </div>
       <div class="stack">
         <div class="row">
@@ -1800,6 +1831,7 @@ const uiHTML = `<!doctype html>
               <label class="muted"><input type="checkbox" id="rule-replace" /> Replace existing rules</label>
               <button id="rule-validate-btn" class="secondary" onclick="validateRuleEditor()">Typecheck</button>
               <button id="rule-hotload-btn" onclick="hotloadRuleEditor()">Hot Load</button>
+              <button class="secondary" onclick="exportRuleDiagnostics()">Export diagnostics</button>
               <span class="pill" id="rule-editor-status">Idle</span>
             </div>
           </div>
@@ -1812,6 +1844,14 @@ const uiHTML = `<!doctype html>
               <label>Diagnostics</label>
               <div id="rule-diagnostics" class="list"></div>
             </div>
+            <div>
+              <label>Source Diff</label>
+              <div id="rule-diff" class="list"></div>
+            </div>
+            <div>
+              <label>Canary Diff</label>
+              <div id="rule-canary" class="list"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -1821,6 +1861,8 @@ const uiHTML = `<!doctype html>
     const TOKEN_KEY = "effectus_api_token";
     let hotloadEnabled = false;
     let currentRuleDiagnostics = [];
+    let currentRuleDiffs = [];
+    let currentCanary = null;
 
     const render = (id, data) => {
       const el = document.getElementById(id);
@@ -1991,6 +2033,42 @@ const uiHTML = `<!doctype html>
       results.innerHTML = html;
     };
 
+    async function downloadBundle() {
+      try {
+        const data = await fetchJSON("/api/bundle");
+        const name = (data && data.name) ? data.name : "bundle";
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = name + ".json";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        alert("Failed to download bundle: " + err.message);
+      }
+    }
+
+    function exportRuleDiagnostics() {
+      const payload = {
+        diagnostics: currentRuleDiagnostics || [],
+        diffs: currentRuleDiffs || [],
+        canary: currentCanary || null,
+        exported_at: new Date().toISOString()
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "effectus-rule-diagnostics.json";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+
     const setRuleHotloadState = (enabled) => {
       hotloadEnabled = !!enabled;
       const status = document.getElementById("rule-hotload-status");
@@ -2080,6 +2158,81 @@ const uiHTML = `<!doctype html>
           '<div class="muted">' + escapeHtml(diag.message || '') + '</div>' +
         '</div>';
       });
+      container.innerHTML = html;
+    };
+
+    const renderRuleDiffs = (diffs) => {
+      currentRuleDiffs = diffs || [];
+      const container = document.getElementById("rule-diff");
+      if (!container) return;
+      if (!currentRuleDiffs.length) {
+        container.innerHTML = '<div class="muted">No changes detected.</div>';
+        return;
+      }
+      let html = '';
+      currentRuleDiffs.forEach(diff => {
+        const change = (diff.change || 'modified').toLowerCase();
+        const klass = change === 'added' ? 'diff-added' : (change === 'removed' ? 'diff-removed' : 'diff-modified');
+        html += '<details class="list-item ' + klass + '">' +
+          '<summary class="row">' +
+            '<strong>' + escapeHtml(diff.path || 'rule') + '</strong>' +
+            '<span class="pill">' + escapeHtml(change) + '</span>' +
+          '</summary>' +
+          '<div class="diff-grid">' +
+            '<div>' +
+              '<div class="muted">Before</div>' +
+              '<pre class="code">' + escapeHtml(diff.before || '') + '</pre>' +
+            '</div>' +
+            '<div>' +
+              '<div class="muted">After</div>' +
+              '<pre class="code">' + escapeHtml(diff.after || '') + '</pre>' +
+            '</div>' +
+          '</div>' +
+        '</details>';
+      });
+      container.innerHTML = html;
+    };
+
+    const renderCanary = (canary) => {
+      currentCanary = canary || null;
+      const container = document.getElementById("rule-canary");
+      if (!container) return;
+      if (!currentCanary) {
+        container.innerHTML = '<div class="muted">No canary run.</div>';
+        return;
+      }
+      const rulesChanged = currentCanary.rules_changed || [];
+      const flowsChanged = currentCanary.flows_changed || [];
+      const summary = currentCanary.staged_summary || {};
+      const errors = currentCanary.errors || [];
+      let html = '';
+      html += '<div class="list-item">' +
+        '<div class="row">' +
+          '<span class="pill">mode: ' + escapeHtml(currentCanary.mode || '-') + '</span>' +
+          '<span class="pill">rules changed: ' + rulesChanged.length + '</span>' +
+          '<span class="pill">flows changed: ' + flowsChanged.length + '</span>' +
+        '</div>' +
+        '<div class="muted">summary: rules ' + (summary.rules_matched || 0) + '/' + (summary.rules_total || 0) +
+        ', flows ' + (summary.flows_matched || 0) + '/' + (summary.flows_total || 0) + '</div>' +
+      '</div>';
+      if (rulesChanged.length) {
+        html += '<div class="muted">Rules changed</div>';
+        rulesChanged.forEach(name => {
+          html += '<div class="list-item">' + escapeHtml(name) + '</div>';
+        });
+      }
+      if (flowsChanged.length) {
+        html += '<div class="muted">Flows changed</div>';
+        flowsChanged.forEach(name => {
+          html += '<div class="list-item">' + escapeHtml(name) + '</div>';
+        });
+      }
+      if (errors.length) {
+        html += '<div class="muted">Canary errors</div>';
+        errors.forEach(err => {
+          html += '<div class="list-item unmatched">' + escapeHtml(err) + '</div>';
+        });
+      }
       container.innerHTML = html;
     };
 
@@ -2419,9 +2572,13 @@ const uiHTML = `<!doctype html>
         });
         const body = await res.json();
         renderRuleDiagnostics(body.diagnostics || []);
+        renderRuleDiffs(body.source_diff || []);
+        renderCanary(body.canary || null);
         if (statusEl) statusEl.textContent = body.ok ? "OK" : "Errors";
       } catch (err) {
         renderRuleDiagnostics([{ severity: "error", message: err.message }]);
+        renderRuleDiffs([]);
+        renderCanary(null);
         if (statusEl) statusEl.textContent = "Error";
       }
     }
@@ -2446,12 +2603,16 @@ const uiHTML = `<!doctype html>
         });
         const body = await res.json();
         renderRuleDiagnostics(body.diagnostics || []);
+        renderRuleDiffs(body.source_diff || []);
+        renderCanary(body.canary || null);
         if (statusEl) statusEl.textContent = body.ok ? "Loaded" : "Errors";
         if (body.ok) {
           refreshAll();
         }
       } catch (err) {
         renderRuleDiagnostics([{ severity: "error", message: err.message }]);
+        renderRuleDiffs([]);
+        renderCanary(null);
         if (statusEl) statusEl.textContent = "Error";
       }
     }
@@ -2465,6 +2626,8 @@ const uiHTML = `<!doctype html>
       ruleEditor.addEventListener("input", () => updateRulePreview());
     }
     updateRulePreview();
+    renderRuleDiffs([]);
+    renderCanary(null);
     setRuleHotloadState(false);
     refreshAll();
   </script>

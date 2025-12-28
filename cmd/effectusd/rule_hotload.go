@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/alecthomas/participle/v2/lexer"
 	"github.com/effectus/effectus-go"
@@ -18,6 +19,7 @@ import (
 	"github.com/effectus/effectus-go/lint"
 	"github.com/effectus/effectus-go/list"
 	"github.com/effectus/effectus-go/pathutil"
+	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/effectus/effectus-go/unified"
@@ -31,6 +33,8 @@ type ruleHotloadRequest struct {
 	Content string            `json:"content,omitempty"`
 	Format  string            `json:"format,omitempty"`
 	Replace *bool             `json:"replace,omitempty"`
+	Confirm *bool             `json:"confirm,omitempty"`
+	Canary  *hotloadCanary    `json:"canary,omitempty"`
 }
 
 type ruleHotloadFile struct {
@@ -51,11 +55,42 @@ type ruleDiagnostic struct {
 type ruleCheckResponse struct {
 	OK            bool             `json:"ok"`
 	Applied       bool             `json:"applied,omitempty"`
+	Confirmed     bool             `json:"confirmed,omitempty"`
+	HealthOK      bool             `json:"health_ok,omitempty"`
 	Rules         int              `json:"rules,omitempty"`
 	Flows         int              `json:"flows,omitempty"`
 	RequiredFacts []string         `json:"required_facts,omitempty"`
 	RuleFiles     []string         `json:"rule_files,omitempty"`
 	Diagnostics   []ruleDiagnostic `json:"diagnostics,omitempty"`
+	SourceDiff    []ruleSourceDiff `json:"source_diff,omitempty"`
+	Canary        *canaryResult    `json:"canary,omitempty"`
+	HealthErrors  []string         `json:"health_errors,omitempty"`
+}
+
+type hotloadCanary struct {
+	Universe  string                 `json:"universe,omitempty"`
+	Facts     map[string]interface{} `json:"facts,omitempty"`
+	Mode      string                 `json:"mode,omitempty"`
+	UseStored bool                   `json:"use_stored,omitempty"`
+}
+
+type canaryResult struct {
+	Mode           string         `json:"mode"`
+	RulesChanged   []string       `json:"rules_changed,omitempty"`
+	FlowsChanged   []string       `json:"flows_changed,omitempty"`
+	CurrentSummary dryRunSummary  `json:"current_summary"`
+	StagedSummary  dryRunSummary  `json:"staged_summary"`
+	Errors         []string       `json:"errors,omitempty"`
+	Universe       string         `json:"universe,omitempty"`
+	Facts          map[string]int `json:"facts,omitempty"`
+}
+
+type ruleSourceDiff struct {
+	Path   string `json:"path"`
+	Format string `json:"format,omitempty"`
+	Change string `json:"change"`
+	Before string `json:"before,omitempty"`
+	After  string `json:"after,omitempty"`
 }
 
 func (s *serverState) handleRuleValidate(w http.ResponseWriter, r *http.Request) {
@@ -127,12 +162,18 @@ func (s *serverState) evaluateRuleHotload(req ruleHotloadRequest, apply bool) ru
 		}
 	}
 
+	if apply {
+		recordHotloadAttempt()
+	}
+
 	sources, ruleFiles := s.mergeRuleSources(bundle, files, replace)
+	sourceDiff := diffRuleSources(bundle.RuleSources, sources)
 	prepared, cleanup, err := prepareRuleSources(sources)
 	if err != nil {
 		return ruleCheckResponse{
 			OK:          false,
 			Diagnostics: []ruleDiagnostic{{Severity: lint.SeverityError, Message: err.Error(), Line: 1, Column: 1}},
+			SourceDiff:  sourceDiff,
 		}
 	}
 	defer cleanup()
@@ -146,10 +187,52 @@ func (s *serverState) evaluateRuleHotload(req ruleHotloadRequest, apply bool) ru
 		compTS.MergeTypeSystem(typeSystem)
 	}
 
+	typecheckStart := time.Now()
 	issues := typecheckRuleSources(comp, facts, prepared, s.verbReg)
+	observeTypecheckDuration(time.Since(typecheckStart))
 	diagnostics := issuesToDiagnostics(issues)
 	if hasDiagnosticErrors(issues) {
-		return ruleCheckResponse{OK: false, Diagnostics: diagnostics}
+		if apply {
+			recordHotloadFailure()
+		}
+		return ruleCheckResponse{
+			OK:          false,
+			Diagnostics: diagnostics,
+			SourceDiff:  sourceDiff,
+		}
+	}
+
+	var staged *unified.Bundle
+	var canary *canaryResult
+	var healthErrors []string
+
+	needsCompile := apply || req.Canary != nil
+	if needsCompile {
+		spec, err := comp.ParseAndCompileFiles(collectTempPaths(prepared), facts)
+		if err != nil {
+			issues = append(issues, issueFromError("compile", err))
+			if apply {
+				recordHotloadFailure()
+			}
+			return ruleCheckResponse{OK: false, Diagnostics: issuesToDiagnostics(issues), SourceDiff: sourceDiff}
+		}
+		recordRuleCompile()
+
+		next := *bundle
+		next.ListSpec = extractListSpec(spec)
+		next.FlowSpec = extractFlowSpec(spec)
+		next.Rules = unified.SummarizeRules(next.ListSpec)
+		next.Flows = unified.SummarizeFlows(next.FlowSpec)
+		next.RequiredFacts = spec.RequiredFacts()
+		next.RuleSources = sources
+		next.RuleFiles = ruleFiles
+		staged = &next
+
+		if req.Canary != nil {
+			result, errors := s.runCanary(bundle, staged, req.Canary)
+			canary = result
+			healthErrors = errors
+		}
 	}
 
 	if !apply {
@@ -157,34 +240,77 @@ func (s *serverState) evaluateRuleHotload(req ruleHotloadRequest, apply bool) ru
 			OK:          true,
 			Diagnostics: diagnostics,
 			RuleFiles:   ruleFiles,
+			SourceDiff:  sourceDiff,
+			Canary:      canary,
+			HealthErrors: func() []string {
+				if len(healthErrors) == 0 {
+					return nil
+				}
+				return healthErrors
+			}(),
+			HealthOK: len(healthErrors) == 0,
 		}
 	}
 
-	spec, err := comp.ParseAndCompileFiles(collectTempPaths(prepared), facts)
-	if err != nil {
-		issues = append(issues, issueFromError("compile", err))
-		return ruleCheckResponse{OK: false, Diagnostics: issuesToDiagnostics(issues)}
+	if staged == nil {
+		recordHotloadFailure()
+		return ruleCheckResponse{
+			OK:          false,
+			Diagnostics: diagnostics,
+			SourceDiff:  sourceDiff,
+		}
 	}
 
-	next := *bundle
-	next.ListSpec = extractListSpec(spec)
-	next.FlowSpec = extractFlowSpec(spec)
-	next.Rules = unified.SummarizeRules(next.ListSpec)
-	next.Flows = unified.SummarizeFlows(next.FlowSpec)
-	next.RequiredFacts = spec.RequiredFacts()
-	next.RuleSources = sources
-	next.RuleFiles = ruleFiles
+	confirm := true
+	if req.Confirm != nil {
+		confirm = *req.Confirm
+	}
 
-	s.SetBundle(&next)
+	if !confirm {
+		return ruleCheckResponse{
+			OK:          true,
+			Applied:     false,
+			Confirmed:   false,
+			HealthOK:    true,
+			Rules:       len(staged.Rules),
+			Flows:       len(staged.Flows),
+			RuleFiles:   ruleFiles,
+			Diagnostics: diagnostics,
+			SourceDiff:  sourceDiff,
+			Canary:      canary,
+		}
+	}
+
+	previous := bundle
+	s.SetBundle(staged)
+
+	if len(healthErrors) > 0 {
+		s.SetBundle(previous)
+		recordHotloadFailure()
+		return ruleCheckResponse{
+			OK:           false,
+			Applied:      false,
+			Confirmed:    false,
+			HealthOK:     false,
+			HealthErrors: healthErrors,
+			Diagnostics:  diagnostics,
+			SourceDiff:   sourceDiff,
+			Canary:       canary,
+		}
+	}
 
 	return ruleCheckResponse{
 		OK:            true,
 		Applied:       true,
-		Rules:         len(next.Rules),
-		Flows:         len(next.Flows),
-		RequiredFacts: next.RequiredFacts,
+		Confirmed:     true,
+		HealthOK:      true,
+		Rules:         len(staged.Rules),
+		Flows:         len(staged.Flows),
+		RequiredFacts: staged.RequiredFacts,
 		RuleFiles:     ruleFiles,
 		Diagnostics:   diagnostics,
+		SourceDiff:    sourceDiff,
+		Canary:        canary,
 	}
 }
 
@@ -310,6 +436,81 @@ func (s *serverState) mergeRuleSources(bundle *unified.Bundle, incoming []ruleHo
 	return sources, paths
 }
 
+func diffRuleSources(before []unified.RuleSource, after []unified.RuleSource) []ruleSourceDiff {
+	if len(before) == 0 && len(after) == 0 {
+		return nil
+	}
+	beforeMap := make(map[string]unified.RuleSource)
+	for _, source := range before {
+		path := strings.TrimSpace(source.Path)
+		if path == "" {
+			continue
+		}
+		beforeMap[path] = source
+	}
+	afterMap := make(map[string]unified.RuleSource)
+	for _, source := range after {
+		path := strings.TrimSpace(source.Path)
+		if path == "" {
+			continue
+		}
+		afterMap[path] = source
+	}
+
+	paths := make([]string, 0, len(beforeMap)+len(afterMap))
+	seen := make(map[string]struct{})
+	for path := range beforeMap {
+		paths = append(paths, path)
+		seen[path] = struct{}{}
+	}
+	for path := range afterMap {
+		if _, ok := seen[path]; !ok {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+
+	diff := make([]ruleSourceDiff, 0)
+	for _, path := range paths {
+		beforeSource, beforeOK := beforeMap[path]
+		afterSource, afterOK := afterMap[path]
+		switch {
+		case !beforeOK && afterOK:
+			diff = append(diff, ruleSourceDiff{
+				Path:   path,
+				Format: normalizeRuleFormat(afterSource.Format, path),
+				Change: "added",
+				After:  afterSource.Content,
+			})
+		case beforeOK && !afterOK:
+			diff = append(diff, ruleSourceDiff{
+				Path:   path,
+				Format: normalizeRuleFormat(beforeSource.Format, path),
+				Change: "removed",
+				Before: beforeSource.Content,
+			})
+		case beforeOK && afterOK:
+			beforeContent := strings.TrimSpace(beforeSource.Content)
+			afterContent := strings.TrimSpace(afterSource.Content)
+			if beforeContent == afterContent {
+				continue
+			}
+			diff = append(diff, ruleSourceDiff{
+				Path:   path,
+				Format: normalizeRuleFormat(afterSource.Format, path),
+				Change: "modified",
+				Before: beforeSource.Content,
+				After:  afterSource.Content,
+			})
+		}
+	}
+
+	if len(diff) == 0 {
+		return nil
+	}
+	return diff
+}
+
 func prepareRuleSources(sources []unified.RuleSource) ([]preparedRuleSource, func(), error) {
 	if len(sources) == 0 {
 		return nil, func() {}, nil
@@ -357,6 +558,189 @@ func collectTempPaths(prepared []preparedRuleSource) []string {
 		paths = append(paths, file.TempPath)
 	}
 	return paths
+}
+
+func (s *serverState) runCanary(current *unified.Bundle, staged *unified.Bundle, canary *hotloadCanary) (*canaryResult, []string) {
+	if canary == nil {
+		return nil, nil
+	}
+	facts, universe, mode, err := s.resolveCanaryFacts(canary)
+	if err != nil {
+		return &canaryResult{Mode: mode, Universe: universe, Errors: []string{err.Error()}}, []string{err.Error()}
+	}
+
+	currentRun := buildDryRunFromBundle(current, facts, mode, universe)
+	stagedRun := buildDryRunFromBundle(staged, facts, mode, universe)
+	rulesChanged, flowsChanged := diffDryRuns(currentRun, stagedRun)
+	errors := collectDryRunErrors(stagedRun)
+
+	result := &canaryResult{
+		Mode:           mode,
+		RulesChanged:   rulesChanged,
+		FlowsChanged:   flowsChanged,
+		CurrentSummary: currentRun.Summary,
+		StagedSummary:  stagedRun.Summary,
+		Errors:         errors,
+		Universe:       universe,
+		Facts:          stagedRun.Facts,
+	}
+
+	return result, errors
+}
+
+func (s *serverState) resolveCanaryFacts(canary *hotloadCanary) (map[string]interface{}, string, string, error) {
+	if canary == nil {
+		return nil, "", "", fmt.Errorf("canary not provided")
+	}
+	universe := strings.TrimSpace(canary.Universe)
+	if universe == "" {
+		universe = "default"
+	}
+	mode := strings.ToLower(strings.TrimSpace(canary.Mode))
+	if mode == "" {
+		mode = "list"
+	}
+	facts := canary.Facts
+	if len(facts) == 0 && canary.UseStored && s.factStore != nil {
+		if snapshot, ok := s.factStore.Snapshot(universe); ok {
+			facts = snapshot
+		}
+	}
+	if len(facts) == 0 {
+		return nil, universe, mode, fmt.Errorf("canary facts are required")
+	}
+	return facts, universe, mode, nil
+}
+
+func buildDryRunFromBundle(bundle *unified.Bundle, facts map[string]interface{}, mode string, universe string) dryRunResponse {
+	resp := dryRunResponse{
+		Universe: universe,
+		Mode:     mode,
+		Facts:    map[string]int{"namespaces": len(facts)},
+	}
+	if bundle == nil {
+		resp.Errors = []string{"bundle not loaded"}
+		return resp
+	}
+
+	registry := schema.NewRegistry()
+	registry.LoadFromMap(facts)
+
+	if mode == "list" || mode == "both" {
+		rules := bundle.Rules
+		if len(rules) == 0 && bundle.ListSpec != nil {
+			rules = unified.SummarizeRules(bundle.ListSpec)
+		}
+		evaluated, matched := evaluateRules(rules, registry)
+		resp.Rules = evaluated
+		resp.Summary.RulesMatched = matched
+		resp.Summary.RulesTotal = len(evaluated)
+	}
+	if mode == "flow" || mode == "both" {
+		flows := bundle.Flows
+		if len(flows) == 0 && bundle.FlowSpec != nil {
+			flows = unified.SummarizeFlows(bundle.FlowSpec)
+		}
+		evaluated, matched := evaluateFlows(flows, registry)
+		resp.Flows = evaluated
+		resp.Summary.FlowsMatched = matched
+		resp.Summary.FlowsTotal = len(evaluated)
+	}
+
+	return resp
+}
+
+func diffDryRuns(current dryRunResponse, staged dryRunResponse) ([]string, []string) {
+	rulesChanged := make([]string, 0)
+	flowsChanged := make([]string, 0)
+
+	currentRules := make(map[string]string)
+	for _, rule := range current.Rules {
+		currentRules[rule.Name] = ruleSignature(rule)
+	}
+	stagedRules := make(map[string]string)
+	for _, rule := range staged.Rules {
+		stagedRules[rule.Name] = ruleSignature(rule)
+	}
+	for name, signature := range stagedRules {
+		if currentRules[name] != signature {
+			rulesChanged = append(rulesChanged, name)
+		}
+	}
+	for name := range currentRules {
+		if _, ok := stagedRules[name]; !ok {
+			rulesChanged = append(rulesChanged, name)
+		}
+	}
+	sort.Strings(rulesChanged)
+
+	currentFlows := make(map[string]string)
+	for _, flow := range current.Flows {
+		currentFlows[flow.Name] = flowSignature(flow)
+	}
+	stagedFlows := make(map[string]string)
+	for _, flow := range staged.Flows {
+		stagedFlows[flow.Name] = flowSignature(flow)
+	}
+	for name, signature := range stagedFlows {
+		if currentFlows[name] != signature {
+			flowsChanged = append(flowsChanged, name)
+		}
+	}
+	for name := range currentFlows {
+		if _, ok := stagedFlows[name]; !ok {
+			flowsChanged = append(flowsChanged, name)
+		}
+	}
+	sort.Strings(flowsChanged)
+
+	return rulesChanged, flowsChanged
+}
+
+func ruleSignature(rule dryRunRule) string {
+	payload := struct {
+		Matched bool         `json:"matched"`
+		Effects []effectInfo `json:"effects"`
+	}{
+		Matched: rule.Matched,
+		Effects: rule.Effects,
+	}
+	raw, _ := json.Marshal(payload)
+	return string(raw)
+}
+
+func flowSignature(flow dryRunFlow) string {
+	payload := struct {
+		Matched bool     `json:"matched"`
+		Verbs   []string `json:"verbs"`
+	}{
+		Matched: flow.Matched,
+		Verbs:   flow.Verbs,
+	}
+	raw, _ := json.Marshal(payload)
+	return string(raw)
+}
+
+func collectDryRunErrors(resp dryRunResponse) []string {
+	errors := append([]string(nil), resp.Errors...)
+	for _, rule := range resp.Rules {
+		for _, pred := range rule.Predicates {
+			if pred.Error != "" {
+				errors = append(errors, pred.Error)
+			}
+		}
+	}
+	for _, flow := range resp.Flows {
+		for _, pred := range flow.Predicates {
+			if pred.Error != "" {
+				errors = append(errors, pred.Error)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 func typecheckRuleSources(comp *compiler.Compiler, facts effectus.Facts, prepared []preparedRuleSource, verbs *verb.Registry) []lint.Issue {

@@ -613,13 +613,3 @@ func startKafkaConsumer(ctx context.Context, state *serverState) {
 	<-ctx.Done()
 	fmt.Println("Stopping Kafka consumer...")
 }
-
-// startMetricsServer starts the metrics server
-func startMetricsServer(ctx context.Context, addr string) {
-	fmt.Printf("Starting metrics server on %s\n", addr)
-
-	// In a real implementation, you would initialize the metrics server here
-	// For now, just a placeholder
-	<-ctx.Done()
-	fmt.Println("Shutting down metrics server")
-}
