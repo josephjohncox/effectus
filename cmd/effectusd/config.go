@@ -22,6 +22,7 @@ type runtimeConfig struct {
 	Verbs         verbConfig                    `yaml:"verbs" json:"verbs"`
 	Extensions    extensionConfig               `yaml:"extensions" json:"extensions"`
 	SchemaSources []adapters.SchemaSourceConfig `yaml:"schema_sources" json:"schema_sources"`
+	FixedTime     string                        `yaml:"fixed_time" json:"fixed_time"`
 }
 
 type bundleConfig struct {
@@ -61,8 +62,22 @@ type factsCacheConfig struct {
 }
 
 type sagaConfig struct {
-	Enabled *bool  `yaml:"enabled" json:"enabled"`
-	Store   string `yaml:"store" json:"store"`
+	Enabled  *bool              `yaml:"enabled" json:"enabled"`
+	Store    string             `yaml:"store" json:"store"`
+	Redis    sagaRedisConfig    `yaml:"redis" json:"redis"`
+	Postgres sagaPostgresConfig `yaml:"postgres" json:"postgres"`
+}
+
+type sagaRedisConfig struct {
+	Addr     string `yaml:"addr" json:"addr"`
+	Password string `yaml:"password" json:"password"`
+	DB       *int   `yaml:"db" json:"db"`
+	Prefix   string `yaml:"prefix" json:"prefix"`
+	TTL      string `yaml:"ttl" json:"ttl"`
+}
+
+type sagaPostgresConfig struct {
+	DSN string `yaml:"dsn" json:"dsn"`
 }
 
 type verbConfig struct {
@@ -70,6 +85,7 @@ type verbConfig struct {
 	PluginDirs      []string `yaml:"plugin_dirs" json:"plugin_dirs"`
 	DuplicatePolicy string   `yaml:"duplicate_policy" json:"duplicate_policy"`
 	OCIWarmup       *bool    `yaml:"oci_warmup" json:"oci_warmup"`
+	Strict          *bool    `yaml:"strict" json:"strict"`
 }
 
 type extensionConfig struct {
@@ -185,6 +201,28 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 	if cfg.Saga.Store != "" && !setFlags["saga-store"] {
 		*sagaStoreType = cfg.Saga.Store
 	}
+	if cfg.Saga.Redis.Addr != "" && !setFlags["saga-redis-addr"] {
+		*sagaRedisAddr = cfg.Saga.Redis.Addr
+	}
+	if cfg.Saga.Redis.Password != "" && !setFlags["saga-redis-password"] {
+		*sagaRedisPass = cfg.Saga.Redis.Password
+	}
+	if cfg.Saga.Redis.DB != nil && !setFlags["saga-redis-db"] {
+		*sagaRedisDB = *cfg.Saga.Redis.DB
+	}
+	if cfg.Saga.Redis.Prefix != "" && !setFlags["saga-redis-prefix"] {
+		*sagaRedisPrefix = cfg.Saga.Redis.Prefix
+	}
+	if cfg.Saga.Redis.TTL != "" && !setFlags["saga-redis-ttl"] {
+		ttl, err := time.ParseDuration(cfg.Saga.Redis.TTL)
+		if err != nil {
+			return fmt.Errorf("saga.redis.ttl: %w", err)
+		}
+		*sagaRedisTTL = ttl
+	}
+	if cfg.Saga.Postgres.DSN != "" && !setFlags["saga-postgres-dsn"] {
+		*sagaPgDSN = cfg.Saga.Postgres.DSN
+	}
 
 	if len(cfg.Verbs.SpecDirs) > 0 && !setFlags["verb-dir"] {
 		*verbDir = strings.Join(cfg.Verbs.SpecDirs, ",")
@@ -197,6 +235,9 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 	}
 	if cfg.Verbs.OCIWarmup != nil && !setFlags["verb-oci-warmup"] {
 		*verbOCIWarmup = *cfg.Verbs.OCIWarmup
+	}
+	if cfg.Verbs.Strict != nil && !setFlags["verb-strict"] {
+		*verbStrict = *cfg.Verbs.Strict
 	}
 
 	if len(cfg.Extensions.Dirs) > 0 && !setFlags["extensions-dir"] {
@@ -215,6 +256,10 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 
 	if len(cfg.SchemaSources) > 0 && !setFlags["schema-sources"] {
 		schemaSources = cfg.SchemaSources
+	}
+
+	if cfg.FixedTime != "" && !setFlags["fixed-time"] {
+		*fixedTime = cfg.FixedTime
 	}
 
 	return nil

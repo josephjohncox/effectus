@@ -64,6 +64,7 @@ var (
 	verbDir                  = flag.String("verb-dir", "", "Directory containing JSON verb specs")
 	verbDuplicatePolicy      = flag.String("verb-duplicate-policy", "error", "Duplicate verb policy (error, replace, ignore)")
 	verbOCIWarmup            = flag.Bool("verb-oci-warmup", false, "Warm OCI verb executors at startup")
+	verbStrict               = flag.Bool("verb-strict", false, "Enable strict verb arg/return checks at runtime")
 	extensionsDir            = flag.String("extensions-dir", "", "Directory containing extension manifests (*.verbs.json, *.schema.json)")
 	extensionsOCI            = flag.String("extensions-oci", "", "OCI references for extension bundles (comma-separated)")
 	extensionsReloadInterval = flag.Duration("extensions-reload-interval", 0, "Interval for reloading extension manifests (0 to disable)")
@@ -71,8 +72,17 @@ var (
 	reloadInterval           = flag.Duration("reload-interval", 30*time.Second, "Interval for hot-reloading")
 
 	// Runtime flags
-	sagaEnabled   = flag.Bool("saga", false, "Enable saga-style compensation")
-	sagaStoreType = flag.String("saga-store", "memory", "Saga store (memory, redis, postgres)")
+	sagaEnabled     = flag.Bool("saga", false, "Enable saga-style compensation")
+	sagaStoreType   = flag.String("saga-store", "memory", "Saga store (memory, redis, postgres)")
+	sagaRedisAddr   = flag.String("saga-redis-addr", "localhost:6379", "Redis address for saga store")
+	sagaRedisPass   = flag.String("saga-redis-password", "", "Redis password for saga store")
+	sagaRedisDB     = flag.Int("saga-redis-db", 0, "Redis DB for saga store")
+	sagaRedisPrefix = flag.String("saga-redis-prefix", "", "Redis key prefix for saga store")
+	sagaRedisTTL    = flag.Duration("saga-redis-ttl", 0, "TTL for saga keys (0 to disable)")
+	sagaPgDSN       = flag.String("saga-postgres-dsn", "", "Postgres DSN for saga store")
+
+	// Determinism
+	fixedTime = flag.String("fixed-time", "", "Fixed time for deterministic evaluation (RFC3339 or RFC3339Nano)")
 
 	// Monitoring flags
 	metricsAddr = flag.String("metrics-addr", ":9090", "Address to expose metrics")
@@ -148,6 +158,18 @@ func main() {
 		schemaSources = sources
 	}
 
+	if strings.TrimSpace(*fixedTime) != "" {
+		parsed, err := parseFixedTime(*fixedTime)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid fixed time: %v\n", err)
+			os.Exit(1)
+		}
+		schema.SetFixedTime(parsed)
+		if *verbose {
+			fmt.Printf("Deterministic time enabled: %s\n", parsed.Format(time.RFC3339Nano))
+		}
+	}
+
 	if *bundleFile == "" && *ociRef == "" {
 		fmt.Fprintln(os.Stderr, "Either -bundle or -oci-ref must be specified")
 		flag.PrintDefaults()
@@ -217,6 +239,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Invalid verb duplicate policy: %v\n", err)
 		os.Exit(1)
 	}
+	if *verbStrict {
+		val := true
+		verbReg.SetStrictArgs(&val)
+		verbReg.SetStrictReturn(&val)
+	}
 	extensionDirs := splitCommaList(*extensionsDir)
 	extensionOCIs := splitCommaList(*extensionsOCI)
 	if err := loadVerbsAndExtensions(typeSystem, verbReg, extensionDirs, extensionOCIs); err != nil {
@@ -251,8 +278,32 @@ func main() {
 		switch strings.ToLower(*sagaStoreType) {
 		case "memory":
 			sagaStore = schema.NewInMemorySagaStore()
+		case "redis":
+			store, err := schema.NewRedisSagaStore(schema.RedisSagaStoreOptions{
+				Addr:     *sagaRedisAddr,
+				Password: *sagaRedisPass,
+				DB:       *sagaRedisDB,
+				Prefix:   *sagaRedisPrefix,
+				TTL:      *sagaRedisTTL,
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error configuring redis saga store: %v\n", err)
+				os.Exit(1)
+			}
+			sagaStore = store
+		case "postgres":
+			if strings.TrimSpace(*sagaPgDSN) == "" {
+				fmt.Fprintln(os.Stderr, "Postgres saga store requires --saga-postgres-dsn")
+				os.Exit(1)
+			}
+			store, err := schema.NewPostgresSagaStore(*sagaPgDSN)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error configuring postgres saga store: %v\n", err)
+				os.Exit(1)
+			}
+			sagaStore = store
 		default:
-			fmt.Fprintf(os.Stderr, "Saga store %q not supported yet (use memory)\n", *sagaStoreType)
+			fmt.Fprintf(os.Stderr, "Saga store %q not supported (use memory, redis, postgres)\n", *sagaStoreType)
 			os.Exit(1)
 		}
 	}
@@ -546,6 +597,20 @@ func splitCommaList(value string) []string {
 		results = append(results, trimmed)
 	}
 	return results
+}
+
+func parseFixedTime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, fmt.Errorf("empty time")
+	}
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed, nil
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed, nil
+	}
+	return time.Time{}, fmt.Errorf("expected RFC3339/RFC3339Nano timestamp")
 }
 
 // startFactSource starts the appropriate fact source

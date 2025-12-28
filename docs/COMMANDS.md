@@ -317,12 +317,20 @@ effectusd [options]
 --reload-interval  Interval for hot-reloading (default: 30s)
 --verb-duplicate-policy Duplicate verb policy (error, replace, ignore)
 --verb-oci-warmup  Warm OCI verb executors at startup
+--verb-strict      Enable strict verb arg/return checks at runtime
 ```
 
 #### Runtime Configuration
 ```bash
 --saga             Enable saga-style compensation
 --saga-store       Saga store (memory, redis, postgres) (default: memory)
+--saga-redis-addr  Redis address for saga store
+--saga-redis-password Redis password for saga store
+--saga-redis-db    Redis DB for saga store
+--saga-redis-prefix Redis key prefix for saga store
+--saga-redis-ttl   TTL for saga keys (0 to disable)
+--saga-postgres-dsn Postgres DSN for saga store
+--fixed-time       Fixed time for deterministic evaluation (RFC3339/RFC3339Nano)
 ```
 
 #### Fact Sources
@@ -348,6 +356,8 @@ effectusd [options]
 --api-rate-limit       Requests per minute per client (0 to disable)
 --api-rate-burst       Burst size (0 to use rate limit)
 --rules-hotload        Enable /api/rules/validate and /api/rules/hotload
+--rules-history        Number of hotload bundles to keep (0 to disable)
+--rules-history-dir    Directory for bundle history snapshots
 ```
 
 Example ACL file: `docs/acl.example.yml`.

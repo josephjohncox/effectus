@@ -140,6 +140,13 @@ Docker compose stack for Postgres CDC, MySQL CDC, and RabbitMQ.
 docker compose -f ./cdc_stack/docker-compose.yml up -d
 ```
 
+### [Saga Stack](./saga_stack/)
+Docker compose stack for saga integration tests (Postgres + Redis).
+
+```bash
+docker compose -f ./saga_stack/docker-compose.yml up -d
+```
+
 ### [Warehouse Sources](./warehouse_sources/)
 Concrete configs for Snowflake (SQL adapter) and Iceberg via Trino (Iceberg adapter).
 

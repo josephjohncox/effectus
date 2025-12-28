@@ -76,8 +76,11 @@ verbs:
   # Optional: Go plugin executors (.so)
   duplicate_policy: "error" # error | replace | ignore
   oci_warmup: false
+  strict: false
   plugin_dirs:
     - "./plugins"
+
+fixed_time: "" # Optional RFC3339 timestamp for deterministic runs
 ```
 
 ## Production baseline example
@@ -134,6 +137,16 @@ extensions:
 verbs:
   duplicate_policy: "error"
   oci_warmup: true
+  strict: true
+
+saga:
+  enabled: true
+  store: "redis"
+  redis:
+    addr: "redis:6379"
+    db: 0
+    prefix: "effectus:"
+    ttl: "24h"
 ```
 
 ### Local extension manifest (HTTP verbs)
@@ -187,6 +200,9 @@ Then list the OCI reference under `extensions.oci`.
 - Extension reloading re-reads `*.verbs.json` / `*.schema.json` from disk or OCI; Go plugins are not hot-reloadable.
 - Schema sources are loaded in-memory at startup; set `extensions.reload_interval` (or `bundle.reload_interval`) to poll for updates.
 - `verbs.duplicate_policy` controls how duplicate verb names are resolved; `verbs.oci_warmup` prefetches OCI verb bundles at startup.
+- `verbs.strict` enforces runtime arg/return type checks; enable it in production if you want strict safety.
+- `fixed_time` pins deterministic time for expression evaluation (useful for tests and canary runs).
+- Use `saga.redis` or `saga.postgres` to persist saga state when `saga.enabled` is true.
 
 ## External Schema Sources (Buf, SQL, Catalogs)
 

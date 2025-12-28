@@ -6,6 +6,7 @@ MIGRATIONS_DIR := "migrations"
 DOCKER_COMPOSE := "docker-compose -f docker-compose.yml"
 WAREHOUSE_DEVSTACK := "examples/warehouse_sources/devstack"
 CDC_STACK := "examples/cdc_stack"
+SAGA_STACK := "examples/saga_stack"
 UI_DEMO_RULES := "examples/fraud_e2e/rules"
 UI_DEMO_SCHEMA := "examples/fraud_e2e/schema"
 UI_DEMO_VERBS := "examples/fraud_e2e/schema/fraud_verbs.json"
@@ -23,6 +24,8 @@ UI_FLOW_DEMO_STREAM := "examples/flow_ui_demo/scripts/stream_facts.sh"
 UI_FLOW_DEMO_TOKEN := "flow-demo-token"
 UI_FLOW_SQL_STACK := "examples/flow_ui_demo/sql_scrape"
 UI_FLOW_SQL_DSN := "postgres://effectus:effectus@localhost:55432/effectus_ui_demo?sslmode=disable"
+SAGA_POSTGRES_DSN := "postgres://effectus:effectus@localhost:55433/effectus_saga?sslmode=disable"
+SAGA_REDIS_ADDR := "localhost:56379"
 
 # Default recipe
 default:
@@ -409,6 +412,20 @@ cdc-test:
 	MYSQL_DATABASE=effectus_cdc \
 	MYSQL_DSN="effectus:effectus@tcp(127.0.0.1:3306)/effectus_cdc?parseTime=true&multiStatements=true" \
 	go test -tags=integration ./adapters/postgres ./adapters/mysql
+
+# === Saga Stack (Postgres + Redis) ===
+
+saga-up:
+	docker compose -f {{SAGA_STACK}}/docker-compose.yml up -d
+
+saga-down:
+	docker compose -f {{SAGA_STACK}}/docker-compose.yml down
+
+saga-logs:
+	docker compose -f {{SAGA_STACK}}/docker-compose.yml logs -f
+
+saga-test:
+	POSTGRES_DSN="{{SAGA_POSTGRES_DSN}}" REDIS_ADDR="{{SAGA_REDIS_ADDR}}" go test -v -tags=integration ./cmd/effectusd
 
 # Clean generated SQL files
 sql-clean:

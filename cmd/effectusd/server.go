@@ -2033,6 +2033,16 @@ const uiHTML = `<!doctype html>
               <label>Canary Diff</label>
               <div id="rule-canary" class="list"></div>
             </div>
+            <div>
+              <div class="row" style="justify-content: space-between; align-items: baseline;">
+                <label>Hotload History</label>
+                <div class="row">
+                  <span class="pill" id="rule-history-status">idle</span>
+                  <button class="secondary" onclick="loadRuleHistory()">Refresh</button>
+                </div>
+              </div>
+              <div id="rule-history" class="list"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -2295,6 +2305,7 @@ const uiHTML = `<!doctype html>
       const note = document.getElementById("rule-hotload-note");
       const typecheckBtn = document.getElementById("rule-validate-btn");
       const hotloadBtn = document.getElementById("rule-hotload-btn");
+      const historyStatus = document.getElementById("rule-history-status");
       const statusText = enabled ? "hotload enabled" : "hotload disabled";
       if (status) {
         status.textContent = statusText;
@@ -2307,6 +2318,7 @@ const uiHTML = `<!doctype html>
       }
       if (typecheckBtn) typecheckBtn.disabled = !enabled;
       if (hotloadBtn) hotloadBtn.disabled = !enabled;
+      if (historyStatus) historyStatus.textContent = enabled ? "idle" : "disabled";
     };
 
     const highlightRuleLine = (line) => {
@@ -2455,6 +2467,84 @@ const uiHTML = `<!doctype html>
       }
       container.innerHTML = html;
     };
+
+    const renderRuleHistory = (items) => {
+      const container = document.getElementById("rule-history");
+      if (!container) return;
+      if (!hotloadEnabled) {
+        container.innerHTML = '<div class="muted">Hotload disabled.</div>';
+        return;
+      }
+      if (!items || items.error) {
+        container.innerHTML = '<div class="muted">Failed to load history.</div>';
+        return;
+      }
+      if (!Array.isArray(items) || items.length === 0) {
+        container.innerHTML = '<div class="muted">No hotload history yet.</div>';
+        return;
+      }
+      let html = '';
+      items.forEach(item => {
+        const created = item.created_at ? new Date(item.created_at).toLocaleString() : "-";
+        const label = (item.name || '-') + '@' + (item.version || '-');
+        const reason = item.reason ? ' · ' + item.reason : '';
+        html += '<div class="list-item">' +
+          '<div class="row">' +
+            '<strong>' + escapeHtml(label) + '</strong>' +
+            '<button class="secondary" data-rollback-id="' + escapeHtml(item.id || '') + '">Rollback</button>' +
+          '</div>' +
+          '<div class="muted">id: ' + escapeHtml(item.id || '-') + reason + '</div>' +
+          '<div class="muted">created: ' + escapeHtml(created) + ' · rules: ' + (item.rules || 0) + ', flows: ' + (item.flows || 0) + '</div>' +
+        '</div>';
+      });
+      container.innerHTML = html;
+      container.querySelectorAll("button[data-rollback-id]").forEach(btn => {
+        btn.addEventListener("click", () => rollbackRules(btn.dataset.rollbackId));
+      });
+    };
+
+    async function loadRuleHistory() {
+      const statusEl = document.getElementById("rule-history-status");
+      if (!hotloadEnabled) {
+        if (statusEl) statusEl.textContent = "disabled";
+        renderRuleHistory([]);
+        return;
+      }
+      if (statusEl) statusEl.textContent = "loading";
+      try {
+        const data = await fetchJSON("/api/rules/history");
+        renderRuleHistory(data);
+        if (statusEl) statusEl.textContent = "loaded";
+      } catch (err) {
+        renderRuleHistory({ error: err.message });
+        if (statusEl) statusEl.textContent = "error";
+      }
+    }
+
+    async function rollbackRules(id) {
+      if (!id) return;
+      if (!confirm("Rollback to snapshot " + id + "?")) {
+        return;
+      }
+      const statusEl = document.getElementById("rule-history-status");
+      if (statusEl) statusEl.textContent = "rolling back";
+      try {
+        const res = await fetch("/api/rules/rollback", {
+          method: "POST",
+          headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+          body: JSON.stringify({ id: id })
+        });
+        const body = await res.json();
+        if (!res.ok || !body.ok) {
+          throw new Error(body && body.error ? body.error : "rollback failed");
+        }
+        if (statusEl) statusEl.textContent = "rolled back";
+        refreshAll();
+      } catch (err) {
+        if (statusEl) statusEl.textContent = "error";
+        alert("Rollback failed: " + err.message);
+      }
+    }
 
     const populateUniverseOptions = (status) => {
       const select = document.getElementById("facts-universe");
@@ -2617,6 +2707,7 @@ const uiHTML = `<!doctype html>
         populateUniverseOptions(status);
         renderFactsMergeConfig(status);
         setRuleHotloadState(status.rules_hotload);
+        loadRuleHistory();
       } catch (err) {
         render("status", { error: err.message });
       }

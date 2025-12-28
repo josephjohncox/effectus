@@ -15,6 +15,38 @@ import (
 	"github.com/expr-lang/expr/vm"
 )
 
+var (
+	defaultClockMu sync.RWMutex
+	defaultClock   func() time.Time = time.Now
+)
+
+// SetDefaultClock overrides the default clock used by new registries.
+func SetDefaultClock(clock func() time.Time) {
+	defaultClockMu.Lock()
+	defer defaultClockMu.Unlock()
+	defaultClock = clock
+}
+
+// SetFixedTime pins registry time functions to a fixed timestamp.
+func SetFixedTime(now time.Time) {
+	SetDefaultClock(func() time.Time { return now })
+}
+
+// ResetDefaultClock restores the default clock to time.Now.
+func ResetDefaultClock() {
+	SetDefaultClock(time.Now)
+}
+
+func getDefaultClock() func() time.Time {
+	defaultClockMu.RLock()
+	clock := defaultClock
+	defaultClockMu.RUnlock()
+	if clock == nil {
+		return time.Now
+	}
+	return clock
+}
+
 // Registry provides expression evaluation with extensible data and functions
 type Registry struct {
 	mu        sync.RWMutex
@@ -28,12 +60,13 @@ type Registry struct {
 
 // NewRegistry creates a new empty registry
 func NewRegistry() *Registry {
+	clock := getDefaultClock()
 	registry := &Registry{
 		data:              make(map[string]interface{}),
 		functions:         make(map[string]interface{}),
 		programs:          make(map[string]*vm.Program),
 		predicatePrograms: make(map[string]*vm.Program),
-		clock:             time.Now,
+		clock:             clock,
 	}
 
 	for _, spec := range types.StandardLibrary() {
