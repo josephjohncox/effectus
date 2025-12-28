@@ -953,6 +953,24 @@ type bundleCounts struct {
 	Flows int `json:"flows"`
 }
 
+type verbSourceSummary struct {
+	Type   string `json:"type"`
+	Ref    string `json:"ref,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+type verbSpecResponse struct {
+	Name         string             `json:"name"`
+	Description  string             `json:"description,omitempty"`
+	Capability   string             `json:"capability,omitempty"`
+	InverseVerb  string             `json:"inverse,omitempty"`
+	ArgTypes     map[string]string  `json:"arg_types,omitempty"`
+	RequiredArgs []string           `json:"required_args,omitempty"`
+	ReturnType   string             `json:"return_type,omitempty"`
+	Resources    []string           `json:"resources,omitempty"`
+	Source       *verbSourceSummary `json:"source,omitempty"`
+}
+
 type factStoreConfigSummary struct {
 	DefaultMerge   string            `json:"default_merge"`
 	NamespaceMerge map[string]string `json:"namespace_merge,omitempty"`
@@ -1006,7 +1024,7 @@ func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 		RequiredFact:     bundle.RequiredFacts,
 		FactStore:        storeTypeOrUnknown(s.factStore),
 		FactStoreConfig:  factConfigSummary(s.factConfig),
-		VerbCount:        len(bundle.VerbSpecs),
+		VerbCount:        verbCount(s.verbReg, bundle),
 		FactCount:        len(combinedFacts),
 		BundleFactCount:  len(bundle.FactTypes),
 		RuntimeFactCount: len(runtimeFacts),
@@ -1226,16 +1244,20 @@ func (s *serverState) handleVerbs(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if s.verbReg != nil && s.verbReg.Count() > 0 {
+		writeJSON(w, http.StatusOK, summarizeVerbRegistry(s.verbReg))
+		return
+	}
 	bundle := s.Bundle()
 	if bundle == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
 		return
 	}
 	if len(bundle.VerbSpecs) == 0 {
-		writeJSON(w, http.StatusOK, []unified.VerbSpecSummary{})
+		writeJSON(w, http.StatusOK, []verbSpecResponse{})
 		return
 	}
-	writeJSON(w, http.StatusOK, bundle.VerbSpecs)
+	writeJSON(w, http.StatusOK, summarizeVerbSummaries(bundle.VerbSpecs))
 }
 
 func (s *serverState) handleSchema(w http.ResponseWriter, r *http.Request) {
@@ -1539,6 +1561,83 @@ func countFlows(bundle *unified.Bundle) int {
 	return 0
 }
 
+func verbCount(reg *verb.Registry, bundle *unified.Bundle) int {
+	if reg != nil && reg.Count() > 0 {
+		return reg.Count()
+	}
+	if bundle != nil {
+		return len(bundle.VerbSpecs)
+	}
+	return 0
+}
+
+func summarizeVerbRegistry(reg *verb.Registry) []verbSpecResponse {
+	if reg == nil {
+		return nil
+	}
+	verbs := reg.GetAllVerbs()
+	out := make([]verbSpecResponse, 0, len(verbs))
+	for _, spec := range verbs {
+		if spec == nil {
+			continue
+		}
+		var resources []string
+		for _, res := range spec.Resources {
+			resources = append(resources, res.Resource+":"+res.Cap.String())
+		}
+		info, _ := reg.GetVerbSource(spec.Name)
+		out = append(out, verbSpecResponse{
+			Name:         spec.Name,
+			Description:  spec.Description,
+			Capability:   spec.Capability.String(),
+			InverseVerb:  spec.Inverse,
+			ArgTypes:     copyStringMap(spec.ArgTypes),
+			RequiredArgs: append([]string(nil), spec.RequiredArgs...),
+			ReturnType:   spec.ReturnType,
+			Resources:    resources,
+			Source:       sourceSummary(info),
+		})
+	}
+	return out
+}
+
+func summarizeVerbSummaries(specs []unified.VerbSpecSummary) []verbSpecResponse {
+	if len(specs) == 0 {
+		return nil
+	}
+	out := make([]verbSpecResponse, 0, len(specs))
+	for _, spec := range specs {
+		out = append(out, verbSpecResponse{
+			Name:         spec.Name,
+			Description:  spec.Description,
+			Capability:   spec.Capability,
+			InverseVerb:  spec.InverseVerb,
+			ArgTypes:     copyStringMap(spec.ArgTypes),
+			RequiredArgs: append([]string(nil), spec.RequiredArgs...),
+			ReturnType:   spec.ReturnType,
+		})
+	}
+	return out
+}
+
+func sourceSummary(info verb.SourceInfo) *verbSourceSummary {
+	if info.Type == "" {
+		return nil
+	}
+	return &verbSourceSummary{Type: info.Type, Ref: info.Ref, Detail: info.Detail}
+}
+
+func copyStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
 func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -1813,7 +1912,11 @@ const uiHTML = `<!doctype html>
     </div>
     <div class="card">
       <h2>Verb Specs</h2>
-      <pre id="verbs">Loading...</pre>
+      <div id="verbs" class="list">Loading...</div>
+      <details>
+        <summary class="muted">Raw JSON</summary>
+        <pre id="verbs-raw">Loading...</pre>
+      </details>
     </div>
     <div class="card">
       <h2>Schema</h2>
@@ -1946,6 +2049,45 @@ const uiHTML = `<!doctype html>
       const el = document.getElementById(id);
       if (!el) return;
       el.textContent = JSON.stringify(data, null, 2);
+    };
+
+    const formatVerbSource = (source) => {
+      if (!source) return "internal";
+      let text = source.type || "internal";
+      if (source.ref) text += " · " + source.ref;
+      if (source.detail) text += " · " + source.detail;
+      return text;
+    };
+
+    const renderVerbs = (verbs) => {
+      const el = document.getElementById("verbs");
+      const raw = document.getElementById("verbs-raw");
+      if (raw) {
+        raw.textContent = JSON.stringify(verbs, null, 2);
+      }
+      if (!el) return;
+      if (verbs && verbs.error) {
+        el.innerHTML = '<div class="muted">Failed to load verbs: ' + escapeHtml(verbs.error) + '</div>';
+        return;
+      }
+      if (!Array.isArray(verbs) || verbs.length === 0) {
+        el.innerHTML = '<div class="muted">No verbs loaded.</div>';
+        return;
+      }
+      let html = "";
+      verbs.forEach((verb) => {
+        const args = verb.arg_types ? Object.keys(verb.arg_types) : [];
+        const sourceText = formatVerbSource(verb.source);
+        html += '<div class="list-item">' +
+          '<div><strong>' + escapeHtml(verb.name || "-") + '</strong>' +
+          (verb.return_type ? ' <span class="muted">→ ' + escapeHtml(verb.return_type) + '</span>' : '') +
+          '</div>' +
+          '<div class="muted">source: ' + escapeHtml(sourceText) + '</div>' +
+          (verb.capability ? '<div class="muted">capability: ' + escapeHtml(verb.capability) + '</div>' : '') +
+          (args.length ? '<div class="muted">args: ' + escapeHtml(args.join(", ")) + '</div>' : '') +
+          '</div>';
+      });
+      el.innerHTML = html;
     };
 
     const escapeHtml = (value) => {
@@ -2502,9 +2644,10 @@ const uiHTML = `<!doctype html>
         render("flows", { error: err.message });
       }
       try {
-        render("verbs", await fetchJSON("/api/verbs"));
+      const verbs = await fetchJSON("/api/verbs");
+      renderVerbs(verbs);
       } catch (err) {
-        render("verbs", { error: err.message });
+      renderVerbs({ error: err.message });
       }
       try {
         render("schema", await fetchJSON("/api/schema"));

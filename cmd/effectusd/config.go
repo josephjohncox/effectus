@@ -66,8 +66,10 @@ type sagaConfig struct {
 }
 
 type verbConfig struct {
-	SpecDirs   []string `yaml:"spec_dirs" json:"spec_dirs"`
-	PluginDirs []string `yaml:"plugin_dirs" json:"plugin_dirs"`
+	SpecDirs        []string `yaml:"spec_dirs" json:"spec_dirs"`
+	PluginDirs      []string `yaml:"plugin_dirs" json:"plugin_dirs"`
+	DuplicatePolicy string   `yaml:"duplicate_policy" json:"duplicate_policy"`
+	OCIWarmup       *bool    `yaml:"oci_warmup" json:"oci_warmup"`
 }
 
 type extensionConfig struct {
@@ -189,6 +191,12 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 	}
 	if len(cfg.Verbs.PluginDirs) > 0 && !setFlags["plugin-dir"] {
 		*pluginDir = strings.Join(cfg.Verbs.PluginDirs, ",")
+	}
+	if cfg.Verbs.DuplicatePolicy != "" && !setFlags["verb-duplicate-policy"] {
+		*verbDuplicatePolicy = cfg.Verbs.DuplicatePolicy
+	}
+	if cfg.Verbs.OCIWarmup != nil && !setFlags["verb-oci-warmup"] {
+		*verbOCIWarmup = *cfg.Verbs.OCIWarmup
 	}
 
 	if len(cfg.Extensions.Dirs) > 0 && !setFlags["extensions-dir"] {

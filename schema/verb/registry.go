@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -13,6 +14,9 @@ import (
 type Registry struct {
 	// verbs is a map of verb name to specification
 	verbs map[string]*Spec
+
+	// sources tracks the origin of registered verbs
+	sources map[string]SourceInfo
 
 	// typeSystem is a generic interface to the type system
 	typeSystem interface{}
@@ -31,13 +35,18 @@ type Registry struct {
 
 	// requireInverseForMutating enforces inverse definitions for mutating verbs
 	requireInverseForMutating bool
+
+	// duplicatePolicy controls how duplicate verb names are handled
+	duplicatePolicy string
 }
 
 // NewRegistry creates a new verb registry
 func NewRegistry(typeSystem interface{}) *Registry {
 	return &Registry{
-		verbs:      make(map[string]*Spec),
-		typeSystem: typeSystem,
+		verbs:           make(map[string]*Spec),
+		sources:         make(map[string]SourceInfo),
+		typeSystem:      typeSystem,
+		duplicatePolicy: "error",
 	}
 }
 
@@ -46,9 +55,19 @@ func (r *Registry) RegisterVerb(spec *Spec) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if spec == nil {
+		return fmt.Errorf("verb spec is nil")
+	}
+
 	// Check if verb already exists
 	if existing, exists := r.verbs[spec.Name]; exists {
-		return fmt.Errorf("verb '%s' already registered with capability %s", spec.Name, existing.Capability)
+		switch normalizeDuplicatePolicy(r.duplicatePolicy) {
+		case "replace":
+		case "ignore":
+			return nil
+		default:
+			return fmt.Errorf("verb '%s' already registered with capability %s", spec.Name, existing.Capability)
+		}
 	}
 
 	if r.requireInverseForMutating && isMutatingVerbSpec(spec) && spec.Inverse == "" {
@@ -57,6 +76,10 @@ func (r *Registry) RegisterVerb(spec *Spec) error {
 
 	// Register the verb
 	r.verbs[spec.Name] = spec
+	if r.sources == nil {
+		r.sources = make(map[string]SourceInfo)
+	}
+	r.sources[spec.Name] = inferVerbSource(spec)
 
 	// Invalidate the hash
 	r.verbHash = ""
@@ -69,6 +92,7 @@ func (r *Registry) Reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.verbs = make(map[string]*Spec)
+	r.sources = make(map[string]SourceInfo)
 	r.verbHash = ""
 }
 
@@ -134,7 +158,62 @@ func (r *Registry) SetExecutor(name string, executor Executor) error {
 	}
 
 	spec.Executor = executor
+	if r.sources == nil {
+		r.sources = make(map[string]SourceInfo)
+	}
+	r.sources[name] = inferVerbSource(spec)
 	return nil
+}
+
+// SetVerbSource sets the source metadata for a verb.
+func (r *Registry) SetVerbSource(name string, source SourceInfo) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.sources == nil {
+		r.sources = make(map[string]SourceInfo)
+	}
+	r.sources[name] = source
+}
+
+// GetVerbSource returns source metadata for a verb if available.
+func (r *Registry) GetVerbSource(name string) (SourceInfo, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	source, ok := r.sources[name]
+	return source, ok
+}
+
+// VerbSources returns a copy of all source metadata.
+func (r *Registry) VerbSources() map[string]SourceInfo {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.sources) == 0 {
+		return nil
+	}
+	out := make(map[string]SourceInfo, len(r.sources))
+	for name, info := range r.sources {
+		out[name] = info
+	}
+	return out
+}
+
+// SetDuplicatePolicy sets the verb duplicate handling policy (error, replace, ignore).
+func (r *Registry) SetDuplicatePolicy(policy string) error {
+	policy = normalizeDuplicatePolicy(policy)
+	if policy == "" {
+		return fmt.Errorf("invalid duplicate policy: %q", policy)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.duplicatePolicy = policy
+	return nil
+}
+
+// DuplicatePolicy returns the configured duplicate policy.
+func (r *Registry) DuplicatePolicy() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.duplicatePolicy
 }
 
 // GetVerbHash returns a hash of all registered verbs
@@ -221,4 +300,30 @@ func (r *Registry) Count() int {
 	defer r.mu.RUnlock()
 
 	return len(r.verbs)
+}
+
+func normalizeDuplicatePolicy(policy string) string {
+	switch strings.ToLower(strings.TrimSpace(policy)) {
+	case "", "error":
+		return "error"
+	case "replace", "override", "last":
+		return "replace"
+	case "ignore", "skip":
+		return "ignore"
+	default:
+		return ""
+	}
+}
+
+func inferVerbSource(spec *Spec) SourceInfo {
+	if spec == nil || spec.Executor == nil {
+		return SourceInfo{Type: SourceUnknown}
+	}
+	if provider, ok := spec.Executor.(SourceProvider); ok {
+		info := provider.SourceInfo()
+		if info.Type != "" {
+			return info
+		}
+	}
+	return SourceInfo{Type: SourceInternal}
 }

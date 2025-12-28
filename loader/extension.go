@@ -683,11 +683,19 @@ func (me *MockExecutor) Execute(ctx context.Context, args map[string]interface{}
 	}, nil
 }
 
+func (me *MockExecutor) SourceInfo() verb.SourceInfo {
+	return verb.SourceInfo{Type: verb.SourceMock, Detail: me.Name}
+}
+
 // NoOpExecutor provides a no-operation executor
 type NoOpExecutor struct{}
 
 func (noe *NoOpExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	return map[string]interface{}{"status": "noop"}, nil
+}
+
+func (noe *NoOpExecutor) SourceInfo() verb.SourceInfo {
+	return verb.SourceInfo{Type: verb.SourceNoop}
 }
 
 // HTTPExecutor executes verbs via HTTP calls
@@ -777,6 +785,14 @@ func (he *HTTPExecutor) Execute(ctx context.Context, args map[string]interface{}
 	return strings.TrimSpace(string(body)), nil
 }
 
+func (he *HTTPExecutor) SourceInfo() verb.SourceInfo {
+	method := strings.ToUpper(strings.TrimSpace(he.Method))
+	if method == "" {
+		method = "POST"
+	}
+	return verb.SourceInfo{Type: verb.SourceHTTP, Ref: he.URL, Detail: method}
+}
+
 // GRPCExecutor executes verbs via gRPC calls.
 type GRPCExecutor struct {
 	Address  string
@@ -863,6 +879,11 @@ func (ge *GRPCExecutor) Execute(ctx context.Context, args map[string]interface{}
 	return resp.AsMap(), nil
 }
 
+func (ge *GRPCExecutor) SourceInfo() verb.SourceInfo {
+	method := strings.TrimSpace(ge.Method)
+	return verb.SourceInfo{Type: verb.SourceGRPC, Ref: ge.Address, Detail: method}
+}
+
 func metadataFromMap(values map[string]string) metadata.MD {
 	md := metadata.MD{}
 	for key, value := range values {
@@ -874,6 +895,7 @@ func metadataFromMap(values map[string]string) metadata.MD {
 // StreamExecutor emits verbs to a stream publisher.
 type StreamExecutor struct {
 	publisher streamPublisher
+	source    verb.SourceInfo
 }
 
 type streamPublisher interface {
@@ -932,7 +954,10 @@ func NewStreamExecutor(config map[string]interface{}) (*StreamExecutor, error) {
 	}
 	switch strings.ToLower(publisher) {
 	case "stdout":
-		return &StreamExecutor{publisher: &stdoutPublisher{}}, nil
+		return &StreamExecutor{
+			publisher: &stdoutPublisher{},
+			source:    verb.SourceInfo{Type: verb.SourceStream, Detail: "stdout"},
+		}, nil
 	case "http":
 		url, _ := config["url"].(string)
 		if url == "" {
@@ -953,7 +978,10 @@ func NewStreamExecutor(config map[string]interface{}) (*StreamExecutor, error) {
 			}
 		}
 		client := &http.Client{Timeout: timeout}
-		return &StreamExecutor{publisher: &httpStreamPublisher{url: url, headers: headers, client: client}}, nil
+		return &StreamExecutor{
+			publisher: &httpStreamPublisher{url: url, headers: headers, client: client},
+			source:    verb.SourceInfo{Type: verb.SourceStream, Ref: url, Detail: "http"},
+		}, nil
 	case "kafka":
 		var brokers []string
 		if raw, ok := config["brokers"].([]interface{}); ok {
@@ -973,13 +1001,20 @@ func NewStreamExecutor(config map[string]interface{}) (*StreamExecutor, error) {
 		if topic == "" {
 			return nil, fmt.Errorf("stream kafka publisher requires topic")
 		}
+		detail := "kafka"
+		if len(brokers) > 0 {
+			detail = fmt.Sprintf("kafka:%s", strings.Join(brokers, ","))
+		}
 		writer := &kafka.Writer{
 			Addr:         kafka.TCP(brokers...),
 			Topic:        topic,
 			Balancer:     &kafka.LeastBytes{},
 			RequiredAcks: kafka.RequireOne,
 		}
-		return &StreamExecutor{publisher: &kafkaStreamPublisher{writer: writer}}, nil
+		return &StreamExecutor{
+			publisher: &kafkaStreamPublisher{writer: writer},
+			source:    verb.SourceInfo{Type: verb.SourceStream, Ref: topic, Detail: detail},
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported stream publisher: %s", publisher)
 	}
@@ -994,6 +1029,10 @@ func (se *StreamExecutor) Execute(ctx context.Context, args map[string]interface
 		return nil, err
 	}
 	return map[string]interface{}{"status": "queued"}, nil
+}
+
+func (se *StreamExecutor) SourceInfo() verb.SourceInfo {
+	return se.source
 }
 
 // OCIExecutor resolves a verb executor from an OCI extension bundle.
@@ -1017,6 +1056,21 @@ func NewOCIExecutor(verbName string, config map[string]interface{}) (*OCIExecuto
 }
 
 func (oe *OCIExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if err := oe.resolve(ctx); err != nil {
+		return nil, err
+	}
+	return oe.executor.Execute(ctx, args)
+}
+
+func (oe *OCIExecutor) Warmup(ctx context.Context) error {
+	return oe.resolve(ctx)
+}
+
+func (oe *OCIExecutor) SourceInfo() verb.SourceInfo {
+	return verb.SourceInfo{Type: verb.SourceOCI, Ref: oe.ref, Detail: oe.verbName}
+}
+
+func (oe *OCIExecutor) resolve(ctx context.Context) error {
 	oe.once.Do(func() {
 		executors, err := loadOCIBundleExecutors(ctx, oe.ref)
 		if err != nil {
@@ -1031,12 +1085,12 @@ func (oe *OCIExecutor) Execute(ctx context.Context, args map[string]interface{})
 		oe.executor = executor
 	})
 	if oe.err != nil {
-		return nil, oe.err
+		return oe.err
 	}
 	if oe.executor == nil {
-		return nil, fmt.Errorf("oci executor not initialized")
+		return fmt.Errorf("oci executor not initialized")
 	}
-	return oe.executor.Execute(ctx, args)
+	return nil
 }
 
 func loadOCIBundleExecutors(ctx context.Context, ref string) (map[string]VerbExecutor, error) {

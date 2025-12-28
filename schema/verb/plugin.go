@@ -66,6 +66,7 @@ func (r *Registry) loadPlugin(path string) error {
 		if err := r.RegisterVerb(verb); err != nil {
 			return fmt.Errorf("registering verb %s: %w", verb.Name, err)
 		}
+		r.SetVerbSource(verb.Name, SourceInfo{Type: SourcePlugin, Ref: path})
 	}
 
 	return nil

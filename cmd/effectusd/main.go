@@ -62,6 +62,8 @@ var (
 	ociRef                   = flag.String("oci-ref", "", "OCI reference for bundle (e.g., ghcr.io/user/bundle:v1)")
 	pluginDir                = flag.String("plugin-dir", "", "Directory containing verb plugins")
 	verbDir                  = flag.String("verb-dir", "", "Directory containing JSON verb specs")
+	verbDuplicatePolicy      = flag.String("verb-duplicate-policy", "error", "Duplicate verb policy (error, replace, ignore)")
+	verbOCIWarmup            = flag.Bool("verb-oci-warmup", false, "Warm OCI verb executors at startup")
 	extensionsDir            = flag.String("extensions-dir", "", "Directory containing extension manifests (*.verbs.json, *.schema.json)")
 	extensionsOCI            = flag.String("extensions-oci", "", "OCI references for extension bundles (comma-separated)")
 	extensionsReloadInterval = flag.Duration("extensions-reload-interval", 0, "Interval for reloading extension manifests (0 to disable)")
@@ -211,6 +213,10 @@ func main() {
 
 	// Create verb registry
 	verbReg := verb.NewRegistry(typeSystem)
+	if err := verbReg.SetDuplicatePolicy(*verbDuplicatePolicy); err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid verb duplicate policy: %v\n", err)
+		os.Exit(1)
+	}
 	extensionDirs := splitCommaList(*extensionsDir)
 	extensionOCIs := splitCommaList(*extensionsOCI)
 	if err := loadVerbsAndExtensions(typeSystem, verbReg, extensionDirs, extensionOCIs); err != nil {
@@ -486,41 +492,45 @@ func loadVerbsAndExtensions(typeSystem *types.TypeSystem, verbReg *verb.Registry
 		}
 	}
 
-	if len(extensionDirs) == 0 && len(extensionOCIs) == 0 {
-		return nil
-	}
-
-	if *verbose {
-		fmt.Printf("Loading extensions from %d dirs and %d OCI bundle(s)\n", len(extensionDirs), len(extensionOCIs))
-	}
-
-	em := loader.NewExtensionManager()
-	for _, dir := range extensionDirs {
-		if dir == "" {
-			continue
+	hasExtensions := len(extensionDirs) > 0 || len(extensionOCIs) > 0
+	if hasExtensions {
+		if *verbose {
+			fmt.Printf("Loading extensions from %d dirs and %d OCI bundle(s)\n", len(extensionDirs), len(extensionOCIs))
 		}
-		loaders, err := loader.LoadFromDirectory(dir)
-		if err != nil {
-			return fmt.Errorf("loading extensions from %s: %w", dir, err)
+
+		em := loader.NewExtensionManager()
+		for _, dir := range extensionDirs {
+			if dir == "" {
+				continue
+			}
+			loaders, err := loader.LoadFromDirectory(dir)
+			if err != nil {
+				return fmt.Errorf("loading extensions from %s: %w", dir, err)
+			}
+			for _, l := range loaders {
+				em.AddLoader(l)
+			}
 		}
-		for _, l := range loaders {
-			em.AddLoader(l)
+
+		for i, ref := range extensionOCIs {
+			if ref == "" {
+				continue
+			}
+			name := fmt.Sprintf("oci-%d", i+1)
+			em.AddLoader(loader.NewOCIBundleLoader(name, ref))
+		}
+
+		registry := schema.NewRegistry()
+		if err := schema.LoadExtensionsIntoRegistries(em, registry, verbReg); err != nil {
+			return fmt.Errorf("loading extension manifests: %w", err)
 		}
 	}
-
-	for i, ref := range extensionOCIs {
-		if ref == "" {
-			continue
+	setVerbSources(verbReg)
+	if *verbOCIWarmup {
+		if err := warmupOCIExecutors(context.Background(), verbReg); err != nil {
+			return err
 		}
-		name := fmt.Sprintf("oci-%d", i+1)
-		em.AddLoader(loader.NewOCIBundleLoader(name, ref))
 	}
-
-	registry := schema.NewRegistry()
-	if err := schema.LoadExtensionsIntoRegistries(em, registry, verbReg); err != nil {
-		return fmt.Errorf("loading extension manifests: %w", err)
-	}
-
 	instrumentVerbRegistry(verbReg)
 	return nil
 }

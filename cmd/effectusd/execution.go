@@ -279,3 +279,81 @@ func instrumentVerbRegistry(reg *verb.Registry) {
 		spec.Executor = &instrumentedExecutor{name: spec.Name, inner: spec.Executor}
 	}
 }
+
+type warmupExecutor interface {
+	Warmup(ctx context.Context) error
+}
+
+func unwrapExecutor(exec verb.Executor) verb.Executor {
+	if wrapped, ok := exec.(*instrumentedExecutor); ok {
+		return wrapped.inner
+	}
+	return exec
+}
+
+func setVerbSources(reg *verb.Registry) {
+	if reg == nil {
+		return
+	}
+	for _, spec := range reg.GetAllVerbs() {
+		if spec == nil {
+			continue
+		}
+		if info, ok := reg.GetVerbSource(spec.Name); ok && info.Type != "" && info.Type != verb.SourceUnknown {
+			continue
+		}
+		reg.SetVerbSource(spec.Name, inferSourceFromExecutor(spec.Executor))
+	}
+}
+
+func inferSourceFromExecutor(exec verb.Executor) verb.SourceInfo {
+	if exec == nil {
+		return verb.SourceInfo{Type: verb.SourceUnknown}
+	}
+	exec = unwrapExecutor(exec)
+	if exec == nil {
+		return verb.SourceInfo{Type: verb.SourceUnknown}
+	}
+	if provider, ok := exec.(verb.SourceProvider); ok {
+		info := provider.SourceInfo()
+		if info.Type != "" {
+			return info
+		}
+	}
+	return verb.SourceInfo{Type: verb.SourceInternal}
+}
+
+func warmupOCIExecutors(ctx context.Context, reg *verb.Registry) error {
+	if reg == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var failures []string
+	for _, spec := range reg.GetAllVerbs() {
+		if spec == nil || spec.Executor == nil {
+			continue
+		}
+		exec := unwrapExecutor(spec.Executor)
+		provider, ok := exec.(verb.SourceProvider)
+		if !ok {
+			continue
+		}
+		info := provider.SourceInfo()
+		if info.Type != verb.SourceOCI {
+			continue
+		}
+		warm, ok := exec.(warmupExecutor)
+		if !ok {
+			continue
+		}
+		if err := warm.Warmup(ctx); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", spec.Name, err))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("oci warmup failed: %s", strings.Join(failures, "; "))
+	}
+	return nil
+}

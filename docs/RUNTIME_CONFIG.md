@@ -74,6 +74,8 @@ extensions:
 
 verbs:
   # Optional: Go plugin executors (.so)
+  duplicate_policy: "error" # error | replace | ignore
+  oci_warmup: false
   plugin_dirs:
     - "./plugins"
 ```
@@ -128,6 +130,10 @@ extensions:
   oci:
     - "ghcr.io/myorg/extension-bundles/payments:1.2.0"
   reload_interval: "60s"
+
+verbs:
+  duplicate_policy: "error"
+  oci_warmup: true
 ```
 
 ### Local extension manifest (HTTP verbs)
@@ -180,6 +186,7 @@ Then list the OCI reference under `extensions.oci`.
 - If you need in‑process Go executors, use `verbs.plugin_dirs` or embed via library mode.
 - Extension reloading re-reads `*.verbs.json` / `*.schema.json` from disk or OCI; Go plugins are not hot-reloadable.
 - Schema sources are loaded in-memory at startup; set `extensions.reload_interval` (or `bundle.reload_interval`) to poll for updates.
+- `verbs.duplicate_policy` controls how duplicate verb names are resolved; `verbs.oci_warmup` prefetches OCI verb bundles at startup.
 
 ## External Schema Sources (Buf, SQL, Catalogs)
 

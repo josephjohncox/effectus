@@ -326,6 +326,50 @@ type GRPCExecutor struct {
 }
 ```
 
+#### gRPC Verb Manifest Example
+Use JSON verbs with `target.type: "grpc"` to call a gRPC service from rules:
+
+```json
+{
+  "name": "ValidationRPC",
+  "version": "1.0.0",
+  "verbs": [
+    {
+      "name": "ValidateAccount",
+      "description": "Calls account validation service via gRPC",
+      "capabilities": ["write", "idempotent"],
+      "argTypes": { "accountId": "string", "amount": "float" },
+      "requiredArgs": ["accountId", "amount"],
+      "returnType": "ValidationResult",
+      "target": {
+        "type": "grpc",
+        "config": {
+          "address": "validation:9090",
+          "method": "/validation.v1.ValidationService/Validate",
+          "timeout": "5s",
+          "useTLS": false,
+          "metadata": { "x-tenant": "acme" }
+        }
+      }
+    }
+  ]
+}
+```
+
+The built-in gRPC executor sends/receives `google.protobuf.Struct` payloads. Example service:
+
+```proto
+syntax = "proto3";
+
+package validation.v1;
+
+import "google/protobuf/struct.proto";
+
+service ValidationService {
+  rpc Validate(google.protobuf.Struct) returns (google.protobuf.Struct);
+}
+```
+
 ### Message Queue Execution
 ```go
 type MessageQueueExecutor struct {

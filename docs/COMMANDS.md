@@ -315,6 +315,8 @@ effectusd [options]
 --schema-sources   Path to schema sources config (YAML/JSON)
 --config           Path to YAML/JSON config file
 --reload-interval  Interval for hot-reloading (default: 30s)
+--verb-duplicate-policy Duplicate verb policy (error, replace, ignore)
+--verb-oci-warmup  Warm OCI verb executors at startup
 ```
 
 #### Runtime Configuration
