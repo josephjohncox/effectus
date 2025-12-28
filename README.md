@@ -12,6 +12,19 @@ Effectus is a strongly-typed rule engine that turns live Facts into safe, determ
 - Runtime daemon with UI, dry-run playground, ACLs, and rate limits
 - Multi-source facts (Kafka, CDC, SQL, S3, Iceberg, AMQP, gRPC, Redis, files)
 
+## Why Effectus
+
+Effectus is a rules runtime built for correctness and change control. Compared to embedding rules in application code,
+it keeps decision logic versioned, typed, and hot‑reloadable with canary checks and rollback. The runtime includes UI,
+metrics, ACLs, and rate limits so the system can be monitored and governed in production.
+
+## Good fit use cases
+
+- Fraud/risk triage, policy enforcement, compliance gating
+- Order routing, fulfillment orchestration, pricing eligibility
+- Incident/SRE automation driven by live facts
+- Access control/entitlements where auditability matters
+
 ## Quick start
 
 ### 1) Install
@@ -166,6 +179,38 @@ Run `effectusd` with the plugin directory mounted (e.g., via Helm/ConfigMap/init
 verbs:
   plugin_dirs:
     - "/plugins"
+```
+
+Helm values example (pull OCI plugin bundle at startup):
+
+```yaml
+bundle:
+  ociRef: "ghcr.io/myorg/bundles/fraud-demo:1.0.0"
+
+initContainers:
+  - name: pull-plugins
+    image: ghcr.io/oras-project/oras:v1.2.0
+    command: ["sh", "-c"]
+    args:
+      - "oras pull ghcr.io/myorg/effectus-plugins:1.0.0 -o /plugins"
+    volumeMounts:
+      - name: plugins
+        mountPath: /plugins
+
+extraVolumes:
+  - name: plugins
+    emptyDir: {}
+
+extraVolumeMounts:
+  - name: plugins
+    mountPath: /plugins
+
+config:
+  enabled: true
+  contents: |
+    verbs:
+      plugin_dirs:
+        - "/plugins"
 ```
 
 For cross-container Go executors, publish JSON verb manifests to OCI and target your Go service via `http` or `grpc`.

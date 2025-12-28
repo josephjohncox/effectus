@@ -19,6 +19,7 @@ Key values in `values.yaml`:
 - `bundle.reloadInterval`
 - `api.*` (auth, ACLs, rate limits)
 - `facts.*` (store path, merge strategy, cache limits)
+- `initContainers`, `extraVolumes`, `extraVolumeMounts` (for pulling plugins or sidecar data)
 - `config.*` (mount a config map and pass `--config`)
 
 ### ConfigMap usage

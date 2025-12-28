@@ -14,6 +14,10 @@ spec:
       labels:
         {{- include "effectusd.selectorLabels" . | nindent 8 }}
     spec:
+      {{- with .Values.initContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: effectusd
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -64,6 +68,9 @@ spec:
               mountPath: {{ .Values.config.mountPath }}
               readOnly: true
             {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: data
           emptyDir: {}
@@ -71,4 +78,7 @@ spec:
         - name: config
           configMap:
             name: {{ default (printf "%s-config" (include "effectusd.fullname" .)) .Values.config.name }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}

@@ -31,6 +31,10 @@ service:
 
 resources: {}
 
+initContainers: []
+extraVolumes: []
+extraVolumeMounts: []
+
 config:
   enabled: false
   name: ""
