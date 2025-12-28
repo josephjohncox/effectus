@@ -12,12 +12,14 @@ type requestIDKey struct{}
 
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
-	bytes  int
+	status    int
+	bytes     int
+	requestID string
+	role      string
 }
 
-func newStatusRecorder(w http.ResponseWriter) *statusRecorder {
-	return &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+func newStatusRecorder(w http.ResponseWriter, requestID string) *statusRecorder {
+	return &statusRecorder{ResponseWriter: w, status: http.StatusOK, requestID: requestID}
 }
 
 func (r *statusRecorder) WriteHeader(status int) {
@@ -32,6 +34,18 @@ func (r *statusRecorder) Write(data []byte) (int, error) {
 	n, err := r.ResponseWriter.Write(data)
 	r.bytes += n
 	return n, err
+}
+
+func (r *statusRecorder) RequestID() string {
+	return r.requestID
+}
+
+func (r *statusRecorder) Role() string {
+	return r.role
+}
+
+func (r *statusRecorder) SetRole(role string) {
+	r.role = role
 }
 
 func withRequestID(r *http.Request) (string, *http.Request) {
@@ -56,9 +70,13 @@ func requestIDFromContext(ctx context.Context) string {
 	return ""
 }
 
-func logAPIRequest(r *http.Request, rec *statusRecorder, elapsed time.Duration, reqID string) {
+func logRequest(r *http.Request, rec *statusRecorder, elapsed time.Duration) {
 	if r == nil || rec == nil {
 		return
+	}
+	role := rec.Role()
+	if role == "" {
+		role = "public"
 	}
 	level := "info"
 	if rec.status >= http.StatusBadRequest {
@@ -67,15 +85,13 @@ func logAPIRequest(r *http.Request, rec *statusRecorder, elapsed time.Duration, 
 	entry := map[string]interface{}{
 		"ts":         time.Now().UTC().Format(time.RFC3339Nano),
 		"level":      level,
-		"request_id": reqID,
+		"request_id": rec.RequestID(),
+		"role":       role,
 		"method":     r.Method,
 		"path":       r.URL.Path,
 		"status":     rec.status,
 		"bytes":      rec.bytes,
 		"latency_ms": float64(elapsed.Milliseconds()),
-	}
-	if reqID == "" {
-		entry["request_id"] = requestIDFromContext(r.Context())
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {

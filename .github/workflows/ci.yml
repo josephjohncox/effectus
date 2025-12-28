@@ -30,8 +30,8 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
-          args: --timeout=5m
+          version: v2.7.2
+          args: --config=.golangci.yml --timeout=5m
 
       - name: Set up Buf
         uses: bufbuild/buf-setup-action@v1

@@ -21,6 +21,7 @@ import (
 	"github.com/effectus/effectus-go/adapters"
 	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/capability"
 	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/effectus/effectus-go/unified"
@@ -40,9 +41,14 @@ type serverState struct {
 	startedAt  time.Time
 	updatedAt  time.Time
 	typeSystem *types.TypeSystem
+	execTypes  *types.TypeSystem
 	sources    []adapters.SchemaSourceConfig
 	verbReg    *verb.Registry
 	rulesOn    bool
+	history    *bundleHistory
+	sagaOn     bool
+	sagaStore  schema.SagaStore
+	capSystem  *capability.CapabilitySystem
 	factStore  factStore
 	factConfig factStoreConfig
 	factCh     chan<- factEnvelope
@@ -51,15 +57,22 @@ type serverState struct {
 	acl        *aclMatcher
 }
 
-func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store factStore, config factStoreConfig, auth apiAuth, limiter *rateLimiter, acl *aclMatcher, typeSystem *types.TypeSystem, sources []adapters.SchemaSourceConfig, verbReg *verb.Registry, rulesHotload bool) *serverState {
+func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store factStore, config factStoreConfig, auth apiAuth, limiter *rateLimiter, acl *aclMatcher, typeSystem *types.TypeSystem, sources []adapters.SchemaSourceConfig, verbReg *verb.Registry, rulesHotload bool, history *bundleHistory, sagaEnabled bool, sagaStore schema.SagaStore, capSystem *capability.CapabilitySystem) *serverState {
+	execTypes := buildHotloadTypeSystem(typeSystem, bundle, verbReg)
+	configureBundleExecution(bundle, verbReg, sagaEnabled, sagaStore, capSystem)
 	return &serverState{
 		bundle:     bundle,
 		startedAt:  time.Now(),
 		updatedAt:  time.Now(),
 		typeSystem: typeSystem,
+		execTypes:  execTypes,
 		sources:    sources,
 		verbReg:    verbReg,
 		rulesOn:    rulesHotload,
+		history:    history,
+		sagaOn:     sagaEnabled,
+		sagaStore:  sagaStore,
+		capSystem:  capSystem,
 		factStore:  store,
 		factConfig: config,
 		factCh:     factCh,
@@ -70,10 +83,20 @@ func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store fa
 }
 
 func (s *serverState) SetBundle(bundle *unified.Bundle) {
+	execTypes := buildHotloadTypeSystem(s.typeSystem, bundle, s.verbReg)
+	configureBundleExecution(bundle, s.verbReg, s.sagaOn, s.sagaStore, s.capSystem)
 	s.mu.Lock()
 	s.bundle = bundle
+	s.execTypes = execTypes
 	s.updatedAt = time.Now()
 	s.mu.Unlock()
+}
+
+func (s *serverState) recordBundleHistory(bundle *unified.Bundle, reason string) {
+	if s == nil || s.history == nil || bundle == nil {
+		return
+	}
+	_, _ = s.history.Add(bundle, reason)
 }
 
 func (s *serverState) Bundle() *unified.Bundle {
@@ -135,6 +158,18 @@ func (a apiAuth) Authorize(r *http.Request, required apiRole) (bool, bool) {
 		return true, true
 	}
 	return false, true
+}
+
+func (a apiAuth) Role(r *http.Request) (apiRole, bool) {
+	if !a.enabled() {
+		return 0, false
+	}
+	token := extractToken(r)
+	if token == "" {
+		return 0, false
+	}
+	role, ok := a.tokens[token]
+	return role, ok
 }
 
 func extractToken(r *http.Request) string {
@@ -223,31 +258,33 @@ func (s *serverState) withAPIMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		start := time.Now()
-		recorder := newStatusRecorder(w)
-		reqID, req := withRequestID(r)
-		recorder.Header().Set("X-Request-ID", reqID)
-		defer logAPIRequest(req, recorder, time.Since(start), reqID)
-
-		if s.limiter != nil && !s.limiter.Allow(clientKey(req)) {
-			writeJSONError(recorder, http.StatusTooManyRequests, "rate limit exceeded")
+		if s.limiter != nil && !s.limiter.Allow(clientKey(r)) {
+			setResponseRole(w, "rate_limited")
+			writeJSONError(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}
 
-		required := requiredRoleFor(req)
+		required := requiredRoleFor(r)
 		if s.acl != nil {
-			required = s.acl.requiredRole(req, required)
+			required = s.acl.requiredRole(r, required)
 		}
-		if ok, hasToken := s.auth.Authorize(req, required); !ok {
+		if ok, hasToken := s.auth.Authorize(r, required); !ok {
 			if !hasToken {
-				writeJSONError(recorder, http.StatusUnauthorized, "missing or invalid token")
+				setResponseRole(w, "unauthorized")
+				writeJSONError(w, http.StatusUnauthorized, "missing or invalid token")
 				return
 			}
-			writeJSONError(recorder, http.StatusForbidden, "insufficient permissions")
+			setResponseRole(w, "forbidden")
+			writeJSONError(w, http.StatusForbidden, "insufficient permissions")
 			return
 		}
 
-		next.ServeHTTP(recorder, req)
+		role := roleLabel(required)
+		if actual, ok := s.auth.Role(r); ok {
+			role = roleLabel(actual)
+		}
+		setResponseRole(w, role)
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -259,6 +296,17 @@ func requiredRoleFor(r *http.Request) apiRole {
 		return roleRead
 	}
 	return roleWrite
+}
+
+func roleLabel(role apiRole) string {
+	switch role {
+	case roleRead:
+		return "read"
+	case roleWrite:
+		return "write"
+	default:
+		return "unknown"
+	}
 }
 
 func clientKey(r *http.Request) string {
@@ -349,6 +397,8 @@ func startHTTPServer(ctx context.Context, addr string, state *serverState) {
 	mux.HandleFunc("/api/bundle", state.handleBundle)
 	mux.HandleFunc("/api/rules", state.handleRules)
 	mux.HandleFunc("/api/rules/source", state.handleRuleSources)
+	mux.HandleFunc("/api/rules/history", state.handleRuleHistory)
+	mux.HandleFunc("/api/rules/rollback", state.handleRuleRollback)
 	mux.HandleFunc("/api/rules/validate", state.handleRuleValidate)
 	mux.HandleFunc("/api/rules/hotload", state.handleRuleHotload)
 	mux.HandleFunc("/api/flows", state.handleFlows)
@@ -360,7 +410,7 @@ func startHTTPServer(ctx context.Context, addr string, state *serverState) {
 
 	server := &http.Server{
 		Addr:    addr,
-		Handler: state.withAPIMiddleware(mux),
+		Handler: state.withRequestTracing(state.withAPIMiddleware(mux)),
 	}
 
 	go func() {
@@ -1497,8 +1547,31 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 	_ = enc.Encode(payload)
 }
 
+func (s *serverState) withRequestTracing(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqID, req := withRequestID(r)
+		recorder := newStatusRecorder(w, reqID)
+		recorder.Header().Set("X-Request-ID", reqID)
+		start := time.Now()
+		next.ServeHTTP(recorder, req)
+		logRequest(req, recorder, time.Since(start))
+	})
+}
+
+func setResponseRole(w http.ResponseWriter, role string) {
+	if setter, ok := w.(interface{ SetRole(string) }); ok {
+		setter.SetRole(role)
+	}
+}
+
 func writeJSONError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+	payload := map[string]string{"error": message}
+	if carrier, ok := w.(interface{ RequestID() string }); ok {
+		if reqID := strings.TrimSpace(carrier.RequestID()); reqID != "" {
+			payload["request_id"] = reqID
+		}
+	}
+	writeJSON(w, status, payload)
 }
 
 func (s *serverState) handleUI(w http.ResponseWriter, r *http.Request) {

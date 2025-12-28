@@ -133,6 +133,72 @@ func (s *serverState) handleRuleHotload(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, result)
 }
 
+type rollbackRequest struct {
+	ID string `json:"id"`
+}
+
+type rollbackResponse struct {
+	OK       bool                   `json:"ok"`
+	Applied  bool                   `json:"applied"`
+	Snapshot *bundleSnapshotSummary `json:"snapshot,omitempty"`
+}
+
+func (s *serverState) handleRuleHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.history == nil {
+		writeJSON(w, http.StatusOK, []bundleSnapshotSummary{})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.history.List())
+}
+
+func (s *serverState) handleRuleRollback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.rulesOn {
+		writeJSONError(w, http.StatusForbidden, "rule hotload disabled")
+		return
+	}
+	if s.history == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "bundle history not configured")
+		return
+	}
+	var req rollbackRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	id := strings.TrimSpace(req.ID)
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "rollback id is required")
+		return
+	}
+	snapshot, ok := s.history.Get(id)
+	if !ok || snapshot == nil || snapshot.Bundle == nil {
+		writeJSONError(w, http.StatusNotFound, "snapshot not found")
+		return
+	}
+
+	current := s.Bundle()
+	if current != nil {
+		s.recordBundleHistory(current, "rollback-source")
+	}
+	s.SetBundle(snapshot.Bundle)
+	s.recordBundleHistory(snapshot.Bundle, "rollback")
+
+	response := rollbackResponse{
+		OK:       true,
+		Applied:  true,
+		Snapshot: ptrSnapshotSummary(snapshot),
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func decodeRuleHotloadRequest(r *http.Request) (ruleHotloadRequest, error) {
 	if r == nil || r.Body == nil {
 		return ruleHotloadRequest{}, fmt.Errorf("missing request body")
@@ -298,6 +364,8 @@ func (s *serverState) evaluateRuleHotload(req ruleHotloadRequest, apply bool) ru
 			Canary:       canary,
 		}
 	}
+
+	s.recordBundleHistory(staged, "hotload")
 
 	return ruleCheckResponse{
 		OK:            true,

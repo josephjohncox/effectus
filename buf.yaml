@@ -11,20 +11,11 @@ lint:
     - STANDARD
   except:
     - UNARY_RPC
-  ignore_only:
-    RPC_REQUEST_RESPONSE_UNIQUE:
-      - effectus/v1/execution.proto
-      - runtime/ruleset_execution.proto
-    RPC_REQUEST_STANDARD_NAME:
-      - effectus/v1/execution.proto
-      - runtime/ruleset_execution.proto
-    RPC_RESPONSE_STANDARD_NAME:
-      - effectus/v1/execution.proto
-      - runtime/ruleset_execution.proto
-    PACKAGE_DIRECTORY_MATCH:
-      - runtime/ruleset_execution.proto
-    PACKAGE_VERSION_SUFFIX:
-      - runtime/ruleset_execution.proto
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+    - PACKAGE_DIRECTORY_MATCH
+    - PACKAGE_VERSION_SUFFIX
   allow_comment_ignores: true
 build:
   excludes:

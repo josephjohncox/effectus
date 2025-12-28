@@ -78,6 +78,58 @@ verbs:
     - "./plugins"
 ```
 
+## Production baseline example
+
+Use this as a starting point for production deployments (bundle from OCI, persisted facts, ACLs, hotload, metrics):
+
+```yaml
+bundle:
+  oci: "ghcr.io/myorg/bundles/fraud-demo:1.0.0"
+  reload_interval: "60s"
+
+http:
+  addr: ":8080"
+metrics:
+  addr: ":9090"
+
+api:
+  auth: "token"
+  token: "${EFFECTUS_WRITE_TOKEN}"
+  read_token: "${EFFECTUS_READ_TOKEN}"
+  acl_file: "/etc/effectus/acl.yaml"
+  rate_limit: 300
+  rate_burst: 120
+  hotload_rules: true
+
+facts:
+  store: "file"
+  path: "/var/lib/effectus/facts.json"
+  merge_default: "last"
+  cache:
+    policy: "lru"
+    max_universes: 500
+    max_namespaces: 100
+
+schema_sources:
+  - name: "warehouse"
+    type: "sql_introspect"
+    namespace: "warehouse"
+    version: "v1"
+    config:
+      driver: "postgres"
+      dsn: "postgres://effectus:effectus@db:5432/warehouse?sslmode=disable"
+      schema: "public"
+      table: "orders"
+      schema_name: "order"
+
+extensions:
+  dirs:
+    - "/etc/effectus/extensions"
+  oci:
+    - "ghcr.io/myorg/extension-bundles/payments:1.2.0"
+  reload_interval: "60s"
+```
+
 ### Local extension manifest (HTTP verbs)
 Put this file in `./extensions/external.verbs.json`:
 

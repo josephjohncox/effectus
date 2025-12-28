@@ -13,6 +13,11 @@ type hotloadMetrics struct {
 	hotloadAttempts uint64
 	hotloadFailures uint64
 	ruleCompiles    uint64
+	listExecutions  uint64
+	flowExecutions  uint64
+	execFailures    uint64
+	verbExecutions  uint64
+	verbFailures    uint64
 	typecheckCount  uint64
 	typecheckSumNs  int64
 	typecheckBins   []uint64
@@ -40,6 +45,26 @@ func recordRuleCompile() {
 	atomic.AddUint64(&metrics.ruleCompiles, 1)
 }
 
+func recordListExecution() {
+	atomic.AddUint64(&metrics.listExecutions, 1)
+}
+
+func recordFlowExecution() {
+	atomic.AddUint64(&metrics.flowExecutions, 1)
+}
+
+func recordExecutionFailure() {
+	atomic.AddUint64(&metrics.execFailures, 1)
+}
+
+func recordVerbExecution() {
+	atomic.AddUint64(&metrics.verbExecutions, 1)
+}
+
+func recordVerbFailure() {
+	atomic.AddUint64(&metrics.verbFailures, 1)
+}
+
 func observeTypecheckDuration(d time.Duration) {
 	atomic.AddUint64(&metrics.typecheckCount, 1)
 	atomic.AddInt64(&metrics.typecheckSumNs, d.Nanoseconds())
@@ -56,6 +81,11 @@ func writeMetrics(w io.Writer) {
 	writeCounter(w, "effectusd_hotload_attempt_total", "Total hotload attempts", atomic.LoadUint64(&metrics.hotloadAttempts))
 	writeCounter(w, "effectusd_hotload_failure_total", "Total hotload failures", atomic.LoadUint64(&metrics.hotloadFailures))
 	writeCounter(w, "effectusd_rule_compile_total", "Total rule compiles", atomic.LoadUint64(&metrics.ruleCompiles))
+	writeCounter(w, "effectusd_list_execution_total", "Total list rule executions", atomic.LoadUint64(&metrics.listExecutions))
+	writeCounter(w, "effectusd_flow_execution_total", "Total flow executions", atomic.LoadUint64(&metrics.flowExecutions))
+	writeCounter(w, "effectusd_execution_failure_total", "Total rule/flow execution failures", atomic.LoadUint64(&metrics.execFailures))
+	writeCounter(w, "effectusd_verb_execution_total", "Total verb executions", atomic.LoadUint64(&metrics.verbExecutions))
+	writeCounter(w, "effectusd_verb_failure_total", "Total verb execution failures", atomic.LoadUint64(&metrics.verbFailures))
 
 	count := atomic.LoadUint64(&metrics.typecheckCount)
 	sumNs := atomic.LoadInt64(&metrics.typecheckSumNs)
@@ -90,6 +120,10 @@ func writeHistogram(w io.Writer, name, help string, count uint64, sumNs int64, b
 func startMetricsServer(ctx context.Context, addr string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		reqID, _ := withRequestID(r)
+		if reqID != "" {
+			w.Header().Set("X-Request-ID", reqID)
+		}
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 		writeMetrics(w)
 	})

@@ -18,50 +18,11 @@ import (
 	"github.com/effectus/effectus-go/loader"
 	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/capability"
 	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/effectus/effectus-go/unified"
 )
-
-// Placeholder types to simulate the eval package until it's properly implemented
-type sagaStoreInterface interface{}
-type listExecutor struct {
-	verbRegistry *verb.Registry
-	sagaEnabled  bool
-	sagaStore    sagaStoreInterface
-}
-
-func newListExecutor(verbRegistry *verb.Registry, options ...func(*listExecutor)) *listExecutor {
-	executor := &listExecutor{
-		verbRegistry: verbRegistry,
-	}
-
-	// Apply options
-	for _, option := range options {
-		option(executor)
-	}
-
-	return executor
-}
-
-func withSaga(store sagaStoreInterface) func(*listExecutor) {
-	return func(e *listExecutor) {
-		e.sagaStore = store
-		e.sagaEnabled = true
-	}
-}
-
-func newMemorySagaStore() sagaStoreInterface {
-	return &struct{}{}
-}
-
-func newRedisSagaStore(opts map[string]string) sagaStoreInterface {
-	return &struct{}{}
-}
-
-func newPostgresSagaStore(opts map[string]string) sagaStoreInterface {
-	return &struct{}{}
-}
 
 type namespaceStrategyFlag struct {
 	values map[string]pathutil.MergeStrategy
@@ -131,6 +92,8 @@ var (
 	apiRateLimit  = flag.Int("api-rate-limit", 120, "API requests per minute per client (0 to disable)")
 	apiRateBurst  = flag.Int("api-rate-burst", 60, "API burst size (0 to use rate limit)")
 	rulesHotload  = flag.Bool("rules-hotload", false, "Enable /api/rules/validate and /api/rules/hotload")
+	rulesHistory  = flag.Int("rules-history", 5, "Number of hotload bundles to keep in memory/on disk")
+	rulesHistDir  = flag.String("rules-history-dir", "./out/rules_history", "Directory for bundle history snapshots")
 	factsStore    = flag.String("facts-store", "file", "Facts store (file, memory)")
 	factsPath     = flag.String("facts-path", "./data/facts.json", "Facts store path (file store)")
 	factsMergeDef = flag.String("facts-merge-default", "last", "Default merge strategy (first, last, error)")
@@ -266,42 +229,29 @@ func main() {
 		}
 	}
 
-	// Create executor options
-	var execOpts []func(*listExecutor)
+	preparedBundle, err := compileBundleRules(bundle, typeSystem, verbReg, *verbose)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error compiling bundle rules: %v\n", err)
+		os.Exit(1)
+	}
+	bundle = preparedBundle
 
-	// Add saga if enabled
+	var sagaStore schema.SagaStore
 	if *sagaEnabled {
 		if *verbose {
 			fmt.Printf("Enabling saga with store: %s\n", *sagaStoreType)
 		}
 
-		var store sagaStoreInterface
-		switch *sagaStoreType {
+		switch strings.ToLower(*sagaStoreType) {
 		case "memory":
-			store = newMemorySagaStore()
-		case "redis":
-			// In a real implementation, these options would be configurable
-			redisOpts := map[string]string{
-				"addr": "localhost:6379",
-			}
-			store = newRedisSagaStore(redisOpts)
-		case "postgres":
-			// In a real implementation, these options would be configurable
-			pgOpts := map[string]string{
-				"connString": "postgres://user:password@localhost:5432/effectus",
-			}
-			store = newPostgresSagaStore(pgOpts)
+			sagaStore = schema.NewInMemorySagaStore()
 		default:
-			fmt.Fprintf(os.Stderr, "Unknown saga store: %s\n", *sagaStoreType)
+			fmt.Fprintf(os.Stderr, "Saga store %q not supported yet (use memory)\n", *sagaStoreType)
 			os.Exit(1)
 		}
-
-		execOpts = append(execOpts, withSaga(store))
 	}
 
-	// Create executor and use it
-	executor := newListExecutor(verbReg, execOpts...)
-	_ = executor // Use the executor variable to avoid unused variable warning
+	var capSystem *capability.CapabilitySystem
 
 	mergeDefault, err := parseMergeStrategy(*factsMergeDef)
 	if err != nil {
@@ -355,7 +305,9 @@ func main() {
 	var wg sync.WaitGroup
 
 	factCh := make(chan factEnvelope, 32)
-	state := newServerState(bundle, factCh, store, storeConfig, auth, limiter, acl, typeSystem, schemaSources, verbReg, *rulesHotload)
+	history := newBundleHistory(*rulesHistory, *rulesHistDir)
+	state := newServerState(bundle, factCh, store, storeConfig, auth, limiter, acl, typeSystem, schemaSources, verbReg, *rulesHotload, history, *sagaEnabled, sagaStore, capSystem)
+	state.recordBundleHistory(bundle, "startup")
 
 	// Start fact source (non-HTTP)
 	wg.Add(1)
@@ -410,8 +362,14 @@ func main() {
 
 					if newBundle.Version != bundle.Version {
 						fmt.Printf("Updated bundle from %s to %s\n", bundle.Version, newBundle.Version)
-						bundle = newBundle
-						state.SetBundle(newBundle)
+						prepared, err := compileBundleRules(newBundle, typeSystem, verbReg, *verbose)
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "Error compiling updated bundle: %v\n", err)
+							continue
+						}
+						bundle = prepared
+						state.SetBundle(prepared)
+						state.recordBundleHistory(prepared, "oci-reload")
 					}
 				}
 			}
@@ -487,23 +445,8 @@ func main() {
 			wg.Wait()
 			return
 		case receivedFacts := <-factCh:
-			bundle = state.Bundle()
-			// Process facts with rules
-			if bundle.ListSpec != nil {
-				for _, rule := range bundle.ListSpec.Rules {
-					// Process the received facts with each rule
-					fmt.Printf("Executing rule: %s with facts (universe=%s)\n", rule.Name, receivedFacts.Universe)
-					_ = receivedFacts // Use the facts variable to avoid unused variable warning
-				}
-			}
-
-			// Process facts with flows (if implemented)
-			if bundle.FlowSpec != nil {
-				// TODO: Implement flow execution
-				if *verbose {
-					fmt.Printf("Flow execution not implemented yet (found %d flows)\n",
-						len(bundle.FlowSpec.Flows))
-				}
+			if err := state.ExecuteFacts(ctx, receivedFacts); err != nil {
+				fmt.Printf("Execution error: %v\n", err)
 			}
 		}
 	}
@@ -577,6 +520,8 @@ func loadVerbsAndExtensions(typeSystem *types.TypeSystem, verbReg *verb.Registry
 	if err := schema.LoadExtensionsIntoRegistries(em, registry, verbReg); err != nil {
 		return fmt.Errorf("loading extension manifests: %w", err)
 	}
+
+	instrumentVerbRegistry(verbReg)
 	return nil
 }
 

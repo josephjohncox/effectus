@@ -169,7 +169,7 @@ func TestHealthAndReadyEndpoints(t *testing.T) {
 	auth, _, err := buildAPIAuth("token", "", "")
 	require.NoError(t, err)
 
-	state := newServerState(nil, nil, nil, factStoreConfig{}, auth, nil, nil, nil, nil, nil, false)
+	state := newServerState(nil, nil, nil, factStoreConfig{}, auth, nil, nil, nil, nil, nil, false, nil, false, nil, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", state.handleHealth)
@@ -207,7 +207,7 @@ func TestRulesHotloadRequiresEnable(t *testing.T) {
 	require.NoError(t, err)
 
 	bundle := &unified.Bundle{Name: "demo", Version: "1.0.0"}
-	state := newServerState(bundle, nil, nil, factStoreConfig{}, auth, nil, nil, nil, nil, nil, false)
+	state := newServerState(bundle, nil, nil, factStoreConfig{}, auth, nil, nil, nil, nil, nil, false, nil, false, nil, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/rules/hotload", state.handleRuleHotload)
@@ -240,7 +240,7 @@ func TestRulesHotloadAppliesBundle(t *testing.T) {
 		},
 	}
 
-	state := newServerState(bundle, nil, nil, factStoreConfig{}, auth, nil, nil, types.NewTypeSystem(), nil, nil, true)
+	state := newServerState(bundle, nil, nil, factStoreConfig{}, auth, nil, nil, types.NewTypeSystem(), nil, nil, true, nil, false, nil, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/rules/hotload", state.handleRuleHotload)

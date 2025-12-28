@@ -41,7 +41,7 @@ func TestHotloadAPIIntegration(t *testing.T) {
 	auth, _, err := buildAPIAuth("disabled", "", "")
 	require.NoError(t, err)
 
-	state := newServerState(bundle, nil, nil, factStoreConfig{}, auth, nil, nil, typeSystem, nil, verbReg, true)
+	state := newServerState(bundle, nil, nil, factStoreConfig{}, auth, nil, nil, typeSystem, nil, verbReg, true, nil, false, nil, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/rules/validate", state.handleRuleValidate)
