@@ -405,6 +405,41 @@ effectusd --bundle ./bundle.json --http-addr :8080 --api-token devtoken
 # open http://localhost:8080/ui
 ```
 
+#### Download current bundle
+
+```bash
+curl -H 'Authorization: Bearer devtoken' http://localhost:8080/api/bundle > bundle.json
+```
+
+#### Metrics endpoint (Prometheus)
+
+```bash
+curl http://localhost:9090/metrics
+```
+
+#### Hotload canary payload
+
+The hotload endpoints accept an optional `canary` block to run a dry-run diff
+between the current and staged bundle before swapping:
+
+```json
+{
+  "path": "rules/fraud_rules.eff",
+  "format": "eff",
+  "content": "...",
+  "replace": true,
+  "canary": {
+    "universe": "default",
+    "mode": "both",
+    "use_stored": true,
+    "facts": {
+      "transaction": {"amount": 1200, "id": "abc"},
+      "customer": {"risk_score": 90}
+    }
+  }
+}
+```
+
 Enable rule editing + hotload from the UI:
 
 ```bash

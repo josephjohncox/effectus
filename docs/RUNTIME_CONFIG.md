@@ -179,3 +179,14 @@ volumes:
     configMap:
       name: effectusd-config
 ```
+
+## Prometheus scrape
+
+Expose `metrics.addr` and scrape `/metrics`:
+
+```yaml
+annotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9090"
+  prometheus.io/path: "/metrics"
+```

@@ -1832,7 +1832,12 @@ const uiHTML = `<!doctype html>
               <button id="rule-validate-btn" class="secondary" onclick="validateRuleEditor()">Typecheck</button>
               <button id="rule-hotload-btn" onclick="hotloadRuleEditor()">Hot Load</button>
               <button class="secondary" onclick="exportRuleDiagnostics()">Export diagnostics</button>
+              <button class="secondary" onclick="prefillCanary()">Prefill canary</button>
               <span class="pill" id="rule-editor-status">Idle</span>
+            </div>
+            <div>
+              <label>Canary JSON (optional)</label>
+              <textarea id="rule-canary-input" rows="6" placeholder='{"universe":"default","mode":"both","use_stored":true}'></textarea>
             </div>
           </div>
           <div class="stack">
@@ -2549,7 +2554,16 @@ const uiHTML = `<!doctype html>
       const path = (document.getElementById("rule-path") || {}).value || "";
       const format = (document.getElementById("rule-format") || {}).value || "eff";
       const replace = (document.getElementById("rule-replace") || {}).checked || false;
-      return { path: path.trim(), content: content, format: format, replace: replace };
+      const canaryText = (document.getElementById("rule-canary-input") || {}).value || "";
+      let canary = null;
+      if (canaryText.trim()) {
+        try {
+          canary = JSON.parse(canaryText);
+        } catch (err) {
+          return { error: "Invalid canary JSON: " + err.message };
+        }
+      }
+      return { path: path.trim(), content: content, format: format, replace: replace, canary: canary };
     };
 
     async function validateRuleEditor() {
@@ -2559,6 +2573,11 @@ const uiHTML = `<!doctype html>
         return;
       }
       const payload = buildRulePayload();
+      if (payload.error) {
+        renderRuleDiagnostics([{ severity: "error", message: payload.error }]);
+        if (statusEl) statusEl.textContent = "Error";
+        return;
+      }
       if (!payload.content.trim()) {
         if (statusEl) statusEl.textContent = "Add rule text";
         return;
@@ -2590,6 +2609,11 @@ const uiHTML = `<!doctype html>
         return;
       }
       const payload = buildRulePayload();
+      if (payload.error) {
+        renderRuleDiagnostics([{ severity: "error", message: payload.error }]);
+        if (statusEl) statusEl.textContent = "Error";
+        return;
+      }
       if (!payload.content.trim()) {
         if (statusEl) statusEl.textContent = "Add rule text";
         return;
@@ -2615,6 +2639,12 @@ const uiHTML = `<!doctype html>
         renderCanary(null);
         if (statusEl) statusEl.textContent = "Error";
       }
+    }
+
+    function prefillCanary() {
+      const textarea = document.getElementById("rule-canary-input");
+      if (!textarea) return;
+      textarea.value = JSON.stringify({ universe: "default", mode: "both", use_stored: true }, null, 2);
     }
 
     const tokenInput = document.getElementById("api-token");
