@@ -318,7 +318,7 @@
     "axios": "^0.27.2",
     "protobufjs": "^7.1.1",
     "vscode-languageclient": "^8.1.0",
-    "ws": "^8.8.1",
+    "ws": "^8.18.3",
     "yaml": "^2.1.1"
   },
   "repository": {
