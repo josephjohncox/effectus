@@ -21,7 +21,7 @@ require (
 	github.com/parquet-go/parquet-go v0.26.3
 	github.com/pressly/goose/v3 v3.26.0
 	github.com/rabbitmq/amqp091-go v1.10.0
-	github.com/segmentio/kafka-go v0.4.49
+	github.com/segmentio/kafka-go v0.4.50
 	github.com/stretchr/testify v1.11.1
 	github.com/tidwall/gjson v1.18.0
 	google.golang.org/grpc v1.78.0
