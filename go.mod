@@ -17,7 +17,7 @@ require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.8.0
-	github.com/lib/pq v1.10.9
+	github.com/lib/pq v1.11.1
 	github.com/parquet-go/parquet-go v0.26.3
 	github.com/pressly/goose/v3 v3.26.0
 	github.com/rabbitmq/amqp091-go v1.10.0
