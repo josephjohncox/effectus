@@ -319,7 +319,7 @@
     "protobufjs": "^7.1.1",
     "vscode-languageclient": "^8.1.0",
     "ws": "^8.8.1",
-    "yaml": "^2.1.1"
+    "yaml": "^2.8.3"
   },
   "repository": {
     "type": "git",
