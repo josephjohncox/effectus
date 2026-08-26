@@ -102,6 +102,14 @@ func TestSagaReplayUsesPersistedSuccessfulResult(t *testing.T) {
 	require.Equal(t, schema.SagaEffectSuccess, effects[0].Status)
 }
 
+func TestSagaRejectsNestedTransactions(t *testing.T) {
+	executor := NewExecutor(verb.NewRegistry(nil), WithSaga(schema.NewInMemorySagaStore()))
+	program := Transaction("outer", "outer", Transaction("inner", "inner", Pure(nil)))
+
+	_, err := executor.ExecuteProgram(context.Background(), "nested", program, common.NewBasicFacts(nil, nil))
+	require.EqualError(t, err, "nested saga transactions are not supported")
+}
+
 func TestSagaRequiresStore(t *testing.T) {
 	executor := NewExecutor(verb.NewRegistry(nil), WithSaga(nil))
 	_, err := executor.ExecuteProgram(

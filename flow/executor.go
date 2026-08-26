@@ -94,8 +94,9 @@ func (fe *Executor) executeSagaProgram(ctx context.Context, flowName string, pro
 		return fe.ExecuteProgram(ctx, flowName, program, facts)
 	}
 
-	// For now, handle the first transaction
-	// TODO: Support nested transactions
+	if len(transactions) > 1 {
+		return nil, fmt.Errorf("nested saga transactions are not supported")
+	}
 	transaction := transactions[0]
 
 	// Generate saga ID if not provided.
