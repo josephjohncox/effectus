@@ -389,7 +389,7 @@ func exampleClientUsage() {
 	fmt.Println("\n🔌 Example Client Usage")
 	fmt.Println("----------------------")
 
-	fmt.Println(`
+	fmt.Print(`
 // Go client example:
 conn, err := grpc.Dial("localhost:8080", grpc.WithInsecure())
 client := NewRulesetExecutionServiceClient(conn)

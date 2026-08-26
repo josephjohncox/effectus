@@ -425,7 +425,6 @@ func namespacedExample() {
 		"stats.conversion_rate",
 	}
 	for _, path := range paths {
-		typeName := typedFacts.GetTypeInfo(path)
 		typeInfo, _ := facts.GetRegistry().GetType(path)
 		typeName := pathutil.NormalizeTypeName(fmt.Sprintf("%v", typeInfo))
 		fmt.Printf("  - %-25s: %s\n", path, typeName)
