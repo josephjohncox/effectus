@@ -7,7 +7,20 @@ INSERT INTO deployments (
     deployed_by, deployment_duration_ms
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
-) RETURNING *;
+)
+ON CONFLICT (ruleset_id, environment) DO UPDATE SET
+    status = EXCLUDED.status,
+    strategy = EXCLUDED.strategy,
+    config = EXCLUDED.config,
+    health_check = EXCLUDED.health_check,
+    rollback_info = EXCLUDED.rollback_info,
+    canary_config = EXCLUDED.canary_config,
+    deployed_by = EXCLUDED.deployed_by,
+    deployment_duration_ms = EXCLUDED.deployment_duration_ms,
+    deployed_at = CURRENT_TIMESTAMP,
+    completed_at = NULL,
+    updated_at = CURRENT_TIMESTAMP
+RETURNING *;
 
 -- name: GetDeployment :one
 SELECT * FROM deployments 
@@ -21,7 +34,15 @@ WHERE id = $1;
 SELECT d.*, r.name as ruleset_name, r.version as ruleset_version
 FROM deployments d
 JOIN rulesets r ON d.ruleset_id = r.id
-WHERE d.environment = $1 AND d.status = 'active'
+WHERE r.name = $1 AND d.environment = $2 AND d.status = 'active'
+ORDER BY d.deployed_at DESC
+LIMIT 1;
+
+-- name: GetLatestDeploymentForRuleset :one
+SELECT d.*, r.name as ruleset_name, r.version as ruleset_version
+FROM deployments d
+JOIN rulesets r ON d.ruleset_id = r.id
+WHERE r.name = $1 AND d.environment = $2
 ORDER BY d.deployed_at DESC
 LIMIT 1;
 
@@ -100,11 +121,16 @@ FROM deployments
 WHERE deployed_at >= $1;
 
 -- name: DeactivateOldDeployments :exec
-UPDATE deployments 
-SET 
+UPDATE deployments d
+SET
     status = 'inactive',
     updated_at = CURRENT_TIMESTAMP
-WHERE environment = $1 AND status = 'active' AND id != $2;
+FROM rulesets r
+WHERE d.ruleset_id = r.id
+  AND r.name = $1
+  AND d.environment = $2
+  AND d.status = 'active'
+  AND d.id != $3;
 
 -- name: GetCanaryDeployments :many
 SELECT d.*, r.name as ruleset_name, r.version as ruleset_version

@@ -23,9 +23,11 @@ type Querier interface {
 	CreateDeployment(ctx context.Context, rulesetID uuid.UUID, environment string, status DeploymentStatus, strategy string, config json.RawMessage, healthCheck json.RawMessage, rollbackInfo json.RawMessage, canaryConfig json.RawMessage, deployedBy pgtype.Text, deploymentDurationMs pgtype.Int4) (*Deployment, error)
 	// Ruleset queries for sqlc code generation
 	CreateRuleset(ctx context.Context, name string, version string, environment string, status RulesetStatus, rulesetData json.RawMessage, ruleCount int32, description pgtype.Text, tags []string, owner pgtype.Text, team pgtype.Text, metadata json.RawMessage, gitCommit pgtype.Text, gitBranch pgtype.Text, gitTag pgtype.Text, gitAuthor pgtype.Text, pullRequest pgtype.Text, compiledAt pgtype.Timestamptz, compilerVersion pgtype.Text, schemaVersion pgtype.Text, validationHash pgtype.Text, createdBy pgtype.Text, updatedBy pgtype.Text) (*Ruleset, error)
-	DeactivateOldDeployments(ctx context.Context, environment string, iD uuid.UUID) error
+	DeactivateOldDeployments(ctx context.Context, name string, environment string, iD uuid.UUID) error
+	DeactivateRulesetVersions(ctx context.Context, name string, environment string, iD uuid.UUID) error
 	DeleteRuleset(ctx context.Context, id uuid.UUID) error
-	GetActiveDeployment(ctx context.Context, environment string) (*GetActiveDeploymentRow, error)
+	DeleteRulesetByNameVersion(ctx context.Context, name string, version string) (int64, error)
+	GetActiveDeployment(ctx context.Context, name string, environment string) (*GetActiveDeploymentRow, error)
 	GetAuditLogs(ctx context.Context, column1 []string, column2 []string, column3 []string, column4 pgtype.Timestamptz, column5 pgtype.Timestamptz, column6 string, column7 string, limit int32, offset int32) ([]*AuditLog, error)
 	GetAuditLogsByResource(ctx context.Context, resource string, column2 string, limit int32) ([]*AuditLog, error)
 	GetAuditLogsBySession(ctx context.Context, sessionID pgtype.Text) ([]*AuditLog, error)
@@ -41,13 +43,16 @@ type Querier interface {
 	GetEnvironmentDeployments(ctx context.Context, environment string) ([]*GetEnvironmentDeploymentsRow, error)
 	GetFailedDeployments(ctx context.Context, deployedAt pgtype.Timestamptz, limit int32) ([]*GetFailedDeploymentsRow, error)
 	GetFailedOperations(ctx context.Context, timestamp pgtype.Timestamptz, limit int32) ([]*AuditLog, error)
+	GetLatestDeploymentForRuleset(ctx context.Context, name string, environment string) (*GetLatestDeploymentForRulesetRow, error)
 	GetLatestRuleset(ctx context.Context, name string, environment string) (*Ruleset, error)
 	GetRecentErrorsCount(ctx context.Context, timestamp pgtype.Timestamptz) (int64, error)
 	GetRecentRulesets(ctx context.Context, createdAt pgtype.Timestamptz, limit int32) ([]*Ruleset, error)
 	GetRuleset(ctx context.Context, name string, version string, environment string) (*Ruleset, error)
+	GetRulesetAnyEnvironment(ctx context.Context, name string, version string) (*Ruleset, error)
 	GetRulesetByID(ctx context.Context, id uuid.UUID) (*Ruleset, error)
 	GetRulesetStats(ctx context.Context) (*GetRulesetStatsRow, error)
 	GetRulesetVersions(ctx context.Context, name string, environment string) ([]*GetRulesetVersionsRow, error)
+	GetRulesetVersionsAll(ctx context.Context, name string) ([]*GetRulesetVersionsAllRow, error)
 	GetRulesetsByGitCommit(ctx context.Context, gitCommit pgtype.Text) ([]*Ruleset, error)
 	GetRulesetsByTags(ctx context.Context, column1 []string, environment string, limit int32) ([]*Ruleset, error)
 	GetRulesetsByTeam(ctx context.Context, team pgtype.Text, environment string, limit int32) ([]*Ruleset, error)

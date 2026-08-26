@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -255,34 +256,14 @@ type PostgresRuleStorageConfig struct {
 	TablePrefix        string        `json:"table_prefix"`
 }
 
-// NewPostgresRuleStorage creates a new PostgreSQL rule storage backend
-func NewPostgresRuleStorage(config *PostgresRuleStorageConfig) (*PostgresRuleStorage, error) {
-	db, err := sql.Open("postgres", config.DSN)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
-	}
+// ErrLegacyPostgresRuleStorageUnsupported identifies the deprecated storage
+// implementation. Use NewPostgresStorage, which owns the canonical schema.
+var ErrLegacyPostgresRuleStorageUnsupported = errors.New("legacy PostgreSQL rule storage is disabled; use NewPostgresStorage")
 
-	db.SetMaxOpenConns(config.MaxConnections)
-	db.SetMaxIdleConns(config.MaxConnections / 2)
-
-	storage := &PostgresRuleStorage{
-		db:     db,
-		config: config,
-	}
-
-	// Setup Redis cache if enabled
-	if config.CacheEnabled {
-		storage.cache = redis.NewClient(&redis.Options{
-			Addr: "localhost:6379", // Should be configurable
-		})
-	}
-
-	// Initialize database schema
-	if err := storage.initializeSchema(); err != nil {
-		return nil, fmt.Errorf("failed to initialize schema: %w", err)
-	}
-
-	return storage, nil
+// NewPostgresRuleStorage fails closed because the legacy backend uses a second,
+// incompatible schema and does not implement the RuleStorageBackend contract.
+func NewPostgresRuleStorage(_ *PostgresRuleStorageConfig) (*PostgresRuleStorage, error) {
+	return nil, ErrLegacyPostgresRuleStorageUnsupported
 }
 
 // initializeSchema creates necessary database tables

@@ -60,6 +60,14 @@ func NewPostgresStorage(config *PostgresStorageConfig) (*PostgresStorage, error)
 	if strings.TrimSpace(config.DSN) == "" {
 		return nil, fmt.Errorf("PostgreSQL DSN is required")
 	}
+	if config.MaxConnections < 0 {
+		return nil, fmt.Errorf("PostgreSQL max connections cannot be negative")
+	}
+	if config.ConnMaxLifetime < 0 || config.ConnMaxIdleTime < 0 {
+		return nil, fmt.Errorf("PostgreSQL connection lifetimes cannot be negative")
+	}
+	resolvedConfig := *config
+	config = &resolvedConfig
 
 	// Set defaults
 	if config.MaxConnections == 0 {
@@ -237,23 +245,17 @@ func (p *PostgresStorage) StoreRuleset(ctx context.Context, ruleset *StoredRules
 
 // GetRuleset retrieves a ruleset using sqlc-generated queries
 func (p *PostgresStorage) GetRuleset(ctx context.Context, name, version string) (*StoredRuleset, error) {
-	// First try to get with explicit environment, then fall back to any environment
-	environments := []string{"production", "staging", "development"}
-
-	for _, env := range environments {
-		dbRuleset, err := p.queries.GetRuleset(ctx, name, version, env)
-
-		if err != nil {
-			if err == pgx.ErrNoRows {
-				continue // Try next environment
-			}
-			return nil, fmt.Errorf("failed to get ruleset: %w", err)
-		}
-
-		return p.convertDBRuleset(dbRuleset)
+	if strings.TrimSpace(name) == "" || strings.TrimSpace(version) == "" {
+		return nil, fmt.Errorf("ruleset name and version are required")
 	}
-
-	return nil, fmt.Errorf("ruleset not found: %s:%s", name, version)
+	dbRuleset, err := p.queries.GetRulesetAnyEnvironment(ctx, name, version)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("ruleset not found: %s:%s", name, version)
+		}
+		return nil, fmt.Errorf("failed to get ruleset: %w", err)
+	}
+	return p.convertDBRuleset(dbRuleset)
 }
 
 // ListRulesets lists rulesets with filtering using sqlc-generated queries
@@ -591,31 +593,237 @@ func toPgInt4(value int) pgtype.Int4 {
 	return pgtype.Int4{Int32: int32(value), Valid: true}
 }
 
-// Placeholder implementations for remaining interface methods
 func (p *PostgresStorage) DeleteRuleset(ctx context.Context, name, version string) error {
-	return fmt.Errorf("not implemented")
+	if strings.TrimSpace(name) == "" || strings.TrimSpace(version) == "" {
+		return fmt.Errorf("ruleset name and version are required")
+	}
+	deleted, err := p.queries.DeleteRulesetByNameVersion(ctx, name, version)
+	if err != nil {
+		return fmt.Errorf("delete ruleset %s:%s: %w", name, version, err)
+	}
+	if deleted == 0 {
+		return fmt.Errorf("ruleset not found: %s:%s", name, version)
+	}
+	p.recordLifecycleActivity(ctx, "delete_ruleset", name, version, "", map[string]interface{}{"deleted_environments": deleted})
+	return nil
 }
 
 func (p *PostgresStorage) GetRulesetVersions(ctx context.Context, name string) ([]*RulesetVersion, error) {
-	return nil, fmt.Errorf("not implemented")
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("ruleset name is required")
+	}
+	rows, err := p.queries.GetRulesetVersionsAll(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("list versions for %s: %w", name, err)
+	}
+	versions := make([]*RulesetVersion, len(rows))
+	for i, row := range rows {
+		versions[i] = &RulesetVersion{
+			Version:      row.Version,
+			CreatedAt:    getTimeValue(row.CreatedAt),
+			CreatedBy:    row.CreatedBy,
+			GitCommit:    row.GitCommit,
+			IsActive:     row.IsActive,
+			DeployedEnvs: append([]string(nil), row.DeployedEnvs...),
+		}
+	}
+	return versions, nil
 }
 
 func (p *PostgresStorage) GetActiveVersion(ctx context.Context, name, environment string) (*RulesetVersion, error) {
-	return nil, fmt.Errorf("not implemented")
+	if err := validateDeploymentIdentity(name, environment, ""); err != nil {
+		return nil, err
+	}
+	deployment, err := p.queries.GetActiveDeployment(ctx, name, environment)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("no active version found for %s in %s", name, environment)
+		}
+		return nil, fmt.Errorf("get active deployment for %s in %s: %w", name, environment, err)
+	}
+	ruleset, err := p.queries.GetRuleset(ctx, name, deployment.RulesetVersion, environment)
+	if err != nil {
+		return nil, fmt.Errorf("get active ruleset %s:%s in %s: %w", name, deployment.RulesetVersion, environment, err)
+	}
+	return &RulesetVersion{
+		Version:      ruleset.Version,
+		CreatedAt:    getTimeValue(ruleset.CreatedAt),
+		CreatedBy:    getStringValue(ruleset.CreatedBy),
+		GitCommit:    getStringValue(ruleset.GitCommit),
+		IsActive:     true,
+		DeployedEnvs: []string{environment},
+	}, nil
 }
 
 func (p *PostgresStorage) SetActiveVersion(ctx context.Context, name, environment, version string) error {
-	return fmt.Errorf("not implemented")
+	return p.DeployRuleset(ctx, name, version, environment, &DeploymentConfig{Strategy: "rolling"})
 }
 
 func (p *PostgresStorage) DeployRuleset(ctx context.Context, name, version, environment string, config *DeploymentConfig) error {
-	return fmt.Errorf("not implemented")
+	if err := validateDeploymentIdentity(name, environment, version); err != nil {
+		return err
+	}
+	if config == nil {
+		config = &DeploymentConfig{Strategy: "rolling"}
+	}
+	strategy := strings.TrimSpace(config.Strategy)
+	if strategy == "" {
+		strategy = "rolling"
+	}
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("marshal deployment config: %w", err)
+	}
+
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin deployment transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	queries := p.queries.WithTx(tx)
+	ruleset, err := queries.GetRuleset(ctx, name, version, environment)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("version %s not found for %s in %s", version, name, environment)
+		}
+		return fmt.Errorf("get deployment ruleset: %w", err)
+	}
+	deployment, err := queries.CreateDeployment(
+		ctx,
+		ruleset.ID,
+		environment,
+		db.DeploymentStatusActive,
+		strategy,
+		configJSON,
+		json.RawMessage(`{}`),
+		json.RawMessage(`{}`),
+		json.RawMessage(`{}`),
+		pgtype.Text{},
+		pgtype.Int4{},
+	)
+	if err != nil {
+		return fmt.Errorf("create deployment: %w", err)
+	}
+	if err := queries.DeactivateOldDeployments(ctx, name, environment, deployment.ID); err != nil {
+		return fmt.Errorf("deactivate previous deployments: %w", err)
+	}
+	if err := queries.DeactivateRulesetVersions(ctx, name, environment, ruleset.ID); err != nil {
+		return fmt.Errorf("deactivate previous ruleset versions: %w", err)
+	}
+	if _, err := queries.UpdateRulesetStatus(ctx, ruleset.ID, db.RulesetStatusDeployed, pgtype.Text{}); err != nil {
+		return fmt.Errorf("activate ruleset version: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit deployment: %w", err)
+	}
+	p.recordLifecycleActivity(ctx, "deploy_ruleset", name, version, environment, map[string]interface{}{"strategy": strategy})
+	return nil
 }
 
 func (p *PostgresStorage) GetDeploymentStatus(ctx context.Context, name, environment string) (*DeploymentStatus, error) {
-	return nil, fmt.Errorf("not implemented")
+	if err := validateDeploymentIdentity(name, environment, ""); err != nil {
+		return nil, err
+	}
+	deployment, err := p.queries.GetLatestDeploymentForRuleset(ctx, name, environment)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("no deployment found for %s in %s", name, environment)
+		}
+		return nil, fmt.Errorf("get deployment status for %s in %s: %w", name, environment, err)
+	}
+	status := DeploymentStatus(deployment.Status)
+	return &status, nil
 }
 
 func (p *PostgresStorage) RollbackDeployment(ctx context.Context, name, environment, targetVersion string) error {
-	return fmt.Errorf("not implemented")
+	if err := validateDeploymentIdentity(name, environment, targetVersion); err != nil {
+		return err
+	}
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin rollback transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	queries := p.queries.WithTx(tx)
+	current, err := queries.GetActiveDeployment(ctx, name, environment)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("no active deployment found for %s in %s", name, environment)
+		}
+		return fmt.Errorf("get active deployment: %w", err)
+	}
+	target, err := queries.GetRuleset(ctx, name, targetVersion, environment)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("rollback target %s not found for %s in %s", targetVersion, name, environment)
+		}
+		return fmt.Errorf("get rollback target: %w", err)
+	}
+	rollbackJSON, err := json.Marshal(&RollbackInfo{
+		PreviousVersion: current.RulesetVersion,
+		RollbackReason:  "manual rollback",
+		RolledBackAt:    time.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal rollback info: %w", err)
+	}
+	if _, err := queries.SetDeploymentRollback(ctx, current.ID, rollbackJSON); err != nil {
+		return fmt.Errorf("mark current deployment rolling back: %w", err)
+	}
+	deployment, err := queries.CreateDeployment(
+		ctx,
+		target.ID,
+		environment,
+		db.DeploymentStatusActive,
+		"rollback",
+		json.RawMessage(`{}`),
+		json.RawMessage(`{}`),
+		rollbackJSON,
+		json.RawMessage(`{}`),
+		pgtype.Text{},
+		pgtype.Int4{},
+	)
+	if err != nil {
+		return fmt.Errorf("activate rollback target: %w", err)
+	}
+	if err := queries.DeactivateOldDeployments(ctx, name, environment, deployment.ID); err != nil {
+		return fmt.Errorf("deactivate previous deployments: %w", err)
+	}
+	if err := queries.DeactivateRulesetVersions(ctx, name, environment, target.ID); err != nil {
+		return fmt.Errorf("deactivate previous ruleset versions: %w", err)
+	}
+	if _, err := queries.UpdateRulesetStatus(ctx, target.ID, db.RulesetStatusDeployed, pgtype.Text{}); err != nil {
+		return fmt.Errorf("activate rollback ruleset: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit rollback: %w", err)
+	}
+	p.recordLifecycleActivity(ctx, "rollback_deployment", name, targetVersion, environment, map[string]interface{}{"previous_version": current.RulesetVersion})
+	return nil
+}
+
+func validateDeploymentIdentity(name, environment, version string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("ruleset name is required")
+	}
+	if strings.TrimSpace(environment) == "" {
+		return fmt.Errorf("deployment environment is required")
+	}
+	if version != "" && strings.TrimSpace(version) == "" {
+		return fmt.Errorf("ruleset version is required")
+	}
+	return nil
+}
+
+func (p *PostgresStorage) recordLifecycleActivity(ctx context.Context, action, name, version, environment string, details map[string]interface{}) {
+	if err := p.RecordActivity(ctx, &AuditEntry{
+		Action:      action,
+		Resource:    name,
+		Version:     version,
+		Environment: environment,
+		Details:     details,
+		Result:      "success",
+	}); err != nil {
+		fmt.Printf("Failed to record %s audit entry: %v\n", action, err)
+	}
 }

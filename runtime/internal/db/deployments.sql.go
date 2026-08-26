@@ -55,7 +55,20 @@ INSERT INTO deployments (
     deployed_by, deployment_duration_ms
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
-) RETURNING id, ruleset_id, environment, status, strategy, config, health_check, rollback_info, canary_config, deployed_at, completed_at, deployed_by, deployment_duration_ms, created_at, updated_at
+)
+ON CONFLICT (ruleset_id, environment) DO UPDATE SET
+    status = EXCLUDED.status,
+    strategy = EXCLUDED.strategy,
+    config = EXCLUDED.config,
+    health_check = EXCLUDED.health_check,
+    rollback_info = EXCLUDED.rollback_info,
+    canary_config = EXCLUDED.canary_config,
+    deployed_by = EXCLUDED.deployed_by,
+    deployment_duration_ms = EXCLUDED.deployment_duration_ms,
+    deployed_at = CURRENT_TIMESTAMP,
+    completed_at = NULL,
+    updated_at = CURRENT_TIMESTAMP
+RETURNING id, ruleset_id, environment, status, strategy, config, health_check, rollback_info, canary_config, deployed_at, completed_at, deployed_by, deployment_duration_ms, created_at, updated_at
 `
 
 // Deployment queries for sqlc code generation
@@ -94,15 +107,20 @@ func (q *Queries) CreateDeployment(ctx context.Context, rulesetID uuid.UUID, env
 }
 
 const DeactivateOldDeployments = `-- name: DeactivateOldDeployments :exec
-UPDATE deployments 
-SET 
+UPDATE deployments d
+SET
     status = 'inactive',
     updated_at = CURRENT_TIMESTAMP
-WHERE environment = $1 AND status = 'active' AND id != $2
+FROM rulesets r
+WHERE d.ruleset_id = r.id
+  AND r.name = $1
+  AND d.environment = $2
+  AND d.status = 'active'
+  AND d.id != $3
 `
 
-func (q *Queries) DeactivateOldDeployments(ctx context.Context, environment string, iD uuid.UUID) error {
-	_, err := q.db.Exec(ctx, DeactivateOldDeployments, environment, iD)
+func (q *Queries) DeactivateOldDeployments(ctx context.Context, name string, environment string, iD uuid.UUID) error {
+	_, err := q.db.Exec(ctx, DeactivateOldDeployments, name, environment, iD)
 	return err
 }
 
@@ -110,7 +128,7 @@ const GetActiveDeployment = `-- name: GetActiveDeployment :one
 SELECT d.id, d.ruleset_id, d.environment, d.status, d.strategy, d.config, d.health_check, d.rollback_info, d.canary_config, d.deployed_at, d.completed_at, d.deployed_by, d.deployment_duration_ms, d.created_at, d.updated_at, r.name as ruleset_name, r.version as ruleset_version
 FROM deployments d
 JOIN rulesets r ON d.ruleset_id = r.id
-WHERE d.environment = $1 AND d.status = 'active'
+WHERE r.name = $1 AND d.environment = $2 AND d.status = 'active'
 ORDER BY d.deployed_at DESC
 LIMIT 1
 `
@@ -135,8 +153,8 @@ type GetActiveDeploymentRow struct {
 	RulesetVersion       string             `db:"ruleset_version" json:"ruleset_version"`
 }
 
-func (q *Queries) GetActiveDeployment(ctx context.Context, environment string) (*GetActiveDeploymentRow, error) {
-	row := q.db.QueryRow(ctx, GetActiveDeployment, environment)
+func (q *Queries) GetActiveDeployment(ctx context.Context, name string, environment string) (*GetActiveDeploymentRow, error) {
+	row := q.db.QueryRow(ctx, GetActiveDeployment, name, environment)
 	var i GetActiveDeploymentRow
 	err := row.Scan(
 		&i.ID,
@@ -583,6 +601,60 @@ func (q *Queries) GetFailedDeployments(ctx context.Context, deployedAt pgtype.Ti
 		return nil, err
 	}
 	return items, nil
+}
+
+const GetLatestDeploymentForRuleset = `-- name: GetLatestDeploymentForRuleset :one
+SELECT d.id, d.ruleset_id, d.environment, d.status, d.strategy, d.config, d.health_check, d.rollback_info, d.canary_config, d.deployed_at, d.completed_at, d.deployed_by, d.deployment_duration_ms, d.created_at, d.updated_at, r.name as ruleset_name, r.version as ruleset_version
+FROM deployments d
+JOIN rulesets r ON d.ruleset_id = r.id
+WHERE r.name = $1 AND d.environment = $2
+ORDER BY d.deployed_at DESC
+LIMIT 1
+`
+
+type GetLatestDeploymentForRulesetRow struct {
+	ID                   uuid.UUID          `db:"id" json:"id"`
+	RulesetID            uuid.UUID          `db:"ruleset_id" json:"ruleset_id"`
+	Environment          string             `db:"environment" json:"environment"`
+	Status               DeploymentStatus   `db:"status" json:"status"`
+	Strategy             string             `db:"strategy" json:"strategy"`
+	Config               json.RawMessage    `db:"config" json:"config"`
+	HealthCheck          json.RawMessage    `db:"health_check" json:"health_check"`
+	RollbackInfo         json.RawMessage    `db:"rollback_info" json:"rollback_info"`
+	CanaryConfig         json.RawMessage    `db:"canary_config" json:"canary_config"`
+	DeployedAt           pgtype.Timestamptz `db:"deployed_at" json:"deployed_at"`
+	CompletedAt          pgtype.Timestamptz `db:"completed_at" json:"completed_at"`
+	DeployedBy           pgtype.Text        `db:"deployed_by" json:"deployed_by"`
+	DeploymentDurationMs pgtype.Int4        `db:"deployment_duration_ms" json:"deployment_duration_ms"`
+	CreatedAt            pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	RulesetName          string             `db:"ruleset_name" json:"ruleset_name"`
+	RulesetVersion       string             `db:"ruleset_version" json:"ruleset_version"`
+}
+
+func (q *Queries) GetLatestDeploymentForRuleset(ctx context.Context, name string, environment string) (*GetLatestDeploymentForRulesetRow, error) {
+	row := q.db.QueryRow(ctx, GetLatestDeploymentForRuleset, name, environment)
+	var i GetLatestDeploymentForRulesetRow
+	err := row.Scan(
+		&i.ID,
+		&i.RulesetID,
+		&i.Environment,
+		&i.Status,
+		&i.Strategy,
+		&i.Config,
+		&i.HealthCheck,
+		&i.RollbackInfo,
+		&i.CanaryConfig,
+		&i.DeployedAt,
+		&i.CompletedAt,
+		&i.DeployedBy,
+		&i.DeploymentDurationMs,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RulesetName,
+		&i.RulesetVersion,
+	)
+	return &i, err
 }
 
 const ListDeployments = `-- name: ListDeployments :many
