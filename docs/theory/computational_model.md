@@ -1,5 +1,7 @@
 # Computational Model: Beyond Turing Completeness
 
+> **Status:** The termination claims apply only to the proposed checked first-order core. The current Go flow API accepts unrestricted continuation functions. See [`../GUARANTEES.md`](../GUARANTEES.md).
+
 ## 1. Introduction to Computational Bounds
 
 Effectus deliberately adopts a computational model that is *not* Turing complete. Instead, it uses free monads (for flows) and free monoids (for lists) to represent and execute business rules. This design decision provides significant benefits for reasoning, verification, and operational safety.

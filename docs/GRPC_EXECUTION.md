@@ -1,5 +1,7 @@
 # gRPC Execution Interface
 
+> **Status:** This document is a design proposal. Dynamic gRPC ruleset registration and execution currently fail closed with `ErrDynamicGRPCUnsupported`. Do not use the examples as an implemented API.
+
 The Effectus gRPC Execution Interface provides a standardized, language-agnostic way to execute rules using **rulesets** as logical namespaces. Each ruleset gets its own typed protobuf interface with dynamic endpoint registration.
 
 ## Overview

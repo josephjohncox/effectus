@@ -66,6 +66,11 @@ lint:
 	golangci-lint run ./...
 	just buf-lint
 
+# Model-check saga recovery and runtime generation publication
+formal-check:
+	@command -v tlc >/dev/null 2>&1 || { echo "ERROR tlc is required"; exit 1; }
+	@set -eu; saga_dir=$(mktemp -d); generation_dir=$(mktemp -d); trap 'rm -rf "$saga_dir" "$generation_dir"' EXIT; tlc -metadir "$saga_dir" formal/Saga.tla -config formal/Saga.cfg; tlc -metadir "$generation_dir" formal/GenerationSwap.tla -config formal/GenerationSwap.cfg
+
 # Format code
 fmt:
 	go fmt ./...

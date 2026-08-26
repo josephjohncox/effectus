@@ -1,5 +1,7 @@
 # Saga-Based Compensation in Effectus
 
+> **Status:** This document describes target algebraic properties. The runtime guarantees effect identity, order, replay of recorded success, and error reporting. It does not guarantee semantic inversion or exactly-once execution. See [`../GUARANTEES.md`](../GUARANTEES.md).
+
 ## 1. Introduction to Compensation
 
 Effectus implements a robust compensation mechanism based on the saga pattern, enabling reliable execution of complex effect sequences with transactional semantics, even across distributed systems where atomic transactions are not available.
@@ -66,7 +68,7 @@ Where `compensate` applies the compensation effects in reverse order:
 \end{align}
 ```
 
-This ensures that if any effect in the sequence fails, all previously executed effects are properly compensated.
+This rule attempts each inverse in reverse order. The runtime returns every compensation failure to the caller.
 
 ## 4. Key Properties
 
@@ -74,7 +76,7 @@ This ensures that if any effect in the sequence fails, all previously executed e
 
 A key property of the saga system is **compensation correctness**:
 
-**Theorem (Compensation Correctness)**: For any effect $e$ with compensating effect $c$, applying $c$ after $e$ restores the system to its original state (modulo observable side effects).
+**Required verb law:** For an effect $e$ and inverse $c$, the verb owner must define the state equivalence that $c$ restores. The runtime does not prove this law.
 
 This is formalized as:
 ```math
@@ -85,11 +87,9 @@ Where $\approx$ indicates equivalence up to observable side effects.
 
 ### 4.2. Idempotence
 
-The saga system provides **idempotence guarantees**:
+The saga store replays recorded successful results for the same saga and effect IDs.
 
-**Theorem (Idempotence)**: Repeated execution of a saga with the same transaction ID is equivalent to a single execution.
-
-This is critical for handling retries and recovery scenarios in distributed systems.
+A pending effect can run again after a process stop. Exactly-once behavior therefore requires an idempotent external verb or idempotency key.
 
 ## 5. Implementation in Effectus
 
@@ -104,9 +104,9 @@ The storage mechanism defines these operations:
 ```math
 \begin{align}
 \text{StartTransaction} &: \text{Name} \rightarrow \text{TxID} \\
-\text{RecordEffect} &: \text{TxID} \times \text{Verb} \times \text{Args} \rightarrow \text{Unit} \\
-\text{MarkSuccess} &: \text{TxID} \times \text{Verb} \rightarrow \text{Unit} \\
-\text{MarkCompensated} &: \text{TxID} \times \text{Verb} \rightarrow \text{Unit} \\
+\text{RecordEffect} &: \text{TxID} \times \text{EffectID} \times \text{Sequence} \times \text{Verb} \times \text{Args} \rightarrow \text{Unit} \\
+\text{MarkSuccess} &: \text{TxID} \times \text{EffectID} \times \text{Result} \rightarrow \text{Unit} \\
+\text{MarkCompensated} &: \text{TxID} \times \text{EffectID} \rightarrow \text{Unit} \\
 \text{GetTxEffects} &: \text{TxID} \rightarrow \text{List}(\text{Effect} \times \text{Status})
 \end{align}
 ```
@@ -128,7 +128,7 @@ A saga can be derived from a Program by extracting the sequence of effects and t
 
 ### 7.1. Nested Sagas
 
-Effectus supports nested sagas, where a step in a saga can itself be a saga:
+Nested sagas are a planned extension. The current executor handles one transaction boundary.
 
 ```math
 \begin{align}

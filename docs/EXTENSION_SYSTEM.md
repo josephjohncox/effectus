@@ -1,5 +1,7 @@
 # Effectus Extension System
 
+> **Status:** Manifest and OCI verb loading are implemented. Extension workflow planning is not implemented and fails closed. See [`GUARANTEES.md`](GUARANTEES.md) before production use.
+
 The Effectus Extension System provides a comprehensive, unified approach to extending the rule engine with new verbs, schemas, and rules. It supports both static registration (compile-time) and dynamic loading (runtime) through multiple distribution mechanisms.
 
 ## Overview

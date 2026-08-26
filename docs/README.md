@@ -5,11 +5,12 @@ This directory contains the documentation for Effectus. Start here and follow th
 ## Start here
 
 1. `../README.md` - project overview and quick start
-2. `SYSTEM_INTENT.md` - design intent and correctness criteria
-3. `GLOSSARY.md` - shared vocabulary
-4. `BASICS.md` - facts, verbs, rules, flows
-5. `TUTORIALS.md` - short walkthroughs
-6. `COMMANDS.md` - CLI reference
+2. `GUARANTEES.md` - implemented guarantees and design boundaries
+3. `SYSTEM_INTENT.md` - design intent and correctness criteria
+4. `GLOSSARY.md` - shared vocabulary
+5. `BASICS.md` - facts, verbs, rules, flows
+6. `TUTORIALS.md` - short walkthroughs
+7. `COMMANDS.md` - CLI reference
 
 ## Runtime operations
 

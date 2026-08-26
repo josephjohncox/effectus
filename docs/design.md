@@ -1,5 +1,7 @@
 # Technical Design Document: Effectus
 
+> **Status:** This document includes target architecture. It does not describe only implemented behavior. [`GUARANTEES.md`](GUARANTEES.md) defines the current runtime contract and limits.
+
 ## 1. Overview
 
 Effectus is a strongly-typed rule engine built in Go, designed to support mission-critical business systems that require high reliability and deterministic behavior. By modeling rules with formal semantics and strong typing, it provides deterministic execution, compile-time verification, and extensibility for a wide range of domains including workflow orchestration, business process automation, and event-driven systems.
@@ -287,7 +289,8 @@ Enables:
 Handles failures through the saga pattern:
 - Logs each effect before execution
 - On failure, executes compensating actions in reverse order
-- Ensures exactly-once semantics through idempotent operations
+- Replays recorded successful results by stable effect ID
+- Retries pending effects with at-least-once semantics
 - Maintains transactional integrity across distributed systems
 
 ### 5.7 Verb Extensibility
@@ -361,7 +364,7 @@ Effects are interpreted in the mathematical **Set** category, giving them precis
 The type system ensures:
 - **Progress**: Well-typed terms either complete or can take another step
 - **Preservation**: Types are maintained throughout execution
-- **Termination**: All executions are guaranteed to terminate
+- **Termination target**: Checked first-order rules must terminate. Unrestricted Go continuations are outside this claim.
 
 ## 7. Domain Examples
 

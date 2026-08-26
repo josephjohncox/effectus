@@ -1,5 +1,7 @@
 # Effectus Mathematical Foundations
 
+> **Status:** These documents describe a target formal model. They are not machine-checked proofs of the full Go runtime. See [`../GUARANTEES.md`](../GUARANTEES.md) for the current implementation boundary.
+
 This directory contains the formal mathematical foundations for Effectus, providing rigorous theoretical backing for the system's design and guarantees.
 
 ## Overview
@@ -31,7 +33,7 @@ Effectus is built on solid mathematical principles from category theory, type th
 ### Type Safety Theorem
 **Progress**: Well-typed terms either complete or can take another step  
 **Preservation**: Types are maintained throughout execution  
-**Termination**: All executions are guaranteed to terminate
+**Termination target**: Checked first-order IR terminates by construction. Current Go continuations are outside this claim.
 
 ### Extensibility Lemma  
 Adding new fact fields doesn't break existing rules - the system is **monotone with respect to fact growth**.
@@ -101,7 +103,7 @@ The mathematical foundations directly inform the implementation:
 - Type soundness theorems ensure runtime safety
 - Operational semantics define step-by-step execution
 
-This tight correspondence between theory and implementation ensures that the mathematical guarantees hold in the actual system.
+The implementation does not yet have a machine-checked correspondence proof. Each theorem must state the exact IR and runtime assumptions that it covers.
 
 ## Contributing
 
