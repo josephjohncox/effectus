@@ -170,6 +170,23 @@ func compileBundleRules(bundle *unified.Bundle, baseTS *types.TypeSystem, verbRe
 	return &next, nil
 }
 
+func configuredBundleCopy(bundle *unified.Bundle, verbReg *verb.Registry, sagaEnabled bool, sagaStore schema.SagaStore, capSystem *capability.CapabilitySystem) *unified.Bundle {
+	if bundle == nil {
+		return nil
+	}
+	next := *bundle
+	if bundle.ListSpec != nil {
+		listSpec := *bundle.ListSpec
+		next.ListSpec = &listSpec
+	}
+	if bundle.FlowSpec != nil {
+		flowSpec := *bundle.FlowSpec
+		next.FlowSpec = &flowSpec
+	}
+	configureBundleExecution(&next, verbReg, sagaEnabled, sagaStore, capSystem)
+	return &next
+}
+
 func configureBundleExecution(bundle *unified.Bundle, verbReg *verb.Registry, sagaEnabled bool, sagaStore schema.SagaStore, capSystem *capability.CapabilitySystem) {
 	if bundle == nil {
 		return
@@ -196,7 +213,7 @@ func (s *serverState) ExecuteFacts(ctx context.Context, env factEnvelope) error 
 		env.Universe = "default"
 	}
 
-	bundle := s.Bundle()
+	bundle, executionTypes, verbRegistry := s.executionRuntimeSnapshot()
 	if bundle == nil {
 		return fmt.Errorf("bundle not loaded")
 	}
@@ -218,15 +235,14 @@ func (s *serverState) ExecuteFacts(ctx context.Context, env factEnvelope) error 
 		ctx = context.WithValue(ctx, requestIDContextKey, fmt.Sprintf("%s-%d", env.Universe, time.Now().UnixNano()))
 	}
 
-	ts := s.execTypes
-	if ts == nil {
-		ts = s.typeSystem
+	if executionTypes == nil {
+		return fmt.Errorf("runtime type system not initialized")
 	}
 
-	facts := newRuntimeFacts(factsData, &typeSystemSchema{ts: ts})
+	facts := newRuntimeFacts(factsData, &typeSystemSchema{ts: executionTypes})
 	var executor effectus.Executor
-	if s.verbReg != nil {
-		executor = common.NewExecutorAdapter(s.verbReg, &commonFactsAdapter{facts: facts})
+	if verbRegistry != nil {
+		executor = common.NewExecutorAdapter(verbRegistry, &commonFactsAdapter{facts: facts})
 	}
 
 	if bundle.ListSpec != nil {

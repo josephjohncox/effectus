@@ -58,10 +58,10 @@ type serverState struct {
 }
 
 func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store factStore, config factStoreConfig, auth apiAuth, limiter *rateLimiter, acl *aclMatcher, typeSystem *types.TypeSystem, sources []adapters.SchemaSourceConfig, verbReg *verb.Registry, rulesHotload bool, history *bundleHistory, sagaEnabled bool, sagaStore schema.SagaStore, capSystem *capability.CapabilitySystem) *serverState {
-	execTypes := buildHotloadTypeSystem(typeSystem, bundle, verbReg)
-	configureBundleExecution(bundle, verbReg, sagaEnabled, sagaStore, capSystem)
+	configuredBundle := configuredBundleCopy(bundle, verbReg, sagaEnabled, sagaStore, capSystem)
+	execTypes := buildHotloadTypeSystem(typeSystem, configuredBundle, verbReg)
 	return &serverState{
-		bundle:     bundle,
+		bundle:     configuredBundle,
 		startedAt:  time.Now(),
 		updatedAt:  time.Now(),
 		typeSystem: typeSystem,
@@ -83,13 +83,40 @@ func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store fa
 }
 
 func (s *serverState) SetBundle(bundle *unified.Bundle) {
-	execTypes := buildHotloadTypeSystem(s.typeSystem, bundle, s.verbReg)
-	configureBundleExecution(bundle, s.verbReg, s.sagaOn, s.sagaStore, s.capSystem)
 	s.mu.Lock()
-	s.bundle = bundle
+	defer s.mu.Unlock()
+
+	configuredBundle := configuredBundleCopy(bundle, s.verbReg, s.sagaOn, s.sagaStore, s.capSystem)
+	execTypes := buildHotloadTypeSystem(s.typeSystem, configuredBundle, s.verbReg)
+	s.bundle = configuredBundle
 	s.execTypes = execTypes
 	s.updatedAt = time.Now()
-	s.mu.Unlock()
+}
+
+func (s *serverState) SetTypeSystem(typeSystem *types.TypeSystem) {
+	if typeSystem == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.typeSystem = typeSystem
+	s.execTypes = buildHotloadTypeSystem(typeSystem, s.bundle, s.verbReg)
+	s.updatedAt = time.Now()
+}
+
+func (s *serverState) SetVerbRegistry(verbRegistry *verb.Registry) {
+	if verbRegistry == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	configuredBundle := configuredBundleCopy(s.bundle, verbRegistry, s.sagaOn, s.sagaStore, s.capSystem)
+	s.bundle = configuredBundle
+	s.verbReg = verbRegistry
+	s.execTypes = buildHotloadTypeSystem(s.typeSystem, configuredBundle, verbRegistry)
+	s.updatedAt = time.Now()
 }
 
 func (s *serverState) recordBundleHistory(bundle *unified.Bundle, reason string) {
@@ -104,6 +131,26 @@ func (s *serverState) Bundle() *unified.Bundle {
 	defer s.mu.RUnlock()
 	return s.bundle
 }
+
+func (s *serverState) executionSnapshot() (*unified.Bundle, *types.TypeSystem) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.bundle, s.execTypes
+}
+
+func (s *serverState) executionRuntimeSnapshot() (*unified.Bundle, *types.TypeSystem, *verb.Registry) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.bundle, s.execTypes, s.verbReg
+}
+
+func (s *serverState) compilerSnapshot() (*types.TypeSystem, *verb.Registry) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.typeSystem, s.verbReg
+}
+
+var errFactQueueFull = errors.New("fact execution queue is full")
 
 func (s *serverState) IngestFacts(env factEnvelope) error {
 	if env.Universe == "" {
@@ -121,6 +168,7 @@ func (s *serverState) IngestFacts(env factEnvelope) error {
 		select {
 		case s.factCh <- env:
 		default:
+			return errFactQueueFull
 		}
 	}
 	return nil
@@ -357,7 +405,7 @@ func buildAPIAuth(mode, writeTokens, readTokens string) (apiAuth, string, error)
 	if len(auth.tokens) == 0 {
 		token, err := generateToken()
 		if err != nil {
-			return apiAuth{}, "", err
+			return apiAuth{}, "", fmt.Errorf("generate API token: %w", err)
 		}
 		auth.tokens[token] = roleWrite
 		generated = token
@@ -387,7 +435,9 @@ func parseMergeStrategy(input string) (pathutil.MergeStrategy, error) {
 	}
 }
 
-func startHTTPServer(ctx context.Context, addr string, state *serverState) {
+const maxAPIRequestBodyBytes int64 = 8 << 20
+
+func newHTTPServer(addr string, state *serverState) (*http.Server, net.Listener, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", state.handleUI)
 	mux.HandleFunc("/ui", state.handleUI)
@@ -408,11 +458,24 @@ func startHTTPServer(ctx context.Context, addr string, state *serverState) {
 	mux.HandleFunc("/api/playground/dry-run", state.handleDryRun)
 	mux.HandleFunc("/api/facts", state.handleFacts)
 
+	handler := state.withRequestTracing(state.withAPIMiddleware(mux))
 	server := &http.Server{
-		Addr:    addr,
-		Handler: state.withRequestTracing(state.withAPIMiddleware(mux)),
+		Addr:              addr,
+		Handler:           withRequestBodyLimit(handler, maxAPIRequestBodyBytes),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("listen on %s: %w", addr, err)
+	}
+	return server, listener, nil
+}
 
+func serveHTTPServer(ctx context.Context, server *http.Server, listener net.Listener) error {
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -420,11 +483,20 @@ func startHTTPServer(ctx context.Context, addr string, state *serverState) {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 
-	fmt.Printf("Starting HTTP server on %s\n", addr)
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		fmt.Printf("HTTP server error: %v\n", err)
+	fmt.Printf("Starting HTTP server on %s\n", listener.Addr())
+	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("serve HTTP API: %w", err)
 	}
-	fmt.Println("Shutting down HTTP server")
+	return nil
+}
+
+func withRequestBodyLimit(next http.Handler, limit int64) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil && limit > 0 {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 type factStore interface {
@@ -598,40 +670,46 @@ func (fs *fileFactStore) Update(universe string, facts map[string]interface{}) e
 	}
 
 	fs.mu.Lock()
-	snapshot, ok := fs.universes[universe]
+	defer fs.mu.Unlock()
+
+	nextUniverses := cloneUniverseSnapshots(fs.universes)
+	snapshot, ok := nextUniverses[universe]
 	if !ok {
 		snapshot = &universeSnapshot{
 			Facts:           make(map[string]interface{}),
 			NamespaceAccess: make(map[string]time.Time),
 		}
-		fs.universes[universe] = snapshot
+		nextUniverses[universe] = snapshot
 	}
 	nextFacts := copyMap(snapshot.Facts)
+	now := time.Now()
 	for namespace, payload := range facts {
 		existing := nextFacts[namespace]
 		strategy := fs.config.strategyFor(namespace)
 		merged, _, err := mergeValue(existing, payload, strategy)
 		if err != nil {
-			fs.mu.Unlock()
 			return fmt.Errorf("merge conflict in namespace %q: %w", namespace, err)
 		}
 		if existing == nil {
 			merged = payload
 		}
 		nextFacts[namespace] = merged
-		snapshot.NamespaceAccess[namespace] = time.Now()
+		snapshot.NamespaceAccess[namespace] = now
 	}
 	snapshot.Facts = nextFacts
-	snapshot.UpdatedAt = time.Now()
-	snapshot.LastAccess = time.Now()
+	snapshot.UpdatedAt = now
+	snapshot.LastAccess = now
 	if fs.config.cache.enabled() {
 		applyNamespaceLimit(snapshot, fs.config.cache.maxNamespaces)
-		applyUniverseLimit(fs.universes, fs.config.cache.maxUniverses)
+		applyUniverseLimit(nextUniverses, fs.config.cache.maxUniverses)
 	}
-	persisted := fs.snapshotLocked()
-	fs.mu.Unlock()
 
-	return fs.persist(persisted)
+	persisted := snapshotUniverses(nextUniverses)
+	committed, err := fs.persist(persisted)
+	if committed {
+		fs.universes = nextUniverses
+	}
+	return err
 }
 
 func (fs *fileFactStore) Snapshot(universe string) (map[string]interface{}, bool) {
@@ -676,12 +754,29 @@ type persistedUniverse struct {
 	AccessedAt time.Time              `json:"accessed_at,omitempty"`
 }
 
-func (fs *fileFactStore) snapshotLocked() persistedFacts {
+func cloneUniverseSnapshots(input map[string]*universeSnapshot) map[string]*universeSnapshot {
+	cloned := make(map[string]*universeSnapshot, len(input))
+	for name, snapshot := range input {
+		next := &universeSnapshot{
+			Facts:           copyMap(snapshot.Facts),
+			UpdatedAt:       snapshot.UpdatedAt,
+			LastAccess:      snapshot.LastAccess,
+			NamespaceAccess: make(map[string]time.Time, len(snapshot.NamespaceAccess)),
+		}
+		for namespace, accessed := range snapshot.NamespaceAccess {
+			next.NamespaceAccess[namespace] = accessed
+		}
+		cloned[name] = next
+	}
+	return cloned
+}
+
+func snapshotUniverses(universes map[string]*universeSnapshot) persistedFacts {
 	persisted := persistedFacts{
 		UpdatedAt: time.Now(),
-		Universes: make(map[string]persistedUniverse, len(fs.universes)),
+		Universes: make(map[string]persistedUniverse, len(universes)),
 	}
-	for name, snapshot := range fs.universes {
+	for name, snapshot := range universes {
 		persisted.Universes[name] = persistedUniverse{
 			Facts:      copyMap(snapshot.Facts),
 			UpdatedAt:  snapshot.UpdatedAt,
@@ -691,29 +786,52 @@ func (fs *fileFactStore) snapshotLocked() persistedFacts {
 	return persisted
 }
 
-func (fs *fileFactStore) persist(data persistedFacts) error {
+// persist returns committed=true once the new file has replaced the old path.
+// An error after that point means durability could not be confirmed, but memory
+// must still advance to match the file visible to subsequent readers.
+func (fs *fileFactStore) persist(data persistedFacts) (committed bool, err error) {
 	if fs == nil || fs.path == "" {
-		return nil
+		return true, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(fs.path), 0o755); err != nil {
-		return err
+	dir := filepath.Dir(fs.path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false, err
 	}
-	tempPath := fs.path + ".tmp"
-	file, err := os.Create(tempPath)
+
+	file, err := os.CreateTemp(dir, "."+filepath.Base(fs.path)+".tmp-*")
 	if err != nil {
-		return err
+		return false, err
 	}
+	tempPath := file.Name()
+	defer func() {
+		_ = file.Close()
+		_ = os.Remove(tempPath)
+	}()
+
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(data); err != nil {
-		_ = file.Close()
-		_ = os.Remove(tempPath)
-		return err
+		return false, err
+	}
+	if err := file.Sync(); err != nil {
+		return false, err
 	}
 	if err := file.Close(); err != nil {
-		return err
+		return false, err
 	}
-	return os.Rename(tempPath, fs.path)
+	if err := os.Rename(tempPath, fs.path); err != nil {
+		return false, err
+	}
+
+	directory, err := os.Open(dir)
+	if err != nil {
+		return true, err
+	}
+	defer directory.Close()
+	if err := directory.Sync(); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 func (fs *fileFactStore) load() error {
@@ -1323,6 +1441,11 @@ func (s *serverState) handleFacts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.IngestFacts(factEnvelope{Universe: req.Universe, Facts: req.Facts}); err != nil {
+			if errors.Is(err, errFactQueueFull) {
+				w.Header().Set("Retry-After", "1")
+				writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+				return
+			}
 			writeJSONError(w, http.StatusConflict, err.Error())
 			return
 		}

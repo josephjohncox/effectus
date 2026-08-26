@@ -86,7 +86,6 @@ var (
 
 	// Monitoring flags
 	metricsAddr = flag.String("metrics-addr", ":9090", "Address to expose metrics")
-	pprofAddr   = flag.String("pprof-addr", ":6060", "Address to expose pprof")
 
 	// Fact source flags
 	factSource   = flag.String("fact-source", "http", "Fact source (http, kafka)")
@@ -234,19 +233,14 @@ func main() {
 	}
 
 	// Create verb registry
-	verbReg := verb.NewRegistry(typeSystem)
-	if err := verbReg.SetDuplicatePolicy(*verbDuplicatePolicy); err != nil {
-		fmt.Fprintf(os.Stderr, "Invalid verb duplicate policy: %v\n", err)
+	verbReg, err := newConfiguredVerbRegistry(typeSystem)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid verb configuration: %v\n", err)
 		os.Exit(1)
-	}
-	if *verbStrict {
-		val := true
-		verbReg.SetStrictArgs(&val)
-		verbReg.SetStrictReturn(&val)
 	}
 	extensionDirs := splitCommaList(*extensionsDir)
 	extensionOCIs := splitCommaList(*extensionsOCI)
-	if err := loadVerbsAndExtensions(typeSystem, verbReg, extensionDirs, extensionOCIs); err != nil {
+	if err := loadVerbsAndExtensions(verbReg, extensionDirs, extensionOCIs); err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading verbs/extensions: %v\n", err)
 		os.Exit(1)
 	}
@@ -366,18 +360,23 @@ func main() {
 	state := newServerState(bundle, factCh, store, storeConfig, auth, limiter, acl, typeSystem, schemaSources, verbReg, *rulesHotload, history, *sagaEnabled, sagaStore, capSystem)
 	state.recordBundleHistory(bundle, "startup")
 
-	// Start fact source (non-HTTP)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		startFactSource(ctx, state)
-	}()
+	if err := validateFactSource(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error configuring fact source: %v\n", err)
+		return
+	}
 
-	// Start HTTP server for API
+	httpServer, httpListener, err := newHTTPServer(*httpAddr, state)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting HTTP server: %v\n", err)
+		return
+	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		startHTTPServer(ctx, *httpAddr, state)
+		if err := serveHTTPServer(ctx, httpServer, httpListener); err != nil {
+			fmt.Fprintf(os.Stderr, "HTTP server error: %v\n", err)
+			cancel()
+		}
 	}()
 
 	// Start metrics server
@@ -417,16 +416,21 @@ func main() {
 						continue
 					}
 
-					if newBundle.Version != bundle.Version {
-						fmt.Printf("Updated bundle from %s to %s\n", bundle.Version, newBundle.Version)
-						prepared, err := compileBundleRules(newBundle, typeSystem, verbReg, *verbose)
+					currentBundle, _ := state.executionSnapshot()
+					if currentBundle == nil || newBundle.Version != currentBundle.Version {
+						previousVersion := "<none>"
+						if currentBundle != nil {
+							previousVersion = currentBundle.Version
+						}
+						baseTypes, currentVerbs := state.compilerSnapshot()
+						prepared, err := compileBundleRules(newBundle, baseTypes, currentVerbs, *verbose)
 						if err != nil {
 							fmt.Fprintf(os.Stderr, "Error compiling updated bundle: %v\n", err)
 							continue
 						}
-						bundle = prepared
 						state.SetBundle(prepared)
 						state.recordBundleHistory(prepared, "oci-reload")
+						fmt.Printf("Updated bundle from %s to %s\n", previousVersion, prepared.Version)
 					}
 				}
 			}
@@ -455,7 +459,7 @@ func main() {
 					if *verbose {
 						fmt.Println("Reloading extension manifests...")
 					}
-					if err := loadVerbsAndExtensions(typeSystem, verbReg, extensionDirs, extensionOCIs); err != nil {
+					if err := reloadVerbsAndExtensions(state, extensionDirs, extensionOCIs); err != nil {
 						fmt.Fprintf(os.Stderr, "Error reloading extensions: %v\n", err)
 					}
 				}
@@ -485,8 +489,7 @@ func main() {
 					if *verbose {
 						fmt.Println("Reloading schema sources...")
 					}
-					typeSystem.ResetFactTypes()
-					if err := schemasources.Apply(context.Background(), typeSystem, schemaSources, *verbose); err != nil {
+					if err := reloadSchemaSources(ctx, state, schemaSources, *verbose); err != nil {
 						fmt.Fprintf(os.Stderr, "Error reloading schema sources: %v\n", err)
 					}
 				}
@@ -509,7 +512,42 @@ func main() {
 	}
 }
 
-func loadVerbsAndExtensions(typeSystem *types.TypeSystem, verbReg *verb.Registry, extensionDirs []string, extensionOCIs []string) error {
+func reloadSchemaSources(ctx context.Context, state *serverState, sources []adapters.SchemaSourceConfig, verbose bool) error {
+	candidate := types.NewTypeSystem()
+	if err := schemasources.Apply(ctx, candidate, sources, verbose); err != nil {
+		return err
+	}
+	state.SetTypeSystem(candidate)
+	return nil
+}
+
+func newConfiguredVerbRegistry(typeSystem *types.TypeSystem) (*verb.Registry, error) {
+	registry := verb.NewRegistry(typeSystem)
+	if err := registry.SetDuplicatePolicy(*verbDuplicatePolicy); err != nil {
+		return nil, err
+	}
+	if *verbStrict {
+		strict := true
+		registry.SetStrictArgs(&strict)
+		registry.SetStrictReturn(&strict)
+	}
+	return registry, nil
+}
+
+func reloadVerbsAndExtensions(state *serverState, extensionDirs []string, extensionOCIs []string) error {
+	typeSystem, _ := state.compilerSnapshot()
+	candidate, err := newConfiguredVerbRegistry(typeSystem)
+	if err != nil {
+		return err
+	}
+	if err := loadVerbsAndExtensions(candidate, extensionDirs, extensionOCIs); err != nil {
+		return err
+	}
+	state.SetVerbRegistry(candidate)
+	return nil
+}
+
+func loadVerbsAndExtensions(verbReg *verb.Registry, extensionDirs []string, extensionOCIs []string) error {
 	if verbReg == nil {
 		return nil
 	}
@@ -613,23 +651,17 @@ func parseFixedTime(value string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("expected RFC3339/RFC3339Nano timestamp")
 }
 
-// startFactSource starts the appropriate fact source
-func startFactSource(ctx context.Context, state *serverState) {
-	if *factSource == "kafka" {
-		startKafkaConsumer(ctx, state)
-		return
+func validateFactSource() error {
+	switch strings.ToLower(strings.TrimSpace(*factSource)) {
+	case "", "http":
+		return nil
+	case "kafka":
+		return fmt.Errorf(
+			"Kafka fact source is not implemented (brokers %q, topic %q)",
+			*kafkaBrokers,
+			*kafkaTopic,
+		)
+	default:
+		return fmt.Errorf("unsupported fact source %q", *factSource)
 	}
-}
-
-// startKafkaConsumer starts a Kafka consumer for facts
-func startKafkaConsumer(ctx context.Context, state *serverState) {
-	// Placeholder for Kafka consumer implementation
-	fmt.Println("Starting Kafka consumer...")
-	fmt.Printf("Brokers: %s\n", *kafkaBrokers)
-	fmt.Printf("Topic: %s\n", *kafkaTopic)
-
-	// In a real implementation, this would connect to Kafka
-	// and read messages into the factCh
-	<-ctx.Done()
-	fmt.Println("Stopping Kafka consumer...")
 }
