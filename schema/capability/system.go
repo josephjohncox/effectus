@@ -17,22 +17,25 @@ type CapabilitySystem struct {
 	// policies defines capability policies for different resources
 	policies map[string]*ResourcePolicy
 
+	// nextFenceToken increases for each granted lock in this process.
+	nextFenceToken int64
+
 	// mu protects concurrent access
 	mu sync.RWMutex
 }
 
 // lockKey represents a unique lock identifier
 type lockKey struct {
-	capability string
-	key        string
+	key string
 }
 
 // activeLock represents an active lock on a resource
 type activeLock struct {
-	holder    string    // identifier of the lock holder
-	acquired  time.Time // when the lock was acquired
-	expires   time.Time // when the lock expires
-	exclusive bool      // whether this is an exclusive lock
+	capability string    // capability granted to the holder
+	holder     string    // identifier of the lock holder
+	acquired   time.Time // when the lock was acquired
+	expires    time.Time // when the lock expires
+	exclusive  bool      // whether this is an exclusive lock
 }
 
 // ResourcePolicy defines capability requirements for a resource type
@@ -85,13 +88,16 @@ func (cs *CapabilitySystem) RegisterResourcePolicy(policy *ResourcePolicy) {
 
 // AcquireLock attempts to acquire a capability-based lock
 func (cs *CapabilitySystem) AcquireLock(capability types.Capability, key, holder string) (*LockResult, error) {
+	if key == "" {
+		return nil, fmt.Errorf("lock key is required")
+	}
+	if holder == "" {
+		return nil, fmt.Errorf("lock holder is required")
+	}
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
-	lockKey := lockKey{
-		capability: capability.String(),
-		key:        key,
-	}
+	lockKey := lockKey{key: key}
 
 	// Check if lock already exists
 	if existing, exists := cs.locks[lockKey]; exists {
@@ -99,12 +105,10 @@ func (cs *CapabilitySystem) AcquireLock(capability types.Capability, key, holder
 			// Lock has expired, remove it
 			delete(cs.locks, lockKey)
 		} else {
-			// Lock is still active
-			if existing.exclusive || capability == types.CapabilityModify ||
-				capability == types.CapabilityCreate || capability == types.CapabilityDelete {
-				return nil, fmt.Errorf("resource locked: capability %s on key %s held by %s until %v",
-					capability.String(), key, existing.holder, existing.expires)
-			}
+			// The current representation tracks one holder per key. Reject all
+			// overlap instead of losing track of concurrent read holders.
+			return nil, fmt.Errorf("resource locked: capability %s on key %s held by %s until %v",
+				capability.String(), key, existing.holder, existing.expires)
 		}
 	}
 
@@ -120,22 +124,26 @@ func (cs *CapabilitySystem) AcquireLock(capability types.Capability, key, holder
 	}
 
 	lock := &activeLock{
-		holder:    holder,
-		acquired:  now,
-		expires:   now.Add(timeout),
-		exclusive: capability != types.CapabilityRead,
+		capability: capability.String(),
+		holder:     holder,
+		acquired:   now,
+		expires:    now.Add(timeout),
+		exclusive:  capability != types.CapabilityRead,
 	}
 
 	cs.locks[lockKey] = lock
 
-	// Create fence token (simplified)
-	fenceToken := now.Unix()
+	cs.nextFenceToken++
+	fenceToken := cs.nextFenceToken
 
-	// Create unlock function
+	// Delete only this lock instance. A stale unlock must not delete a lock
+	// that another holder acquired after expiration.
 	unlock := func() {
 		cs.mu.Lock()
 		defer cs.mu.Unlock()
-		delete(cs.locks, lockKey)
+		if current, exists := cs.locks[lockKey]; exists && current == lock {
+			delete(cs.locks, lockKey)
+		}
 	}
 
 	return &LockResult{
@@ -146,8 +154,17 @@ func (cs *CapabilitySystem) AcquireLock(capability types.Capability, key, holder
 	}, nil
 }
 
-// ValidateCapability validates that an effect can be executed with the given capability
+// ValidateCapability validates an effect for callers that do not identify a holder.
 func (cs *CapabilitySystem) ValidateCapability(effect effectus.Effect, requiredCapability types.Capability) error {
+	return cs.ValidateCapabilityForHolder(effect, requiredCapability, "system")
+}
+
+// ValidateCapabilityForHolder validates an effect and gives policy validators
+// the identity that will own the resource lock.
+func (cs *CapabilitySystem) ValidateCapabilityForHolder(effect effectus.Effect, requiredCapability types.Capability, holder string) error {
+	if holder == "" {
+		return fmt.Errorf("capability holder is required")
+	}
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 
@@ -164,7 +181,7 @@ func (cs *CapabilitySystem) ValidateCapability(effect effectus.Effect, requiredC
 			Effect:     effect,
 			Capability: requiredCapability,
 			Key:        extractKey(effect),
-			Holder:     "system", // TODO: Extract from context
+			Holder:     holder,
 			Timestamp:  time.Now(),
 		}
 
@@ -188,8 +205,8 @@ func (cs *CapabilitySystem) GetActiveLocks() map[string]LockInfo {
 
 	for key, lock := range cs.locks {
 		if lock.expires.After(now) {
-			result[fmt.Sprintf("%s:%s", key.capability, key.key)] = LockInfo{
-				Capability: key.capability,
+			result[fmt.Sprintf("%s:%s", lock.capability, key.key)] = LockInfo{
+				Capability: lock.capability,
 				Key:        key.key,
 				Holder:     lock.holder,
 				Acquired:   lock.acquired,
@@ -318,7 +335,7 @@ func (cae *CapabilityAwareExecutor) Do(effect effectus.Effect) (interface{}, err
 	capability := inferCapabilityFromVerb(effect.Verb)
 
 	// Validate capability
-	if err := cae.capSystem.ValidateCapability(effect, capability); err != nil {
+	if err := cae.capSystem.ValidateCapabilityForHolder(effect, capability, cae.holderID); err != nil {
 		return nil, fmt.Errorf("capability validation failed: %w", err)
 	}
 
