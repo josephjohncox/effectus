@@ -775,7 +775,14 @@ func (f *testFacts) Schema() effectus.SchemaInfo {
 	return f.schema
 }
 
-// Type returns the type of a fact (not implemented)
+// Type returns the registered type of a fact.
 func (f *testFacts) Type(path string) interface{} {
-	return nil
+	if f == nil || f.schema == nil || f.schema.typeSystem == nil {
+		return nil
+	}
+	typ, err := f.schema.typeSystem.GetFactType(path)
+	if err != nil {
+		return nil
+	}
+	return typ
 }

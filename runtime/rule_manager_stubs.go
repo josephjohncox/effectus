@@ -2,8 +2,13 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
+
+// ErrRuleManagerPipelineUnsupported reports that the legacy rule-manager
+// compiler, validator, and deployment controller do not have implementations.
+var ErrRuleManagerPipelineUnsupported = errors.New("rule manager compilation and deployment pipeline is not implemented")
 
 // RuleCompiler is a minimal placeholder for the rule compilation pipeline.
 type RuleCompiler struct {
@@ -16,13 +21,13 @@ func NewRuleCompiler(settings *CompilerSettings) *RuleCompiler {
 }
 
 // CompileRuleset compiles a ruleset from rule files.
-func (c *RuleCompiler) CompileRuleset(ctx context.Context, rulesetName string, files []RuleFile) (*CompiledRuleset, error) {
-	return nil, fmt.Errorf("rule compilation not implemented")
+func (_ *RuleCompiler) CompileRuleset(_ context.Context, rulesetName string, _ []RuleFile) (*CompiledRuleset, error) {
+	return nil, fmt.Errorf("compile ruleset %q: %w", rulesetName, ErrRuleManagerPipelineUnsupported)
 }
 
 // GetVersion returns the compiler version.
-func (c *RuleCompiler) GetVersion() string {
-	return "unknown"
+func (_ *RuleCompiler) GetVersion() string {
+	return "unsupported"
 }
 
 // RuleValidator is a minimal placeholder for ruleset validation.
@@ -36,8 +41,8 @@ func NewRuleValidator(settings *ValidationSettings) *RuleValidator {
 }
 
 // ValidateRuleset validates a compiled ruleset.
-func (v *RuleValidator) ValidateRuleset(ctx context.Context, ruleset *CompiledRuleset) error {
-	return nil
+func (_ *RuleValidator) ValidateRuleset(_ context.Context, _ *CompiledRuleset) error {
+	return ErrRuleManagerPipelineUnsupported
 }
 
 // DeploymentController is a minimal placeholder for deployment orchestration.
@@ -52,6 +57,6 @@ func NewDeploymentController(settings *DeploymentSettings, storage RuleStorageBa
 }
 
 // Deploy performs a deployment.
-func (d *DeploymentController) Deploy(ctx context.Context, ruleset *StoredRuleset, environment string, options *DeploymentOptions) (*DeploymentResult, error) {
-	return nil, fmt.Errorf("deployment controller not implemented")
+func (_ *DeploymentController) Deploy(_ context.Context, _ *StoredRuleset, environment string, _ *DeploymentOptions) (*DeploymentResult, error) {
+	return nil, fmt.Errorf("deploy to %q: %w", environment, ErrRuleManagerPipelineUnsupported)
 }
