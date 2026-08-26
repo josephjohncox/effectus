@@ -12,6 +12,7 @@ services:
       -c wal_level=logical
       -c max_replication_slots=10
       -c max_wal_senders=10
+      -c output_plugin_libraries=wal2json
     ports:
       - "5432:5432"
     volumes:
@@ -24,7 +25,11 @@ services:
       MYSQL_DATABASE: effectus_cdc
       MYSQL_USER: effectus
       MYSQL_PASSWORD: effectus
-    command: --server-id=1 --log-bin=mysql-bin --binlog-format=ROW --binlog-row-image=FULL
+    command: >
+      --server-id=1
+      --log-bin=mysql-bin
+      --binlog-format=ROW
+      --binlog-row-image=FULL
     ports:
       - "3306:3306"
     volumes:
