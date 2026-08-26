@@ -155,14 +155,14 @@ func compileBundleRules(bundle *unified.Bundle, baseTS *types.TypeSystem, verbRe
 	}
 	defer cleanup()
 
-	spec, err := comp.ParseAndCompileFiles(collectTempPaths(prepared), facts)
+	spec, err := comp.ParseAndCompileProgram(collectTempPaths(prepared), facts)
 	if err != nil {
 		return nil, err
 	}
 
 	next := *bundle
-	next.ListSpec = extractListSpec(spec)
-	next.FlowSpec = extractFlowSpec(spec)
+	next.ListSpec = spec.ListSpec()
+	next.FlowSpec = spec.FlowSpec()
 	next.Rules = unified.SummarizeRules(next.ListSpec)
 	next.Flows = unified.SummarizeFlows(next.FlowSpec)
 	next.RequiredFacts = spec.RequiredFacts()

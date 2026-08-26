@@ -27,12 +27,6 @@ func TestNewPostgresStorageRejectsInvalidConfig(t *testing.T) {
 	})
 }
 
-func TestLegacyPostgresStorageFailsClosed(t *testing.T) {
-	storage, err := NewPostgresRuleStorage(&PostgresRuleStorageConfig{})
-	require.Nil(t, storage)
-	require.ErrorIs(t, err, ErrLegacyPostgresRuleStorageUnsupported)
-}
-
 func TestValidateDeploymentIdentity(t *testing.T) {
 	require.EqualError(t, validateDeploymentIdentity("", "production", "1"), "ruleset name is required")
 	require.EqualError(t, validateDeploymentIdentity("orders", "", "1"), "deployment environment is required")

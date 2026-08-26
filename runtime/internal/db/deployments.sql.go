@@ -657,6 +657,24 @@ func (q *Queries) GetLatestDeploymentForRuleset(ctx context.Context, name string
 	return &i, err
 }
 
+const HasActiveDeployments = `-- name: HasActiveDeployments :one
+SELECT EXISTS (
+    SELECT 1
+    FROM deployments d
+    JOIN rulesets r ON r.id = d.ruleset_id
+    WHERE r.name = $1
+      AND r.version = $2
+      AND d.status = 'active'
+)
+`
+
+func (q *Queries) HasActiveDeployments(ctx context.Context, name string, version string) (bool, error) {
+	row := q.db.QueryRow(ctx, HasActiveDeployments, name, version)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const ListDeployments = `-- name: ListDeployments :many
 SELECT d.id, d.ruleset_id, d.environment, d.status, d.strategy, d.config, d.health_check, d.rollback_info, d.canary_config, d.deployed_at, d.completed_at, d.deployed_by, d.deployment_duration_ms, d.created_at, d.updated_at, r.name as ruleset_name, r.version as ruleset_version
 FROM deployments d

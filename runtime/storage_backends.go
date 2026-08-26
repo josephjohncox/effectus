@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -109,6 +110,12 @@ func (m *InMemoryRuleStorage) DeleteRuleset(ctx context.Context, name, version s
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	for key, deployment := range m.deployments {
+		if strings.HasPrefix(key, name+":") && deployment.Version == version && deployment.Status == DeploymentStatusActive {
+			return fmt.Errorf("%w: %s:%s", ErrRulesetActive, name, version)
+		}
+	}
+
 	// Find and delete the ruleset
 	for key, ruleset := range m.rulesets {
 		if ruleset.Name == name && ruleset.Version == version {
@@ -162,8 +169,12 @@ func (m *InMemoryRuleStorage) GetActiveVersion(ctx context.Context, name, enviro
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	deployment := m.deployments[name+":"+environment]
+	if deployment == nil || deployment.Status != DeploymentStatusActive {
+		return nil, fmt.Errorf("no active version found for %s in %s", name, environment)
+	}
 	for _, ruleset := range m.rulesets {
-		if ruleset.Name == name && ruleset.Environment == environment && ruleset.Status == RulesetStatusDeployed {
+		if ruleset.Name == name && ruleset.Version == deployment.Version {
 			return &RulesetVersion{
 				Version:      ruleset.Version,
 				CreatedAt:    ruleset.CreatedAt,
@@ -173,75 +184,80 @@ func (m *InMemoryRuleStorage) GetActiveVersion(ctx context.Context, name, enviro
 			}, nil
 		}
 	}
-
-	return nil, fmt.Errorf("no active version found for %s in %s", name, environment)
+	return nil, fmt.Errorf("active ruleset artifact not found for %s in %s", name, environment)
 }
 
-// SetActiveVersion sets the active version for an environment
+// SetActiveVersion atomically replaces the active version for an environment.
+// Deprecated: use DeployRuleset with the atomic strategy.
 func (m *InMemoryRuleStorage) SetActiveVersion(ctx context.Context, name, environment, version string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	// Deactivate current active version
-	for _, ruleset := range m.rulesets {
-		if ruleset.Name == name && ruleset.Environment == environment && ruleset.Status == RulesetStatusDeployed {
-			ruleset.Status = RulesetStatusReady
-		}
-	}
-
-	// Activate new version
-	for _, ruleset := range m.rulesets {
-		if ruleset.Name == name && ruleset.Environment == environment && ruleset.Version == version {
-			ruleset.Status = RulesetStatusDeployed
-			return nil
-		}
-	}
-
-	return fmt.Errorf("version %s not found for %s in %s", version, name, environment)
+	return m.activateLocked(name, version, environment, &DeploymentConfig{Strategy: "atomic"}, "activate_ruleset")
 }
 
-// DeployRuleset deploys a ruleset to an environment
+// DeployRuleset atomically replaces the active version for an environment.
 func (m *InMemoryRuleStorage) DeployRuleset(ctx context.Context, name, version, environment string, config *DeploymentConfig) error {
+	config, err := normalizeDeploymentConfig(config)
+	if err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.activateLocked(name, version, environment, config, "deploy_ruleset")
+}
 
-	// Find the ruleset
+func (m *InMemoryRuleStorage) activateLocked(name, version, environment string, config *DeploymentConfig, action string) error {
+	var target *StoredRuleset
 	for _, ruleset := range m.rulesets {
 		if ruleset.Name == name && ruleset.Version == version {
-			// Create deployment record
-			deployment := &Deployment{
-				Environment: environment,
-				Version:     version,
-				DeployedAt:  time.Now(),
-				Status:      DeploymentStatusActive,
-				Config:      config,
+			target = ruleset
+			break
+		}
+	}
+	if target == nil {
+		return fmt.Errorf("ruleset not found for deployment: %s:%s", name, version)
+	}
+
+	key := name + ":" + environment
+	if current := m.deployments[key]; current != nil {
+		current.Status = DeploymentStatusInactive
+	}
+	for _, ruleset := range m.rulesets {
+		if ruleset.Name != name || ruleset.Deployments == nil {
+			continue
+		}
+		if deployment := ruleset.Deployments[environment]; deployment != nil {
+			deployment.Status = DeploymentStatusInactive
+			if ruleset.Status == RulesetStatusDeployed {
+				ruleset.Status = RulesetStatusReady
 			}
-
-			if ruleset.Deployments == nil {
-				ruleset.Deployments = make(map[string]*Deployment)
-			}
-			ruleset.Deployments[environment] = deployment
-
-			// Update ruleset status
-			ruleset.Status = RulesetStatusDeployed
-
-			// Record audit
-			auditEntry := &AuditEntry{
-				ID:          fmt.Sprintf("audit-%d", time.Now().UnixNano()),
-				Timestamp:   time.Now(),
-				Action:      "deploy_ruleset",
-				Resource:    name,
-				Version:     version,
-				Environment: environment,
-				Result:      "success",
-			}
-			m.auditLog = append(m.auditLog, auditEntry)
-
-			return nil
 		}
 	}
 
-	return fmt.Errorf("ruleset not found for deployment: %s:%s", name, version)
+	now := time.Now()
+	deployment := &Deployment{
+		Environment: environment,
+		Version:     version,
+		DeployedAt:  now,
+		Status:      DeploymentStatusActive,
+		Config:      config,
+	}
+	if target.Deployments == nil {
+		target.Deployments = make(map[string]*Deployment)
+	}
+	target.Deployments[environment] = deployment
+	target.Status = RulesetStatusDeployed
+	m.deployments[key] = deployment
+	m.auditLog = append(m.auditLog, &AuditEntry{
+		ID:          fmt.Sprintf("audit-%d", now.UnixNano()),
+		Timestamp:   now,
+		Action:      action,
+		Resource:    name,
+		Version:     version,
+		Environment: environment,
+		Result:      "success",
+	})
+	return nil
 }
 
 // GetDeploymentStatus returns deployment status
@@ -249,16 +265,12 @@ func (m *InMemoryRuleStorage) GetDeploymentStatus(ctx context.Context, name, env
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	for _, ruleset := range m.rulesets {
-		if ruleset.Name == name {
-			if deployment, exists := ruleset.Deployments[environment]; exists {
-				status := deployment.Status
-				return &status, nil
-			}
-		}
+	deployment := m.deployments[name+":"+environment]
+	if deployment == nil {
+		return nil, fmt.Errorf("no deployment found for %s in %s", name, environment)
 	}
-
-	return nil, fmt.Errorf("no deployment found for %s in %s", name, environment)
+	status := deployment.Status
+	return &status, nil
 }
 
 // RollbackDeployment rolls back a deployment
@@ -266,19 +278,7 @@ func (m *InMemoryRuleStorage) RollbackDeployment(ctx context.Context, name, envi
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Record audit
-	auditEntry := &AuditEntry{
-		ID:          fmt.Sprintf("audit-%d", time.Now().UnixNano()),
-		Timestamp:   time.Now(),
-		Action:      "rollback_deployment",
-		Resource:    name,
-		Version:     targetVersion,
-		Environment: environment,
-		Result:      "success",
-	}
-	m.auditLog = append(m.auditLog, auditEntry)
-
-	return nil // Simplified implementation
+	return m.activateLocked(name, targetVersion, environment, &DeploymentConfig{Strategy: "atomic"}, "rollback_deployment")
 }
 
 // GetAuditLog returns audit logs with filters

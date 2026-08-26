@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +31,7 @@ type runtimeConfig struct {
 type bundleConfig struct {
 	File           string `yaml:"file" json:"file"`
 	OCI            string `yaml:"oci" json:"oci"`
+	CacheDir       string `yaml:"cache_dir" json:"cache_dir"`
 	ReloadInterval string `yaml:"reload_interval" json:"reload_interval"`
 }
 
@@ -104,15 +108,37 @@ func loadRuntimeConfig(path string) (*runtimeConfig, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".json":
-		if err := json.Unmarshal(data, cfg); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(cfg); err != nil {
+			return nil, fmt.Errorf("parsing config json: %w", err)
+		}
+		var extra interface{}
+		if err := requireConfigEOF(decoder.Decode(&extra)); err != nil {
 			return nil, fmt.Errorf("parsing config json: %w", err)
 		}
 	default:
-		if err := yaml.Unmarshal(data, cfg); err != nil {
+		decoder := yaml.NewDecoder(bytes.NewReader(data))
+		decoder.KnownFields(true)
+		if err := decoder.Decode(cfg); err != nil {
+			return nil, fmt.Errorf("parsing config yaml: %w", err)
+		}
+		var extra interface{}
+		if err := requireConfigEOF(decoder.Decode(&extra)); err != nil {
 			return nil, fmt.Errorf("parsing config yaml: %w", err)
 		}
 	}
 	return cfg, nil
+}
+
+func requireConfigEOF(err error) error {
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err == nil {
+		return fmt.Errorf("multiple configuration documents are not allowed")
+	}
+	return err
 }
 
 func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
@@ -125,6 +151,9 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 	}
 	if cfg.Bundle.OCI != "" && !setFlags["oci-ref"] {
 		*ociRef = cfg.Bundle.OCI
+	}
+	if cfg.Bundle.CacheDir != "" && !setFlags["oci-cache-dir"] {
+		*ociCacheDir = cfg.Bundle.CacheDir
 	}
 	if cfg.Bundle.ReloadInterval != "" && !setFlags["reload-interval"] {
 		interval, err := time.ParseDuration(cfg.Bundle.ReloadInterval)

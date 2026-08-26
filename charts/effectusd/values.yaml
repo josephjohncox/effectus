@@ -1,22 +1,25 @@
 image:
   repository: ghcr.io/effectus/effectusd
-  tag: "latest"
+  tag: ""
+  digest: ""
   pullPolicy: IfNotPresent
 
 bundle:
   ociRef: ""
+  cacheDir: "/data/bundles"
   reloadInterval: "60s"
 
 api:
   authMode: "token"
-  token: ""
-  readToken: ""
+  existingSecret: ""
+  tokenKey: "api-token"
+  readTokenKey: "api-read-token"
   aclFile: ""
   rateLimit: 120
   rateBurst: 60
 
 facts:
-  store: "file"
+  store: "memory"
   path: "/data/facts.json"
   mergeDefault: "last"
   mergeNamespace: []
@@ -24,12 +27,31 @@ facts:
   cacheMaxUniverses: 0
   cacheMaxNamespaces: 0
 
+persistence:
+  enabled: false
+  existingClaim: ""
+  size: 1Gi
+  storageClass: ""
+
 service:
   type: ClusterIP
   port: 8080
   metricsPort: 9090
 
 resources: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  fsGroup: 10001
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+terminationGracePeriodSeconds: 30
 
 initContainers: []
 extraVolumes: []

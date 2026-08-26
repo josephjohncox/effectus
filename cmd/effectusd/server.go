@@ -35,15 +35,31 @@ type factEnvelope struct {
 	Namespace string                 `json:"namespace,omitempty"`
 }
 
+type runtimeGeneration struct {
+	id           uint64
+	bundle       *unified.Bundle
+	bundleDigest string
+	schemaTypes  *types.TypeSystem
+	execTypes    *types.TypeSystem
+	verbs        *verb.Registry
+	publishedAt  time.Time
+}
+
+type processPhase string
+
+const (
+	phaseStarting processPhase = "starting"
+	phaseRunning  processPhase = "running"
+	phaseDraining processPhase = "draining"
+	phaseStopped  processPhase = "stopped"
+)
+
 type serverState struct {
 	mu         sync.RWMutex
-	bundle     *unified.Bundle
+	generation *runtimeGeneration
+	phase      processPhase
 	startedAt  time.Time
-	updatedAt  time.Time
-	typeSystem *types.TypeSystem
-	execTypes  *types.TypeSystem
 	sources    []adapters.SchemaSourceConfig
-	verbReg    *verb.Registry
 	rulesOn    bool
 	history    *bundleHistory
 	sagaOn     bool
@@ -58,16 +74,10 @@ type serverState struct {
 }
 
 func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store factStore, config factStoreConfig, auth apiAuth, limiter *rateLimiter, acl *aclMatcher, typeSystem *types.TypeSystem, sources []adapters.SchemaSourceConfig, verbReg *verb.Registry, rulesHotload bool, history *bundleHistory, sagaEnabled bool, sagaStore schema.SagaStore, capSystem *capability.CapabilitySystem) *serverState {
-	configuredBundle := configuredBundleCopy(bundle, verbReg, sagaEnabled, sagaStore, capSystem)
-	execTypes := buildHotloadTypeSystem(typeSystem, configuredBundle, verbReg)
-	return &serverState{
-		bundle:     configuredBundle,
+	state := &serverState{
+		phase:      phaseStarting,
 		startedAt:  time.Now(),
-		updatedAt:  time.Now(),
-		typeSystem: typeSystem,
-		execTypes:  execTypes,
 		sources:    sources,
-		verbReg:    verbReg,
 		rulesOn:    rulesHotload,
 		history:    history,
 		sagaOn:     sagaEnabled,
@@ -80,43 +90,84 @@ func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store fa
 		limiter:    limiter,
 		acl:        acl,
 	}
+	state.generation = state.buildGeneration(1, bundle, typeSystem, verbReg)
+	return state
+}
+
+func (s *serverState) buildGeneration(id uint64, bundle *unified.Bundle, typeSystem *types.TypeSystem, verbRegistry *verb.Registry) *runtimeGeneration {
+	configuredBundle := configuredBundleCopy(bundle, verbRegistry, s.sagaOn, s.sagaStore, s.capSystem)
+	digest, _ := unified.BundleDigest(configuredBundle)
+	return &runtimeGeneration{
+		id:           id,
+		bundle:       configuredBundle,
+		bundleDigest: digest,
+		schemaTypes:  typeSystem,
+		execTypes:    buildHotloadTypeSystem(typeSystem, configuredBundle, verbRegistry),
+		verbs:        verbRegistry,
+		publishedAt:  time.Now(),
+	}
 }
 
 func (s *serverState) SetBundle(bundle *unified.Bundle) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	configuredBundle := configuredBundleCopy(bundle, s.verbReg, s.sagaOn, s.sagaStore, s.capSystem)
-	execTypes := buildHotloadTypeSystem(s.typeSystem, configuredBundle, s.verbReg)
-	s.bundle = configuredBundle
-	s.execTypes = execTypes
-	s.updatedAt = time.Now()
+	s.generation = s.buildGeneration(s.generation.id+1, bundle, s.generation.schemaTypes, s.generation.verbs)
 }
 
 func (s *serverState) SetTypeSystem(typeSystem *types.TypeSystem) {
 	if typeSystem == nil {
 		return
 	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.typeSystem = typeSystem
-	s.execTypes = buildHotloadTypeSystem(typeSystem, s.bundle, s.verbReg)
-	s.updatedAt = time.Now()
+	s.generation = s.buildGeneration(s.generation.id+1, s.generation.bundle, typeSystem, s.generation.verbs)
 }
 
 func (s *serverState) SetVerbRegistry(verbRegistry *verb.Registry) {
 	if verbRegistry == nil {
 		return
 	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	configuredBundle := configuredBundleCopy(s.bundle, verbRegistry, s.sagaOn, s.sagaStore, s.capSystem)
-	s.bundle = configuredBundle
-	s.verbReg = verbRegistry
-	s.execTypes = buildHotloadTypeSystem(s.typeSystem, configuredBundle, verbRegistry)
-	s.updatedAt = time.Now()
+	s.generation = s.buildGeneration(s.generation.id+1, s.generation.bundle, s.generation.schemaTypes, verbRegistry)
+}
+
+var errGenerationConflict = errors.New("runtime generation changed while preparing candidate")
+
+func (s *serverState) ActivateBundle(bundle *unified.Bundle, expected uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.generation.id != expected {
+		return errGenerationConflict
+	}
+	s.generation = s.buildGeneration(expected+1, bundle, s.generation.schemaTypes, s.generation.verbs)
+	return nil
+}
+
+func (s *serverState) ActivateTypeSystem(typeSystem *types.TypeSystem, expected uint64) error {
+	if typeSystem == nil {
+		return fmt.Errorf("type system is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.generation.id != expected {
+		return errGenerationConflict
+	}
+	s.generation = s.buildGeneration(expected+1, s.generation.bundle, typeSystem, s.generation.verbs)
+	return nil
+}
+
+func (s *serverState) ActivateVerbRegistry(verbRegistry *verb.Registry, expected uint64) error {
+	if verbRegistry == nil {
+		return fmt.Errorf("verb registry is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.generation.id != expected {
+		return errGenerationConflict
+	}
+	s.generation = s.buildGeneration(expected+1, s.generation.bundle, s.generation.schemaTypes, verbRegistry)
+	return nil
 }
 
 func (s *serverState) recordBundleHistory(bundle *unified.Bundle, reason string) {
@@ -126,28 +177,41 @@ func (s *serverState) recordBundleHistory(bundle *unified.Bundle, reason string)
 	_, _ = s.history.Add(bundle, reason)
 }
 
-func (s *serverState) Bundle() *unified.Bundle {
+func (s *serverState) generationSnapshot() *runtimeGeneration {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.bundle
+	return s.generation
+}
+
+func (s *serverState) SetPhase(phase processPhase) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.phase = phase
+}
+
+func (s *serverState) lifecycleSnapshot() (*runtimeGeneration, processPhase) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.generation, s.phase
+}
+
+func (s *serverState) Bundle() *unified.Bundle {
+	return s.generationSnapshot().bundle
 }
 
 func (s *serverState) executionSnapshot() (*unified.Bundle, *types.TypeSystem) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.bundle, s.execTypes
+	generation := s.generationSnapshot()
+	return generation.bundle, generation.execTypes
 }
 
 func (s *serverState) executionRuntimeSnapshot() (*unified.Bundle, *types.TypeSystem, *verb.Registry) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.bundle, s.execTypes, s.verbReg
+	generation := s.generationSnapshot()
+	return generation.bundle, generation.execTypes, generation.verbs
 }
 
 func (s *serverState) compilerSnapshot() (*types.TypeSystem, *verb.Registry) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.typeSystem, s.verbReg
+	generation := s.generationSnapshot()
+	return generation.schemaTypes, generation.verbs
 }
 
 var errFactQueueFull = errors.New("fact execution queue is full")
@@ -158,11 +222,6 @@ func (s *serverState) IngestFacts(env factEnvelope) error {
 	}
 	if env.Received.IsZero() {
 		env.Received = time.Now()
-	}
-	if s.factStore != nil {
-		if err := s.factStore.Update(env.Universe, env.Facts); err != nil {
-			return err
-		}
 	}
 	if s.factCh != nil {
 		select {
@@ -376,7 +435,7 @@ func clientKey(r *http.Request) string {
 	return host
 }
 
-func buildAPIAuth(mode, writeTokens, readTokens string) (apiAuth, string, error) {
+func buildAPIAuth(mode, writeTokens, readTokens string) (apiAuth, error) {
 	auth := apiAuth{
 		mode:   strings.ToLower(strings.TrimSpace(mode)),
 		tokens: make(map[string]apiRole),
@@ -384,8 +443,11 @@ func buildAPIAuth(mode, writeTokens, readTokens string) (apiAuth, string, error)
 	if auth.mode == "" {
 		auth.mode = "token"
 	}
+	if auth.mode != "token" && auth.mode != "disabled" {
+		return apiAuth{}, fmt.Errorf("unsupported API authentication mode %q", auth.mode)
+	}
 	if !auth.enabled() {
-		return auth, "", nil
+		return auth, nil
 	}
 
 	addTokens := func(raw string, role apiRole) {
@@ -401,17 +463,11 @@ func buildAPIAuth(mode, writeTokens, readTokens string) (apiAuth, string, error)
 	addTokens(writeTokens, roleWrite)
 	addTokens(readTokens, roleRead)
 
-	var generated string
 	if len(auth.tokens) == 0 {
-		token, err := generateToken()
-		if err != nil {
-			return apiAuth{}, "", fmt.Errorf("generate API token: %w", err)
-		}
-		auth.tokens[token] = roleWrite
-		generated = token
+		return apiAuth{}, fmt.Errorf("token authentication requires at least one configured token")
 	}
 
-	return auth, generated, nil
+	return auth, nil
 }
 
 func generateToken() (string, error) {
@@ -1031,6 +1087,9 @@ func factConfigSummary(config factStoreConfig) *factStoreConfigSummary {
 }
 
 type statusResponse struct {
+	GenerationID     uint64                  `json:"generation_id"`
+	ArtifactDigest   string                  `json:"artifact_digest"`
+	Phase            processPhase            `json:"phase"`
 	Bundle           *bundleSummary          `json:"bundle"`
 	Counts           bundleCounts            `json:"counts"`
 	StartedAt        time.Time               `json:"started_at"`
@@ -1113,14 +1172,18 @@ func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	bundle := s.Bundle()
+	generation, phase := s.lifecycleSnapshot()
+	bundle := generation.bundle
 	if bundle == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
 		return
 	}
-	runtimeFacts := summarizeRuntimeFacts(s.typeSystem)
+	runtimeFacts := summarizeRuntimeFacts(generation.schemaTypes)
 	combinedFacts := mergeFactTypeSummaries(runtimeFacts, bundle.FactTypes)
 	resp := statusResponse{
+		GenerationID:   generation.id,
+		ArtifactDigest: generation.bundleDigest,
+		Phase:          phase,
 		Bundle: &bundleSummary{
 			Name:        bundle.Name,
 			Version:     bundle.Version,
@@ -1136,13 +1199,13 @@ func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 			Flows: countFlows(bundle),
 		},
 		StartedAt:        s.startedAt,
-		LastReload:       s.updatedAt,
+		LastReload:       generation.publishedAt,
 		UptimeSec:        int64(time.Since(s.startedAt).Seconds()),
 		Universes:        summariesOrEmpty(s.factStore),
 		RequiredFact:     bundle.RequiredFacts,
 		FactStore:        storeTypeOrUnknown(s.factStore),
 		FactStoreConfig:  factConfigSummary(s.factConfig),
-		VerbCount:        verbCount(s.verbReg, bundle),
+		VerbCount:        verbCount(generation.verbs, bundle),
 		FactCount:        len(combinedFacts),
 		BundleFactCount:  len(bundle.FactTypes),
 		RuntimeFactCount: len(runtimeFacts),
@@ -1362,11 +1425,12 @@ func (s *serverState) handleVerbs(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if s.verbReg != nil && s.verbReg.Count() > 0 {
-		writeJSON(w, http.StatusOK, summarizeVerbRegistry(s.verbReg))
+	generation := s.generationSnapshot()
+	if generation.verbs != nil && generation.verbs.Count() > 0 {
+		writeJSON(w, http.StatusOK, summarizeVerbRegistry(generation.verbs))
 		return
 	}
-	bundle := s.Bundle()
+	bundle := generation.bundle
 	if bundle == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
 		return
@@ -1383,12 +1447,13 @@ func (s *serverState) handleSchema(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	bundle := s.Bundle()
+	generation := s.generationSnapshot()
+	bundle := generation.bundle
 	if bundle == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
 		return
 	}
-	runtimeFacts := summarizeRuntimeFacts(s.typeSystem)
+	runtimeFacts := summarizeRuntimeFacts(generation.schemaTypes)
 	resp := schemaResponse{
 		Bundle:   bundle.FactTypes,
 		Runtime:  runtimeFacts,
@@ -1411,9 +1476,18 @@ func (s *serverState) handleReady(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	bundle := s.Bundle()
+	generation, phase := s.lifecycleSnapshot()
+	bundle := generation.bundle
 	if bundle == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
+		return
+	}
+	if phase != phaseRunning {
+		writeJSONError(w, http.StatusServiceUnavailable, fmt.Sprintf("runtime is %s", phase))
+		return
+	}
+	if generation.schemaTypes == nil || generation.execTypes == nil || generation.verbs == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "runtime generation is incomplete")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{

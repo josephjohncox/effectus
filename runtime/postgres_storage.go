@@ -3,10 +3,12 @@ package runtime
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/effectus/effectus-go/runtime/internal/db"
@@ -17,6 +19,11 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/pressly/goose/v3"
 )
+
+//go:embed migrations/*.sql
+var embeddedMigrations embed.FS
+
+var migrationMu sync.Mutex
 
 // PostgresStorage implements RuleStorageBackend using sqlc and goose
 type PostgresStorage struct {
@@ -36,20 +43,6 @@ type PostgresStorageConfig struct {
 	// Migration settings
 	MigrationsPath string `yaml:"migrations_path"`
 	AutoMigrate    bool   `yaml:"auto_migrate"`
-
-	// Performance settings
-	PreparedStatements bool          `yaml:"prepared_statements"`
-	CacheEnabled       bool          `yaml:"cache_enabled"`
-	CacheTTL           time.Duration `yaml:"cache_ttl"`
-
-	// Maintenance settings
-	AuditRetentionDays int    `yaml:"audit_retention_days"`
-	VacuumEnabled      bool   `yaml:"vacuum_enabled"`
-	VacuumSchedule     string `yaml:"vacuum_schedule"`
-
-	// Monitoring
-	MetricsEnabled bool `yaml:"metrics_enabled"`
-	LogQueries     bool `yaml:"log_queries"`
 }
 
 // NewPostgresStorage creates a new PostgreSQL storage backend with modern tooling
@@ -79,10 +72,6 @@ func NewPostgresStorage(config *PostgresStorageConfig) (*PostgresStorage, error)
 	if config.ConnMaxIdleTime == 0 {
 		config.ConnMaxIdleTime = 30 * time.Minute
 	}
-	if config.MigrationsPath == "" {
-		config.MigrationsPath = "migrations"
-	}
-
 	// Configure connection pool
 	poolConfig, err := pgxpool.ParseConfig(config.DSN)
 	if err != nil {
@@ -132,6 +121,16 @@ func NewPostgresStorage(config *PostgresStorageConfig) (*PostgresStorage, error)
 
 // runMigrations runs database migrations using goose
 func (p *PostgresStorage) runMigrations() error {
+	migrationMu.Lock()
+	defer migrationMu.Unlock()
+
+	migrationPath := p.config.MigrationsPath
+	if migrationPath == "" {
+		goose.SetBaseFS(embeddedMigrations)
+		defer goose.SetBaseFS(nil)
+		migrationPath = "migrations"
+	}
+
 	// Get a regular sql.DB connection for goose
 	db, err := sql.Open("postgres", p.config.DSN)
 	if err != nil {
@@ -145,7 +144,7 @@ func (p *PostgresStorage) runMigrations() error {
 	}
 
 	// Run migrations
-	if err := goose.Up(db, p.config.MigrationsPath); err != nil {
+	if err := goose.Up(db, migrationPath); err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
@@ -597,6 +596,13 @@ func (p *PostgresStorage) DeleteRuleset(ctx context.Context, name, version strin
 	if strings.TrimSpace(name) == "" || strings.TrimSpace(version) == "" {
 		return fmt.Errorf("ruleset name and version are required")
 	}
+	active, err := p.queries.HasActiveDeployments(ctx, name, version)
+	if err != nil {
+		return fmt.Errorf("check active deployments for %s:%s: %w", name, version, err)
+	}
+	if active {
+		return fmt.Errorf("%w: %s:%s", ErrRulesetActive, name, version)
+	}
 	deleted, err := p.queries.DeleteRulesetByNameVersion(ctx, name, version)
 	if err != nil {
 		return fmt.Errorf("delete ruleset %s:%s: %w", name, version, err)
@@ -656,20 +662,18 @@ func (p *PostgresStorage) GetActiveVersion(ctx context.Context, name, environmen
 }
 
 func (p *PostgresStorage) SetActiveVersion(ctx context.Context, name, environment, version string) error {
-	return p.DeployRuleset(ctx, name, version, environment, &DeploymentConfig{Strategy: "rolling"})
+	return p.DeployRuleset(ctx, name, version, environment, &DeploymentConfig{Strategy: "atomic"})
 }
 
 func (p *PostgresStorage) DeployRuleset(ctx context.Context, name, version, environment string, config *DeploymentConfig) error {
 	if err := validateDeploymentIdentity(name, environment, version); err != nil {
 		return err
 	}
-	if config == nil {
-		config = &DeploymentConfig{Strategy: "rolling"}
+	config, err := normalizeDeploymentConfig(config)
+	if err != nil {
+		return err
 	}
-	strategy := strings.TrimSpace(config.Strategy)
-	if strategy == "" {
-		strategy = "rolling"
-	}
+	strategy := config.Strategy
 	configJSON, err := json.Marshal(config)
 	if err != nil {
 		return fmt.Errorf("marshal deployment config: %w", err)

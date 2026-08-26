@@ -18,9 +18,8 @@ func TestPostgresStorageLifecycle(t *testing.T) {
 	}
 
 	storage, err := NewPostgresStorage(&PostgresStorageConfig{
-		DSN:            dsn,
-		AutoMigrate:    true,
-		MigrationsPath: "migrations",
+		DSN:         dsn,
+		AutoMigrate: true,
 	})
 	require.NoError(t, err)
 	t.Cleanup(storage.Close)
@@ -57,7 +56,9 @@ func TestPostgresStorageLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, versions, 2)
 
-	require.NoError(t, storage.DeployRuleset(ctx, "orders", "1.0.0", "production", &DeploymentConfig{Strategy: "rolling"}))
+	require.ErrorIs(t, storage.DeployRuleset(ctx, "orders", "1.0.0", "production", &DeploymentConfig{Strategy: "canary"}), ErrUnsupportedDeploymentStrategy)
+	require.NoError(t, storage.DeployRuleset(ctx, "orders", "1.0.0", "production", &DeploymentConfig{Strategy: "atomic"}))
+	require.ErrorIs(t, storage.DeleteRuleset(ctx, "orders", "1.0.0"), ErrRulesetActive)
 	active, err := storage.GetActiveVersion(ctx, "orders", "production")
 	require.NoError(t, err)
 	require.Equal(t, "1.0.0", active.Version)

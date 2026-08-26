@@ -119,7 +119,7 @@ func (er *ExecutionRuntime) ExecuteVerb(ctx context.Context, verbName string, ar
 	er.mu.RLock()
 	defer er.mu.RUnlock()
 
-	if er.state != StateReady {
+	if er.state != StateReady || er.compiledUnit == nil {
 		return nil, fmt.Errorf("runtime not ready (state: %s)", er.state)
 	}
 
@@ -195,21 +195,11 @@ func (er *ExecutionRuntime) GetRuntimeInfo() *RuntimeInfo {
 func (er *ExecutionRuntime) HotReload(ctx context.Context) error {
 	log.Println("Starting hot reload...")
 
-	er.mu.Lock()
-	er.state = StateCompiling
-	er.mu.Unlock()
-
 	result, err := er.compiler.Compile(ctx, er.extensionManager)
 	if err != nil {
-		er.mu.Lock()
-		er.state = StateReady
-		er.mu.Unlock()
 		return fmt.Errorf("hot reload failed: %w", err)
 	}
 	if !result.Success {
-		er.mu.Lock()
-		er.state = StateReady
-		er.mu.Unlock()
 		return fmt.Errorf("hot reload failed: %v", result.Errors)
 	}
 

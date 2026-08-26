@@ -30,6 +30,16 @@ WHERE ruleset_id = $1 AND environment = $2;
 SELECT * FROM deployments 
 WHERE id = $1;
 
+-- name: HasActiveDeployments :one
+SELECT EXISTS (
+    SELECT 1
+    FROM deployments d
+    JOIN rulesets r ON r.id = d.ruleset_id
+    WHERE r.name = sqlc.arg(name)
+      AND r.version = sqlc.arg(version)
+      AND d.status = 'active'
+);
+
 -- name: GetActiveDeployment :one
 SELECT d.*, r.name as ruleset_name, r.version as ruleset_version
 FROM deployments d

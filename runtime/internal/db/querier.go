@@ -59,6 +59,7 @@ type Querier interface {
 	GetSecurityEvents(ctx context.Context, timestamp pgtype.Timestamptz, limit int32) ([]*AuditLog, error)
 	GetTopActions(ctx context.Context, timestamp pgtype.Timestamptz, limit int32) ([]*GetTopActionsRow, error)
 	GetTopUsers(ctx context.Context, timestamp pgtype.Timestamptz, limit int32) ([]*GetTopUsersRow, error)
+	HasActiveDeployments(ctx context.Context, name string, version string) (bool, error)
 	ListDeployments(ctx context.Context, column1 string, column2 []DeploymentStatus, column3 string, column4 pgtype.Timestamptz, column5 pgtype.Timestamptz, limit int32) ([]*ListDeploymentsRow, error)
 	ListRulesets(ctx context.Context, column1 []string, column2 []string, column3 []RulesetStatus, column4 string, column5 string, column6 []string, column7 pgtype.Timestamptz, column8 string, column9 string, limit int32) ([]*ListRulesetsRow, error)
 	SearchAuditLogs(ctx context.Context, plaintoTsquery string, timestamp pgtype.Timestamptz, limit int32) ([]*AuditLog, error)

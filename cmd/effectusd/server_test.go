@@ -61,11 +61,14 @@ func TestRequestBodyLimitBoundsReads(t *testing.T) {
 func TestIngestFactsReturnsQueueFull(t *testing.T) {
 	queue := make(chan factEnvelope, 1)
 	queue <- factEnvelope{Universe: "occupied"}
-	state := &serverState{factCh: queue}
+	store := newMemoryFactStore(factStoreConfig{})
+	state := &serverState{factCh: queue, factStore: store}
 
 	err := state.IngestFacts(factEnvelope{Facts: map[string]interface{}{"ready": true}})
 	require.ErrorIs(t, err, errFactQueueFull)
 	require.Len(t, queue, 1)
+	_, mutated := store.Snapshot("default")
+	require.False(t, mutated, "a rejected request must not mutate fact state")
 }
 
 func TestHandleFactsReportsBackpressure(t *testing.T) {
@@ -151,6 +154,16 @@ func TestExecutionSnapshotKeepsBundleAndTypesCoherent(t *testing.T) {
 	for failure := range failures {
 		t.Error(failure)
 	}
+}
+
+func TestGenerationActivationRejectsStaleCandidate(t *testing.T) {
+	state := newServerState(&unified.Bundle{Name: "initial"}, nil, nil, factStoreConfig{}, apiAuth{}, nil, nil, types.NewTypeSystem(), nil, verb.NewRegistry(nil), false, nil, false, nil, nil)
+	base := state.generationSnapshot()
+
+	state.SetBundle(&unified.Bundle{Name: "newer"})
+	err := state.ActivateBundle(&unified.Bundle{Name: "stale"}, base.id)
+	require.ErrorIs(t, err, errGenerationConflict)
+	require.Equal(t, "newer", state.Bundle().Name)
 }
 
 func TestSchemaReloadKeepsLastKnownGoodOnFailure(t *testing.T) {
@@ -454,11 +467,19 @@ func TestFileFactStoreMergeStrategies(t *testing.T) {
 	})
 }
 
+func TestBuildAPIAuthRejectsIncompleteConfiguration(t *testing.T) {
+	_, err := buildAPIAuth("token", "", "")
+	require.ErrorContains(t, err, "requires at least one configured token")
+	_, err = buildAPIAuth("unknown", "token", "")
+	require.ErrorContains(t, err, "unsupported API authentication mode")
+}
+
 func TestHealthAndReadyEndpoints(t *testing.T) {
-	auth, _, err := buildAPIAuth("token", "", "")
+	auth, err := buildAPIAuth("token", "test-token", "")
 	require.NoError(t, err)
 
-	state := newServerState(nil, nil, nil, factStoreConfig{}, auth, nil, nil, nil, nil, nil, false, nil, false, nil, nil)
+	typeSystem := types.NewTypeSystem()
+	state := newServerState(nil, nil, nil, factStoreConfig{}, auth, nil, nil, typeSystem, nil, verb.NewRegistry(typeSystem), false, nil, false, nil, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", state.handleHealth)
@@ -480,6 +501,7 @@ func TestHealthAndReadyEndpoints(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, resp.Code)
 
 	state.SetBundle(&unified.Bundle{Name: "demo", Version: "1.0.0"})
+	state.SetPhase(phaseRunning)
 	req = httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	resp = httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
@@ -489,10 +511,16 @@ func TestHealthAndReadyEndpoints(t *testing.T) {
 	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &ready))
 	require.Equal(t, "ready", ready["status"])
 	require.Equal(t, "demo", ready["bundle"])
+
+	state.SetPhase(phaseDraining)
+	req = httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	resp = httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	require.Equal(t, http.StatusServiceUnavailable, resp.Code)
 }
 
 func TestRulesHotloadRequiresEnable(t *testing.T) {
-	auth, _, err := buildAPIAuth("disabled", "", "")
+	auth, err := buildAPIAuth("disabled", "", "")
 	require.NoError(t, err)
 
 	bundle := &unified.Bundle{Name: "demo", Version: "1.0.0"}
@@ -509,7 +537,7 @@ func TestRulesHotloadRequiresEnable(t *testing.T) {
 }
 
 func TestRulesHotloadAppliesBundle(t *testing.T) {
-	auth, _, err := buildAPIAuth("disabled", "", "")
+	auth, err := buildAPIAuth("disabled", "", "")
 	require.NoError(t, err)
 
 	bundle := &unified.Bundle{

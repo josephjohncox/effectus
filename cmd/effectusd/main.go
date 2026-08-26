@@ -60,16 +60,18 @@ var (
 	configPath               = flag.String("config", "", "Path to YAML/JSON config file")
 	bundleFile               = flag.String("bundle", "", "Path to bundle file")
 	ociRef                   = flag.String("oci-ref", "", "OCI reference for bundle (e.g., ghcr.io/user/bundle:v1)")
+	ociCacheDir              = flag.String("oci-cache-dir", "./bundles", "Writable directory for OCI bundle cache")
 	pluginDir                = flag.String("plugin-dir", "", "Directory containing verb plugins")
 	verbDir                  = flag.String("verb-dir", "", "Directory containing JSON verb specs")
 	verbDuplicatePolicy      = flag.String("verb-duplicate-policy", "error", "Duplicate verb policy (error, replace, ignore)")
 	verbOCIWarmup            = flag.Bool("verb-oci-warmup", false, "Warm OCI verb executors at startup")
-	verbStrict               = flag.Bool("verb-strict", false, "Enable strict verb arg/return checks at runtime")
+	verbStrict               = flag.Bool("verb-strict", true, "Validate verb arguments and return values")
 	extensionsDir            = flag.String("extensions-dir", "", "Directory containing extension manifests (*.verbs.json, *.schema.json)")
 	extensionsOCI            = flag.String("extensions-oci", "", "OCI references for extension bundles (comma-separated)")
 	extensionsReloadInterval = flag.Duration("extensions-reload-interval", 0, "Interval for reloading extension manifests (0 to disable)")
 	schemaSourcesFile        = flag.String("schema-sources", "", "Path to schema sources config (YAML/JSON)")
 	reloadInterval           = flag.Duration("reload-interval", 30*time.Second, "Interval for hot-reloading")
+	shutdownTimeout          = flag.Duration("shutdown-timeout", 30*time.Second, "Deadline for graceful shutdown and queue drain")
 
 	// Runtime flags
 	sagaEnabled     = flag.Bool("saga", false, "Enable saga-style compensation")
@@ -174,6 +176,10 @@ func main() {
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
+	if *bundleFile != "" && *ociRef != "" {
+		fmt.Fprintln(os.Stderr, "Use either -bundle or -oci-ref, not both")
+		os.Exit(1)
+	}
 
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
@@ -217,7 +223,7 @@ func main() {
 		if *verbose {
 			fmt.Printf("Pulling bundle from OCI registry: %s\n", *ociRef)
 		}
-		puller := unified.NewOCIBundlePuller("./bundles")
+		puller := unified.NewOCIBundlePuller(*ociCacheDir)
 		bundle, err = puller.Pull(*ociRef)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error pulling bundle: %v\n", err)
@@ -335,15 +341,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	auth, generatedToken, err := buildAPIAuth(*apiAuthMode, *apiToken, *apiReadToken)
+	auth, err := buildAPIAuth(*apiAuthMode, *apiToken, *apiReadToken)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error configuring API auth: %v\n", err)
 		os.Exit(1)
 	}
-	if generatedToken != "" {
-		fmt.Printf("Generated API token: %s\n", generatedToken)
-	}
-
 	acl, err := loadACL(*apiACLFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading API ACL: %v\n", err)
@@ -362,13 +364,13 @@ func main() {
 
 	if err := validateFactSource(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error configuring fact source: %v\n", err)
-		return
+		os.Exit(1)
 	}
 
 	httpServer, httpListener, err := newHTTPServer(*httpAddr, state)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting HTTP server: %v\n", err)
-		return
+		os.Exit(1)
 	}
 	wg.Add(1)
 	go func() {
@@ -409,26 +411,34 @@ func main() {
 						fmt.Println("Checking for bundle updates...")
 					}
 
-					puller := unified.NewOCIBundlePuller("./bundles")
+					puller := unified.NewOCIBundlePuller(*ociCacheDir)
 					newBundle, err := puller.Pull(*ociRef)
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "Error pulling bundle update: %v\n", err)
 						continue
 					}
 
-					currentBundle, _ := state.executionSnapshot()
-					if currentBundle == nil || newBundle.Version != currentBundle.Version {
+					generation := state.generationSnapshot()
+					currentBundle := generation.bundle
+					newDigest, err := unified.BundleDigest(newBundle)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error identifying bundle update: %v\n", err)
+						continue
+					}
+					if currentBundle == nil || newDigest != generation.bundleDigest {
 						previousVersion := "<none>"
 						if currentBundle != nil {
 							previousVersion = currentBundle.Version
 						}
-						baseTypes, currentVerbs := state.compilerSnapshot()
-						prepared, err := compileBundleRules(newBundle, baseTypes, currentVerbs, *verbose)
+						prepared, err := compileBundleRules(newBundle, generation.schemaTypes, generation.verbs, *verbose)
 						if err != nil {
 							fmt.Fprintf(os.Stderr, "Error compiling updated bundle: %v\n", err)
 							continue
 						}
-						state.SetBundle(prepared)
+						if err := state.ActivateBundle(prepared, generation.id); err != nil {
+							fmt.Fprintf(os.Stderr, "Discarding stale bundle update: %v\n", err)
+							continue
+						}
 						state.recordBundleHistory(prepared, "oci-reload")
 						fmt.Printf("Updated bundle from %s to %s\n", previousVersion, prepared.Version)
 					}
@@ -497,28 +507,58 @@ func main() {
 		}()
 	}
 
+	state.SetPhase(phaseRunning)
+
 	// Main processing loop
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("Shutting down, waiting for goroutines to finish...")
+			state.SetPhase(phaseDraining)
+			fmt.Println("Shutting down, stopping admission...")
 			wg.Wait()
-			return
+			drainCtx, stopDrain := context.WithTimeout(context.WithoutCancel(ctx), *shutdownTimeout)
+			defer stopDrain()
+			for {
+				select {
+				case receivedFacts := <-factCh:
+					if err := processFactEnvelope(drainCtx, state, receivedFacts); err != nil {
+						fmt.Printf("Drain error: %v\n", err)
+					}
+				case <-drainCtx.Done():
+					state.SetPhase(phaseStopped)
+					return
+				default:
+					state.SetPhase(phaseStopped)
+					return
+				}
+			}
 		case receivedFacts := <-factCh:
-			if err := state.ExecuteFacts(ctx, receivedFacts); err != nil {
+			if err := processFactEnvelope(ctx, state, receivedFacts); err != nil {
 				fmt.Printf("Execution error: %v\n", err)
 			}
 		}
 	}
 }
 
+func processFactEnvelope(ctx context.Context, state *serverState, receivedFacts factEnvelope) error {
+	if state.factStore != nil {
+		if err := state.factStore.Update(receivedFacts.Universe, receivedFacts.Facts); err != nil {
+			return fmt.Errorf("persist facts: %w", err)
+		}
+	}
+	if err := state.ExecuteFacts(ctx, receivedFacts); err != nil {
+		return fmt.Errorf("execute facts: %w", err)
+	}
+	return nil
+}
+
 func reloadSchemaSources(ctx context.Context, state *serverState, sources []adapters.SchemaSourceConfig, verbose bool) error {
+	generation := state.generationSnapshot()
 	candidate := types.NewTypeSystem()
 	if err := schemasources.Apply(ctx, candidate, sources, verbose); err != nil {
 		return err
 	}
-	state.SetTypeSystem(candidate)
-	return nil
+	return state.ActivateTypeSystem(candidate, generation.id)
 }
 
 func newConfiguredVerbRegistry(typeSystem *types.TypeSystem) (*verb.Registry, error) {
@@ -526,25 +566,22 @@ func newConfiguredVerbRegistry(typeSystem *types.TypeSystem) (*verb.Registry, er
 	if err := registry.SetDuplicatePolicy(*verbDuplicatePolicy); err != nil {
 		return nil, err
 	}
-	if *verbStrict {
-		strict := true
-		registry.SetStrictArgs(&strict)
-		registry.SetStrictReturn(&strict)
-	}
+	strict := *verbStrict
+	registry.SetStrictArgs(&strict)
+	registry.SetStrictReturn(&strict)
 	return registry, nil
 }
 
 func reloadVerbsAndExtensions(state *serverState, extensionDirs []string, extensionOCIs []string) error {
-	typeSystem, _ := state.compilerSnapshot()
-	candidate, err := newConfiguredVerbRegistry(typeSystem)
+	generation := state.generationSnapshot()
+	candidate, err := newConfiguredVerbRegistry(generation.schemaTypes)
 	if err != nil {
 		return err
 	}
 	if err := loadVerbsAndExtensions(candidate, extensionDirs, extensionOCIs); err != nil {
 		return err
 	}
-	state.SetVerbRegistry(candidate)
-	return nil
+	return state.ActivateVerbRegistry(candidate, generation.id)
 }
 
 func loadVerbsAndExtensions(verbReg *verb.Registry, extensionDirs []string, extensionOCIs []string) error {

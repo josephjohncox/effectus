@@ -7,6 +7,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestFailedInitialHotReloadDoesNotReportReady(t *testing.T) {
+	runtime := NewExecutionRuntime()
+
+	err := runtime.HotReload(t.Context())
+	require.Error(t, err)
+	require.Equal(t, StateInitializing, runtime.GetRuntimeInfo().State)
+	require.Nil(t, runtime.compiledUnit)
+}
+
 func TestExecuteWorkflowFailsClosedOnEmptyPlan(t *testing.T) {
 	runtime := &ExecutionRuntime{
 		compiledUnit: &compiler.CompiledUnit{ExecutionPlan: &compiler.ExecutionPlan{}},
