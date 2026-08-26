@@ -12,7 +12,6 @@ import (
 	"github.com/effectus/effectus-go/common"
 	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/schema/capability"
-	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/google/uuid"
 )
@@ -62,7 +61,7 @@ func NewExecutor(verbRegistry common.VerbRegistry, options ...ExecutorOption) *E
 func (fe *Executor) ExecuteProgram(ctx context.Context, flowName string, program *Program, facts common.Facts) (interface{}, error) {
 	if fe.sagaEnabled {
 		if fe.sagaStore == nil {
-			return nil, fmt.Errorf("saga execution requires a saga store")
+			return nil, schema.ErrSagaStoreRequired
 		}
 		if !program.IsTransactional() {
 			program = program.ToAtomic(fmt.Sprintf("flow-%s", flowName))
@@ -81,7 +80,7 @@ func (fe *Executor) ExecuteProgram(ctx context.Context, flowName string, program
 		executor = common.NewExecutorAdapter(fe.verbRegistry, facts)
 	}
 
-	return Run(program, executor)
+	return RunContext(ctx, program, executor)
 }
 
 // executeSagaProgram executes a transactional program with full saga support
@@ -165,10 +164,14 @@ type sagaExecutedEffect struct {
 }
 
 func (se *sagaProgramExecutor) Do(effect eff.Effect) (interface{}, error) {
-	if se.ctx != nil {
+	return se.DoContext(se.ctx, effect)
+}
+
+func (se *sagaProgramExecutor) DoContext(ctx context.Context, effect eff.Effect) (interface{}, error) {
+	if ctx != nil {
 		select {
-		case <-se.ctx.Done():
-			return nil, errors.Join(se.ctx.Err(), se.compensate())
+		case <-ctx.Done():
+			return nil, errors.Join(ctx.Err(), se.compensate())
 		default:
 		}
 	}
@@ -239,7 +242,7 @@ func (se *sagaProgramExecutor) Do(effect eff.Effect) (interface{}, error) {
 		defer lock.Unlock()
 	}
 
-	result, err := se.executor.Do(effect)
+	result, err := eff.Invoke(ctx, se.executor, effect)
 	if err != nil {
 		markErr := se.sagaStore.MarkFailed(se.sagaID, effectID, err)
 		return nil, errors.Join(
@@ -283,7 +286,7 @@ func (se *sagaProgramExecutor) acquireLocks(effect eff.Effect) ([]*capability.Lo
 	var locks []*capability.LockResult
 	for _, resource := range spec.Resources {
 		lock, err := se.capSystem.AcquireLock(
-			convertVerbCapabilityToTypes(resource.Cap),
+			resource.Cap.RuntimeCapability(),
 			resource.Resource,
 			se.holderID,
 		)
@@ -364,7 +367,7 @@ func (se *sagaProgramExecutor) acquireCompensationLocks(spec *verb.Spec) ([]*cap
 	var locks []*capability.LockResult
 	for _, resource := range spec.Resources {
 		lock, err := se.capSystem.AcquireLock(
-			convertVerbCapabilityToTypes(resource.Cap),
+			resource.Cap.RuntimeCapability(),
 			resource.Resource,
 			se.holderID,
 		)
@@ -377,19 +380,4 @@ func (se *sagaProgramExecutor) acquireCompensationLocks(spec *verb.Spec) ([]*cap
 		locks = append(locks, lock)
 	}
 	return locks, nil
-}
-
-func convertVerbCapabilityToTypes(verbCap verb.Capability) types.Capability {
-	switch {
-	case verbCap&verb.CapRead != 0:
-		return types.CapabilityRead
-	case verbCap&verb.CapCreate != 0:
-		return types.CapabilityCreate
-	case verbCap&verb.CapDelete != 0:
-		return types.CapabilityDelete
-	case verbCap&verb.CapWrite != 0:
-		return types.CapabilityModify
-	default:
-		return types.CapabilityModify
-	}
 }

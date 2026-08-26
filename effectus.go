@@ -12,8 +12,22 @@ type Effect struct {
 
 // Executor handles execution of effects
 type Executor interface {
-	// Do executes an effect and returns a result
+	// Do executes an effect without cancellation support.
+	// Deprecated: production executors should also implement ContextExecutor.
 	Do(effect Effect) (result interface{}, err error)
+}
+
+// ContextExecutor executes effects with cancellation and deadline propagation.
+type ContextExecutor interface {
+	DoContext(ctx context.Context, effect Effect) (result interface{}, err error)
+}
+
+// Invoke executes an effect through the context-aware API when available.
+func Invoke(ctx context.Context, executor Executor, effect Effect) (interface{}, error) {
+	if contextual, ok := executor.(ContextExecutor); ok {
+		return contextual.DoContext(ctx, effect)
+	}
+	return executor.Do(effect)
 }
 
 // Spec is the interface implemented by both list.Spec and flow.Spec

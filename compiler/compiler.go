@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/alecthomas/participle/v2"
 	"github.com/effectus/effectus-go"
@@ -66,8 +67,33 @@ func (c *Compiler) ParseFile(filename string) (*ast.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse error: %w", err)
 	}
+	if err := normalizeFlowBindings(file); err != nil {
+		return nil, err
+	}
 
 	return file, nil
+}
+
+func normalizeFlowBindings(file *ast.File) error {
+	if file == nil {
+		return nil
+	}
+	for _, flow := range file.Flows {
+		if flow == nil || flow.Steps == nil {
+			continue
+		}
+		for _, step := range flow.Steps.Steps {
+			if step == nil || step.Arrow == "" {
+				continue
+			}
+			if step.BindName != "" {
+				return fmt.Errorf("%d:%d: step cannot use both prefix and arrow bindings", step.Pos.Line, step.Pos.Column)
+			}
+			step.BindName = step.Arrow
+			step.Arrow = ""
+		}
+	}
+	return nil
 }
 
 // ParseAndTypeCheck parses a file and performs type checking
@@ -91,8 +117,24 @@ func (c *Compiler) ParseAndTypeCheck(filename string, facts effectus.Facts) (*as
 	return file, nil
 }
 
-// CompileFiles compiles multiple rule files into a unified spec
+// CompileFiles parses, type checks, and compiles files through the legacy interface API.
 func (c *Compiler) CompileFiles(filenames []string, facts effectus.Facts) (effectus.Spec, error) {
+	return c.CompileProgram(filenames, facts)
+}
+
+// CompileProgram parses, type checks, and compiles one concrete program.
+func (c *Compiler) CompileProgram(filenames []string, facts effectus.Facts) (*CompiledSpec, error) {
+	return c.ParseAndCompileProgram(filenames, facts)
+}
+
+// CompileUncheckedFiles compiles without type checking.
+// Deprecated: production code must use CompileFiles or CompileProgram.
+func (c *Compiler) CompileUncheckedFiles(filenames []string, facts effectus.Facts) (effectus.Spec, error) {
+	return c.CompileUncheckedProgram(filenames, facts)
+}
+
+// CompileUncheckedProgram compiles without type checking.
+func (c *Compiler) CompileUncheckedProgram(filenames []string, facts effectus.Facts) (*CompiledSpec, error) {
 	// Group files by extension
 	effFiles := []string{}
 	effxFiles := []string{}
@@ -117,7 +159,7 @@ func (c *Compiler) CompileFiles(filenames []string, facts effectus.Facts) (effec
 }
 
 // compileAllFiles compiles both list and flow style rule files and merges them into a single spec
-func (c *Compiler) compileAllFiles(effFiles, effxFiles []string, schema effectus.SchemaInfo) (effectus.Spec, error) {
+func (c *Compiler) compileAllFiles(effFiles, effxFiles []string, schema effectus.SchemaInfo) (*CompiledSpec, error) {
 	var listSpec *list.Spec
 	var flowSpec *flow.Spec
 
@@ -162,63 +204,79 @@ func (c *Compiler) compileAllFiles(effFiles, effxFiles []string, schema effectus
 		flowSpec = c.mergeFlowSpecs(specs)
 	}
 
-	// Create a combined spec structure
-	combinedSpec := struct {
-		ListSpec *list.Spec
-		FlowSpec *flow.Spec
-		Name     string
-	}{
-		ListSpec: listSpec,
-		FlowSpec: flowSpec,
-		Name:     "unified",
-	}
-
-	// Wrap it as an effectus.Spec
-	return &unifiedSpecWrapper{spec: combinedSpec}, nil
+	return &CompiledSpec{List: listSpec, Flow: flowSpec, Name: "unified"}, nil
 }
 
-// NewUnifiedSpec creates a new unified spec
+type parsedSource struct {
+	path string
+	file *ast.File
+}
+
+func (c *Compiler) compileParsedSources(sources []parsedSource, schema effectus.SchemaInfo) (*CompiledSpec, error) {
+	var listSpecs []effectus.Spec
+	var flowSpecs []effectus.Spec
+	for _, source := range sources {
+		switch filepath.Ext(source.path) {
+		case ".eff":
+			spec, err := c.listCompiler.CompileParsedFile(source.file, source.path, schema)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile %s: %w", source.path, err)
+			}
+			listSpecs = append(listSpecs, spec)
+		case ".effx":
+			spec, err := c.flowCompiler.CompileParsedFile(source.file, source.path, schema)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile %s: %w", source.path, err)
+			}
+			flowSpecs = append(flowSpecs, spec)
+		default:
+			return nil, fmt.Errorf("unsupported file extension for %s", source.path)
+		}
+	}
+	return &CompiledSpec{
+		List: c.mergeListSpecs(listSpecs),
+		Flow: c.mergeFlowSpecs(flowSpecs),
+		Name: "unified",
+	}, nil
+}
+
+// CompiledSpec is the concrete, checked result of compiling list and flow rules.
+// It is the canonical boundary between compilation and execution.
+type CompiledSpec struct {
+	List *list.Spec
+	Flow *flow.Spec
+	Name string
+}
+
+// NewUnifiedSpec creates a unified spec.
 func NewUnifiedSpec(listSpec *list.Spec, flowSpec *flow.Spec, name string) effectus.Spec {
-	return &unifiedSpecWrapper{spec: struct {
-		ListSpec *list.Spec
-		FlowSpec *flow.Spec
-		Name     string
-	}{ListSpec: listSpec, FlowSpec: flowSpec, Name: name}}
+	return &CompiledSpec{List: listSpec, Flow: flowSpec, Name: name}
 }
 
-// unifiedSpecWrapper wraps our combined spec to implement effectus.Spec
-type unifiedSpecWrapper struct {
-	spec struct {
-		ListSpec *list.Spec
-		FlowSpec *flow.Spec
-		Name     string
-	}
+// ListSpec returns the compiled list rules.
+func (s *CompiledSpec) ListSpec() *list.Spec {
+	return s.List
 }
 
-// ListSpec exposes the compiled list spec for downstream consumers.
-func (s *unifiedSpecWrapper) ListSpec() *list.Spec {
-	return s.spec.ListSpec
-}
-
-// FlowSpec exposes the compiled flow spec for downstream consumers.
-func (s *unifiedSpecWrapper) FlowSpec() *flow.Spec {
-	return s.spec.FlowSpec
+// FlowSpec returns the compiled flow rules.
+func (s *CompiledSpec) FlowSpec() *flow.Spec {
+	return s.Flow
 }
 
 // RequiredFacts implements effectus.Spec
-func (s *unifiedSpecWrapper) RequiredFacts() []string {
+func (s *CompiledSpec) RequiredFacts() []string {
 	factPathSet := make(map[string]struct{})
 
 	// Add list spec fact paths
-	if s.spec.ListSpec != nil {
-		for _, path := range s.spec.ListSpec.FactPaths {
+	if s.List != nil {
+		for _, path := range s.List.FactPaths {
 			factPathSet[path] = struct{}{}
 		}
 	}
 
 	// Add flow spec fact paths
-	if s.spec.FlowSpec != nil {
-		for _, path := range s.spec.FlowSpec.FactPaths {
+	if s.Flow != nil {
+		for _, path := range s.Flow.FactPaths {
 			factPathSet[path] = struct{}{}
 		}
 	}
@@ -228,27 +286,28 @@ func (s *unifiedSpecWrapper) RequiredFacts() []string {
 	for path := range factPathSet {
 		factPaths = append(factPaths, path)
 	}
+	sort.Strings(factPaths)
 
 	return factPaths
 }
 
 // GetName implements effectus.Spec
-func (s *unifiedSpecWrapper) GetName() string {
-	return s.spec.Name
+func (s *CompiledSpec) GetName() string {
+	return s.Name
 }
 
 // Execute implements effectus.Spec
-func (s *unifiedSpecWrapper) Execute(ctx context.Context, facts effectus.Facts, ex effectus.Executor) error {
+func (s *CompiledSpec) Execute(ctx context.Context, facts effectus.Facts, ex effectus.Executor) error {
 	// Execute list spec if available
-	if s.spec.ListSpec != nil {
-		if err := s.spec.ListSpec.Execute(ctx, facts, ex); err != nil {
+	if s.List != nil {
+		if err := s.List.Execute(ctx, facts, ex); err != nil {
 			return fmt.Errorf("list spec execution error: %w", err)
 		}
 	}
 
 	// Execute flow spec if available
-	if s.spec.FlowSpec != nil {
-		if err := s.spec.FlowSpec.Execute(ctx, facts, ex); err != nil {
+	if s.Flow != nil {
+		if err := s.Flow.Execute(ctx, facts, ex); err != nil {
 			return fmt.Errorf("flow spec execution error: %w", err)
 		}
 	}
@@ -288,6 +347,7 @@ func (c *Compiler) mergeListSpecs(specs []effectus.Spec) *list.Spec {
 	for path := range factPathSet {
 		merged.FactPaths = append(merged.FactPaths, path)
 	}
+	sort.Strings(merged.FactPaths)
 
 	return merged
 }
@@ -324,22 +384,28 @@ func (c *Compiler) mergeFlowSpecs(specs []effectus.Spec) *flow.Spec {
 	for path := range factPathSet {
 		merged.FactPaths = append(merged.FactPaths, path)
 	}
+	sort.Strings(merged.FactPaths)
 
 	return merged
 }
 
-// ParseAndCompileFiles parses, type checks, and compiles multiple files
+// ParseAndCompileFiles parses, checks, and compiles through the legacy API.
+// Deprecated: use ParseAndCompileProgram.
 func (c *Compiler) ParseAndCompileFiles(filenames []string, facts effectus.Facts) (effectus.Spec, error) {
-	// Type check all files
+	return c.ParseAndCompileProgram(filenames, facts)
+}
+
+// ParseAndCompileProgram parses, type checks, and compiles one concrete program.
+func (c *Compiler) ParseAndCompileProgram(filenames []string, facts effectus.Facts) (*CompiledSpec, error) {
+	sources := make([]parsedSource, 0, len(filenames))
 	for _, filename := range filenames {
-		_, err := c.ParseAndTypeCheck(filename, facts)
+		file, err := c.ParseAndTypeCheck(filename, facts)
 		if err != nil {
 			return nil, err
 		}
+		sources = append(sources, parsedSource{path: filename, file: file})
 	}
-
-	// Compile all files into a unified spec
-	return c.CompileFiles(filenames, facts)
+	return c.compileParsedSources(sources, facts.Schema())
 }
 
 // LoadVerbSpecs loads verb specifications from a JSON file

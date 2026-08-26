@@ -2,6 +2,8 @@
 package unified
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -19,6 +21,19 @@ import (
 	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/schema/verb"
 )
+
+// BundleDigest returns the digest of the serializable release content.
+func BundleDigest(bundle *Bundle) (string, error) {
+	if bundle == nil {
+		return "", fmt.Errorf("bundle is required")
+	}
+	data, err := json.Marshal(bundle)
+	if err != nil {
+		return "", fmt.Errorf("marshal bundle digest input: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
 
 // Bundle represents a compiled bundle of rules and schemas
 type Bundle struct {
@@ -376,51 +391,17 @@ func (bb *BundleBuilder) loadRules() error {
 	facts := bb.createEmptyFacts()
 
 	// Compile all rules
-	compiledSpec, err := bb.compiler.ParseAndCompileFiles(append(listRuleFiles, flowRuleFiles...), facts)
+	compiledSpec, err := bb.compiler.ParseAndCompileProgram(append(listRuleFiles, flowRuleFiles...), facts)
 	if err != nil {
 		return fmt.Errorf("compiling rules: %w", err)
 	}
 
 	// Extract list and flow specs (in-memory only) and summarize for storage.
-	bb.bundle.ListSpec = getListSpec(compiledSpec)
-	bb.bundle.FlowSpec = getFlowSpec(compiledSpec)
+	bb.bundle.ListSpec = compiledSpec.ListSpec()
+	bb.bundle.FlowSpec = compiledSpec.FlowSpec()
 	bb.bundle.Rules = SummarizeRules(bb.bundle.ListSpec)
 	bb.bundle.Flows = SummarizeFlows(bb.bundle.FlowSpec)
 	bb.bundle.RequiredFacts = compiledSpec.RequiredFacts()
-
-	return nil
-}
-
-// getListSpec extracts a list.Spec from an effectus.Spec using reflection
-func getListSpec(spec eff.Spec) *list.Spec {
-	// For now, just attempt a direct type check and conversion
-	// This is a placeholder for a more robust solution
-	type specWithListField interface {
-		GetName() string
-		RequiredFacts() []string
-		ListSpec() *list.Spec
-	}
-
-	if s, ok := spec.(specWithListField); ok {
-		return s.ListSpec()
-	}
-
-	return nil
-}
-
-// getFlowSpec extracts a flow.Spec from an effectus.Spec using reflection
-func getFlowSpec(spec eff.Spec) *fl.Spec {
-	// For now, just attempt a direct type check and conversion
-	// This is a placeholder for a more robust solution
-	type specWithFlowField interface {
-		GetName() string
-		RequiredFacts() []string
-		FlowSpec() *fl.Spec
-	}
-
-	if s, ok := spec.(specWithFlowField); ok {
-		return s.FlowSpec()
-	}
 
 	return nil
 }

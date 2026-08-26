@@ -11,9 +11,11 @@ import (
 
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/schema/capability"
-	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/schema/verb"
 )
+
+// ErrSagaStoreRequired reports an invalid saga execution configuration.
+var ErrSagaStoreRequired = errors.New("saga execution requires a saga store")
 
 // SagaStore defines the interface for persisting saga transactions
 type SagaStore interface {
@@ -129,7 +131,7 @@ func (se *SagaExecutor) ExecuteWithSaga(ctx context.Context, sagaID string, rule
 		}
 
 		// Execute the effects in this step
-		stepResults, stepEffects, err := se.executeStep(sagaID, step)
+		stepResults, stepEffects, err := se.executeStep(ctx, sagaID, step)
 
 		// Release locks
 		for _, lock := range locks {
@@ -205,7 +207,7 @@ func (se *SagaExecutor) acquireLocksForStep(step *ExecutionStep) ([]*capability.
 		resources := spec.Resources
 		for _, resource := range resources {
 			// Convert verb capability to types capability
-			typesCapability := convertVerbCapabilityToTypes(resource.Cap)
+			typesCapability := resource.Cap.RuntimeCapability()
 
 			lock, err := se.capSystem.AcquireLock(typesCapability, resource.Resource, se.holderID)
 			if err != nil {
@@ -223,7 +225,7 @@ func (se *SagaExecutor) acquireLocksForStep(step *ExecutionStep) ([]*capability.
 }
 
 // executeStep executes all effects in a step
-func (se *SagaExecutor) executeStep(sagaID string, step *ExecutionStep) ([]interface{}, []executedSagaEffect, error) {
+func (se *SagaExecutor) executeStep(ctx context.Context, sagaID string, step *ExecutionStep) ([]interface{}, []executedSagaEffect, error) {
 	var results []interface{}
 	var executedEffects []executedSagaEffect
 
@@ -262,7 +264,7 @@ func (se *SagaExecutor) executeStep(sagaID string, step *ExecutionStep) ([]inter
 			return nil, executedEffects, fmt.Errorf("effect %s has unknown saga status %q", effectID, recorded.Status)
 		}
 
-		result, err := se.executor.Do(effect)
+		result, err := effectus.Invoke(ctx, se.executor, effect)
 		if err != nil {
 			markErr := se.sagaStore.MarkFailed(sagaID, effectID, err)
 			return nil, executedEffects, errors.Join(
@@ -315,7 +317,7 @@ func (se *SagaExecutor) compensate(sagaID string, executedEffects []executedSaga
 			lockFailed := false
 			for _, resource := range inverseSpec.Resources {
 				lock, err := se.capSystem.AcquireLock(
-					convertVerbCapabilityToTypes(resource.Cap),
+					resource.Cap.RuntimeCapability(),
 					resource.Resource,
 					se.holderID,
 				)
@@ -353,22 +355,6 @@ func (se *SagaExecutor) compensate(sagaID string, executedEffects []executedSaga
 		}
 	}
 	return errors.Join(failures...)
-}
-
-// convertVerbCapabilityToTypes converts verb.Capability to types.Capability
-func convertVerbCapabilityToTypes(verbCap verb.Capability) types.Capability {
-	switch {
-	case verbCap&verb.CapRead != 0:
-		return types.CapabilityRead
-	case verbCap&verb.CapCreate != 0:
-		return types.CapabilityCreate
-	case verbCap&verb.CapDelete != 0:
-		return types.CapabilityDelete
-	case verbCap&verb.CapWrite != 0:
-		return types.CapabilityModify
-	default:
-		return types.CapabilityModify
-	}
 }
 
 // InMemorySagaStore provides an in-memory implementation of SagaStore for testing.

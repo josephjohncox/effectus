@@ -9,14 +9,14 @@ type Prioritized interface {
 
 // SortByPriority sorts a slice of Prioritized items by priority (higher priority first)
 func SortByPriority[T Prioritized](items []T) {
-	sort.Slice(items, func(i, j int) bool {
+	sort.SliceStable(items, func(i, j int) bool {
 		return items[i].GetPriority() > items[j].GetPriority()
 	})
 }
 
 // SortByPriorityFunc sorts a slice using a priority extraction function
 func SortByPriorityFunc[T any](items []T, getPriority func(T) int) {
-	sort.Slice(items, func(i, j int) bool {
+	sort.SliceStable(items, func(i, j int) bool {
 		return getPriority(items[i]) > getPriority(items[j])
 	})
 }

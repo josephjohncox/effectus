@@ -10,6 +10,9 @@ import (
 // FactRef marks an argument value as a fact path reference.
 type FactRef string
 
+// ResultRef marks an argument value as a checked flow result-slot reference.
+type ResultRef string
+
 // CompileArgs resolves any variable references and fact paths in arguments
 func CompileArgs(args []*ast.StepArg, bindings map[string]interface{}) (map[string]interface{}, error) {
 	compiledArgs := make(map[string]interface{})

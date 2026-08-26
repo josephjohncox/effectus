@@ -1,6 +1,7 @@
 package capability
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -329,8 +330,13 @@ func NewCapabilityAwareExecutor(executor effectus.Executor, capSystem *Capabilit
 	}
 }
 
-// Do executes an effect with capability checking and locking
+// Do executes through the legacy context-free API.
 func (cae *CapabilityAwareExecutor) Do(effect effectus.Effect) (interface{}, error) {
+	return cae.DoContext(context.Background(), effect)
+}
+
+// DoContext executes an effect with capability checking, locking, and cancellation.
+func (cae *CapabilityAwareExecutor) DoContext(ctx context.Context, effect effectus.Effect) (interface{}, error) {
 	// Determine required capability based on verb
 	capability := inferCapabilityFromVerb(effect.Verb)
 
@@ -348,7 +354,7 @@ func (cae *CapabilityAwareExecutor) Do(effect effectus.Effect) (interface{}, err
 	defer lockResult.Unlock()
 
 	// Execute the effect
-	return cae.executor.Do(effect)
+	return effectus.Invoke(ctx, cae.executor, effect)
 }
 
 // inferCapabilityFromVerb infers the required capability from a verb name

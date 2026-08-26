@@ -77,7 +77,7 @@ func (le *Executor) ExecuteRule(ctx context.Context, rule *CompiledRule, facts c
 
 	if le.sagaEnabled {
 		if le.sagaStore == nil {
-			return nil, fmt.Errorf("saga execution requires a saga store")
+			return nil, schema.ErrSagaStoreRequired
 		}
 		program = program.ToAtomic(fmt.Sprintf("rule-%s", rule.Name))
 	}

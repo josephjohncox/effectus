@@ -34,6 +34,9 @@ func (s *Spec) RequiredFacts() []string {
 
 // Execute runs all flows in the spec with saga and capability support
 func (s *Spec) Execute(ctx context.Context, facts effectus.Facts, ex effectus.Executor) error {
+	if s.SagaEnabled && s.SagaStore == nil {
+		return schema.ErrSagaStoreRequired
+	}
 	// Sort flows by priority using common utility (make a copy first)
 	flows := make([]*CompiledFlow, len(s.Flows))
 	copy(flows, s.Flows)

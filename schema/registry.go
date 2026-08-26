@@ -446,9 +446,14 @@ func (r *Registry) NewPredicate(expression string) (*Predicate, error) {
 	}, nil
 }
 
-// Evaluate evaluates the predicate
+// Evaluate evaluates the predicate against the registry that compiled it.
 func (p *Predicate) Evaluate() (bool, error) {
-	if p.registry == nil {
+	return p.EvaluateWithRegistry(p.registry)
+}
+
+// EvaluateWithRegistry evaluates a compiled predicate without mutating it.
+func (p *Predicate) EvaluateWithRegistry(registry *Registry) (bool, error) {
+	if registry == nil {
 		return false, fmt.Errorf("predicate registry is nil")
 	}
 
@@ -457,7 +462,7 @@ func (p *Predicate) Evaluate() (bool, error) {
 	}
 
 	if p.program != nil {
-		result, err := expr.Run(p.program, p.registry.buildEnvironment())
+		result, err := expr.Run(p.program, registry.buildEnvironment())
 		if err != nil {
 			return false, err
 		}
@@ -467,53 +472,55 @@ func (p *Predicate) Evaluate() (bool, error) {
 		return false, fmt.Errorf("expression did not return boolean, got %T", result)
 	}
 
-	return p.registry.EvaluateBoolean(p.Expression)
+	return registry.EvaluateBoolean(p.Expression)
 }
 
-// EvaluatePredicates evaluates multiple predicates (all must be true)
+// EvaluatePredicates evaluates multiple predicates against a request-local registry.
 func (r *Registry) EvaluatePredicates(predicates []*Predicate, facts effectus.Facts) bool {
-	if len(predicates) == 0 {
-		return true
-	}
-
-	// Load facts into this registry
-	r.LoadFromFacts(facts)
-
-	// Evaluate each predicate using this registry (which now has the facts loaded)
-	for _, predicate := range predicates {
-		result, err := predicate.Evaluate()
-		if err != nil || !result {
-			return false
-		}
-	}
-
-	return true
+	result, _ := evaluatePredicates(predicates, facts, r)
+	return result
 }
 
-// EvaluatePredicatesWithFacts is a convenience method that creates a new registry, loads facts, and evaluates
+// EvaluatePredicatesWithFacts evaluates predicates without mutating compiled state.
 func EvaluatePredicatesWithFacts(predicates []*Predicate, facts effectus.Facts) bool {
+	result, _ := EvaluatePredicatesWithFactsE(predicates, facts)
+	return result
+}
+
+// EvaluatePredicatesWithFactsE distinguishes a false predicate from an evaluation error.
+func EvaluatePredicatesWithFactsE(predicates []*Predicate, facts effectus.Facts) (bool, error) {
+	var base *Registry
+	if len(predicates) > 0 {
+		base = predicates[0].registry
+	}
+	return evaluatePredicates(predicates, facts, base)
+}
+
+func evaluatePredicates(predicates []*Predicate, facts effectus.Facts, base *Registry) (bool, error) {
 	if len(predicates) == 0 {
-		return true
+		return true, nil
 	}
 
-	// Create a registry specifically for this evaluation
 	registry := NewRegistry()
+	if base != nil {
+		base.mu.RLock()
+		for name, function := range base.functions {
+			registry.functions[name] = function
+		}
+		base.mu.RUnlock()
+	}
 	registry.LoadFromFacts(facts)
 
-	// Update predicates to use this registry
 	for _, predicate := range predicates {
-		predicate.registry = registry
-	}
-
-	// Evaluate each predicate
-	for _, predicate := range predicates {
-		result, err := predicate.Evaluate()
-		if err != nil || !result {
-			return false
+		result, err := predicate.EvaluateWithRegistry(registry)
+		if err != nil {
+			return false, err
+		}
+		if !result {
+			return false, nil
 		}
 	}
-
-	return true
+	return true, nil
 }
 
 // CompileLogicalExpression compiles a logical expression and extracts fact paths

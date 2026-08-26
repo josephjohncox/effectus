@@ -43,6 +43,11 @@ func TestListSagaExecutesEveryEffectWithoutCapabilitySystem(t *testing.T) {
 	require.Equal(t, []string{"one", "two", "three"}, executed)
 }
 
+func TestSpecRejectsSagaWithoutStore(t *testing.T) {
+	spec := &Spec{SagaEnabled: true}
+	require.ErrorIs(t, spec.Execute(context.Background(), nil, nil), schema.ErrSagaStoreRequired)
+}
+
 func TestListSagaRequiresStore(t *testing.T) {
 	executor := NewExecutor(verb.NewRegistry(nil), WithSaga(nil))
 	_, err := executor.ExecuteRule(

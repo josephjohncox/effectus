@@ -110,6 +110,11 @@ func TestSagaRejectsNestedTransactions(t *testing.T) {
 	require.EqualError(t, err, "nested saga transactions are not supported")
 }
 
+func TestSpecRejectsSagaWithoutStore(t *testing.T) {
+	spec := &Spec{SagaEnabled: true}
+	require.ErrorIs(t, spec.Execute(context.Background(), nil, nil), schema.ErrSagaStoreRequired)
+}
+
 func TestSagaRequiresStore(t *testing.T) {
 	executor := NewExecutor(verb.NewRegistry(nil), WithSaga(nil))
 	_, err := executor.ExecuteProgram(

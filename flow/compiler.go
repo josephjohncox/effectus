@@ -152,53 +152,68 @@ func compileFlow(flow *ast.Flow, schemaInfo effectus.SchemaInfo) (*CompiledFlow,
 	return compiledFlow, nil
 }
 
-// compileSteps compiles a sequence of steps into a Program
-func compileSteps(steps []*ast.Step, bindings map[string]interface{}, schema effectus.SchemaInfo) (*Program, error) {
-	if len(steps) == 0 {
-		return Pure(nil), nil
-	}
-	step := steps[0]
+type compiledStep struct {
+	verb string
+	args map[string]interface{}
+	bind string
+}
 
-	// Create the effect
-	compiledArgs, err := common.CompileArgs(step.Args, bindings)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compile args: %w", err)
+// compileSteps checks and lowers every step before it creates an executable program.
+func compileSteps(steps []*ast.Step, bindings map[string]interface{}, _ effectus.SchemaInfo) (*Program, error) {
+	checkedBindings := copyBindings(bindings)
+	compiled := make([]compiledStep, 0, len(steps))
+	for index, step := range steps {
+		if step == nil {
+			return nil, fmt.Errorf("step %d is nil", index+1)
+		}
+		args, err := common.CompileArgs(step.Args, checkedBindings)
+		if err != nil {
+			return nil, fmt.Errorf("compile step %d (%s): %w", index+1, step.Verb, err)
+		}
+		compiled = append(compiled, compiledStep{verb: step.Verb, args: args, bind: step.BindName})
+		if step.BindName != "" {
+			if _, exists := checkedBindings[step.BindName]; exists {
+				return nil, fmt.Errorf("step %d redefines result binding %q", index+1, step.BindName)
+			}
+			checkedBindings[step.BindName] = common.ResultRef(step.BindName)
+		}
 	}
-	effect := effectus.Effect{
-		Verb:    step.Verb,
-		Payload: compiledArgs,
-	}
+	return buildCompiledSteps(compiled, 0, copyBindings(bindings)), nil
+}
 
-	// Create the program with the remaining steps
-	if step.BindName != "" {
-		// If we're binding a name, create a continuation that updates bindings
-		return Do(effect, func(result interface{}) *Program {
-			// Update bindings with result
-			newBindings := make(map[string]interface{})
-			for k, v := range bindings {
-				newBindings[k] = v
-			}
-			newBindings[step.BindName] = result
-
-			// Compile remaining steps with updated bindings
-			nextProgram, err := compileSteps(steps[1:], newBindings, schema)
-			if err != nil {
-				// Return a program that immediately returns this error to ensure proper error propagation
-				return Error(fmt.Errorf("failed to compile next steps: %w", err))
-			}
-			return nextProgram
-		}), nil
-	} else {
-		// If not binding, just continue with remaining steps
-		return Do(effect, func(_ interface{}) *Program {
-			nextProgram, err := compileSteps(steps[1:], bindings, schema)
-			if err != nil {
-				// Return a program that immediately returns this error to ensure proper error propagation
-				return Error(fmt.Errorf("failed to compile next steps: %w", err))
-			}
-			return nextProgram
-		}), nil
+func buildCompiledSteps(steps []compiledStep, index int, bindings map[string]interface{}) *Program {
+	if index == len(steps) {
+		return Pure(nil)
 	}
+	step := steps[index]
+	args := make(map[string]interface{}, len(step.args))
+	for name, value := range step.args {
+		if ref, ok := value.(common.ResultRef); ok {
+			resolved, exists := bindings[string(ref)]
+			if !exists {
+				return Error(fmt.Errorf("result binding %q is unavailable", ref))
+			}
+			args[name] = resolved
+			continue
+		}
+		args[name] = value
+	}
+	effect := effectus.Effect{Verb: step.verb, Payload: args}
+	return Do(effect, func(result interface{}) *Program {
+		nextBindings := copyBindings(bindings)
+		if step.bind != "" {
+			nextBindings[step.bind] = result
+		}
+		return buildCompiledSteps(steps, index+1, nextBindings)
+	})
+}
+
+func copyBindings(bindings map[string]interface{}) map[string]interface{} {
+	copy := make(map[string]interface{}, len(bindings))
+	for name, value := range bindings {
+		copy[name] = value
+	}
+	return copy
 }
 
 // Error creates a program that immediately returns an error

@@ -2,16 +2,10 @@ package common
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/schema/verb"
-)
-
-const (
-	envStrictArgs   = "EFFECTUS_STRICT_VERB_ARGS"
-	envStrictReturn = "EFFECTUS_STRICT_VERB_RETURN"
 )
 
 type verbRegistryStrictness interface {
@@ -20,9 +14,6 @@ type verbRegistryStrictness interface {
 }
 
 func resolveStrictArgs(spec *verb.Spec, registry VerbRegistry) bool {
-	if value, ok := envBool(envStrictArgs); ok {
-		return value
-	}
 	if spec != nil && spec.StrictArgs != nil {
 		return *spec.StrictArgs
 	}
@@ -31,13 +22,10 @@ func resolveStrictArgs(spec *verb.Spec, registry VerbRegistry) bool {
 			return *reg.StrictArgs()
 		}
 	}
-	return false
+	return true
 }
 
 func resolveStrictReturn(spec *verb.Spec, registry VerbRegistry) bool {
-	if value, ok := envBool(envStrictReturn); ok {
-		return value
-	}
 	if spec != nil && spec.StrictReturn != nil {
 		return *spec.StrictReturn
 	}
@@ -46,22 +34,7 @@ func resolveStrictReturn(spec *verb.Spec, registry VerbRegistry) bool {
 			return *reg.StrictReturn()
 		}
 	}
-	return false
-}
-
-func envBool(key string) (bool, bool) {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return false, false
-	}
-	switch strings.ToLower(value) {
-	case "1", "true", "yes", "on":
-		return true, true
-	case "0", "false", "no", "off":
-		return false, true
-	default:
-		return false, false
-	}
+	return true
 }
 
 func validateVerbArgs(spec *verb.Spec, args map[string]interface{}, registry VerbRegistry) error {
@@ -69,6 +42,9 @@ func validateVerbArgs(spec *verb.Spec, args map[string]interface{}, registry Ver
 		return nil
 	}
 	if !resolveStrictArgs(spec, registry) {
+		return nil
+	}
+	if len(spec.ArgTypes) == 0 && len(spec.RequiredArgs) == 0 {
 		return nil
 	}
 

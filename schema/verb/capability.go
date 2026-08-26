@@ -4,6 +4,8 @@ package verb
 import (
 	"fmt"
 	"strings"
+
+	"github.com/effectus/effectus-go/schema/types"
 )
 
 // Capability represents a capability flag for a verb
@@ -27,6 +29,23 @@ const (
 	CapReadWrite = CapRead | CapWrite
 	CapAll       = CapRead | CapWrite | CapCreate | CapDelete
 )
+
+// RuntimeCapability returns the strongest access capability in the flag set.
+// Semantic flags do not weaken the lock required by access flags.
+func (c Capability) RuntimeCapability() types.Capability {
+	switch {
+	case c&CapDelete != 0:
+		return types.CapabilityDelete
+	case c&CapCreate != 0:
+		return types.CapabilityCreate
+	case c&CapWrite != 0:
+		return types.CapabilityModify
+	case c&CapRead != 0:
+		return types.CapabilityRead
+	default:
+		return types.CapabilityModify
+	}
+}
 
 // ResourceCapability pairs a resource name with capabilities
 type ResourceCapability struct {

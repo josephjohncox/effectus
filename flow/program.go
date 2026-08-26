@@ -1,6 +1,8 @@
 package flow
 
 import (
+	"context"
+
 	"github.com/effectus/effectus-go"
 )
 
@@ -222,9 +224,13 @@ func (p *Program) ToAtomic(name string) *Program {
 	return Atomic(name, p)
 }
 
-// Run executes a program with an executor, returning the final value
-// This preserves the simple, elegant execution model
+// Run executes a program through the legacy context-free API.
 func Run(program *Program, executor effectus.Executor) (interface{}, error) {
+	return RunContext(context.Background(), program, executor)
+}
+
+// RunContext executes a program and propagates cancellation to every effect.
+func RunContext(ctx context.Context, program *Program, executor effectus.Executor) (interface{}, error) {
 	if program.Tag == PureProgramTag {
 		// Check if the Pure value is an error
 		if err, isError := program.Pure.(error); isError {
@@ -236,16 +242,16 @@ func Run(program *Program, executor effectus.Executor) (interface{}, error) {
 	if program.Tag == TransactionProgramTag {
 		// For transactions, execute the inner program
 		// The saga handling is done at a higher level (in the executors)
-		return Run(program.Transaction.Program, executor)
+		return RunContext(ctx, program.Transaction.Program, executor)
 	}
 
-	result, err := executor.Do(program.Effect)
+	result, err := effectus.Invoke(ctx, executor, program.Effect)
 	if err != nil {
 		return nil, err
 	}
 
 	next := program.Continue(result)
-	return Run(next, executor)
+	return RunContext(ctx, next, executor)
 }
 
 // ExtractTransactions extracts all transaction boundaries from a program
