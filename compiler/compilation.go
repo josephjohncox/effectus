@@ -2,12 +2,17 @@ package compiler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/effectus/effectus-go/loader"
 	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/schema/verb"
 )
+
+// ErrExtensionExecutionPlanUnsupported reports that extension workflow
+// planning is intentionally unavailable rather than returning an empty plan.
+var ErrExtensionExecutionPlanUnsupported = errors.New("extension workflow execution planning is not implemented")
 
 // CompilationResult represents the outcome of compilation
 type CompilationResult struct {
@@ -458,11 +463,7 @@ func (c *ExtensionCompiler) determineExecutorConfig(spec *verb.Spec) (ExecutorTy
 		}, nil
 	}
 
-	// No implementation - need to determine from metadata or configuration
-	// This would be expanded based on actual requirements
-	return ExecutorMessage, &MessageExecutorConfig{
-		Publisher: "stdout",
-	}, nil
+	return ExecutorType(""), nil, fmt.Errorf("verb %q has no executable implementation", spec.Name)
 }
 
 func (c *ExtensionCompiler) validateTypeSignature(sig *TypeSignature) error {
@@ -476,18 +477,7 @@ func (c *ExtensionCompiler) extractVerbDependencies(spec *verb.Spec) []string {
 }
 
 func (c *ExtensionCompiler) createExecutionPlan(verbs map[string]*CompiledVerbSpec) (*ExecutionPlan, error) {
-	// Create optimized execution plan based on dependencies and capabilities
-	plan := &ExecutionPlan{
-		Phases:       make([]ExecutionPhase, 0),
-		Dependencies: make(map[string][]string),
-		Capabilities: make(map[string][]string),
-		Executors:    make(map[string]ExecutorConfig),
-	}
-
-	// Build dependency graph and create execution phases
-	// Implementation would do topological sort of dependencies
-
-	return plan, nil
+	return nil, ErrExtensionExecutionPlanUnsupported
 }
 
 func (c *ExtensionCompiler) extractDependencies(verbs map[string]*CompiledVerbSpec) []string {

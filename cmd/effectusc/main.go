@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -105,6 +106,8 @@ func defineCommands() {
 		// Create a compiler
 		comp := compiler.NewCompiler()
 
+		var failures []error
+
 		// Load verb schemas if provided
 		if *tcVerbSchemas != "" {
 			files := strings.Split(*tcVerbSchemas, ",")
@@ -115,6 +118,7 @@ func defineCommands() {
 				err := comp.LoadVerbSpecs(file)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error loading verb schema file %s: %v\n", file, err)
+					failures = append(failures, fmt.Errorf("load verb schema %s: %w", file, err))
 					continue
 				}
 			}
@@ -147,6 +151,7 @@ func defineCommands() {
 			file, err := comp.ParseAndTypeCheck(filename, facts)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error processing %s: %v\n", filename, err)
+				failures = append(failures, fmt.Errorf("process %s: %w", filename, err))
 				continue
 			}
 
@@ -172,7 +177,7 @@ func defineCommands() {
 			outputReport(report, *tcOutput)
 		}
 
-		return nil
+		return errors.Join(failures...)
 	}
 
 	// Define compile command
@@ -469,6 +474,7 @@ func defineCommands() {
 		comp := compiler.NewCompiler()
 
 		// Parse each file
+		var failures []error
 		for _, filename := range files {
 			if *pVerbose {
 				fmt.Printf("Parsing %s...\n", filename)
@@ -477,6 +483,7 @@ func defineCommands() {
 			file, err := comp.ParseFile(filename)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error parsing %s: %v\n", filename, err)
+				failures = append(failures, fmt.Errorf("parse %s: %w", filename, err))
 				continue
 			}
 
@@ -484,7 +491,7 @@ func defineCommands() {
 				filename, len(file.Rules), len(file.Flows))
 		}
 
-		return nil
+		return errors.Join(failures...)
 	}
 
 	// Define capabilities command
@@ -518,6 +525,7 @@ func defineCommands() {
 		combinedReport := strings.Builder{}
 
 		// Process each file
+		var failures []error
 		for _, filename := range files {
 			if *capVerbose {
 				fmt.Printf("Analyzing capabilities in %s...\n", filename)
@@ -528,6 +536,7 @@ func defineCommands() {
 			file, err := comp.ParseFile(filename)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error parsing file %s: %v\n", filename, err)
+				failures = append(failures, fmt.Errorf("parse %s: %w", filename, err))
 				continue
 			}
 
@@ -535,6 +544,7 @@ func defineCommands() {
 			result, err := analyzer.Analyze(file)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error analyzing file %s: %v\n", filename, err)
+				failures = append(failures, fmt.Errorf("analyze %s: %w", filename, err))
 				continue
 			}
 
@@ -554,7 +564,7 @@ func defineCommands() {
 		report := combinedReport.String()
 		outputReport(report, *capOutput)
 
-		return nil
+		return errors.Join(failures...)
 	}
 
 	// Register commands
@@ -690,51 +700,6 @@ func collectRuleFiles(dir string) ([]string, error) {
 	}
 	sort.Strings(ruleFiles)
 	return ruleFiles, nil
-}
-
-// loadSchemaFile loads a schema file into the provided type system
-func loadSchemaFile(typeSystem *types.TypeSystem, filename string, verbose bool) error {
-	// Read the file
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		return fmt.Errorf("reading schema file: %w", err)
-	}
-
-	// Parse the schema file
-	var schemaEntries []struct {
-		Path string     `json:"path"`
-		Type types.Type `json:"type"`
-	}
-
-	if err := json.Unmarshal(content, &schemaEntries); err != nil {
-		return fmt.Errorf("parsing schema file: %w", err)
-	}
-
-	if verbose {
-		fmt.Printf("Found %d schema entries\n", len(schemaEntries))
-	}
-
-	// Add each entry to the type system
-	for i, entry := range schemaEntries {
-		if verbose {
-			fmt.Printf("Registering schema entry %d: path=%s, type=%v\n",
-				i, entry.Path, entry.Type)
-		}
-		// No need to parse path string anymore, just use it directly
-		typeSystem.RegisterFactType(entry.Path, &entry.Type)
-	}
-
-	// Debug - print all registered fact types
-	if verbose {
-		fmt.Println("Registered fact types:")
-		paths := typeSystem.GetAllFactPaths()
-		for _, path := range paths {
-			typ, _ := typeSystem.GetFactType(path)
-			fmt.Printf("  %s: %v\n", path, typ)
-		}
-	}
-
-	return nil
 }
 
 // testSchema implements the SchemaInfo interface using a TypeSystem

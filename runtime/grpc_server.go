@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -9,12 +10,15 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/reflection"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/effectus/effectus-go/compiler"
 )
+
+// ErrDynamicGRPCUnsupported reports that the exported dynamic gRPC runtime is
+// intentionally disabled until registration and execution are implemented.
+var ErrDynamicGRPCUnsupported = errors.New("dynamic gRPC ruleset execution is not implemented")
 
 // RulesetExecutionServer provides a dynamic gRPC interface for ruleset execution
 type RulesetExecutionServer struct {
@@ -145,38 +149,21 @@ const (
 )
 
 // NewRulesetExecutionServer creates a new dynamic gRPC server
-func NewRulesetExecutionServer(runtime *ExecutionRuntime, addr string) (*RulesetExecutionServer, error) {
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
-	}
-
-	server := grpc.NewServer()
-
-	// Enable reflection for dynamic service discovery
-	reflection.Register(server)
-
-	rulesetServer := &RulesetExecutionServer{
-		runtime:  runtime,
-		server:   server,
-		listener: listener,
-		rulesets: make(map[string]*CompiledRuleset),
-		services: make(map[string]*RulesetService),
-	}
-
-	return rulesetServer, nil
+func NewRulesetExecutionServer(_ *ExecutionRuntime, addr string) (*RulesetExecutionServer, error) {
+	return nil, fmt.Errorf("create dynamic gRPC server on %q: %w", addr, ErrDynamicGRPCUnsupported)
 }
 
 // Start starts the gRPC server
 func (res *RulesetExecutionServer) Start() error {
-	log.Printf("Starting Effectus gRPC server on %s", res.listener.Addr().String())
-	return res.server.Serve(res.listener)
+	return ErrDynamicGRPCUnsupported
 }
 
 // Stop gracefully stops the gRPC server
 func (res *RulesetExecutionServer) Stop() {
-	log.Println("Stopping Effectus gRPC server...")
-	res.server.GracefulStop()
+	if res.server != nil {
+		log.Println("Stopping Effectus gRPC server...")
+		res.server.GracefulStop()
+	}
 
 	if res.hotReload && res.reloadChecker != nil {
 		res.reloadChecker.Stop()
@@ -296,18 +283,11 @@ func (res *RulesetExecutionServer) ListRulesets(ctx context.Context) ([]*Ruleset
 
 // EnableHotReload enables automatic reloading of rulesets
 func (res *RulesetExecutionServer) EnableHotReload(interval time.Duration) {
-	res.mu.Lock()
-	defer res.mu.Unlock()
-
-	if res.hotReload {
-		return // Already enabled
+	if interval <= 0 {
+		log.Printf("Dynamic gRPC hot reload disabled: interval must be positive")
+		return
 	}
-
-	res.hotReload = true
-	res.reloadChecker = time.NewTicker(interval)
-
-	go res.hotReloadLoop()
-	log.Printf("Hot reload enabled with interval: %v", interval)
+	log.Printf("Dynamic gRPC hot reload disabled: %v", ErrDynamicGRPCUnsupported)
 }
 
 // Execute implements the execution logic for a specific ruleset
@@ -381,49 +361,28 @@ func (res *RulesetExecutionServer) validateRuleset(ruleset *CompiledRuleset) err
 	return nil
 }
 
-func (res *RulesetExecutionServer) registerGRPCService(name string, service *RulesetService) error {
-	// In a full implementation, this would dynamically generate and register
-	// protobuf service definitions based on the ruleset's schema
-	// For now, we'll use a generic service interface
-	return nil
+func (res *RulesetExecutionServer) registerGRPCService(name string, _ *RulesetService) error {
+	return fmt.Errorf("register %q: %w", name, ErrDynamicGRPCUnsupported)
 }
 
 func (res *RulesetExecutionServer) unregisterGRPCService(name string) error {
-	// Implementation would remove the dynamically registered service
-	return nil
+	return fmt.Errorf("unregister %q: %w", name, ErrDynamicGRPCUnsupported)
 }
 
-func (res *RulesetExecutionServer) hotReloadLoop() {
-	for range res.reloadChecker.C {
-		if err := res.checkForUpdates(); err != nil {
-			log.Printf("Hot reload check failed: %v", err)
-		}
-	}
+func (rs *RulesetService) unmarshalFacts(_ *anypb.Any) (map[string]interface{}, error) {
+	return nil, ErrDynamicGRPCUnsupported
 }
 
-func (res *RulesetExecutionServer) checkForUpdates() error {
-	// Implementation would check for ruleset updates and reload as needed
-	return nil
+func (rs *RulesetService) validateFacts(_ map[string]interface{}) error {
+	return ErrDynamicGRPCUnsupported
 }
 
-func (rs *RulesetService) unmarshalFacts(anyFacts *anypb.Any) (map[string]interface{}, error) {
-	// Implementation would unmarshal the Any type to facts based on the schema
-	return make(map[string]interface{}), nil
+func (rs *RulesetService) executeRules(_ context.Context, _ map[string]interface{}, _ *ExecutionOptions) ([]interface{}, error) {
+	return nil, ErrDynamicGRPCUnsupported
 }
 
-func (rs *RulesetService) validateFacts(facts map[string]interface{}) error {
-	// Implementation would validate facts against the ruleset's fact schema
-	return nil
-}
-
-func (rs *RulesetService) executeRules(ctx context.Context, facts map[string]interface{}, options *ExecutionOptions) ([]interface{}, error) {
-	// Implementation would execute rules using the runtime
-	return []interface{}{}, nil
-}
-
-func (rs *RulesetService) marshalEffects(effects []interface{}) ([]*TypedEffect, error) {
-	// Implementation would marshal effects to typed protobuf messages
-	return []*TypedEffect{}, nil
+func (rs *RulesetService) marshalEffects(_ []interface{}) ([]*TypedEffect, error) {
+	return nil, ErrDynamicGRPCUnsupported
 }
 
 func generateExecutionID() string {

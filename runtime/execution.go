@@ -158,31 +158,17 @@ func (er *ExecutionRuntime) ExecuteVerb(ctx context.Context, verbName string, ar
 }
 
 // ExecuteWorkflow executes a complete workflow using the execution plan
-func (er *ExecutionRuntime) ExecuteWorkflow(ctx context.Context, facts map[string]interface{}) error {
+func (er *ExecutionRuntime) ExecuteWorkflow(_ context.Context, _ map[string]interface{}) error {
 	er.mu.RLock()
 	defer er.mu.RUnlock()
 
 	if er.state != StateReady {
 		return fmt.Errorf("runtime not ready (state: %s)", er.state)
 	}
-
-	if er.compiledUnit.ExecutionPlan == nil {
+	if er.compiledUnit == nil || er.compiledUnit.ExecutionPlan == nil {
 		return fmt.Errorf("no execution plan available")
 	}
-
-	er.state = StateExecuting
-	defer func() { er.state = StateReady }()
-
-	// Execute each phase in the execution plan
-	for i, phase := range er.compiledUnit.ExecutionPlan.Phases {
-		log.Printf("Executing phase %d: %s", i+1, phase.Name)
-
-		if err := er.executePhase(ctx, phase, facts); err != nil {
-			return fmt.Errorf("phase %s failed: %w", phase.Name, err)
-		}
-	}
-
-	return nil
+	return compiler.ErrExtensionExecutionPlanUnsupported
 }
 
 // GetRuntimeInfo returns information about the current runtime state
