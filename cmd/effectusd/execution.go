@@ -130,9 +130,6 @@ func compileBundleRules(bundle *unified.Bundle, baseTS *types.TypeSystem, verbRe
 	if bundle == nil {
 		return nil, fmt.Errorf("bundle not loaded")
 	}
-	if bundle.ListSpec != nil || bundle.FlowSpec != nil {
-		return bundle, nil
-	}
 	if len(bundle.RuleSources) == 0 {
 		if verbose {
 			fmt.Println("Bundle has no embedded rule sources; skipping runtime compilation")

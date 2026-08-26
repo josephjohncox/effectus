@@ -134,6 +134,19 @@ func (s *serverState) SetVerbRegistry(verbRegistry *verb.Registry) {
 
 var errGenerationConflict = errors.New("runtime generation changed while preparing candidate")
 
+func (s *serverState) ActivateGeneration(bundle *unified.Bundle, typeSystem *types.TypeSystem, verbRegistry *verb.Registry, expected uint64) error {
+	if bundle == nil || typeSystem == nil || verbRegistry == nil {
+		return fmt.Errorf("complete runtime generation is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.generation.id != expected {
+		return errGenerationConflict
+	}
+	s.generation = s.buildGeneration(expected+1, bundle, typeSystem, verbRegistry)
+	return nil
+}
+
 func (s *serverState) ActivateBundle(bundle *unified.Bundle, expected uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -558,7 +558,11 @@ func reloadSchemaSources(ctx context.Context, state *serverState, sources []adap
 	if err := schemasources.Apply(ctx, candidate, sources, verbose); err != nil {
 		return err
 	}
-	return state.ActivateTypeSystem(candidate, generation.id)
+	bundle, err := compileBundleRules(generation.bundle, candidate, generation.verbs, verbose)
+	if err != nil {
+		return fmt.Errorf("compile rules against schema candidate: %w", err)
+	}
+	return state.ActivateGeneration(bundle, candidate, generation.verbs, generation.id)
 }
 
 func newConfiguredVerbRegistry(typeSystem *types.TypeSystem) (*verb.Registry, error) {
@@ -581,7 +585,11 @@ func reloadVerbsAndExtensions(state *serverState, extensionDirs []string, extens
 	if err := loadVerbsAndExtensions(candidate, extensionDirs, extensionOCIs); err != nil {
 		return err
 	}
-	return state.ActivateVerbRegistry(candidate, generation.id)
+	bundle, err := compileBundleRules(generation.bundle, generation.schemaTypes, candidate, false)
+	if err != nil {
+		return fmt.Errorf("compile rules against verb candidate: %w", err)
+	}
+	return state.ActivateGeneration(bundle, generation.schemaTypes, candidate, generation.id)
 }
 
 func loadVerbsAndExtensions(verbReg *verb.Registry, extensionDirs []string, extensionOCIs []string) error {
