@@ -1,7 +1,6 @@
 package loader
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -15,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/effectus/effectus-go/internal/safetar"
 	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -1169,42 +1169,10 @@ func LoadExtensionsFromReader(r io.Reader, extension string) (Loader, error) {
 	}
 }
 
-// extractTarLayer extracts files from a tar stream to the target directory.
+// extractTarLayer extracts a bounded tar stream beneath targetDir.
 func extractTarLayer(r io.Reader, targetDir string) error {
-	tr := tar.NewReader(r)
-
-	for {
-		header, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("reading tar header: %w", err)
-		}
-
-		if header.FileInfo().IsDir() {
-			continue
-		}
-
-		targetPath := filepath.Join(targetDir, header.Name)
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-			return fmt.Errorf("creating directory for %s: %w", targetPath, err)
-		}
-
-		file, err := os.Create(targetPath)
-		if err != nil {
-			return fmt.Errorf("creating file %s: %w", targetPath, err)
-		}
-
-		if _, err := io.Copy(file, tr); err != nil {
-			file.Close()
-			return fmt.Errorf("writing to %s: %w", targetPath, err)
-		}
-
-		if err := file.Close(); err != nil {
-			return fmt.Errorf("closing file %s: %w", targetPath, err)
-		}
+	if err := safetar.Extract(r, targetDir, safetar.DefaultLimits()); err != nil {
+		return fmt.Errorf("extracting safe tar layer: %w", err)
 	}
-
 	return nil
 }

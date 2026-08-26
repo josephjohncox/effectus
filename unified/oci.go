@@ -11,6 +11,7 @@ import (
 
 	"archive/tar"
 
+	"github.com/effectus/effectus-go/internal/safetar"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
@@ -275,46 +276,10 @@ func (p *OCIBundlePuller) PullWithData(imageRef string) (*Bundle, []byte, error)
 	return &bundle, bundleData, nil
 }
 
-// extractTarLayer extracts files from a tar stream to the target directory
+// extractTarLayer extracts a bounded tar stream beneath targetDir.
 func extractTarLayer(r io.Reader, targetDir string) error {
-	tr := tar.NewReader(r)
-
-	for {
-		header, err := tr.Next()
-		if err == io.EOF {
-			break // End of archive
-		}
-		if err != nil {
-			return fmt.Errorf("reading tar header: %w", err)
-		}
-
-		// Skip directories
-		if header.FileInfo().IsDir() {
-			continue
-		}
-
-		// Create target file
-		targetPath := filepath.Join(targetDir, header.Name)
-
-		// Create parent directories if needed
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
-			return fmt.Errorf("creating directory for %s: %w", targetPath, err)
-		}
-
-		// Create the file
-		file, err := os.Create(targetPath)
-		if err != nil {
-			return fmt.Errorf("creating file %s: %w", targetPath, err)
-		}
-
-		// Copy contents
-		if _, err := io.Copy(file, tr); err != nil {
-			file.Close()
-			return fmt.Errorf("writing to %s: %w", targetPath, err)
-		}
-
-		file.Close()
+	if err := safetar.Extract(r, targetDir, safetar.DefaultLimits()); err != nil {
+		return fmt.Errorf("extracting safe tar layer: %w", err)
 	}
-
 	return nil
 }
