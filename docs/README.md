@@ -14,6 +14,7 @@ This directory contains the documentation for Effectus. Start here and follow th
 
 ## Runtime operations
 
+- `LIFECYCLE.md` - release, activation, generation, refresh, and rollback semantics
 - `RUNTIME_CONFIG.md` - YAML config for non-library deployments
 - `PRODUCTION_RUNBOOK.md` - production checklist, hotload, rollback
 - `FACT_SOURCES.md` - adapters for Kafka/CDC/SQL/S3/Iceberg/AMQP/gRPC

@@ -28,6 +28,7 @@ A saga can be understood as a particular kind of categorical structure:
 ```
 
 Where:
+
 - $e_i$ is the forward effect
 - $c_i$ is the compensating effect
 - The structure forms a sequence of effect-compensation pairs
@@ -79,6 +80,7 @@ A key property of the saga system is **compensation correctness**:
 **Required verb law:** For an effect $e$ and inverse $c$, the verb owner must define the state equivalence that $c$ restores. The runtime does not prove this law.
 
 This is formalized as:
+
 ```math
 \forall \text{ctx}, e, c. \quad \text{interp}(c, \text{interp}(e, \text{ctx})) \approx \text{ctx}
 ```
@@ -159,4 +161,4 @@ Potential extensions to the saga system include:
 2. **Compensation Policies**: Customizable strategies for handling compensation failures
 3. **Stochastic Compensation**: Probabilistic models for compensation effectiveness in unreliable systems
 
-These extensions would further enhance the resilience and expressiveness of the compensation mechanism in Effectus. 
+These extensions would further enhance the resilience and expressiveness of the compensation mechanism in Effectus.

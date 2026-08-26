@@ -51,6 +51,7 @@ A key limitation of Turing-complete languages is the undecidability of the halti
 **Theorem (Rice)**: For any non-trivial property of the partial functions, it is undecidable whether a program computes a partial function with that property.
 
 This fundamental barrier means that in Turing-complete languages, we cannot generally determine:
+
 - Whether a program will terminate
 - Resource bounds (time/space complexity)
 - Freedom from unintended behaviors
@@ -73,23 +74,22 @@ These properties enable compile-time verification of critical business propertie
 
 ### 4.1. Rule Safety Properties
 
-The constrained computational model allows Effectus to guarantee key safety properties:
+The checked source language has a finite number of rules and steps. This gives the compiler a finite syntax tree to analyze.
 
-1. **Termination**: All rule executions are guaranteed to terminate
-2. **Resource Predictability**: Upper bounds on time and space can be statically determined
-3. **Determinism**: Given the same inputs, rules always produce the same outputs
-4. **Isolation**: Effects between rules can only interact through documented interfaces
+This property does not bound external verb duration or resource use. It also does not cover direct Go continuation APIs.
+
+Stable source order makes rule selection repeatable for the same checked artifact and facts. External verbs can still be nondeterministic.
 
 ### 4.2. Operational Advantages
 
 These theoretical properties translate directly to operational benefits:
 
 | Property | Operational Benefit |
-|----------|---------------------|
-| Guaranteed termination | No runaway processes or infinite loops |
-| Bounded resource usage | Predictable scaling and reliable operations |
-| Static verification | Earlier detection of logical errors |
-| Compositional reasoning | Reliable behavior when combining rule sets |
+| ---------- | --------------------- |
+| Finite checked syntax | The compiler can inspect every source step |
+| Stable rule order | Equal-priority rules keep their source order |
+| Static type checks | The compiler rejects known type errors |
+| Explicit effect boundary | External operations remain visible and testable |
 
 ## 5. Free Structures as Implementation Strategy
 
@@ -105,8 +105,9 @@ F^{\star}(X) &= 1 + X + X^2 + X^3 + \ldots
 ```
 
 This enables:
+
 - Simple sequential execution
-- Parallelizable evaluation (since effects are independent)
+- Sequential execution in source order
 - Straightforward serialization and auditing
 
 ### 5.2. Free Monads (Flows)
@@ -121,6 +122,7 @@ T^F(A) &= \mu X. \, A + F(X)
 ```
 
 This enables:
+
 - Binding results from prior steps
 - Conditional execution paths
 - Maintaining sequential dependencies
@@ -136,31 +138,30 @@ From a categorical perspective, Effectus uses:
 \end{align}
 ```
 
-This enables a precise characterization of the computational power:
+These free structures describe composition. They do not establish a Chomsky-hierarchy classification for the implementation.
 
-**Theorem**: The computational power of Effectus is bounded by:
-- List dialect: Regular languages (Type 3 in Chomsky hierarchy)
-- Flow dialect: Context-free languages (Type 2 in Chomsky hierarchy)
-
-Both are strictly less powerful than Turing-complete languages but sufficient for expressing business rules.
+A formal computational-power result needs a defined first-order IR and a machine-checked correspondence proof.
 
 ## 7. Comparison to Alternatives
 
 ### 7.1. General-Purpose Languages
 
 General-purpose languages (Java, Go, Python) offer:
+
 - Full Turing completeness
 - Arbitrary recursion and side effects
 - Undecidable static analysis
 
-Effectus trades these for:
-- Guaranteed termination
-- Complete static analyzability  
-- Compositional safety guarantees
+The checked source path instead provides:
+
+- A finite source plan
+- Static checks for known schemas and verbs
+- Explicit external effect boundaries
 
 ### 7.2. Domain-Specific Rule Engines
 
 Compared to other rule engines:
+
 - Prolog/logic programming: Can diverge with recursive predicates
 - RETE algorithms: Limited to pattern-matching, no sequential composition
 - BPEL/workflow: Often Turing complete, harder to reason about
@@ -188,4 +189,4 @@ The deliberate limitations in Effectus's computational model are not weaknesses 
 3. **Performance**: Execution has predictable resource usage
 4. **Evolution**: Rule behavior remains tractable as systems grow
 
-In practice, these benefits dramatically outweigh the theoretical limitation of not being Turing complete. For business rules, having predictable, verifiable behavior is far more valuable than unlimited computational power. 
+In practice, these benefits dramatically outweigh the theoretical limitation of not being Turing complete. For business rules, having predictable, verifiable behavior is far more valuable than unlimited computational power.

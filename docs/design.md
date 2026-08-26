@@ -13,12 +13,14 @@ Effectus is designed with language interoperability in mind, using Protocol Buff
 ## 2. Background & Motivation
 
 Modern business systems require reliable control logic that can:
+
 - Process complex event streams from multiple sources
 - Apply business logic consistently across distributed systems
 - Guarantee deterministic outcomes with transactional integrity
 - Adapt to changing requirements while maintaining type safety
 
 Traditional rule engines lack the formal rigor, type safety, and performance characteristics needed for critical operational environments. Similarly, conventional coding approaches suffer from:
+
 - Logic Dispersion: Critical business rules scattered across services and codebases
 - Domain Translation Loss: Key business concepts get lost in implementation details
 - Verification Gaps: Difficult to prove rule correctness without formal models
@@ -29,22 +31,27 @@ Effectus addresses these limitations through strong typing and capability-based 
 ## 2.1 Why Effectus Over Traditional Code
 
 ### 2.1.1 Business-Domain Alignment
+
 Traditional code: Requires translation of business concepts into programming constructs, leading to semantic gaps and misinterpretation.
 Effectus: Provides a domain-specific language that directly models business concepts, allowing domain experts to verify rule correctness without understanding implementation details.
 
 ### 2.1.2 Static Verification
+
 Traditional code: Testing can only verify specific input-output pairs, leaving edge cases undiscovered.
 Effectus: Rules checked at compile-time with strong type constraints, ensuring correctness properties like type safety, capability checks, and resource access controls before deployment.
 
 ### 2.1.3 Adaptability to Change
+
 Traditional code: Business logic changes require developer time, code changes, testing, and deployment cycles.
 Effectus: Rules are data, not code, enabling hot-reloading, versioning, and modification without recompilation or redeployment.
 
 ### 2.1.4 Auditability and Traceability
+
 Traditional code: Reasoning about why a decision was made requires debugging through code execution.
 Effectus: Every rule execution is traceable, recording which facts triggered which rules and effects, enabling perfect audit trails and replay capabilities.
 
 ### 2.1.5 Separation of Concerns
+
 Traditional code: Business logic often becomes entangled with infrastructure concerns.
 Effectus: Clean separation between rule definition (what should happen), fact ingestion (when it should happen), and effect execution (how it should happen).
 
@@ -57,6 +64,7 @@ When evaluating rule engines for business environments, several alternatives to 
 Microsoft's JSON-based Rules Engine is designed for general business applications with an emphasis on accessibility and integration with Microsoft ecosystems.
 
 **Key Differences:**
+
 - **Formal Foundations:** Microsoft's engine uses a JSON declarative approach without the mathematical rigor of Effectus's algebraic foundations.
 - **Type Safety:** Limited compile-time type checking compared to Effectus's strong typing throughout the pipeline.
 - **Performance:** Not optimized for the high-throughput, real-time requirements of critical operational systems.
@@ -68,6 +76,7 @@ While Microsoft's engine offers a low barrier to entry with its JSON-based appro
 GoRules is a lightweight, Go-based rule engine focused on simplicity and integration within Go applications.
 
 **Key Differences:**
+
 - **Expressiveness:** GoRules offers basic conditional logic, while Effectus provides comprehensive support for complex event patterns, advanced rule composition, and type-safe operations.
 - **Type Safety & Correctness:** GoRules uses simple conditional evaluation with limited type checking, whereas Effectus enforces strong typing throughout the rule definition and execution pipeline, preventing entire classes of runtime errors.
 - **Scalability:** GoRules is designed for smaller-scale applications, while Effectus's architecture supports distributed execution and high-volume processing.
@@ -79,6 +88,7 @@ GoRules is suitable for simple rule evaluation in Go applications but doesn't ad
 Drools is a mature, Java-based business rules management system with broad adoption in enterprise environments.
 
 **Key Differences:**
+
 - **Implementation Language:** Java-based vs. Effectus's Go implementation, which offers better performance characteristics for modern applications.
 - **Learning Curve:** Drools has a steep learning curve and requires significant Java expertise, whereas Effectus is designed for clarity and accessibility.
 - **Lightweight vs. Heavyweight:** Drools is a full-featured but heavyweight solution, while Effectus provides comparable power with a more focused, efficient implementation.
@@ -109,6 +119,7 @@ Effectus combines the technical rigor needed for mission-critical systems with t
 ### 3.1 Type-Driven Development
 
 All components are explicitly typed, enabling:
+
 - Compile-time verification of rule correctness
 - Static analysis for conflict detection
 - Prevention of runtime type errors
@@ -116,18 +127,19 @@ All components are explicitly typed, enabling:
 ### 3.2 Capability-Based Protection
 
 Rules operate under a capability model that governs:
+
 - What resources they can access (Read, Modify, Create, Delete)
 - How resources are protected during concurrent execution
 - Which operations can be composed safely together
 - Static verification of permission boundaries at compile time
 
-### 3.3 Deterministic Execution
+### 3.3 Execution Semantics
 
-All rule executions are:
-- Deterministic with clear operational semantics
-- Traceable with execution logs
-- Replayable for debugging and verification
-- Transactional with saga patterns for failure recovery and compensation
+Effectus gives checked rules a stable source order. It also sorts equal-priority rules without changing that order.
+
+External verbs can depend on networks, clocks, databases, and other mutable systems. Effectus does not make those operations deterministic.
+
+Saga logs support result replay for completed steps. Compensation is recovery work, not an ACID rollback.
 
 ## 4. Architecture
 
@@ -185,6 +197,7 @@ message MachineStatus {
 ```
 
 Facts are:
+
 - Schema-versioned with compatibility verification
 - Immutable after creation
 - Queryable through a unified API
@@ -218,6 +231,7 @@ type Effect struct {
 ```
 
 Effects are:
+
 - Capability-protected for access control and concurrency
 - Versioned via schema registry
 - Locked by capability and key to prevent conflicts
@@ -225,6 +239,7 @@ Effects are:
 - Compensatable for error recovery
 
 Importantly, Effectus doesn't directly execute the business logic of effects. Instead, it:
+
 1. Determines which effects should be executed (rule evaluation)
 2. Manages the execution order and transactional boundaries
 3. Dispatches effects to external interpreters for actual execution
@@ -247,12 +262,14 @@ const (
 ```
 
 The capability model provides:
+
 - **Resource Protection**: Critical resources are protected by requiring specific capabilities
 - **Concurrency Control**: Capabilities determine lock acquisition strategy
 - **Authorization Modeling**: Business permissions map to capability requirements
 - **Static Verification**: Capabilities are checked at compile time before execution
 
 Capabilities form a lattice where higher capabilities include lower ones:
+
 ```
 Read ≤ Modify ≤ Create ≤ Delete
 ```
@@ -262,6 +279,7 @@ Read ≤ Modify ≤ Create ≤ Delete
 #### 5.5.1 List Engine
 
 Executes effects sequentially:
+
 - Acquires locks on (capability, key) pairs
 - Executes effects in order
 - Releases locks deterministically
@@ -281,12 +299,14 @@ type Prog[A any] struct {
 ```
 
 Enables:
+
 - Branching and conditional execution
 - Composition of sub-programs
 
 ### 5.6 Compensation System
 
 Handles failures through the saga pattern:
+
 - Logs each effect before execution
 - On failure, executes compensating actions in reverse order
 - Replays recorded successful results by stable effect ID
@@ -346,7 +366,7 @@ This clean separation between rule definition and execution allows domain expert
 Effects are interpreted in the mathematical **Set** category, giving them precise meaning:
 
 | Term | Meaning in Set theory |
-|------|------------|
+| ------ | ------------ |
 | `Facts` | Product set $\prod_{i} \llbracket\tau_i\rrbracket$ |
 | `Effect` | Coproduct $\sum_{i}(\text{Verb}_i \times \llbracket\text{Payload}_i\rrbracket)$ |
 | `Program A` | Free monad $T^E(A) \cong \mu X. \, A + (\text{Effect} \times X)$ |
@@ -362,6 +382,7 @@ Effects are interpreted in the mathematical **Set** category, giving them precis
 ### 6.3 Type Soundness
 
 The type system ensures:
+
 - **Progress**: Well-typed terms either complete or can take another step
 - **Preservation**: Types are maintained throughout execution
 - **Termination target**: Checked first-order rules must terminate. Unrestricted Go continuations are outside this claim.
@@ -464,24 +485,28 @@ This approach enables teams to use Effectus regardless of their preferred develo
 ## 10. Implementation Roadmap
 
 ### Phase 1: Core Foundation
+
 - ✅ Core execution engine and type system
 - ✅ Extension loading and compilation system  
 - ✅ Basic CLI tools and runtime daemon
 - ✅ Coherent flow architecture
 
 ### Phase 2: Production Readiness
+
 - 🚧 OCI bundle distribution system
 - 🚧 Advanced execution policies and saga compensation
 - 📋 Production monitoring and observability
 - 📋 Performance optimization and caching
 
 ### Phase 3: Enterprise Features
+
 - 📋 Multi-tenant isolation and security
 - 📋 Advanced IDE integration and tooling
 - 📋 Comprehensive testing framework
 - 📋 Cloud-native deployment options
 
 ### Phase 4: Advanced Capabilities
+
 - 📋 Machine learning integration
 - 📋 Formal verification tools
 - 📋 Multi-language runtimes

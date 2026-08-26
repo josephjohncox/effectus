@@ -78,6 +78,7 @@ mgr.AddLoader(staticSchemas)
 For extensions loaded at runtime:
 
 #### JSON Manifest-based
+
 ```bash
 # Create manifest
 cat > verbs/manifest.json << EOF
@@ -126,6 +127,7 @@ args explicitly:
 ```
 
 #### Protocol Buffer-based
+
 ```protobuf
 // verb_spec.proto
 message VerbSpecProto {
@@ -305,6 +307,7 @@ func (e *EmailExecutor) Compensate(ctx context.Context, effect Effect, result pr
 The system supports multiple execution patterns:
 
 ### Local Execution
+
 ```go
 type LocalExecutor struct {
     handler func(ctx context.Context, args map[string]interface{}) (interface{}, error)
@@ -312,6 +315,7 @@ type LocalExecutor struct {
 ```
 
 ### HTTP Execution
+
 ```go
 type HTTPExecutor struct {
     client   *http.Client
@@ -321,6 +325,7 @@ type HTTPExecutor struct {
 ```
 
 ### gRPC Execution
+
 ```go
 type GRPCExecutor struct {
     client grpc.ClientConnInterface
@@ -329,6 +334,7 @@ type GRPCExecutor struct {
 ```
 
 #### gRPC Verb Manifest Example
+
 Use JSON verbs with `target.type: "grpc"` to call a gRPC service from rules:
 
 ```json
@@ -373,6 +379,7 @@ service ValidationService {
 ```
 
 ### Message Queue Execution
+
 ```go
 type MessageQueueExecutor struct {
     publisher MessagePublisher
@@ -385,6 +392,7 @@ type MessageQueueExecutor struct {
 The extension system implements a coherent flow: **Load → Compile → Execute**
 
 ### 1. Loading Phase
+
 ```go
 // Load all extensions
 extensions, err := mgr.LoadAll(ctx)
@@ -394,6 +402,7 @@ if err != nil {
 ```
 
 ### 2. Compilation Phase
+
 ```go
 // Compile and validate
 compiler := compilation.NewExtensionCompiler()
@@ -404,6 +413,7 @@ if err != nil {
 ```
 
 ### 3. Execution Phase
+
 ```go
 // Execute with hot-reload capability
 runtime := execution.NewExecutionRuntime()
@@ -442,6 +452,7 @@ Bundles are self-contained packages with versioning and metadata:
 The CLI provides comprehensive bundle management:
 
 ### Creating Bundles
+
 ```bash
 effectusc bundle create \
   --name "order-processing" \
@@ -453,6 +464,7 @@ effectusc bundle create \
 ```
 
 ### Distributing via OCI
+
 ```bash
 effectusc bundle push \
   --bundle bundle.json \
@@ -460,6 +472,7 @@ effectusc bundle push \
 ```
 
 ### Running with Extensions
+
 ```bash
 # From local bundle
 effectusd --bundle ./bundle.json
@@ -474,6 +487,7 @@ effectusd --extensions-dir ./extensions
 ## Advanced Features
 
 ### Hot Reloading
+
 ```go
 // Enable hot reloading
 runtime.EnableHotReload(30 * time.Second)
@@ -486,6 +500,7 @@ runtime.EnableHotReload(30 * time.Second)
 ```
 
 ### Capability-based Security
+
 ```go
 // Verbs declare required capabilities
 type VerbSpec struct {
@@ -502,6 +517,7 @@ executor := eval.NewListExecutor(
 ```
 
 ### PII Redaction
+
 ```go
 // Bundle declares PII fields
 bundle.PiiMasks = []string{
@@ -516,6 +532,7 @@ bundle.PiiMasks = []string{
 ```
 
 ### Saga Compensation
+
 ```go
 // Enable compensation for transactional integrity
 effectusd --bundle ./bundle.json --saga --saga-store postgres
@@ -529,6 +546,7 @@ effectusd --bundle ./bundle.json --saga --saga-store postgres
 ## Integration Examples
 
 ### Manufacturing Integration
+
 ```go
 // Manufacturing-specific executors
 registry.Register("reserve_material", &MaterialReservationExecutor{})
@@ -537,6 +555,7 @@ registry.Register("quality_check", &QualityInspectionExecutor{})
 ```
 
 ### Financial Services Integration
+
 ```go
 // Finance-specific executors
 registry.Register("validate_transaction", &TransactionValidatorExecutor{})
@@ -545,6 +564,7 @@ registry.Register("send_alert", &ComplianceAlertExecutor{})
 ```
 
 ### E-commerce Integration
+
 ```go
 // E-commerce-specific executors
 registry.Register("check_inventory", &InventoryCheckExecutor{})
@@ -573,4 +593,4 @@ This comprehensive system enables teams to extend Effectus effectively while mai
 - **Multi-Language Support**: Extension development in Python, TypeScript, Rust
 - **Advanced Caching**: Intelligent caching of compiled extensions
 - **Distributed Extensions**: Extensions that span multiple services
-- **ML Integration**: Extensions that incorporate machine learning models 
+- **ML Integration**: Extensions that incorporate machine learning models

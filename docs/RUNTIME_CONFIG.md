@@ -76,7 +76,7 @@ verbs:
   # Optional: Go plugin executors (.so)
   duplicate_policy: "error" # error | replace | ignore
   oci_warmup: false
-  strict: false
+  strict: true
   plugin_dirs:
     - "./plugins"
 
@@ -99,8 +99,8 @@ metrics:
 
 api:
   auth: "token"
-  token: "${EFFECTUS_WRITE_TOKEN}"
-  read_token: "${EFFECTUS_READ_TOKEN}"
+  token: "replace-with-write-token"
+  read_token: "replace-with-read-token"
   acl_file: "/etc/effectus/acl.yaml"
   rate_limit: 300
   rate_burst: 120
@@ -200,7 +200,7 @@ Then list the OCI reference under `extensions.oci`.
 - Extension reloading re-reads `*.verbs.json` / `*.schema.json` from disk or OCI; Go plugins are not hot-reloadable.
 - Schema sources are loaded in-memory at startup; set `extensions.reload_interval` (or `bundle.reload_interval`) to poll for updates.
 - `verbs.duplicate_policy` controls how duplicate verb names are resolved; `verbs.oci_warmup` prefetches OCI verb bundles at startup.
-- `verbs.strict` enforces runtime arg/return type checks; enable it in production if you want strict safety.
+- `verbs.strict` controls runtime argument and return checks. The default is `true`. Use `false` only for unchecked development code.
 - `fixed_time` pins deterministic time for expression evaluation (useful for tests and canary runs).
 - Use `saga.redis` or `saga.postgres` to persist saga state when `saga.enabled` is true.
 

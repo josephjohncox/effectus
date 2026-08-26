@@ -88,8 +88,8 @@ metrics:
 
 api:
   auth: "token"
-  token: "${EFFECTUS_WRITE_TOKEN}"
-  read_token: "${EFFECTUS_READ_TOKEN}"
+  token: "replace-with-write-token"
+  read_token: "replace-with-read-token"
   hotload_rules: true
 
 facts:

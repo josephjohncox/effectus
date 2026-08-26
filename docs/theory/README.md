@@ -16,40 +16,48 @@ Effectus is built on solid mathematical principles from category theory, type th
 ## Mathematical Structure
 
 ### Core Theory
+
 - **[Basic Foundations](basic.md)** - Core mathematical concepts, denotational semantics, and type soundness
 - **[Computational Model](computational_model.md)** - Why Effectus is deliberately not Turing complete
 - **[Formal Proofs](appendix.md)** - Categorical proofs and small-step operational semantics
 
 ### System Components  
+
 - **[Compensation Theory](compensation.md)** - Saga-based compensation with mathematical foundations
 - **[Capability System](capabilities.md)** - Formal model for capability-based security
 - **[Verb Extension](verb_extension.md)** - Mathematical framework for extending the verb system
 
 ### Simplified Explanations
+
 - **[Accessible Theory](appendix_simple.md)** - Mathematical concepts explained for broader audiences
 
-## Key Mathematical Results
+## Semantic Design Targets
 
-### Type Safety Theorem
+### Type Safety Target
+
 **Progress**: Well-typed terms either complete or can take another step  
 **Preservation**: Types are maintained throughout execution  
 **Termination target**: Checked first-order IR terminates by construction. Current Go continuations are outside this claim.
 
-### Extensibility Lemma  
-Adding new fact fields doesn't break existing rules - the system is **monotone with respect to fact growth**.
+### Fact-growth Target
 
-### Canonical Embedding
-List rules can be uniquely embedded into flow rules via the natural transformation from free monoids to free monads.
+Adding unrelated fact fields should not change an existing checked rule.
+
+### List-to-flow Embedding
+
+The implementation preserves list order when it converts a list plan to a flow plan.
 
 ## Category Theory Foundations
 
 ### Free Constructions
+
 | Dialect | Mathematical Structure | Practical Meaning |
-|---------|----------------------|-------------------|
+| --------- | ---------------------- | ------------------- |
 | **List Rules** | Free Monoid on Effects | Sequential composition only |
 | **Flow Rules** | Free Monad on Effects | Sequential + binding/branching |
 
 ### Denotational Semantics
+
 ```math
 \begin{align}
 \text{Facts} &\triangleq \prod_{i} \llbracket\tau_i\rrbracket \\
@@ -72,16 +80,19 @@ These theoretical foundations provide real-world benefits:
 ## Reading Guide
 
 ### For Implementers
+
 1. Start with [Basic Foundations](basic.md) for core concepts
 2. Read [Computational Model](computational_model.md) for design rationale
 3. Study [Formal Proofs](appendix.md) for implementation details
 
 ### For Theorists  
+
 1. Review [Basic Foundations](basic.md) for notation and definitions
 2. Examine [Formal Proofs](appendix.md) for rigorous treatments
 3. Explore component-specific theory files for detailed analysis
 
 ### For General Audience
+
 1. Begin with [Accessible Theory](appendix_simple.md) for intuitive explanations
 2. Progress to [Basic Foundations](basic.md) for more formal treatment
 3. Refer to specific component files as needed
@@ -89,6 +100,7 @@ These theoretical foundations provide real-world benefits:
 ## Mathematical Notation
 
 We use standard mathematical notation throughout:
+
 - $\triangleq$ for definitional equality
 - $\llbracket \cdot \rrbracket$ for semantic interpretation
 - $\mu X. F(X)$ for least fixed points
@@ -98,6 +110,7 @@ We use standard mathematical notation throughout:
 ## Relationship to Implementation
 
 The mathematical foundations directly inform the implementation:
+
 - Category theory structures map to Go interfaces and types
 - Formal semantics guide the execution engine design  
 - Type soundness theorems ensure runtime safety
@@ -108,9 +121,10 @@ The implementation does not yet have a machine-checked correspondence proof. Eac
 ## Contributing
 
 When extending Effectus, maintain the mathematical rigor:
+
 1. New features should have formal semantic definitions
 2. Type safety properties must be preserved
 3. Extensions should respect the categorical structure
 4. Add appropriate proofs for new theoretical claims
 
-The mathematical foundations are not just documentation - they are the blueprint that ensures Effectus maintains its safety and correctness guarantees as it evolves. 
+The mathematical foundations are not just documentation - they are the blueprint that ensures Effectus maintains its safety and correctness guarantees as it evolves.

@@ -317,7 +317,7 @@ effectusd [options]
 --reload-interval  Interval for hot-reloading (default: 30s)
 --verb-duplicate-policy Duplicate verb policy (error, replace, ignore)
 --verb-oci-warmup  Warm OCI verb executors at startup
---verb-strict      Enable strict verb arg/return checks at runtime
+--verb-strict      Validate verb arguments and return values (default: true)
 ```
 
 #### Runtime Configuration

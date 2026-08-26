@@ -36,7 +36,9 @@ The gRPC interface enables:
 ### Core Concepts
 
 #### **Ruleset**
+
 A logical grouping of related rules with:
+
 - **Name and Version**: Unique identification
 - **Fact Schema**: Typed input requirements
 - **Effect Schemas**: Typed output definitions
@@ -45,6 +47,7 @@ A logical grouping of related rules with:
 - **Capabilities**: Required permissions
 
 #### **Dynamic Registration**
+
 - Each ruleset automatically gets a gRPC endpoint
 - Endpoints are registered/unregistered on hot-reload
 - Type-safe protobuf interfaces generated from schemas
@@ -79,6 +82,7 @@ service RulesetExecutionService {
 ### Key Message Types
 
 #### ExecutionRequest
+
 ```protobuf
 message ExecutionRequest {
   string ruleset_name = 1;      // Which ruleset to execute
@@ -90,6 +94,7 @@ message ExecutionRequest {
 ```
 
 #### ExecutionResponse
+
 ```protobuf
 message ExecutionResponse {
   bool success = 1;                    // Execution success
@@ -414,22 +419,26 @@ if !response.Success {
 ## Benefits
 
 ### Type Safety
+
 - **Compile-time Validation**: Schemas validated before registration
 - **Runtime Type Checking**: Facts validated against schemas
 - **Typed Interfaces**: Protocol Buffer guarantees across languages
 
 ### Language Interoperability
+
 - **Any gRPC Language**: Go, Python, Java, C#, JavaScript, Rust, etc.
 - **Consistent Interface**: Same API regardless of client language
 - **Type Generation**: Auto-generated client stubs from protobuf
 
 ### Operational Excellence
+
 - **Hot Reloading**: Update rules without downtime
 - **Observability**: Built-in tracing and metrics
 - **Scalability**: Stateless design enables horizontal scaling
 - **Reliability**: Comprehensive error handling and recovery
 
 ### Developer Experience
+
 - **Simple Interface**: Facts in → Effects out
 - **Rich Metadata**: Comprehensive ruleset information
 - **Streaming Support**: Real-time updates for long operations
@@ -438,6 +447,7 @@ if !response.Success {
 ## Integration Patterns
 
 ### Microservices Architecture
+
 ```
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
 │   Order     │───▶│  Effectus   │───▶│  Payment    │
@@ -452,13 +462,15 @@ if !response.Success {
 ```
 
 ### Event-Driven Architecture
+
 ```
 Kafka Topic → Effectus gRPC → Multiple Effects → Various Services
 ```
 
 ### API Gateway Integration
+
 ```
 API Gateway → Business Logic → Effectus gRPC → Effect Execution
 ```
 
-The gRPC execution interface provides a standardized, scalable, and type-safe way to execute business rules across any technology stack while maintaining the mathematical rigor and safety guarantees that make Effectus suitable for mission-critical systems. 
+The gRPC execution interface provides a standardized, scalable, and type-safe way to execute business rules across any technology stack while maintaining the mathematical rigor and safety guarantees that make Effectus suitable for mission-critical systems.

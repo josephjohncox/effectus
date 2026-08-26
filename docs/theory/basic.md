@@ -1,4 +1,6 @@
-# Effectus Rules — A Concise Type-Theoretic Guide  
+# Effectus Rules — A Concise Type-Theoretic Guide
+
+> Status: This document describes a semantic design target. `../GUARANTEES.md` is the normative implementation contract.
 
 ## 1. Surface Language, Core Language
 
@@ -6,7 +8,7 @@ This section describes the syntax of our rule languages and how they map to inte
 
 At its core, Effectus provides two distinct ways to express business rules:
 
-1. **List-style rules** (.eff files): These express simple "when this, then that" relationships where all effects happen in parallel.
+1. **List-style rules** (.eff files): These express simple "when this, then that" relationships. Effects run sequentially in source order.
 2. **Flow-style rules** (.effx files): These allow for more complex, sequential operations where each step can depend on the results of previous steps.
 
 ```
@@ -185,7 +187,7 @@ This property enables a modular approach to rule development:
 
 Why this matters for actual systems:
 
-* **List rules** are *monoids*—simpler to understand, can run in parallel, and handle 95% of QA/compliance logic.  
+* **List rules** are *monoids*. Their effects run sequentially in source order.
 * **Flow rules** are *free monads*—more powerful, supporting sequential operations when you need them.  
 * Shared grammar and schema validation catch errors early, before runtime.  
 
