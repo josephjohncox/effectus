@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -67,43 +68,67 @@ func (rs *RedisSagaStore) StartTransaction(sagaID, ruleName string) error {
 	return nil
 }
 
-func (rs *RedisSagaStore) RecordEffect(sagaID, verb string, args map[string]interface{}) error {
+func (rs *RedisSagaStore) RecordEffect(sagaID, effectID string, sequence int, verb string, args map[string]interface{}) error {
 	if rs == nil || rs.client == nil {
 		return fmt.Errorf("redis saga store not initialized")
 	}
 	ctx := context.Background()
 	effect := &SagaEffect{
+		ID:        effectID,
+		Sequence:  sequence,
 		Verb:      verb,
 		Args:      args,
-		Status:    "pending",
+		Status:    SagaEffectPending,
 		Timestamp: time.Now().UTC(),
 	}
 	payload, err := json.Marshal(effect)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal saga effect: %w", err)
 	}
 	key := rs.effectsKey(sagaID)
-	if err := rs.client.RPush(ctx, key, payload).Err(); err != nil {
+	return rs.client.Watch(ctx, func(tx *redis.Tx) error {
+		values, err := tx.LRange(ctx, key, 0, -1).Result()
+		if err != nil {
+			return err
+		}
+		for _, entry := range values {
+			var existing SagaEffect
+			if err := json.Unmarshal([]byte(entry), &existing); err != nil {
+				return err
+			}
+			if existing.ID != effectID {
+				continue
+			}
+			if existing.Sequence == sequence && existing.Verb == verb && reflect.DeepEqual(existing.Args, args) {
+				return nil
+			}
+			return fmt.Errorf("effect identity conflict for saga %s effect %s", sagaID, effectID)
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.RPush(ctx, key, payload)
+			if rs.ttl > 0 {
+				pipe.Expire(ctx, key, rs.ttl)
+			}
+			return nil
+		})
 		return err
-	}
-	rs.applyTTL(ctx, key)
-	return nil
+	}, key)
 }
 
-func (rs *RedisSagaStore) MarkSuccess(sagaID, verb string) error {
-	return rs.updateEffectStatus(sagaID, verb, "success", "")
+func (rs *RedisSagaStore) MarkSuccess(sagaID, effectID string, result interface{}) error {
+	return rs.updateEffectStatus(sagaID, effectID, SagaEffectSuccess, "", result)
 }
 
-func (rs *RedisSagaStore) MarkFailed(sagaID, verb string, reason error) error {
+func (rs *RedisSagaStore) MarkFailed(sagaID, effectID string, reason error) error {
 	msg := ""
 	if reason != nil {
 		msg = reason.Error()
 	}
-	return rs.updateEffectStatus(sagaID, verb, "failed", msg)
+	return rs.updateEffectStatus(sagaID, effectID, SagaEffectFailed, msg, nil)
 }
 
-func (rs *RedisSagaStore) MarkCompensated(sagaID, verb string) error {
-	return rs.updateEffectStatus(sagaID, verb, "compensated", "")
+func (rs *RedisSagaStore) MarkCompensated(sagaID, effectID string) error {
+	return rs.updateEffectStatus(sagaID, effectID, SagaEffectCompensated, "", nil)
 }
 
 func (rs *RedisSagaStore) GetTransactionEffects(sagaID string) ([]*SagaEffect, error) {
@@ -175,52 +200,75 @@ func (rs *RedisSagaStore) CompleteSaga(sagaID string) error {
 	return nil
 }
 
-func (rs *RedisSagaStore) updateEffectStatus(sagaID, verb, status, errMsg string) error {
+func (rs *RedisSagaStore) updateEffectStatus(sagaID, effectID, status, errMsg string, result interface{}) error {
 	if rs == nil || rs.client == nil {
 		return fmt.Errorf("redis saga store not initialized")
 	}
 	ctx := context.Background()
 	key := rs.effectsKey(sagaID)
-	values, err := rs.client.LRange(ctx, key, 0, -1).Result()
-	if err != nil {
-		return err
-	}
-	if len(values) == 0 {
-		return fmt.Errorf("no effects found for saga %s", sagaID)
-	}
-	updated := make([]string, len(values))
-	var matched bool
-	for i := len(values) - 1; i >= 0; i-- {
-		var effect SagaEffect
-		if err := json.Unmarshal([]byte(values[i]), &effect); err != nil {
+	return rs.client.Watch(ctx, func(tx *redis.Tx) error {
+		values, err := tx.LRange(ctx, key, 0, -1).Result()
+		if err != nil {
 			return err
 		}
-		if !matched && effect.Verb == verb && effect.Status == "pending" {
+		if len(values) == 0 {
+			return fmt.Errorf("no effects found for saga %s", sagaID)
+		}
+		updated := append([]string(nil), values...)
+		matched := false
+		for i, entry := range values {
+			var effect SagaEffect
+			if err := json.Unmarshal([]byte(entry), &effect); err != nil {
+				return err
+			}
+			if effect.ID != effectID {
+				continue
+			}
+			if !validSagaStatusTransition(effect.Status, status) {
+				return fmt.Errorf("cannot transition saga %s effect %s from %s to %s", sagaID, effectID, effect.Status, status)
+			}
 			effect.Status = status
 			effect.Error = errMsg
-			matched = true
+			if status == SagaEffectSuccess {
+				effect.Result = result
+			}
 			payload, err := json.Marshal(effect)
 			if err != nil {
 				return err
 			}
 			updated[i] = string(payload)
-		} else {
-			updated[i] = values[i]
+			matched = true
+			break
 		}
-	}
-	if !matched {
-		return fmt.Errorf("pending effect not found for saga %s verb %s", sagaID, verb)
-	}
-	pipe := rs.client.TxPipeline()
-	pipe.Del(ctx, key)
-	for _, entry := range updated {
-		pipe.RPush(ctx, key, entry)
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
+		if !matched {
+			return fmt.Errorf("effect not found for saga %s: %s", sagaID, effectID)
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Del(ctx, key)
+			for _, entry := range updated {
+				pipe.RPush(ctx, key, entry)
+			}
+			if rs.ttl > 0 {
+				pipe.Expire(ctx, key, rs.ttl)
+			}
+			return nil
+		})
 		return err
+	}, key)
+}
+
+func validSagaStatusTransition(current, next string) bool {
+	if current == next {
+		return true
 	}
-	rs.applyTTL(ctx, key)
-	return nil
+	switch next {
+	case SagaEffectSuccess, SagaEffectFailed:
+		return current == SagaEffectPending
+	case SagaEffectCompensated:
+		return current == SagaEffectSuccess
+	default:
+		return false
+	}
 }
 
 func (rs *RedisSagaStore) sagaKey(sagaID string) string {
