@@ -42,7 +42,7 @@ install:
 # Install SQL tooling (sqlc and goose)
 install-sql-tools:
 	@echo "Installing SQL tooling..."
-	go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.25.0
+	go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.29.0
 	go install github.com/pressly/goose/v3/cmd/goose@v3.17.0
 	@echo "OK Tools installed"
 

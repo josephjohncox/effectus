@@ -158,7 +158,10 @@ CREATE TABLE audit_log (
     timestamp TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     
     -- Partitioning helper
-    month_partition INTEGER GENERATED ALWAYS AS (EXTRACT(YEAR FROM timestamp) * 100 + EXTRACT(MONTH FROM timestamp)) STORED
+    month_partition INTEGER GENERATED ALWAYS AS (
+        (EXTRACT(YEAR FROM timestamp AT TIME ZONE 'UTC') * 100
+            + EXTRACT(MONTH FROM timestamp AT TIME ZONE 'UTC'))::INTEGER
+    ) STORED
 );
 
 -- Rule execution metrics (for monitoring)

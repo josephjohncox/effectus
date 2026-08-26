@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/lib/pq"
 	"github.com/pressly/goose/v3"
 )
 
@@ -53,6 +54,13 @@ type PostgresStorageConfig struct {
 
 // NewPostgresStorage creates a new PostgreSQL storage backend with modern tooling
 func NewPostgresStorage(config *PostgresStorageConfig) (*PostgresStorage, error) {
+	if config == nil {
+		return nil, fmt.Errorf("PostgreSQL storage config is required")
+	}
+	if strings.TrimSpace(config.DSN) == "" {
+		return nil, fmt.Errorf("PostgreSQL DSN is required")
+	}
+
 	// Set defaults
 	if config.MaxConnections == 0 {
 		config.MaxConnections = 25
@@ -83,8 +91,17 @@ func NewPostgresStorage(config *PostgresStorageConfig) (*PostgresStorage, error)
 		return nil, fmt.Errorf("failed to create connection pool: %w", err)
 	}
 
-	// Test connection
-	if err := pool.Ping(context.Background()); err != nil {
+	cleanupPool := true
+	defer func() {
+		if cleanupPool {
+			pool.Close()
+		}
+	}()
+
+	// Test connection with a finite startup deadline.
+	pingContext, cancelPing := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelPing()
+	if err := pool.Ping(pingContext); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
@@ -101,6 +118,7 @@ func NewPostgresStorage(config *PostgresStorageConfig) (*PostgresStorage, error)
 		}
 	}
 
+	cleanupPool = false
 	return storage, nil
 }
 
@@ -201,7 +219,7 @@ func (p *PostgresStorage) StoreRuleset(ctx context.Context, ruleset *StoredRules
 		Version:     ruleset.Version,
 		Environment: ruleset.Environment,
 		UserID:      ruleset.CreatedBy,
-		Details: map[string]interface{}{
+		Details: map[string]any{
 			"rule_count":      len(ruleset.Ruleset.Rules),
 			"schema_version":  ruleset.SchemaVersion,
 			"validation_hash": ruleset.ValidationHash,
@@ -263,7 +281,10 @@ func (p *PostgresStorage) ListRulesets(ctx context.Context, filters *RulesetFilt
 		limit = 50
 	}
 
-	nameFilter := toTextArrayLiteral(filters.Names)
+	var names []string
+	if len(filters.Names) > 0 {
+		names = filters.Names
+	}
 	createdAfter := pgtype.Timestamptz{}
 	if filters.CreatedAfter != nil {
 		createdAfter = pgtype.Timestamptz{Time: *filters.CreatedAfter, Valid: true}
@@ -272,7 +293,7 @@ func (p *PostgresStorage) ListRulesets(ctx context.Context, filters *RulesetFilt
 	// Execute query
 	dbRulesets, err := p.queries.ListRulesets(
 		ctx,
-		nameFilter,
+		names,
 		environments,
 		status,
 		filters.Owner,
@@ -322,9 +343,9 @@ func (p *PostgresStorage) RecordActivity(ctx context.Context, entry *AuditEntry)
 	}
 
 	// Convert types
-	resourceID := uuid.Nil
+	resourceID := ""
 	if entry.ResourceID != nil {
-		resourceID = *entry.ResourceID
+		resourceID = entry.ResourceID.String()
 	}
 
 	version := toPgText(entry.Version)
@@ -427,7 +448,7 @@ func (p *PostgresStorage) GetAuditLog(ctx context.Context, filters *AuditFilters
 	// Convert to audit entries
 	entries := make([]*AuditEntry, len(dbEntries))
 	for i, dbEntry := range dbEntries {
-		var details map[string]interface{}
+		var details map[string]any
 		if len(dbEntry.Details) > 0 {
 			json.Unmarshal(dbEntry.Details, &details)
 		}
@@ -568,18 +589,6 @@ func toPgInt4(value int) pgtype.Int4 {
 		return pgtype.Int4{}
 	}
 	return pgtype.Int4{Int32: int32(value), Valid: true}
-}
-
-func toTextArrayLiteral(values []string) string {
-	if len(values) == 0 {
-		return ""
-	}
-
-	escaped := make([]string, len(values))
-	for i, value := range values {
-		escaped[i] = strings.ReplaceAll(value, "\"", "\\\"")
-	}
-	return "{" + strings.Join(escaped, ",") + "}"
 }
 
 // Placeholder implementations for remaining interface methods

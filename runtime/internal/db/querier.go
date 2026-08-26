@@ -18,7 +18,7 @@ type Querier interface {
 	CompleteDeployment(ctx context.Context, id uuid.UUID) (*Deployment, error)
 	CountRulesetsByStatus(ctx context.Context, environment string) ([]*CountRulesetsByStatusRow, error)
 	// Audit log queries for sqlc code generation
-	CreateAuditEntry(ctx context.Context, action string, resource string, resourceID uuid.UUID, version pgtype.Text, environment pgtype.Text, userID pgtype.Text, userEmail pgtype.Text, ipAddress net.IP, userAgent pgtype.Text, sessionID pgtype.Text, details json.RawMessage, requestID pgtype.Text, traceID pgtype.Text, result string, errorMessage pgtype.Text, durationMs pgtype.Int4) (*AuditLog, error)
+	CreateAuditEntry(ctx context.Context, action string, resource string, column3 string, version pgtype.Text, environment pgtype.Text, userID pgtype.Text, userEmail pgtype.Text, ipAddress net.IP, userAgent pgtype.Text, sessionID pgtype.Text, details json.RawMessage, requestID pgtype.Text, traceID pgtype.Text, result string, errorMessage pgtype.Text, durationMs pgtype.Int4) (*AuditLog, error)
 	// Deployment queries for sqlc code generation
 	CreateDeployment(ctx context.Context, rulesetID uuid.UUID, environment string, status DeploymentStatus, strategy string, config json.RawMessage, healthCheck json.RawMessage, rollbackInfo json.RawMessage, canaryConfig json.RawMessage, deployedBy pgtype.Text, deploymentDurationMs pgtype.Int4) (*Deployment, error)
 	// Ruleset queries for sqlc code generation
@@ -55,7 +55,7 @@ type Querier interface {
 	GetTopActions(ctx context.Context, timestamp pgtype.Timestamptz, limit int32) ([]*GetTopActionsRow, error)
 	GetTopUsers(ctx context.Context, timestamp pgtype.Timestamptz, limit int32) ([]*GetTopUsersRow, error)
 	ListDeployments(ctx context.Context, column1 string, column2 []DeploymentStatus, column3 string, column4 pgtype.Timestamptz, column5 pgtype.Timestamptz, limit int32) ([]*ListDeploymentsRow, error)
-	ListRulesets(ctx context.Context, column1 string, column2 []string, column3 []RulesetStatus, column4 string, column5 string, column6 []string, column7 pgtype.Timestamptz, column8 string, column9 string, limit int32) ([]*ListRulesetsRow, error)
+	ListRulesets(ctx context.Context, column1 []string, column2 []string, column3 []RulesetStatus, column4 string, column5 string, column6 []string, column7 pgtype.Timestamptz, column8 string, column9 string, limit int32) ([]*ListRulesetsRow, error)
 	SearchAuditLogs(ctx context.Context, plaintoTsquery string, timestamp pgtype.Timestamptz, limit int32) ([]*AuditLog, error)
 	SearchRulesets(ctx context.Context, plaintoTsquery string, limit int32) ([]*SearchRulesetsRow, error)
 	SetDeploymentRollback(ctx context.Context, iD uuid.UUID, rollbackInfo json.RawMessage) (*Deployment, error)

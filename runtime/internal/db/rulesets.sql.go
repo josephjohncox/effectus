@@ -538,15 +538,15 @@ SELECT r.id, r.name, r.version, r.environment, r.status, r.ruleset_data, r.rule_
 FROM rulesets r
 LEFT JOIN deployments d ON r.id = d.ruleset_id AND d.environment = r.environment
 WHERE 
-    ($1::text IS NULL OR r.name = ANY($1::text[]))
+    ($1::text[] IS NULL OR r.name = ANY($1::text[]))
     AND ($2::text[] IS NULL OR r.environment = ANY($2::text[]))
     AND ($3::ruleset_status[] IS NULL OR r.status = ANY($3::ruleset_status[]))
-    AND ($4::text IS NULL OR r.owner = $4)
-    AND ($5::text IS NULL OR r.team = $5)
+    AND (NULLIF($4::text, '') IS NULL OR r.owner = $4)
+    AND (NULLIF($5::text, '') IS NULL OR r.team = $5)
     AND ($6::text[] IS NULL OR r.tags && $6::text[])
     AND ($7::timestamptz IS NULL OR r.created_at >= $7)
-    AND ($8::text IS NULL OR r.created_by = $8)
-    AND ($9::text IS NULL OR r.git_commit = $9)
+    AND (NULLIF($8::text, '') IS NULL OR r.created_by = $8)
+    AND (NULLIF($9::text, '') IS NULL OR r.git_commit = $9)
 ORDER BY r.created_at DESC
 LIMIT $10
 `
@@ -581,7 +581,7 @@ type ListRulesetsRow struct {
 	LastDeployedAt   pgtype.Timestamptz `db:"last_deployed_at" json:"last_deployed_at"`
 }
 
-func (q *Queries) ListRulesets(ctx context.Context, column1 string, column2 []string, column3 []RulesetStatus, column4 string, column5 string, column6 []string, column7 pgtype.Timestamptz, column8 string, column9 string, limit int32) ([]*ListRulesetsRow, error) {
+func (q *Queries) ListRulesets(ctx context.Context, column1 []string, column2 []string, column3 []RulesetStatus, column4 string, column5 string, column6 []string, column7 pgtype.Timestamptz, column8 string, column9 string, limit int32) ([]*ListRulesetsRow, error) {
 	rows, err := q.db.Query(ctx, ListRulesets,
 		column1,
 		column2,
