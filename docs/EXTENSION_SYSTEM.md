@@ -1,290 +1,59 @@
-# Effectus Extension System
+# Extension System
 
-> **Status:** `runtime.ExecutionRuntime` loads `.eff` and `.effx` workflows and lowers them into canonical checked IR.
+Effectus extensions add fact types, pure functions, verb contracts, executor targets, and rule sources.
 
-JSON manifests define verbs and their targets. They do not define workflows.
-The extension runtime supports static loaders, JSON manifests, protobuf sources, and OCI bundles.
+Effectusd compiles extension `.eff` and `.effx` sources into canonical checked IR before it publishes a generation.
 
-## Overview
+## Production boundary
 
-The extension system enables:
+Production effectusd accepts declarative extension inputs. It rejects in-process Go plugins.
 
-- **Unified Extension Loading**: Single framework for all extension types
-- **Multiple Distribution Methods**: Local files, JSON manifests, Protocol Buffers, OCI bundles
-- **Static and Dynamic Registration**: Compile-time and runtime extension support
-- **Type Safety**: Full compile-time verification of extensions
-- **Version Management**: Schema evolution and compatibility checking
-- **Hot Reloading**: Dynamic updates without service restart
+A trusted embedded Go application can register static Go executors. This compatibility path is outside the daemon isolation boundary.
 
-Compiled generations retain registered initial data and function implementations. Workflow fact lookup merges immutable initial data with caller facts. Caller facts override the same path. Current workflow IR does not call registered functions; function implementations remain available as generation metadata.
+JSON verb manifests define contracts and targets. They do not contain workflow control flow.
 
-OCI extension references must use an immutable digest such as `registry.example/extension@sha256:...`.
-Mutable tags are rejected. A caller can also require a configured `OCISignatureVerifier`.
+## Extension inputs
 
-Go plugins are trusted native code, not capability sandboxes. Plugin directories and `.so` files must be read-only. The loader rejects writable files, writable directories, links, and non-regular files. Do not mount an untrusted plugin directory.
+Effectus supports:
 
-## Architecture
+- JSON verb manifests
+- JSON schema and function manifests
+- Protobuf verb declarations
+- Local extension directories
+- Digest-pinned OCI extension bundles
+- Static Go declarations for embedded applications
 
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│                 │     │                 │     │                 │
-│ Extension Mgr   │────▶│   Compilation   │────▶│   Execution     │
-│                 │     │     System      │     │    Runtime      │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-         │                       │                       │
-         │                       │                       │
-         ▼                       ▼                       ▼
-┌───────────────────────────────────────────────────────────────┐
-│                                                               │
-│                    Unified Extension System                   │
-│                                                               │
-└───────────────────────────────────────────────────────────────┘
-                                │
-                ┌───────────────┼───────────────┐
-                │               │               │
-                ▼               ▼               ▼
-         ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-         │    Static   │ │   Dynamic   │ │     OCI     │
-         │ Registration│ │    Files    │ │   Bundles   │
-         └─────────────┘ └─────────────┘ └─────────────┘
-```
+The extension manager combines these inputs into a candidate declaration environment.
 
-### Core Components
+## Verb manifest
 
-1. **ExtensionManager**: Central coordinator for all extension loading
-2. **Multiple Loaders**: Static, JSON, Protocol Buffer, OCI bundle support
-3. **LoaderAdapter**: Bridges new system to existing registries
-4. **VerbExecutor Interface**: Unified interface for verb implementations
-5. **Compilation System**: Static validation and type checking
-6. **Execution Runtime**: Hot-reload capable runtime system
-
-## Extension Types
-
-### 1. Static Registration (Compile-time)
-
-For extensions known at compile time:
-
-```go
-// Verb registration
-staticVerbs := loader.NewStaticVerbLoader().
-    AddVerb("send_email", &EmailVerbSpec{}).
-    AddVerb("log_event", &LogVerbSpec{})
-
-// Schema registration  
-staticSchemas := loader.NewStaticSchemaLoader().
-    AddSchema("user", userSchema).
-    AddSchema("order", orderSchema)
-
-// Load into manager
-mgr := loader.NewExtensionManager()
-mgr.AddLoader(staticVerbs)
-mgr.AddLoader(staticSchemas)
-```
-
-### 2. Dynamic Registration (Runtime)
-
-For extensions loaded at runtime:
-
-#### JSON Manifest-based
-
-```bash
-# Create manifest
-cat > verbs/manifest.json << EOF
-{
-  "verbs": [
-    {"id": 1001, "name": "send_email", "spec_file": "email_spec.json"},
-    {"id": 1002, "name": "log_event", "spec_file": "log_spec.json"}
-  ]
-}
-EOF
-
-# Load dynamically
-mgr.LoadFromDirectory("./verbs")
-```
-
-For the current JSON verb manifest format (used by `*.verbs.json` loaders), define capabilities, resources, and required
-args explicitly:
-
-```json
-{
-  "name": "ExternalAPI",
-  "version": "1.0.0",
-  "description": "HTTP-backed validators",
-  "verbs": [
-    {
-      "name": "ValidateAccount",
-      "description": "Calls external validation service",
-      "capabilities": ["write", "idempotent"],
-      "resources": [
-        { "resource": "account_validation", "capabilities": ["write", "idempotent"] }
-      ],
-      "argTypes": { "accountId": "string" },
-      "requiredArgs": ["accountId"],
-      "returnType": "ValidationResult",
-      "target": {
-        "type": "http",
-        "config": {
-          "url": "https://api.validation.com/check",
-          "method": "POST",
-          "timeout": "5s"
-        }
-      }
-    }
-  ]
-}
-```
-
-HTTP targets reject loopback, private, link-local, multicast, and unspecified addresses by default.
-The HTTP client validates every DNS answer and redirect destination.
-Set `allowPrivateNetwork: true` only for a trusted private target.
-
-### Checked workflows
-
-Put each workflow in an `.eff` or `.effx` file.
-The JSON verb manifest must not contain a `workflows` field.
-
-```effx
-flow "charge-order" priority 10 {
-  when { order.id != "" }
-  steps {
-    receipt = Charge(order_id: order.id, amount: 12500)
-    RecordReceipt(receipt: $receipt)
-  }
-}
-```
-
-The extension manager first creates an immutable staged snapshot.
-The checked compiler reads only this snapshot.
-The compiler does not call filesystem, DNS, HTTP, or OCI loaders.
-
-The compiler validates capabilities, resource subsets, types, required arguments, inverse contracts, result bindings, and fact paths.
-It publishes a snapshot only after `ir.Check` accepts the artifact.
-A failed reload closes candidate resources and keeps the active snapshot.
-An active execution keeps its snapshot until the execution ends.
-
-#### Protocol Buffer-based
-
-```protobuf
-// verb_spec.proto
-message VerbSpecProto {
-  uint32 id = 1;
-  string name = 2;
-  string capability = 3;
-  google.protobuf.Any payload_schema = 4;
-}
-```
-
-### 3. OCI Bundle Distribution
-
-Package and distribute as OCI artifacts:
-
-```bash
-# Create bundle
-effectusc bundle \
-  --name customer-rules \
-  --version 1.2.0 \
-  --verbs ./verbs \
-  --schemas ./schemas \
-  --rules ./rules \
-  --oci-ref ghcr.io/myorg/customer-rules:v1.2.0
-
-# Resolve and sign the published digest before deployment.
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
-effectusd \
-  --oci-ref ghcr.io/myorg/customer-rules@sha256:<manifest-digest> \
-  --oci-signature-verifier /usr/local/bin/effectus-verify-oci
-```
-
-### 4. Extension Manifest Resolution
-
-Declare bundle dependencies with semver constraints and checksums:
-
-```json
-{
-  "name": "customer-stack",
-  "version": "0.1.0",
-  "effectus": ">=1.4.0",
-  "registries": [
-    {"name": "public", "base": "ghcr.io/myorg", "default": true}
-  ],
-  "bundles": [
-    {
-      "name": "customer-rules",
-      "version": "^1.2.0",
-      "checksum": "sha256:...",
-      "registry": "public"
-    }
-  ]
-}
-```
-
-Resolve locally:
-
-```bash
-effectusc resolve --registry public=ghcr.io/myorg ./extensions.json
-```
-
-## Using Effectus as a Library
-
-The simplest path is to follow the end-to-end example in `examples/fraud_e2e/main.go`. The flow is:
-
-1. **Load schemas** into a `types.TypeSystem` for type checking.
-2. **Load verb specs + executors** into a `verb.Registry`.
-3. **Compile** `.eff` / `.effx` files with `compiler.NewCompiler()` and the facts/schema adapter.
-4. **Execute** with the list or flow runtime (`spec.Execute`) using the verb registry.
-
-The example shows concrete wiring for facts, schema adapters, and executors without extra boilerplate.
-
-## Runtime Loading + Cross-Container Extensions
-
-There are three supported extension protocols today:
-
-1. **JSON manifests** (`loader.NewJSONVerbLoader`, `loader.NewJSONSchemaLoader`)  
-2. **Protocol Buffers** (`loader.NewProtoVerbLoader`, `loader.NewProtoSchemaLoader`)  
-3. **OCI bundles** (build with `effectusc bundle`, pull with `effectusd --oci-ref` or `effectusc resolve`)
-
-Recommended runtime pattern:
-
-```go
-mgr := loader.NewExtensionManager()
-mgr.AddLoader(loader.NewJSONVerbLoader("verbs", "./verbs.json"))
-mgr.AddLoader(loader.NewJSONSchemaLoader("schema", "./schema.json"))
-// OCI bundles are loaded via effectusd --oci-ref or effectusc resolve today.
-
-registry := schema.NewRegistry()
-verbRegistry := verb.NewRegistry(nil)
-_ = schema.LoadExtensionsIntoRegistries(mgr, registry, verbRegistry)
-```
-
-For **cross-container** execution, keep verbs local and call remote services from the executor implementation (HTTP/gRPC/stream). The JSON loader supports `target.type` with `http`, `grpc`, `stream`, `oci`, and `mock`.
-
-For **hot loading**, `runtime.ExecutionRuntime.HotReload` can re-run extension loading and compilation using the same `ExtensionManager` (swap bundles or directories without restart).
-
-## Publishing Verb Extensions (OCI)
-
-Verb executors can live outside the core binary and be loaded at runtime. The OCI loader expects a directory in the
-bundle that includes one or more `*.verbs.json` (and optionally `*.schema.json`) files.
-
-Example `extensions/payments.verbs.json`:
+A verb manifest declares one or more operation contracts:
 
 ```json
 {
   "name": "payments",
   "version": "1.0.0",
-  "description": "HTTP-backed payment verbs",
   "verbs": [
     {
-      "name": "AuthorizePayment",
-      "description": "Authorize a card payment",
+      "name": "ReservePayment",
+      "argTypes": {
+        "orderId": "string",
+        "amount": "float"
+      },
+      "requiredArgs": ["orderId", "amount"],
+      "returnType": "PaymentReservation",
       "capabilities": ["write", "idempotent"],
-      "resources": [{"resource": "payment", "capabilities": ["write", "idempotent"]}],
-      "argTypes": {"orderId": "string", "amount": "float", "currency": "string"},
-      "requiredArgs": ["orderId", "amount", "currency"],
-      "returnType": "string",
+      "resources": [
+        {
+          "resource": "payment",
+          "capabilities": ["write"]
+        }
+      ],
+      "inverse": "ReleasePayment",
       "target": {
         "type": "http",
         "config": {
-          "url": "https://payments.internal/authorize",
+          "url": "https://payments.example/reservations",
           "method": "POST",
           "timeout": "5s"
         }
@@ -294,346 +63,175 @@ Example `extensions/payments.verbs.json`:
 }
 ```
 
-Publish the extension bundle with any OCI tooling (for example `oras`):
+The compiler checks names, argument types, required arguments, result types, capabilities, resources, inverse references, and target configuration.
 
-```bash
-oras push ghcr.io/myorg/effectus-extensions:1.0.0 ./extensions
+A successful declaration check does not prove the destination implements the contract.
+
+## Schema manifest
+
+A schema manifest can define named types, pure function signatures, and immutable initial data:
+
+```json
+{
+  "name": "payment-types",
+  "version": "1.0.0",
+  "types": {
+    "PaymentReservation": {
+      "name": "PaymentReservation",
+      "type": "object",
+      "properties": {
+        "reservationId": {"type": "string"},
+        "accepted": {"type": "boolean"}
+      }
+    }
+  },
+  "functions": {
+    "isSupportedCurrency": {
+      "name": "isSupportedCurrency",
+      "type": "builtin"
+    }
+  },
+  "initialData": {
+    "payment.defaultCurrency": "USD"
+  }
+}
 ```
 
-Then load it at runtime:
+The current workflow IR records function declarations as generation metadata. It does not invoke arbitrary registered Go functions.
 
-```go
-mgr := loader.NewExtensionManager()
-ociLoader := loader.NewOCIBundleLoader("payments", "ghcr.io/myorg/effectus-extensions@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-mgr.AddLoader(ociLoader)
+## Rule sources
 
-rt := runtime.NewExecutionRuntime()
-rt.RegisterExtensionLoader(ociLoader)
-_ = rt.CompileAndValidate(context.Background())
-```
+An extension bundle can contain `.eff` and `.effx` sources.
 
-Re-push the OCI tag and call `ExecutionRuntime.HotReload` to swap updated executors without a restart.
+The daemon compiles these sources with `compiler.CompileChecked`. It rejects a bundle when any source fails to parse or check.
 
-## Verb Implementation Interface
+A schema or verb refresh recompiles the same source against the candidate environment.
 
-All verb executors implement the unified interface:
+## Executor targets
+
+### HTTP
+
+The HTTP executor sends a checked argument object to a configured endpoint.
+
+It applies URL, host, redirect, DNS, timeout, and response-size controls. These controls reduce SSRF and resource-exhaustion risk.
+
+The destination receives invocation, idempotency, attempt, contract, and fencing metadata.
+
+### gRPC
+
+The gRPC executor invokes a configured unary method with typed `Struct` payloads.
+
+It applies transport security policy, deadlines, message limits, and strict result validation.
+
+### Stream and Kafka
+
+Stream targets publish checked payloads to a configured publisher. Kafka publication waits for the configured broker acknowledgement.
+
+Publication acknowledgement does not prove that a downstream consumer applied the operation.
+
+### OCI-resolved executor
+
+An OCI target resolves executor configuration from a verified extension bundle.
+
+The reference must use a digest. The operator-provided verifier must approve that digest before activation.
+
+## Static executors
+
+A trusted embedded application can register a `loader.VerbExecutor`:
 
 ```go
 type VerbExecutor interface {
-    Execute(ctx context.Context, effect Effect) (proto.Message, error)
-    Compensate(ctx context.Context, effect Effect, result proto.Message) error
-}
-
-// Example implementation
-type EmailExecutor struct {
-    client emailapi.Client
-}
-
-func (e *EmailExecutor) Execute(ctx context.Context, effect Effect) (proto.Message, error) {
-    payload := effect.Payload.(*EmailPayload)
-    messageID, err := e.client.SendEmail(ctx, payload)
-    return &EmailResult{MessageID: messageID}, err
-}
-
-func (e *EmailExecutor) Compensate(ctx context.Context, effect Effect, result proto.Message) error {
-    emailResult := result.(*EmailResult)
-    return e.client.RecallEmail(ctx, emailResult.MessageID)
+    Execute(ctx context.Context, args map[string]interface{}) (interface{}, error)
 }
 ```
 
-## Execution Types
+Static executors can contain arbitrary Go code and process state. They cannot become checked protobuf IR.
 
-The system supports multiple execution patterns:
+Do not expose this path as an untrusted plugin system.
 
-### Local Execution
+## Immutable snapshots
 
-```go
-type LocalExecutor struct {
-    handler func(ctx context.Context, args map[string]interface{}) (interface{}, error)
-}
-```
+The runtime builds one extension snapshot for each candidate generation.
 
-### HTTP Execution
+A snapshot contains declarations, executor instances, checked artifacts, and content digests. Active executions retain a reference to their snapshot.
 
-```go
-type HTTPExecutor struct {
-    client   *http.Client
-    endpoint string
-    method   string
-}
-```
+Retirement waits until no execution uses the old snapshot. A failed candidate closes its own resources without changing the active generation.
 
-### gRPC Execution
+## OCI distribution
 
-```go
-type GRPCExecutor struct {
-    client grpc.ClientConnInterface
-    method string
-}
-```
-
-#### gRPC Verb Manifest Example
-
-Use JSON verbs with `target.type: "grpc"` to call a gRPC service from rules:
-
-```json
-{
-  "name": "ValidationRPC",
-  "version": "1.0.0",
-  "verbs": [
-    {
-      "name": "ValidateAccount",
-      "description": "Calls account validation service via gRPC",
-      "capabilities": ["write", "idempotent"],
-      "argTypes": { "accountId": "string", "amount": "float" },
-      "requiredArgs": ["accountId", "amount"],
-      "returnType": "ValidationResult",
-      "target": {
-        "type": "grpc",
-        "config": {
-          "address": "validation:9090",
-          "method": "/validation.v1.ValidationService/Validate",
-          "timeout": "5s",
-          "insecure": true,
-          "metadata": { "x-tenant": "acme" }
-        }
-      }
-    }
-  ]
-}
-```
-
-The gRPC executor uses TLS by default. Set `insecure: true` only for a trusted plaintext endpoint.
-
-The default request and response type is `google.protobuf.Struct`. Example service:
-
-```proto
-syntax = "proto3";
-
-package validation.v1;
-
-import "google/protobuf/struct.proto";
-
-service ValidationService {
-  rpc Validate(google.protobuf.Struct) returns (google.protobuf.Struct);
-}
-```
-
-For other protobuf messages, configure `descriptorSet`, `requestType`, and `responseType`.
-The executor validates the unary method against the descriptor set before it sends a request.
-
-### Message Queue Execution
-
-```go
-type MessageQueueExecutor struct {
-    publisher MessagePublisher
-    topic     string
-}
-```
-
-## Coherent Flow Architecture
-
-The extension system implements a coherent flow: **Load → Compile → Execute**
-
-### 1. Loading Phase
-
-```go
-// Load all extensions
-extensions, err := mgr.LoadAll(ctx)
-if err != nil {
-    return fmt.Errorf("failed to load extensions: %w", err)
-}
-```
-
-### 2. Compilation Phase
-
-```go
-// Compile and validate
-compiler := compilation.NewExtensionCompiler()
-plan, err := compiler.Compile(ctx, extensions)
-if err != nil {
-    return fmt.Errorf("compilation failed: %w", err)
-}
-```
-
-### 3. Execution Phase
-
-```go
-// Execute with hot-reload capability
-runtime := execution.NewExecutionRuntime()
-if err := runtime.LoadPlan(plan); err != nil {
-    return fmt.Errorf("failed to load execution plan: %w", err)
-}
-```
-
-## Bundle Structure
-
-Bundles are self-contained packages with versioning and metadata:
-
-```json
-{
-  "name": "customer-rules",
-  "version": "1.2.0",
-  "description": "Customer management rules",
-  "verbHash": "a1b2c3d4...",
-  "createdAt": "2023-06-15T12:34:56Z",
-  "verbs": [
-    {"name": "send_email", "capability": "external", "spec": "..."}
-  ],
-  "schemas": [
-    {"name": "customer", "format": "protobuf", "definition": "..."}
-  ],
-  "rules": [
-    {"name": "validate_customer", "type": "list", "content": "..."}
-  ],
-  "requiredFacts": ["customer.name", "customer.email"],
-  "piiMasks": ["customer.ssn", "payment.cardNumber"]
-}
-```
-
-## CLI Integration
-
-The CLI provides comprehensive bundle management:
-
-### Creating Bundles
+Create and push an extension bundle with `effectusc`:
 
 ```bash
-effectusc bundle create \
-  --name "order-processing" \
-  --version "2.1.0" \
-  --verbs ./business_verbs \
-  --schemas ./schemas \
-  --rules ./rules \
-  --output bundle.json
+effectusc bundle \
+  --name payments \
+  --version 1.0.0 \
+  --schema-dir ./schemas \
+  --verb-dir ./verbs \
+  --rules-dir ./rules \
+  --oci-ref ghcr.io/acme/effectus-payments:1.0.0
 ```
 
-### Distributing via OCI
+Resolve the published tag to a digest. Sign that digest with the operator trust system.
+
+Run effectusd with the immutable reference:
 
 ```bash
-effectusc bundle push \
-  --bundle bundle.json \
-  --ref ghcr.io/company/order-processing:v2.1.0
-```
-
-### Running with Extensions
-
-```bash
-# From a local bundle
-EFFECTUS_SAGA_POSTGRES_DSN="$POSTGRES_DSN" \
-  effectusd --bundle ./bundle.json
-
-# From a signed immutable OCI digest
 EFFECTUS_SAGA_POSTGRES_DSN="$POSTGRES_DSN" \
   effectusd \
-  --oci-ref ghcr.io/company/order-processing@sha256:<manifest-digest> \
+  --oci-ref ghcr.io/acme/effectus-payments@sha256:BUNDLE_DIGEST \
   --oci-signature-verifier /usr/local/bin/effectus-verify-oci
-
-# Add extension manifests and .eff/.effx sources
-EFFECTUS_SAGA_POSTGRES_DSN="$POSTGRES_DSN" \
-  effectusd --bundle ./bundle.json --extensions-dir ./extensions
 ```
 
-## Advanced Features
+Effectusd does not poll a mutable OCI tag. Deploy a new digest to publish a new generation.
 
-### Hot Reloading
+## Archive safety
 
-```go
-// Enable hot reloading
-runtime.EnableHotReload(30 * time.Second)
+The shared extractor rejects:
 
-// Runtime will automatically:
-// 1. Check for new bundle versions
-// 2. Compile new extensions
-// 3. Atomically swap execution plans
-// 4. Maintain zero-downtime operation
-```
+- Absolute paths
+- Parent traversal
+- Symbolic and hard links
+- Device and unsupported entry types
+- Excessive file counts
+- Excessive file or expanded archive sizes
 
-### Capability-based Security
+Nested archives use the same limits.
 
-```go
-// Verbs declare required capabilities
-type VerbSpec struct {
-    Name       string
-    Capability capability.Type  // Read, Modify, Create, Delete
-    // ...
-}
+## Durable execution metadata
 
-// Runtime enforces capability constraints
-executor := eval.NewListExecutor(
-    verbReg, 
-    eval.WithCapabilityRestriction(capability.Read)
-)
-```
+A checked invocation carries:
 
-### PII Redaction
+- Stable execution, plan, effect, and dispatch identities
+- An idempotency key
+- An attempt number
+- The contract hash
+- A fencing class and token
 
-```go
-// Bundle declares PII fields
-bundle.PiiMasks = []string{
-    "customer.ssn",
-    "payment.cardNumber",
-    "user.medicalRecord",
-}
+The destination must enforce idempotency or fencing when correctness requires it.
 
-// Runtime automatically masks in logs
-// Original: {"customer": {"ssn": "123-45-6789"}}
-// Logged:   {"customer": {"ssn": "***"}}
-```
+## Compensation
 
-### Durable workflow execution
+A verb can name an inverse verb. The runtime records forward success before it considers compensation.
 
-Effectusd uses the V2 outbox for checked workflows by default and rejects the obsolete `--saga` compatibility switch. Embedded callers configure `runtime.ExecutionRuntime.ConfigureDurableWorkflowExecution` and use `runtime.Engine` or `ExecuteWorkflowWithIdentity`.
+Compensation runs in reverse source order. It is another external operation and can fail.
 
-The checked runtime commits each step intent before invocation and preserves unknown outcomes instead of claiming rollback.
+The runtime blocks automatic compensation when a forward operation has an unknown outcome.
 
-## Integration Examples
+## Security checklist
 
-### Manufacturing Integration
+- Use digest-pinned OCI references.
+- Configure and test a signature verifier.
+- Keep credentials in a secret store.
+- Use TLS and destination authentication.
+- Restrict executor network access.
+- Set request and response limits.
+- Require destination idempotency or fencing where needed.
+- Review capability and resource declarations.
 
-```go
-// Manufacturing-specific executors
-registry.Register("reserve_material", &MaterialReservationExecutor{})
-registry.Register("schedule_operation", &ProductionScheduleExecutor{})
-registry.Register("quality_check", &QualityInspectionExecutor{})
-```
+## Related documents
 
-### Financial Services Integration
-
-```go
-// Finance-specific executors
-registry.Register("validate_transaction", &TransactionValidatorExecutor{})
-registry.Register("calculate_risk", &RiskCalculatorExecutor{})
-registry.Register("send_alert", &ComplianceAlertExecutor{})
-```
-
-### E-commerce Integration
-
-```go
-// E-commerce-specific executors
-registry.Register("check_inventory", &InventoryCheckExecutor{})
-registry.Register("process_payment", &PaymentProcessorExecutor{})
-registry.Register("ship_order", &ShippingExecutor{})
-```
-
-## Benefits
-
-The unified extension system provides:
-
-1. **Consistency**: Single approach for all extension types
-2. **Type Safety**: Compile-time verification prevents runtime errors
-3. **Flexibility**: Support for both static and dynamic loading
-4. **Distribution**: Multiple deployment and distribution options
-5. **Evolution**: Safe schema and verb evolution with versioning
-6. **Performance**: Hot-reload without service interruption
-7. **Security**: Capability-based protection and PII handling
-8. **Reliability**: Saga-based compensation for transactional integrity
-
-This comprehensive system enables teams to extend Effectus effectively while maintaining the mathematical guarantees and safety properties that make it suitable for mission-critical systems.
-
-## Future Enhancements
-
-- **Formal Verification**: Static proofs of extension correctness
-- **Multi-Language Support**: Extension development in Python, TypeScript, Rust
-- **Advanced Caching**: Intelligent caching of compiled extensions
-- **Distributed Extensions**: Extensions that span multiple services
-- **ML Integration**: Extensions that incorporate machine learning models
+- [Checked Compilation Flow](coherent_flow.md)
+- [Runtime Guarantees](GUARANTEES.md)
+- [Runtime Lifecycle](LIFECYCLE.md)
+- [Durable Saga Protocol](DURABLE_SAGA_PROTOCOL.md)
+- [Loader Package](../loader/README.md)

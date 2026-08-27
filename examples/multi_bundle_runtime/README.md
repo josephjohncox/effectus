@@ -1,6 +1,8 @@
 # Multi-Bundle Runtime Example
 
-This example demonstrates resolving multiple bundles from a manifest, loading their schemas/verbs/rules, and executing a merged list ruleset. It also includes a hot-reload loop that swaps bundle versions by changing the manifest.
+This example resolves local bundles from a manifest. It loads their declarations and rules, then executes a merged list ruleset.
+
+The watch mode swaps local bundle versions when the manifest changes. This is a library example, not production OCI polling.
 
 ## Run Once
 

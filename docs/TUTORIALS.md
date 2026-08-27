@@ -3,6 +3,7 @@
 Short, copy-pasteable walkthroughs for common Effectus workflows.
 
 ## 1) Snowflake facts via SQL adapter (batch)
+
 1. Install the Snowflake driver in your app (for example `gosnowflake`).
 2. Create a source config:
 
@@ -18,10 +19,11 @@ config:
   schema_name: "acme.v1.facts.Customer"
 ```
 
-3. Load schemas (proto or JSON schema) for `acme.v1.facts.Customer`.
-4. Run your app and subscribe to facts.
+1. Load schemas (proto or JSON schema) for `acme.v1.facts.Customer`.
+2. Run your app and subscribe to facts.
 
 ## 2) Iceberg facts via Trino (stream)
+
 1. Install the Trino driver in your app.
 2. Create a source config:
 
@@ -40,10 +42,11 @@ config:
   schema_name: "acme.v1.facts.Order"
 ```
 
-3. Register the `acme.v1.facts.Order` schema and start the source.
+1. Register the `acme.v1.facts.Order` schema and start the source.
 
 ## 3) S3 facts from JSON exports (stream)
-1. Ensure your AWS credentials are available in the environment.
+
+1. Make sure the environment contains your AWS credentials.
 2. Create a source config:
 
 ```yaml
@@ -59,14 +62,15 @@ config:
   schema_name: "acme.v1.facts.Event"
 ```
 
-3. Use `mappings` if you want different schemas per prefix/key pattern.
-4. For Parquet objects, set `format: "parquet"`.
+1. Use `mappings` if you want different schemas per prefix/key pattern.
+2. For Parquet objects, set `format: "parquet"`.
 
-See `examples/warehouse_sources/` for production-style config files.
+See `examples/warehouse_sources/` for example config files.
 See `examples/warehouse_sources/s3_parquet_demo` for a runnable Parquet reader.
 
 ## 4) Postgres CDC (wal2json)
-1. Ensure `wal2json` is installed and `wal_level=logical`.
+
+1. Install `wal2json` and set `wal_level=logical`.
 2. Create a source config:
 
 ```yaml
@@ -83,6 +87,7 @@ config:
 ```
 
 ## 5) AMQP streaming
+
 1. Create a queue and exchange.
 2. Create a source config:
 
@@ -99,6 +104,7 @@ config:
 ```
 
 ## 6) Library usage (compile + execute)
+
 This is the shortest “library mode” path: register schema/verbs, compile rules, execute against facts.
 
 ```go
@@ -153,6 +159,7 @@ func main() {
 ```
 
 When to choose each loader:
+
 - Use `loader.NewStaticVerbLoader` for in-process Go executors.
 - Use JSON/OCI loaders for HTTP/gRPC/stream targets or cross-team verb distribution.
 

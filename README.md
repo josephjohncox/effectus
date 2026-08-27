@@ -1,51 +1,39 @@
-# Effectus - Typed, Deterministic Rule Engine
+# Effectus
 
 ![Effectus logo](./effectus-small.png)
 
-Effectus is a strongly-typed rule engine that turns live Facts into safe, deterministic Effects. It enforces types at compile time, supports dynamic extensions, and runs as a library or a daemon with hot-reloadable bundles.
+Effectus is a typed rule compiler and execution runtime. It compiles `.eff` and `.effx` sources into checked protobuf IR.
 
-## Highlights
+The production daemon uses one durable execution engine for HTTP, Kafka, generated gRPC, and recovery work.
 
-- Typed facts and verbs with proto/JSON schema support
-- Deterministic evaluation and static validation before runtime
-- Dynamic extensions (JSON + OCI bundles) and static Go extensions
-- Runtime daemon with UI, dry-run playground, ACLs, and rate limits
-- Multi-source facts (Kafka, CDC, SQL, S3, Iceberg, AMQP, gRPC, Redis, files)
+## What Effectus provides
 
-## Why Effectus
+- Static checks for fact paths, verb arguments, result bindings, and declared types
+- Deterministic checked artifacts and content digests
+- Immutable runtime generations with atomic activation
+- Durable admission, execution, recovery, and saga state in PostgreSQL
+- HTTP, Kafka, generated gRPC, CDC, SQL, S3, Iceberg, AMQP, Redis, and file adapters
+- JSON and signed OCI extension bundles
+- A status API, web UI, metrics, health probes, and a Helm chart
 
-Effectus is a rules runtime built for correctness and change control. Compared to embedding rules in application code,
-it keeps decision logic versioned, typed, and hot‑reloadable with canary checks and rollback. The runtime includes UI,
-metrics, ACLs, and rate limits so the system can be monitored and governed in production.
+## Execution boundary
 
-## Good fit use cases
+Effectus controls internal admission and execution state. It does not make an external service transactional.
 
-- Fraud/risk triage, policy enforcement, compliance gating
-- Order routing, fulfillment orchestration, pricing eligibility
-- Incident/SRE automation driven by live facts
-- Access control/entitlements where auditability matters
+External destinations must enforce the supplied idempotency key or fencing token. Compensation is recovery work, not an ACID rollback.
 
-## Quick start
+Read [Runtime Guarantees](docs/GUARANTEES.md) before you use Effectus in production.
 
-### 1) Install
+## Install
 
 ```bash
 go install github.com/effectus/effectus-go/cmd/effectusc@latest
 go install github.com/effectus/effectus-go/cmd/effectusd@latest
 ```
 
-### 2) Define facts (JSON schema or proto)
+## Compile rules
 
-```json
-// schemas/fraud_facts.json
-[
-  {"path": "transaction.id", "type": {"primitive": "string"}},
-  {"path": "transaction.amount", "type": {"primitive": "float"}},
-  {"path": "customer.tier", "type": {"primitive": "string"}}
-]
-```
-
-### 3) Write rules
+Define fact types and verb contracts, then write a rule:
 
 ```eff
 rule "HighRiskLargeTxn" {
@@ -54,7 +42,7 @@ rule "HighRiskLargeTxn" {
 }
 ```
 
-### 4) Bundle + run
+Create a bundle:
 
 ```bash
 effectusc bundle \
@@ -64,193 +52,61 @@ effectusc bundle \
   --verb-dir verbs \
   --rules-dir rules \
   --output bundle.json
-
-effectusd --bundle bundle.json --http-addr :8080
-# open http://localhost:8080/ui
 ```
 
-For non-library deployments (YAML config, ConfigMaps, mixed HTTP/OCI verbs), see `docs/RUNTIME_CONFIG.md`.
+The compiler checks each source file before it writes the bundle. Production generations contain checked first-order IR, not Go callbacks.
 
-## Standalone runtime (primary mode)
+## Run the daemon
 
-Run `effectusd` with a YAML/JSON config to operate as a standalone service:
-
-```yaml
-# effectusd.yaml
-bundle:
-  oci: "ghcr.io/myorg/bundles/fraud-demo@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
-http:
-  addr: ":8080"
-metrics:
-  addr: ":9090"
-
-api:
-  auth: "token"
-  token: "replace-with-write-token"
-  read_token: "replace-with-read-token"
-  hotload_rules: true
-
-facts:
-  store: "file"
-  path: "/var/lib/effectus/facts.json"
-  merge_default: "last"
-  cache:
-    policy: "lru"
-    max_universes: 200
-    max_namespaces: 50
-
-verbs:
-  duplicate_policy: "error"
-  oci_warmup: true
-  strict: true
-
-extensions:
-  dirs: ["./extensions"]
-  oci:
-    - "ghcr.io/myorg/extension-bundles/payments@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-```
-
-Run it:
+Effectusd requires PostgreSQL for durable workflow state:
 
 ```bash
-EFFECTUS_API_TOKEN="..." \
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
-  effectusd --config effectusd.yaml \
+EFFECTUS_API_TOKEN="replace-me" \
+EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:password@db/effectus?sslmode=require" \
+  effectusd --bundle bundle.json --http-addr :8080
+```
+
+Open `http://localhost:8080/ui`. Use `/healthz` for liveness and `/readyz` for readiness.
+
+Use environment variables or Kubernetes Secrets for credentials. Effectusd rejects secret command-line flags.
+
+## Deploy an OCI bundle
+
+Production OCI references must use a digest. The daemon also requires an operator-provided signature verifier.
+
+```bash
+EFFECTUS_API_TOKEN="replace-me" \
+EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:password@db/effectus?sslmode=require" \
+  effectusd \
+  --oci-ref ghcr.io/acme/rules@sha256:BUNDLE_DIGEST \
   --oci-signature-verifier /usr/local/bin/effectus-verify-oci
 ```
 
-Bundle/compiler example (creates a distributable bundle):
+Deploy a new digest to publish a new generation. Effectusd does not poll mutable OCI tags.
 
-```bash
-effectusc bundle \
-  --name fraud-demo \
-  --version 1.0.0 \
-  --schema-dir examples/fraud_e2e/schema \
-  --verb-dir examples/fraud_e2e/verbs \
-  --rules-dir examples/fraud_e2e/rules \
-  --output out/fraud-demo.bundle.json
-```
+## Extend Effectus
 
-For more config patterns (mixed verb sources, schema providers, Kubernetes ConfigMaps), see `docs/RUNTIME_CONFIG.md`.
+Production effectusd supports checked HTTP, gRPC, stream, Kafka, and OCI-resolved executors. It rejects in-process Go plugins.
 
-## Extensions (verbs)
+A trusted Go application can embed Effectus and register static executors. This compatibility path is outside the daemon isolation boundary.
 
-Effectus supports multiple extension styles:
+Read [Extension System](docs/EXTENSION_SYSTEM.md) for manifest formats and security requirements.
 
-- Static: Go executors via `loader.NewStaticVerbLoader(...)`
-- Dynamic: JSON verb manifests (`*.verbs.json`)
-- OCI bundles: publish digest-pinned, signed bundles and deploy a new digest for each release
+## Documentation
 
-Dynamic verb example (HTTP target):
+Start with the [documentation index](docs/README.md).
 
-```json
-{
-  "name": "ExternalAPI",
-  "version": "1.0.0",
-  "verbs": [
-    {
-      "name": "ValidateAccount",
-      "argTypes": {"accountId": "string"},
-      "requiredArgs": ["accountId"],
-      "returnType": "ValidationResult",
-      "target": {"type": "http", "config": {"url": "https://api.example.com/validate"}}
-    }
-  ]
-}
-```
+- [Basics](docs/BASICS.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Runtime guarantees](docs/GUARANTEES.md)
+- [Runtime lifecycle](docs/LIFECYCLE.md)
+- [Runtime configuration](docs/RUNTIME_CONFIG.md)
+- [Production runbook](docs/PRODUCTION_RUNBOOK.md)
+- [Durable saga protocol](docs/DURABLE_SAGA_PROTOCOL.md)
+- [CLI reference](docs/COMMANDS.md)
+- [Examples](examples/README.md)
 
-See `docs/EXTENSION_SYSTEM.md` for full manifest schema and OCI publishing.
-
-### Go-backed verbs
-
-Production effectusd rejects in-process Go plugins. Run Go-backed executors as separate HTTP or gRPC services and describe them with checked extension manifests.
-
-A trusted embedded Go application can still register a static executor with `loader.NewStaticVerbLoader`. This library-only compatibility path is outside the daemon's process-isolation boundary.
-
-## Runtime UI + API
-
-`effectusd` ships a lightweight status UI with rules, flows, schema summaries, a dependency graph, and a dry-run playground.
-`/api/*` endpoints are token-protected by default; `/ui`, `/healthz`, and `/readyz` are open.
-Enable `/api/rules/validate` + `/api/rules/hotload` (and the in-UI rule editor) with `--rules-hotload` or `api.hotload_rules`.
-
-```bash
-EFFECTUS_API_TOKEN=devtoken \
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
-  effectusd --bundle bundle.json
-curl -X POST http://localhost:8080/api/facts \
-  -H 'Authorization: Bearer devtoken' \
-  -H 'Content-Type: application/json' \
-  -d '{"universe":"prod","facts":{"customer":{"tier":"gold"}}}'
-```
-
-## Library usage (embed in Go)
-
-Use the library when you want in-process execution or custom wiring:
-
-```go
-ts := types.NewTypeSystem()
-ts.RegisterFactType("order.id", types.NewStringType())
-ts.RegisterFactType("order.total", types.NewFloatType())
-
-registry := verb.NewRegistry(ts)
-_ = registry.RegisterVerb(&verb.Spec{
-  Name:       "FlagHighValue",
-  ArgTypes:   map[string]string{"orderId": "string"},
-  ReturnType: "bool",
-  Executor:   myExecutor,
-})
-
-facts := common.NewBasicFacts(map[string]interface{}{
-  "order": map[string]interface{}{"id": "o-1", "total": 2500.0},
-}, ts)
-
-comp := compiler.NewCompiler()
-compTS := comp.GetTypeSystem()
-compTS.RegisterFactType("order.id", types.NewStringType())
-compTS.RegisterFactType("order.total", types.NewFloatType())
-compTS.RegisterVerbType("FlagHighValue", map[string]*types.Type{"orderId": types.NewStringType()}, types.NewBoolType())
-
-parsed, _ := comp.ParseAndTypeCheck("rules/flags.eff", facts)
-specAny, _ := (&list.Compiler{}).CompileParsedFile(parsed, "rules/flags.eff", facts.Schema())
-spec := specAny.(*list.Spec)
-spec.VerbRegistry = registry
-_ = spec.Execute(context.Background(), facts, nil)
-```
-
-See `docs/TUTORIALS.md` for a compact library walkthrough and extension loaders.
-
-## UI demos
-
-Run the demo bundles + UI locally:
-
-```bash
-just ui-demo
-just ui-flow-demo
-```
-
-## Screenshots & video
-
-![Flow UI demo placeholder](docs/media/ui-flow-demo.gif)
-
-## Key docs
-
-- `docs/README.md` - documentation index
-- `docs/TUTORIALS.md` - short tutorials
-- `docs/COMMANDS.md` - CLI reference
-- `docs/RUNTIME_CONFIG.md` - non-library runtime config (YAML)
-- `docs/PRODUCTION_RUNBOOK.md` - production checklist, hotload, rollback
-- `docs/FACT_SOURCES.md` - streaming and batch adapter tutorials
-- `docs/EXTENSION_SYSTEM.md` - verbs and bundles
-- `docs/SYSTEM_INTENT.md` / `docs/GLOSSARY.md` - model and vocabulary
-
-## Production & Helm
-
-- Helm chart: `charts/effectusd/` (OCI-ready runtime chart)
-- Runtime config (non-library mode): `docs/RUNTIME_CONFIG.md`
-- Production runbook: `docs/PRODUCTION_RUNBOOK.md`
-
-## Development
+## Develop
 
 ```bash
 just build
@@ -258,8 +114,8 @@ just test
 just lint
 ```
 
-See `CONTRIBUTING.md` for workflow details.
+Use `just --list` to show all repository tasks. See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution rules.
 
 ## License
 
-MIT - see `LICENSE`.
+Effectus uses the MIT license. See [LICENSE](LICENSE).

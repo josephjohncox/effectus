@@ -1,173 +1,91 @@
-# Verb Extension System in Effectus
+# Verb Extension Model
 
-## 1. Introduction to Verb Extension
+A verb extension adds typed operation contracts and executor configuration to a candidate environment.
 
-Effectus implements a powerful verb extension system that allows the core rule engine to be extended with new domain-specific verbs. This extension mechanism is founded on strong type-theoretical principles to ensure both flexibility and safety.
+Read [Extension System](../EXTENSION_SYSTEM.md) for supported manifest formats.
 
-```math
-\begin{align}
-\text{VerbSpec} &: \text{Name} \times \text{Capability} \times \text{ArgTypes} \times \text{ReturnType} \times \text{Inverse} \\
-\text{VerbRegistry} &: \text{Name} \rightarrow \text{VerbSpec}
-\end{align}
-```
+## Contract
 
-The verb extension system provides a categorical structure for extending the effect algebra in a principled way.
-
-## 2. Theoretical Foundation
-
-### 2.1. Verbs as Algebraic Operations
-
-Every verb in Effectus can be viewed as an algebraic operation:
+A verb contract has this abstract form:
 
 ```math
-\begin{align}
-\text{Verb} : \prod_{i} \tau_i \rightarrow \rho
-\end{align}
+v : (\tau_1, \tau_2, \ldots, \tau_n) \rightarrow \rho
 ```
 
-Where:
-- $\tau_i$ are the parameter types
-- $\rho$ is the return type
+The contract also contains required arguments, capability metadata, resources, and an optional inverse verb.
 
-This algebraic view connects verbs to the theory of algebraic effects, where operations are the primitives of effectful computation.
+The declaration describes an operation. It does not prove the executor implementation satisfies the contract.
 
-### 2.2. Extension as a Functor
+## Environment extension
 
-The verb extension mechanism defines a functor from a base category of effect types to an extended category:
+Let $V$ be the active map of verb names to contracts. A candidate extension proposes $V'$.
+
+The loader applies duplicate and compatibility policy before it builds the candidate environment.
+
+The environment digest changes when a relevant contract changes. Checked artifacts include contract hashes for their steps.
+
+## Compilation
+
+For each invocation, the compiler checks:
+
+- The verb exists.
+- Argument names are unique.
+- Required arguments are present.
+- Argument values have compatible types.
+- A result binding uses the declared result type.
+- The selected executor target is supported.
+
+A schema or verb refresh recompiles existing rule sources against the candidate environment.
+
+## Interpretation
+
+An executor interprets a checked invocation:
 
 ```math
-\begin{align}
-F : \mathcal{C} \rightarrow \mathcal{C}'
-\end{align}
+\mathrm{execute}_v : (Args_v, Metadata, W) \rightarrow (Result_v, Outcome, W')
 ```
 
-Where $\mathcal{C}$ is the category of built-in effects, and $\mathcal{C}'$ is the extended category with domain-specific effects.
+The runtime validates the result against $\rho$ before it records successful completion.
 
-## 3. Plugin Architecture
+$W$ represents external state. The runtime does not assume that this function is pure or deterministic.
 
-The plugin architecture for verb extension follows a principled approach:
+## Supported production targets
 
-```math
-\begin{align}
-\text{Plugin} &: \text{GetVerbs} \times \text{Execute} \\
-\text{GetVerbs} &: 1 \rightarrow \text{List}(\text{VerbSpec}) \\
-\text{Execute} &: \text{Args} \rightarrow \text{Result} \cup \text{Error}
-\end{align}
-```
+Production effectusd supports checked HTTP, gRPC, stream, Kafka, and OCI-resolved targets.
 
-This structure ensures that plugins provide both the type specifications and the implementation of verb behaviors.
+OCI loading requires a digest and an operator-provided signature verifier. HTTP targets apply host, redirect, DNS, and response-size controls.
 
-## 4. Type Safety in Extension
+In-process Go plugins are rejected by the production daemon.
 
-Effectus maintains type safety across extensions through two mechanisms:
+## Static embedded executors
 
-### 4.1. Static Type Validation
+A trusted Go application can register a static executor through the library API.
 
-```math
-\begin{align}
-\text{ValidateType} : \text{Type} \times \text{TypeSystem} \rightarrow \{\text{Valid}, \text{Invalid}\}
-\end{align}
-```
+This path can contain arbitrary Go behavior. It does not become serializable checked IR and does not gain daemon process isolation.
 
-All verb specifications undergo static type validation against the global type system, ensuring type consistency.
+## Composition
 
-### 4.2. Dynamic Type Checking
+Two verbs compose in a flow when an earlier result type matches a later argument type.
 
-```math
-\begin{align}
-\text{CheckArg} : \text{Value} \times \text{Type} \rightarrow \{\text{Compatible}, \text{Incompatible}\}
-\end{align}
-```
+This is typed data dependency, not proof that the external operations commute or form a category.
 
-At runtime, arguments passed to verbs are checked for compatibility with the declared types, providing an additional layer of safety.
+Capability and resource declarations provide additional conflict metadata. They do not prove semantic independence.
 
-## 5. Verb Hashing and Versioning
+## Versioning
 
-The verb registry maintains a cryptographic hash of all registered verbs:
+A production generation pins exact verb contracts and executors. Existing executions keep that generation after a refresh.
 
-```math
-\begin{align}
-\text{VerbHash} = \text{SHA256}(\text{Sort}(\text{VerbSpecs}))
-\end{align}
-```
+A changed contract must produce a new candidate and pass compilation before activation.
 
-This hash is used to:
-1. Detect changes in verb specifications
-2. Ensure compatibility between rule bundles and executors
-3. Prevent accidental or malicious verb redefinition
+## Security obligations
 
-## 6. Operational Semantics
+The operator must define:
 
-The operational semantics of verb extension define how the system resolves and executes verbs:
+- OCI trust policy
+- Destination authentication
+- Network policy
+- Secret distribution
+- Idempotency enforcement
+- Fencing enforcement
 
-```math
-\begin{align}
-\frac{\text{lookupVerb}(v) = \text{spec} \quad \text{validateArgs}(a, \text{spec}) = \text{ok}}
-     {\langle \text{execute}(v, a), \text{ctx} \rangle \Rightarrow \langle \text{result}, \text{ctx'} \rangle}
-\end{align}
-```
-
-The execution mechanism provides a clean separation between verb specification (the "what") and implementation (the "how").
-
-## 7. Loading Mechanisms
-
-Effectus supports multiple loading mechanisms for verb extensions:
-
-1. **Static Loading**: Verbs defined in JSON configuration files
-2. **Dynamic Loading**: Verbs loaded from compiled plugins at runtime
-3. **Programmatic Registration**: Verbs registered through API calls
-
-Each loading mechanism maintains the same type safety guarantees.
-
-## 8. Relationship to Category Theory
-
-The verb extension system has deep connections to category theory:
-
-```math
-\begin{align}
-\text{Verb} &\cong \text{Morphism in a Kleisli Category} \\
-\text{VerbRegistry} &\cong \text{Enriched Category} \\
-\text{Composition} &\cong \text{Kleisli Composition}
-\end{align}
-```
-
-These connections provide a theoretical foundation for understanding how verbs compose and interact.
-
-## 9. Key Properties
-
-### 9.1. Compositionality
-
-The verb extension system maintains **compositionality**:
-
-**Theorem (Compositionality)**: Verbs from different extensions can be composed in flow rules, with type checking ensuring safety.
-
-This enables modular development of domain-specific extensions.
-
-### 9.2. Determinism
-
-The system ensures **deterministic behavior**:
-
-**Theorem (Determinism)**: For a fixed registry and inputs, verb execution produces consistent results.
-
-This property is critical for reasoning about rule behavior.
-
-## 10. Advanced Extensions
-
-Potential advanced extensions to the verb system include:
-
-1. **Verb Polymorphism**: Allowing verbs to operate on multiple types
-2. **Higher-Order Verbs**: Verbs that take other verbs as parameters
-3. **Effect Inference**: Inferring capability requirements from verb implementations
-
-These extensions would further enhance the expressiveness of the verb system.
-
-## 11. Practical Applications
-
-The verb extension system enables:
-
-1. **Domain-Specific Languages**: Creating specialized verbs for particular domains
-2. **Integration Points**: Building verbs that connect to external systems
-3. **Controlled Evolution**: Adding new capabilities without breaking existing rules
-4. **Security Boundaries**: Isolating critical operations behind capability controls
-
-This combination of features makes the verb extension system a powerful tool for building adaptive and secure rule systems. 
+The extension manifest cannot enforce these controls by itself.

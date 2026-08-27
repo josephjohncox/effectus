@@ -1,130 +1,62 @@
-# Effectus Mathematical Foundations
+# Theory Notes
 
-> **Status:** These documents describe a target formal model. They are not machine-checked proofs of the full Go runtime. See [`../GUARANTEES.md`](../GUARANTEES.md) for the current implementation boundary.
+These documents describe semantic models for Effectus. They are not proofs of the complete Go implementation.
 
-This directory contains the formal mathematical foundations for Effectus, providing rigorous theoretical backing for the system's design and guarantees.
+Use [Runtime Guarantees](../GUARANTEES.md) for implemented behavior. Use [Executable State Models](../../formal/README.md) for the bounded TLA+ models.
 
-## Overview
+## Scope
 
-Effectus is built on solid mathematical principles from category theory, type theory, and formal semantics. This theoretical foundation enables:
+The notes separate three systems:
 
-- **Static verification** of rule correctness
-- **Deterministic execution** with formal guarantees  
-- **Compositional reasoning** about rule behavior
-- **Type safety** throughout the system
+1. The checked first-order IR used by production effectusd
+2. Legacy Go list and continuation APIs used by embedded applications
+3. External verb destinations that Effectus does not control
 
-## Mathematical Structure
+A property must name the system and assumptions that it covers.
 
-### Core Theory
+## Documents
 
-- **[Basic Foundations](basic.md)** - Core mathematical concepts, denotational semantics, and type soundness
-- **[Computational Model](computational_model.md)** - Why Effectus is deliberately not Turing complete
-- **[Formal Proofs](appendix.md)** - Categorical proofs and small-step operational semantics
+- [Core Model](basic.md) defines facts, plans, steps, values, and execution states.
+- [Computational Bounds](computational_model.md) explains finite checked plans and termination assumptions.
+- [Compensation](compensation.md) models durable forward and reverse dispatch.
+- [Capabilities](capabilities.md) explains conflict metadata, local locking, and fencing.
+- [Verb Extensions](verb_extension.md) models contracts and executor interpretation.
+- [Notation and Proof Obligations](appendix.md) collects the abstract transition rules.
 
-### System Components  
+## Terminology
 
-- **[Compensation Theory](compensation.md)** - Saga-based compensation with mathematical foundations
-- **[Capability System](capabilities.md)** - Formal model for capability-based security
-- **[Verb Extension](verb_extension.md)** - Mathematical framework for extending the verb system
+A checked artifact is a finite protobuf value that passes `ir.Check`.
 
-### Simplified Explanations
+A plan is an ordered sequence of checked steps. A result slot can refer only to an earlier step.
 
-- **[Accessible Theory](appendix_simple.md)** - Mathematical concepts explained for broader audiences
+An interpreter maps a checked verb invocation to an external operation and an outcome.
 
-## Semantic Design Targets
+A generation is an immutable environment plus its checked artifacts and executors.
 
-### Type Safety Target
+## Claim levels
 
-**Progress**: Well-typed terms either complete or can take another step  
-**Preservation**: Types are maintained throughout execution  
-**Termination target**: Checked first-order IR terminates by construction. Current Go continuations are outside this claim.
+These notes use three claim levels:
 
-### Fact-growth Target
+- **Implemented invariant**: repository tests or a checked model cover the stated boundary.
+- **Model property**: the property follows from the abstract model and its assumptions.
+- **Proof obligation**: a full implementation proof would need to establish the property.
 
-Adding unrelated fact fields should not change an existing checked rule.
+No theory document establishes exactly-once external delivery, semantic inversion, or unconditional termination.
 
-### List-to-flow Embedding
+## Main distinctions
 
-The implementation preserves list order when it converts a list plan to a flow plan.
+Checked rule evaluation can be deterministic for a fixed artifact, environment, and fact payload.
 
-## Category Theory Foundations
+External verb execution can depend on networks, clocks, databases, and remote policy. It is not generally deterministic.
 
-### Free Constructions
+A finite checked plan bounds internal step count. It does not bound external latency, retries, storage growth, or remote resource use.
 
-| Dialect | Mathematical Structure | Practical Meaning |
-| --------- | ---------------------- | ------------------- |
-| **List Rules** | Free Monoid on Effects | Sequential composition only |
-| **Flow Rules** | Free Monad on Effects | Sequential + binding/branching |
+Compensation is a second external operation. It is not an ACID rollback.
 
-### Denotational Semantics
+## Contribution rules
 
-```math
-\begin{align}
-\text{Facts} &\triangleq \prod_{i} \llbracket\tau_i\rrbracket \\
-\text{Effect} &\triangleq \sum_{i}(\text{Verb}_i \times \llbracket\text{Payload}_i\rrbracket) \\
-\text{Program}(A) &\triangleq \mu X. \, A + (\text{Effect} \times X) \\
-\text{SpecList} &\triangleq \text{Facts} \rightarrow \text{List}(\text{Effect}) \\
-\text{SpecFlow} &\triangleq \text{Facts} \rightarrow \text{Program}(\text{Unit})
-\end{align}
-```
-
-## Practical Benefits
-
-These theoretical foundations provide real-world benefits:
-
-1. **Early Error Detection**: Mathematical properties enable compile-time verification
-2. **Predictable Behavior**: Formal semantics ensure deterministic execution  
-3. **Safe Composition**: Categorical structure enables modular reasoning
-4. **Evolution Safety**: Monotonicity properties enable safe schema extension
-
-## Reading Guide
-
-### For Implementers
-
-1. Start with [Basic Foundations](basic.md) for core concepts
-2. Read [Computational Model](computational_model.md) for design rationale
-3. Study [Formal Proofs](appendix.md) for implementation details
-
-### For Theorists  
-
-1. Review [Basic Foundations](basic.md) for notation and definitions
-2. Examine [Formal Proofs](appendix.md) for rigorous treatments
-3. Explore component-specific theory files for detailed analysis
-
-### For General Audience
-
-1. Begin with [Accessible Theory](appendix_simple.md) for intuitive explanations
-2. Progress to [Basic Foundations](basic.md) for more formal treatment
-3. Refer to specific component files as needed
-
-## Mathematical Notation
-
-We use standard mathematical notation throughout:
-
-- $\triangleq$ for definitional equality
-- $\llbracket \cdot \rrbracket$ for semantic interpretation
-- $\mu X. F(X)$ for least fixed points
-- $\prod$ and $\sum$ for products and coproducts
-- Category theory notation follows Mac Lane's "Categories for the Working Mathematician"
-
-## Relationship to Implementation
-
-The mathematical foundations directly inform the implementation:
-
-- Category theory structures map to Go interfaces and types
-- Formal semantics guide the execution engine design  
-- Type soundness theorems ensure runtime safety
-- Operational semantics define step-by-step execution
-
-The implementation does not yet have a machine-checked correspondence proof. Each theorem must state the exact IR and runtime assumptions that it covers.
-
-## Contributing
-
-When extending Effectus, maintain the mathematical rigor:
-
-1. New features should have formal semantic definitions
-2. Type safety properties must be preserved
-3. Extensions should respect the categorical structure
-4. Add appropriate proofs for new theoretical claims
-
-The mathematical foundations are not just documentation - they are the blueprint that ensures Effectus maintains its safety and correctness guarantees as it evolves.
+- State all assumptions next to each property.
+- Distinguish checked IR from legacy Go continuations.
+- Distinguish internal durability from external enforcement.
+- Link runtime claims to tests, models, or the normative guarantee document.
+- Do not use category-theory terminology when an ordered state machine is sufficient.

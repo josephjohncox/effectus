@@ -68,11 +68,10 @@ extensions:
   oci:
     - "ghcr.io/myorg/extension-bundles/payments@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-  # Optional: hot-reload extension schemas + verbs
+  # Optional: reload local extension manifests
   reload_interval: "60s"
 
 verbs:
-  # Optional: Go plugin executors (.so)
   duplicate_policy: "error" # error | replace | ignore
   oci_warmup: false
   strict: true
@@ -179,7 +178,7 @@ verbs:
 # The old saga.enabled mode is rejected; checked execution always uses V2.
 ```
 
-### Local extension manifest (HTTP verbs)
+## Local extension manifest (HTTP verbs)
 
 Put this file in `./extensions/external.verbs.json`:
 
@@ -211,7 +210,7 @@ Put this file in `./extensions/external.verbs.json`:
 }
 ```
 
-### OCI extension bundles
+## OCI extension bundles
 
 OCI extension bundles are directories containing `*.verbs.json` / `*.schema.json` files, pushed with an OCI tool
 such as `oras`:
@@ -228,8 +227,9 @@ Resolve the published digest, sign it under the deployment trust policy, and lis
 - `/api/*` endpoints require a token; `/healthz` and `/readyz` are open by default.
 - Set `api.hotload_rules` to enable `/api/rules/validate` and `/api/rules/hotload` (UI rule editor + VS Code hot reload).
 - Production effectusd rejects Go plugin executors. Use immutable invocation-aware targets, or use plugins only in an explicitly trusted embedded library process.
-- Extension reloading re-reads `*.verbs.json` / `*.schema.json` from disk or OCI; Go plugins are not hot-reloadable.
-- Schema sources are loaded in-memory at startup; set `extensions.reload_interval` (or `bundle.reload_interval`) to poll for updates.
+- Extension reload can re-read local `*.verbs.json` and `*.schema.json` files. An immutable OCI digest cannot change.
+- Deploy a new OCI digest to publish another generation. Effectusd does not poll mutable OCI tags.
+- Schema sources load at startup. Set `extensions.reload_interval` only when a local or external source can return new declarations.
 - `verbs.duplicate_policy` controls how duplicate verb names are resolved; `verbs.oci_warmup` prefetches OCI verb bundles at startup.
 - `verbs.strict` controls runtime argument and return checks. The default is `true`. Use `false` only for unchecked development code.
 - `fixed_time` pins deterministic time for expression evaluation (useful for tests and canary runs).

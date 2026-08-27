@@ -1,26 +1,36 @@
-# CDC Stack (Postgres + MySQL + RabbitMQ)
+# CDC Development Stack
 
-This compose stack is used by the CDC and AMQP examples.
+This Compose stack starts PostgreSQL, MySQL, and RabbitMQ for local CDC and AMQP examples.
 
-## Start the stack
+## Start
+
+From the repository root, run:
+
 ```bash
 docker compose -f examples/cdc_stack/docker-compose.yml up -d
 ```
 
-Or:
+You can also run:
+
 ```bash
 just cdc-up
 ```
 
 ## Services
-- Postgres (wal2json): localhost:5432
-- MySQL (ROW binlog): localhost:3306
-- RabbitMQ: localhost:5672 (management: localhost:15672)
 
-## Default credentials
-- Postgres: user `effectus`, pass `effectus`, db `effectus_cdc`
-- MySQL: user `effectus`, pass `effectus`, db `effectus_cdc`
-- RabbitMQ: user `guest`, pass `guest`
+| Service | Address | Development credentials |
+| --- | --- | --- |
+| PostgreSQL with `wal2json` | `localhost:5432` | `effectus` / `effectus` |
+| MySQL with row binlog | `localhost:3306` | `effectus` / `effectus` |
+| RabbitMQ | `localhost:5672` | `guest` / `guest` |
+| RabbitMQ management | `localhost:15672` | `guest` / `guest` |
 
-## Notes
-- Postgres is built locally to include the wal2json plugin.
+Both databases use the `effectus_cdc` database.
+
+The PostgreSQL image builds locally and installs `wal2json`. These credentials and ports are for local development only.
+
+## Stop
+
+```bash
+docker compose -f examples/cdc_stack/docker-compose.yml down -v
+```

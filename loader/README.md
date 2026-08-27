@@ -1,111 +1,55 @@
-# Effectus Extension System
+# Extension Loaders
 
-The Extension System provides a unified interface for loading verbs and schemas into Effectus, supporting both static (compile-time) and dynamic (runtime) registration patterns.
+The `loader` package reads schema, function, verb, rule, and OCI extension inputs.
 
-## Design Principles
+The loader prepares declarations and executor configuration. The compiler still checks rule sources before activation.
 
-- **Unified Interface**: Same API for static and dynamic extensions
-- **Multiple Sources**: Support JSON, Protocol Buffers, and OCI bundles
-- **Type Safety**: Strong typing for static registration, validation for dynamic
-- **Composable**: Mix and match different loader types
-- **Extensible**: Easy to add new loader types
+## Supported inputs
 
-## Quick Start
+- Static Go declarations for trusted embedded applications
+- JSON verb and schema manifests
+- Protobuf verb declarations
+- Extension directories
+- Digest-pinned OCI bundles
+- `.eff` and `.effx` rule sources inside extension snapshots
 
-```go
-package main
+Read [Extension System](../docs/EXTENSION_SYSTEM.md) for manifest fields and executor targets.
 
-import (
-    "context"
-    "github.com/effectus/effectus-go/loader"
-    "github.com/effectus/effectus-go/schema"
-    "github.com/effectus/effectus-go/schema/verb"
-)
+## Extension manager
 
-func main() {
-    // Create registries
-    registry := schema.NewRegistry()
-    verbRegistry := verb.NewRegistry(nil)
-    
-    // Create extension manager
-    em := loader.NewExtensionManager()
-    
-    // Add loaders (static and/or dynamic)
-    em.AddLoader(createStaticLoader())
-    em.AddLoader(loader.NewJSONVerbLoader("external", "verbs.json"))
-    
-    // Load all extensions
-    schema.LoadExtensionsIntoRegistries(em, registry, verbRegistry)
-}
-```
+`ExtensionManager` combines one or more loaders. Registry helpers apply the loaded declarations to candidate schema and verb registries.
 
-If `target` is omitted, verbs default to **stream** emission using the stdout publisher.
+Duplicate behavior depends on the configured policy. Production startup uses strict validation and fails on unsupported conflicts.
 
-## Loading Patterns
+## Static loaders
 
-### 1. Static Registration (Compile-time)
+Static loaders register Go values directly. They are useful in trusted embedded applications and tests.
 
-Use when you have Go code that defines your extensions:
+Static executors can contain arbitrary Go behavior. They do not become serializable checked IR.
 
-```go
-// Define your verb executor
-type MyExecutor struct {}
-func (e *MyExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-    // Implementation
-}
+Production effectusd rejects in-process Go plugins.
 
-// Define your verb spec
-type MyVerbSpec struct {
-    // Implementation of loader.VerbSpec interface
-}
+## JSON manifests
 
-// Create static loader
-verbs := []loader.VerbDefinition{
-    {
-        Spec:     &MyVerbSpec{...},
-        Executor: &MyExecutor{},
-    },
-}
+A verb manifest declares contracts and executor targets:
 
-loader := loader.NewStaticVerbLoader("my-verbs", verbs)
-```
-
-**Benefits:**
-- Type safety at compile time
-- IDE support with autocomplete
-- Performance (no parsing overhead)
-- Direct integration with Go business logic
-
-### 2. Dynamic Registration (Runtime)
-
-Use when you want to load extensions from configuration files:
-
-#### JSON Verb Manifest
 ```json
 {
-  "name": "BusinessVerbs",
-  "version": "1.0.0", 
+  "name": "payments",
+  "version": "1.0.0",
   "verbs": [
     {
-      "name": "ProcessPayment",
-      "description": "Processes customer payment",
-      "capabilities": ["write", "exclusive"],
-      "resources": [
-        {
-          "resource": "payment",
-          "capabilities": ["write"]
-        }
-      ],
+      "name": "ReservePayment",
       "argTypes": {
-        "amount": "float",
-        "method": "string"
+        "orderId": "string",
+        "amount": "float"
       },
-      "requiredArgs": ["amount", "method"],
-      "returnType": "PaymentResult",
+      "requiredArgs": ["orderId", "amount"],
+      "returnType": "PaymentReservation",
       "target": {
         "type": "http",
         "config": {
-          "url": "https://api.payments.com/process",
+          "url": "https://payments.example/reservations",
           "method": "POST"
         }
       }
@@ -114,232 +58,54 @@ Use when you want to load extensions from configuration files:
 }
 ```
 
-#### JSON Schema Manifest
-```json
-{
-  "name": "BusinessSchema",
-  "version": "1.0.0",
-  "types": {
-    "PaymentResult": {
-      "name": "PaymentResult", 
-      "type": "object",
-      "properties": {
-        "success": {"type": "boolean"},
-        "transactionId": {"type": "string"}
-      }
-    }
-  },
-  "functions": {
-    "calculateTax": {
-      "name": "calculateTax",
-      "type": "builtin"
-    }
-  },
-  "initialData": {
-    "config.taxRate": 0.08,
-    "config.currency": "USD"
-  }
-}
+The extension compiler validates type declarations, required arguments, capabilities, resources, and target configuration.
+
+## Executor targets
+
+Production checked plans support configured HTTP, gRPC, stream, Kafka, and OCI-resolved executors.
+
+HTTP execution applies URL, host, redirect, DNS, response-size, and timeout controls.
+
+Invocation metadata includes stable identity, idempotency key, attempt, contract, and fencing values.
+
+The destination must enforce idempotency or fencing when correctness requires it.
+
+## Extension snapshots
+
+Effectusd builds an immutable extension snapshot for each candidate generation.
+
+The runtime retains a snapshot while an execution uses it. Retirement waits for active references.
+
+A failed candidate releases its resources without changing the active generation.
+
+## OCI loading
+
+Production OCI references must use a digest. Effectusd also requires an operator-provided signature verifier.
+
+The shared archive extractor rejects traversal, links, device entries, excessive file counts, and excessive expanded sizes.
+
+The verifier command defines the trust policy. A successful pull without successful verification is not accepted.
+
+## Rule compilation
+
+The daemon compiles extension `.eff` and `.effx` sources through `compiler.CompileChecked`.
+
+A schema or verb refresh recompiles the source against the candidate environment. A failed compile prevents publication.
+
+## Directory loading
+
+Directory loaders discover supported extension files under configured roots.
+
+Use directory refresh for controlled local development or mounted configuration. Do not use it as a substitute for signed artifact distribution.
+
+## Test
+
+```bash
+go test ./loader
 ```
 
-**Benefits:**
-- Runtime configuration
-- Non-Go services can provide extensions
-- Easy deployment and updates
-- Configuration-driven behavior
+Use race tests when you change snapshot activation or retirement:
 
-### 3. Protocol Buffer Registration
-
-Use when you have protobuf-defined extensions:
-
-```go
-// Assuming you have a protobuf message defining verbs
-loader := loader.NewProtoVerbLoader("proto-verbs", myProtoMessage)
+```bash
+go test -race ./loader ./runtime
 ```
-
-**Benefits:**
-- Language agnostic definitions
-- Strong schema validation
-- Integration with existing protobuf workflows
-- Version compatibility
-
-### 4. OCI Bundle Registration
-
-Use for distributed extension packages:
-
-```go
-loader := loader.NewOCIBundleLoader("external", "registry.io/my-extensions@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-```
-
-**Benefits:**
-- Distribution via container registries
-- Versioning and signing
-- Dependency management
-- Hot reloading capabilities
-
-**Bundle layout:**
-- Include `*.verbs.json` and `*.schema.json` files inside the OCI bundle (for example under `verbs/` or `schema/`).
-
-## Directory Scanning
-
-Automatically discover extensions in directories:
-
-```go
-// Scan directory for *.verbs.json and *.schema.json files
-loaders, err := loader.LoadFromDirectory("./extensions")
-if err != nil {
-    log.Fatal(err)
-}
-
-em := loader.NewExtensionManager()
-for _, l := range loaders {
-    em.AddLoader(l)
-}
-```
-
-## Executor Types
-
-### Built-in Executors
-
-- **mock**: Returns mock responses for testing
-- **noop**: No-operation executor
-- **http**: Makes HTTP calls to external services
-- **grpc**: Invokes gRPC methods with Struct payloads
-- **stream**: Emits verb payloads to a stream (stdout/http/kafka)
-- **oci**: Resolves executors from OCI extension bundles
-
-### Custom Executors
-
-Implement the `loader.VerbExecutor` interface:
-
-```go
-type CustomExecutor struct {
-    Config map[string]interface{}
-}
-
-func (ce *CustomExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-    // Custom implementation
-}
-```
-
-## Integration Patterns
-
-### Application Startup
-
-```go
-func initializeExtensions() (*schema.Registry, *verb.VerbRegistry, error) {
-    registry := schema.NewRegistry()
-    verbRegistry := verb.NewRegistry(nil)
-    
-    em := loader.NewExtensionManager()
-    
-    // Static business logic
-    em.AddLoader(createBusinessVerbs())
-    em.AddLoader(createBusinessFunctions())
-    
-    // Dynamic configuration
-    if loaders, err := loader.LoadFromDirectory("./config/extensions"); err == nil {
-        for _, l := range loaders {
-            em.AddLoader(l)
-        }
-    }
-    
-    // External packages
-    em.AddLoader(loader.NewOCIBundleLoader("external", "registry.io/effectus-extensions@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"))
-    
-    // Load everything
-    if err := schema.LoadExtensionsIntoRegistries(em, registry, verbRegistry); err != nil {
-        return nil, nil, err
-    }
-    
-    return registry, verbRegistry, nil
-}
-```
-
-### Hot Reloading
-
-```go
-func setupHotReload(em *loader.ExtensionManager, registry *schema.Registry, verbRegistry *verb.VerbRegistry) {
-    ticker := time.NewTicker(30 * time.Second)
-    go func() {
-        for range ticker.C {
-            // Clear existing extensions
-            registry.ClearAll()
-            // Note: verb registry doesn't have clear - would need implementation
-            
-            // Reload all extensions
-            schema.LoadExtensionsIntoRegistries(em, registry, verbRegistry)
-        }
-    }()
-}
-```
-
-### Testing
-
-```go
-func TestExtensions(t *testing.T) {
-    // Create test extension from string
-    manifest := `{"name": "test", "verbs": [...]}`
-    loader, err := loader.LoadExtensionsFromReader(
-        strings.NewReader(manifest), 
-        ".verbs.json",
-    )
-    require.NoError(t, err)
-    
-    em := loader.NewExtensionManager()
-    em.AddLoader(loader)
-    
-    // Test loading
-    registry := schema.NewRegistry()
-    verbRegistry := verb.NewRegistry(nil)
-    err = schema.LoadExtensionsIntoRegistries(em, registry, verbRegistry)
-    require.NoError(t, err)
-    
-    // Verify extensions loaded correctly
-    _, exists := verbRegistry.GetVerb("TestVerb")
-    assert.True(t, exists)
-}
-```
-
-## Best Practices
-
-### 1. Layered Loading
-Load extensions in layers from most general to most specific:
-1. Core business extensions (static)
-2. Environment-specific configuration (dynamic)
-3. Customer-specific customizations (OCI/external)
-
-### 2. Error Handling
-Always validate extensions before production use:
-```go
-if err := em.LoadExtensions(ctx, adapter); err != nil {
-    log.Printf("Extension loading failed: %v", err)
-    // Fall back to default behavior or fail fast
-}
-```
-
-### 3. Security
-- Validate all dynamic extension sources
-- Use signed OCI bundles in production
-- Implement capability-based security
-- Audit extension loading
-
-### 4. Performance
-- Static extensions have no runtime overhead
-- Cache compiled dynamic extensions
-- Use batch loading for multiple extensions
-- Monitor extension loading performance
-
-## Extension File Conventions
-
-- `*.verbs.json` - Verb definitions
-- `*.schema.json` - Schema and function definitions  
-- `*.proto` - Protocol Buffer definitions
-- Follow semantic versioning for extension packages
-
-## See Also
-
-- [Extension System Example](../../examples/extension_system/)
-- [Verb System Documentation](../schema/verb/)
-- [Schema Registry Documentation](../schema/)
-- [OCI Bundle Specification](../../docs/oci-bundles.md) 

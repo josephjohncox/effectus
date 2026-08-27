@@ -1,32 +1,59 @@
 # Effectus Basics
 
-This document explains the fundamental concepts of Effectus: Facts, Verbs, Effects, and the coherent flow architecture.
+Effectus evaluates typed facts and selects checked effect plans.
 
-## Core Concepts
+## Facts
 
-### Facts
-**Facts** represent the current state of your domain - customer data, inventory levels, machine status, etc. They are:
-- **Strongly typed** using Protocol Buffers
-- **Immutable** once created
-- **Extensible** without breaking existing rules
-- **Versioned** for schema evolution
+Facts are a typed snapshot of domain data. Rules read values through paths such as `order.id` or `customer.tier`.
 
-### Verbs  
-**Verbs** define *what actions can be taken*. They are:
-- **Specifications** that declare argument types, return types, and capabilities
-- **Statically defined** and versioned as a closed set
-- **Capability-protected** for security and resource control
-- **Executable** through multiple execution strategies (local, HTTP, gRPC, message queues)
+The compiler checks each referenced path against the candidate fact schema. The runtime pins the admitted fact payload to one execution identity.
 
-### Effects
-**Effects** are the *actual execution* of verbs with specific arguments. They are:
-- **Idempotent** where possible for safe retry
-- **Atomic** operations that either succeed or fail completely
-- **Ordered** based on dependencies and capabilities
-- **Compensatable** for saga-style transaction rollback
+A production request uses a namespace and a universe. The namespace separates tenants. The universe identifies a fact snapshot within that namespace.
 
-### Flow Bindings (effx)
-Flows can bind verb results to variables and reuse them downstream:
+## Verbs
+
+A verb declares an external operation contract:
+
+- A unique name
+- Required and optional arguments
+- Argument types
+- A result type
+- Capability and resource metadata
+- An optional inverse verb
+- A supported executor target
+
+The contract says what the operation accepts. The executor defines how the operation runs.
+
+## Effects
+
+An effect is one occurrence of a verb with checked arguments.
+
+Each effect occurrence receives a stable identity and source sequence. Repeated uses of the same verb remain distinct effects.
+
+Effectus records dispatch intent before invocation. The external destination remains responsible for its own transaction and deduplication behavior.
+
+## List rules
+
+A `.eff` rule selects an ordered list of effects:
+
+```eff
+rule "HighRiskLargeTxn" priority 10 {
+  when {
+    transaction.amount > 1000
+    customer.risk_score >= 80
+  }
+  then {
+    FlagFraud(orderId: transaction.id)
+    NotifyAnalyst(orderId: transaction.id)
+  }
+}
+```
+
+All predicates must return `bool`. The selected effects keep their source order.
+
+## Flow rules
+
+A `.effx` flow can bind one step result and use it in a later step:
 
 ```effx
 flow "CaseHold" priority 5 {
@@ -40,286 +67,64 @@ flow "CaseHold" priority 5 {
 }
 ```
 
-**Type rules:**
-- Bound variables carry the **return type** of the verb.
-- Using an **undefined** variable (e.g. `$missing`) fails type checking.
-- Passing a variable to an incompatible argument type fails type checking.
+The compiler gives each result a slot. A step can reference only an earlier slot.
 
-## Coherent Flow Architecture
+An undefined variable or incompatible result type causes compilation to fail.
 
-Effectus follows a coherent flow from extension loading through compilation to execution:
+## Predicates
 
-```
-Extension Loading → Compilation & Validation → Execution
-       ↓                     ↓                    ↓
-  Static/Dynamic        Type Checking        Multiple Executors
-  JSON/Proto/OCI       Dependencies         (Local/HTTP/gRPC)
-  Directory Scanning   Capabilities         Message Queues
-```
+Predicates compare checked values from facts, literals, and supported pure functions.
 
-### 1. Extension Loading
-- **Static Registration**: Compile-time verb definitions in Go
-- **Dynamic Loading**: Runtime loading from JSON/Protocol Buffer files
-- **OCI Bundles**: Distributed packages with versioning
-- **Directory Scanning**: Automatic discovery of extension files
+The checked IR keeps each value source in a distinct protobuf variant. The runtime does not evaluate arbitrary Go functions as production predicates.
 
-### 2. Compilation & Validation
-- **Type Checking**: Validate all verb arguments and return types
-- **Dependency Resolution**: Ensure all required verbs are available
-- **Capability Verification**: Check security constraints
-- **Execution Planning**: Create optimized execution strategies
+Rule selection uses stable priority and source order. External verb results can still depend on remote state.
 
-### 3. Runtime Execution
-- **Executor Selection**: Choose appropriate execution strategy
-- **State Management**: Track runtime state with hot-reload capability
-- **Error Handling**: Compensation and retry policies
-- **Observability**: Metrics, tracing, and structured logging
+## Types
 
-## Fact System
+Effectus supports primitive, list, object, and named types through its declaration environment.
 
-Facts use Protocol Buffers for strong typing and extensibility:
+The compiler checks:
 
-```protobuf
-// customer/v1/customer.proto
-message Customer {
-  string code = 1;
-  string email = 2;
-  bool is_new = 3;
-  string tier = 4;
-}
+- Fact paths
+- Literal compatibility
+- Verb arguments
+- Required arguments
+- Result bindings
+- Predicate result types
 
-// inventory/v1/item.proto  
-message InventoryItem {
-  string sku = 1;
-  int32 quantity = 2;
-  double unit_cost = 3;
-  bool low_stock = 4;
-}
-```
+A successful type check does not prove that an external service honors the declared contract.
 
-If `target` is omitted, verbs default to stream emission (stdout).
+## Capabilities
 
-### Schema Composition
+Capability metadata describes access and conflict requirements. A verb can declare read, write, create, delete, exclusive, commutative, idempotent, and related flags.
 
-Facts are composed from multiple modules:
+The runtime uses the strongest applicable requirement when it protects a resource. A local lock provides process-local coordination only.
 
-```protobuf
-message Facts {
-  customer.v1.Customer customer = 1;
-  inventory.v1.InventoryItem inventory = 2;
-  // Add new modules without breaking existing rules
-  sensors.v1.Temperature temperature = 3;
-}
-```
+Durable fencing requires a monotonic provider and destination enforcement.
 
-### Path Resolution
+## Compensation
 
-Rules reference facts using dot notation:
-- `customer.email` → string
-- `inventory.quantity` → int32  
-- `temperature.ambient_c` → double
+A verb can declare an inverse operation. The runtime records each successful effect and compensates in reverse source order after a later failure.
 
-The compiler validates all paths at compilation time.
+An inverse is not a mathematical inverse unless the verb owner makes it one. Compensation can also fail.
 
-## Verb System
+The runtime does not compensate an effect with an unknown external outcome.
 
-### Verb Specifications
+## Checked and compatibility paths
 
-Verbs are defined as specifications that declare their contract:
+Production effectusd compiles source into checked first-order IR. This representation contains no Go callbacks.
 
-```go
-type VerbSpec interface {
-    GetName() string
-    GetCapabilities() []string
-    GetArgTypes() map[string]string
-    GetReturnType() string
-    GetResources() []ResourceSpec
-}
-```
+Embedded applications can still use legacy list specifications and flow continuations. Those compatibility values are outside the production guarantees.
 
-### Static Registration
+## Generations
 
-```go
-verbs := []loader.VerbDefinition{
-    {
-        Spec: &VerbSpec{
-            Name: "SendEmail",
-            ArgTypes: map[string]string{
-                "to": "string",
-                "subject": "string", 
-                "body": "string",
-            },
-            ReturnType: "bool",
-            Capabilities: []string{"write", "idempotent"},
-        },
-        Executor: &EmailExecutor{},
-    },
-}
+A generation contains the bundle, declaration environment, executors, checked artifacts, and digests.
 
-loader := loader.NewStaticVerbLoader("communication", verbs)
-runtime.RegisterExtensionLoader(loader)
-```
+The runtime publishes a validated generation atomically. Each admitted execution stays pinned to its original generation.
 
-### Dynamic Registration
+## Next steps
 
-```json
-{
-  "name": "BusinessVerbs",
-  "verbs": [
-    {
-      "name": "ValidateAccount",
-      "argTypes": {
-        "accountId": "string",
-        "accountType": "string"
-      },
-      "returnType": "ValidationResult",
-      "capabilities": ["read", "idempotent"],
-      "target": {
-        "type": "http",
-        "config": {
-          "url": "https://api.validation.com/check",
-          "method": "POST",
-          "timeout": "5s"
-        }
-      }
-    }
-  ]
-}
-```
-
-## Capability System
-
-Verbs declare required capabilities for security and resource control:
-
-### Capability Levels
-```go
-const (
-    CapRead   Capability = 1 << iota  // Read-only operations
-    CapWrite                          // Modify existing resources  
-    CapCreate                         // Create new resources
-    CapDelete                         // Delete resources
-)
-```
-
-### Capability Lattice
-Capabilities form a lattice: `Read ≤ Write ≤ Create ≤ Delete`
-
-### Resource Protection
-```go
-type ResourceSpec interface {
-    GetResource() string      // e.g., "customer", "inventory"
-    GetCapabilities() []string // e.g., ["read", "write"]
-}
-```
-
-Resources are protected by capability and key:
-- **Capability**: What level of access is required
-- **Key**: Which specific resource instance (e.g., customer ID)
-
-## Execution Models
-
-### Local Execution
-Verbs execute directly in the Effectus process:
-```go
-type LocalExecutor struct {
-    impl VerbExecutor
-}
-
-func (e *LocalExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-    return e.impl.Execute(ctx, args)
-}
-```
-
-### Remote Execution
-Verbs execute via external systems:
-```go
-type HTTPExecutor struct {
-    config *HTTPExecutorConfig
-}
-
-func (e *HTTPExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-    // Make HTTP request to external API
-    return httpCall(e.config.URL, args)
-}
-```
-
-### Executor Selection
-The compilation process determines the appropriate executor based on:
-- **Verb specification**: What execution type is configured
-- **Runtime environment**: What executors are available
-- **Policy configuration**: Security and performance constraints
-
-## Rule Structure
-
-Rules define when effects should be triggered:
-
-```go
-rule "low_inventory_alert" {
-    when {
-        inventory.quantity < 10
-        inventory.low_stock == false
-    }
-    then {
-        SendEmail(
-            to: "warehouse@company.com",
-            subject: "Low Inventory Alert",
-            body: "Item " + inventory.sku + " is running low"
-        )
-        UpdateInventoryFlag(
-            sku: inventory.sku,
-            low_stock: true
-        )
-    }
-}
-```
-
-## Type Safety
-
-### Compile-Time Validation
-- All fact paths validated against schemas
-- Verb arguments checked against specifications
-- Return types verified for consistency
-- Dependencies resolved and validated
-
-### Runtime Safety  
-- Argument types validated before execution
-- Resource access checked against capabilities
-- Error handling with compensation support
-- Execution traced for observability
-
-## Extensibility
-
-### Schema Evolution
-Add new fact types without breaking existing rules:
-```protobuf
-// Add new fields to existing types
-message Customer {
-  string code = 1;
-  string email = 2;
-  bool is_new = 3;
-  string tier = 4;
-  // New field - doesn't break existing rules
-  google.protobuf.Timestamp last_login = 5;
-}
-
-// Add entirely new fact types
-message SensorData {
-  double temperature = 1;
-  double humidity = 2;
-  google.protobuf.Timestamp reading_time = 3;
-}
-```
-
-### Verb Extension
-Add new verbs through the extension system:
-- **Development**: Register statically during development
-- **Configuration**: Load dynamically from JSON/Proto files
-- **Distribution**: Package in OCI bundles for deployment
-
-### Multiple Deployment Patterns
-- **Embedded**: Include Effectus as a library in Go applications
-- **Sidecar**: Run as separate process alongside applications  
-- **Service**: Deploy as standalone rule execution service
-- **Multi-language**: Connect from any language via Protocol Buffers
-
-This foundation provides a robust, extensible system for rule-based automation while maintaining mathematical rigor and practical usability.
+- Use [Tutorials](TUTORIALS.md) for short examples.
+- Read [Architecture](ARCHITECTURE.md) for the production data path.
+- Read [Runtime Guarantees](GUARANTEES.md) before deployment.
+- Read [Extension System](EXTENSION_SYSTEM.md) to define executors.

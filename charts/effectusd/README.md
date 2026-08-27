@@ -19,14 +19,14 @@ helm install effectusd oci://ghcr.io/OWNER/helm/effectusd \
 
 Key values in `values.yaml`:
 
-- `image.repository` plus `image.digest` or `image.tag`
+- `image.repository` plus an immutable `image.digest`
 - `postgres.existingSecret` and `postgres.dsnKey` for the durable ledger
 - `bundle.ociRef` as a digest-pinned reference
 - `bundle.signatureVerifier` for the fixed verifier executable
 - `bundle.reloadInterval` for non-OCI development sources only
 - `api.*` (auth, ACLs, rate limits)
 - `facts.*` (store path, merge strategy, cache limits)
-- `initContainers`, `extraVolumes`, `extraVolumeMounts` (for pulling plugins or sidecar data)
+- `initContainers`, `extraVolumes`, `extraVolumeMounts` for the verifier or sidecar data
 - `config.*` (mount a config map and pass `--config`)
 
 ### ConfigMap usage

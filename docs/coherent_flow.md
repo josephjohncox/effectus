@@ -1,228 +1,101 @@
-# Coherent Flow Architecture
+# Checked Compilation Flow
 
-## Overview
+This document maps rule and extension inputs to the production execution engine.
 
-The Effectus system now implements a **coherent flow** from extension loading through compilation to execution. This ensures static validation before runtime and provides clear separation of concerns across the entire system.
+## Inputs
 
-## Architecture Phases
+A candidate generation can contain:
 
-### 1. Extension Loading
-**Purpose**: Load verbs and schemas from multiple sources  
-**Interface**: `loader.ExtensionManager`
+- `.eff` list rules
+- `.effx` flow rules
+- Fact type declarations
+- Function declarations
+- Verb contracts
+- Supported executor configuration
 
-```go
-// Static registration (compile-time)
-runtime.RegisterExtensionLoader(loader.NewStaticVerbLoader("business", verbs))
+Inputs can come from a local bundle, an extension directory, or a signed OCI bundle.
 
-// Dynamic registration (runtime)
-runtime.RegisterExtensionLoader(loader.NewJSONVerbLoader("external", "verbs.json"))
+Production OCI references use digests. Effectusd does not poll mutable tags.
 
-// OCI bundle support (future)
-runtime.RegisterExtensionLoader(loader.NewOCIBundleLoader("registry", "registry.example/bundle@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"))
-```
+## Build the environment
 
-**Key Features**:
-- Multiple loader types: Static, JSON, Protocol Buffer, OCI
-- Unified interfaces for all extension types
-- Directory scanning and auto-discovery
+The loader resolves declarations before rule compilation. It rejects duplicate or incompatible definitions according to the configured policy.
 
-### 2. Compilation & Validation
-**Purpose**: Validate all extensions before execution  
-**Interface**: `compiler.ExtensionCompiler`
+The compiler builds an immutable environment with:
 
-```go
-result, err := compiler.Compile(ctx, extensionManager)
-if !result.Success {
-    // Handle compilation errors before starting daemon
-    return fmt.Errorf("compilation failed: %v", result.Errors)
-}
-```
+- Fact paths and types
+- Pure predicate functions
+- Verb argument and result contracts
+- Capability and resource declarations
 
-**Validation Steps**:
-1. **Type System Building**: Extract and validate type definitions
-2. **Verb Compilation**: Validate verb specifications and signatures
-3. **Dependency Resolution**: Check verb dependencies and capabilities
-4. **Execution Planning**: Create optimized execution phases
-5. **Security Validation**: Ensure capability constraints
+The environment digest identifies this declaration set.
 
-**Error Types**:
-- `type_error`: Type mismatches or invalid signatures
-- `dependency_error`: Missing or circular dependencies  
-- `capability_error`: Insufficient or conflicting capabilities
-- `security_error`: Policy violations
+## Compile source
 
-### 3. Execution Planning
-**Purpose**: Create optimized execution strategies  
-**Interface**: `compiler.ExecutionPlan`
+`compiler.CompileChecked` parses and checks each rule source.
 
-```go
-type ExecutionPlan struct {
-    Phases        []ExecutionPhase     // Sequential execution phases
-    Dependencies  map[string][]string  // Dependency graph
-    Capabilities  map[string][]string  // Required capabilities
-    Executors     map[string]ExecutorConfig // Execution configuration
-}
-```
+For list rules, it preserves source effect order. For flow rules, it assigns result slots in step order.
 
-**Phase Types**:
-- **Sequential**: Verbs execute in order
-- **Parallel**: Verbs execute concurrently
-- **Conditional**: Verbs execute based on predicates
+The compiler rejects:
 
-**Error Policies**:
-- `fail`: Stop on first error
-- `continue`: Continue despite errors
-- `retry`: Retry failed operations
-- `compensate`: Run inverse operations
+- Unknown fact paths
+- Unknown verbs or functions
+- Invalid predicate types
+- Missing or duplicate arguments
+- Incompatible literals and result bindings
+- References to future result slots
+- Unsupported nested saga boundaries
 
-### 4. Execution Runtime
-**Purpose**: Execute compiled verbs with appropriate executors  
-**Interface**: `runtime.ExecutionRuntime`
+## Check the artifact
 
-```go
-// Individual verb execution
-result, err := runtime.ExecuteVerb(ctx, "ProcessPayment", args)
+The `ir` package validates the protobuf artifact again before execution or storage.
 
-// Workflow execution
-err := runtime.ExecuteWorkflow(ctx, facts)
-```
+The checker applies structural limits and recalculates environment and contract hashes. It rejects unknown protobuf fields.
 
-**Executor Types**:
-- **Local**: In-process execution (`ExecutorLocal`)
-- **HTTP**: Remote HTTP APIs (`ExecutorHTTP`)
-- **gRPC**: Remote gRPC services (`ExecutorGRPC`)
-- **Message**: Queue-based execution (`ExecutorMessage`)
-- **Mock**: Testing execution (`ExecutorMock`)
+`Checked.Marshal` produces deterministic bytes. `Checked.Digest` identifies the exact artifact content.
 
-## Coherent Interface Design
+Read [Checked IR](../ir/README.md) for the full checker list.
 
-### Separation of Concerns
+## Build a candidate generation
 
-**Verb Specification** (What):
-```go
-type VerbSpec interface {
-    GetName() string
-    GetCapabilities() []string
-    GetArgTypes() map[string]string
-    GetReturnType() string
-}
-```
+The runtime combines the checked artifacts with the exact schemas, verb contracts, executors, and bundle manifest.
 
-**Verb Executor** (How):
-```go
-type VerbExecutor interface {
-    Execute(ctx context.Context, args map[string]interface{}) (interface{}, error)
-}
-```
+It validates the complete candidate before publication. A failed candidate releases its resources and leaves the active generation unchanged.
 
-**Execution Configuration**:
-```go
-type ExecutorConfig interface {
-    GetType() ExecutorType
-    Validate() error
-}
-```
+## Publish atomically
 
-### Type Safety & Validation
+Activation compares the candidate base generation with the current active generation.
 
-**Compile-time Safety** (Static):
-- Type checking for static verbs
-- Dependency validation
-- Capability verification
+If they match, the runtime publishes the candidate as one immutable snapshot. If they do not match, activation returns a generation conflict.
 
-**Runtime Safety** (Dynamic):
-- Argument validation
-- Type coercion
-- Error handling
+A schema or verb refresh recompiles existing source rules against the candidate declarations before publication.
 
-## Flow Example
+## Admit work
 
-```go
-// 1. Load Extensions
-runtime := runtime.NewExecutionRuntime()
-runtime.RegisterExtensionLoader(staticLoader)
-runtime.RegisterExtensionLoader(dynamicLoader)
+HTTP, Kafka, generated gRPC, and recovery use `runtime.Engine.Execute`.
 
-// 2. Compile & Validate (BEFORE daemon starts)
-if err := runtime.CompileAndValidate(ctx); err != nil {
-    log.Fatal("Compilation failed - fix before starting")
-}
+The engine records the admission identity, payload hash, ruleset, version, and generation. It then records the selected checked plans.
 
-// 3. Execute (daemon running)
-result, err := runtime.ExecuteVerb(ctx, "ProcessPayment", args)
-```
+A duplicate identity with the same payload returns the existing execution. A duplicate identity with different facts fails.
 
-## Key Benefits
+## Execute and recover
 
-### 1. **Fail-Fast Validation**
-- All errors caught before daemon starts
-- No runtime surprises from invalid configurations
-- Clear error messages with suggestions
+The workflow runtime records each dispatch intent before invocation. A worker completes a dispatch only while it holds the current lease token.
 
-### 2. **Clear Separation**
-- Specification separate from implementation
-- Multiple execution strategies for same verb
-- Easy testing with mock executors
+Recovery gets a new lease and uses the same execution, plan, effect, and dispatch identities.
 
-### 3. **Extensibility**
-- Plugin-like architecture for new loaders
-- Support for different executor types
-- Hot-reload capability
+Completed results replay from durable state. Unknown external outcomes enter a blocked state for operator action.
 
-### 4. **Type Safety**
-- Static type checking where possible
-- Runtime validation for dynamic extensions
-- Comprehensive error reporting
+## Refresh and drain
 
-### 5. **Performance**
-- Optimized execution plans
-- Parallel execution support
-- Efficient dependency resolution
+A successful refresh affects new admissions only. Existing executions keep their pinned generation.
 
-## Integration Points
+During shutdown, effectusd stops admission and drains accepted work. It then retires unused generation resources.
 
-### Daemon Integration
-```go
-func main() {
-    runtime := runtime.NewExecutionRuntime()
-    
-    // Load extensions from config/directory/OCI
-    loadExtensions(runtime)
-    
-    // Compile and validate BEFORE starting server
-    if err := runtime.CompileAndValidate(ctx); err != nil {
-        log.Fatal("Startup validation failed: %v", err)
-    }
-    
-    // Start HTTP/gRPC server
-    server := startServer(runtime)
-    server.Run()
-}
-```
+Read [Runtime Lifecycle](LIFECYCLE.md) for the complete state machine.
 
-### Testing Integration
-```go
-func TestBusinessLogic(t *testing.T) {
-    runtime := runtime.NewExecutionRuntime()
-    runtime.RegisterExtensionLoader(testLoader)
-    
-    // Use mock executors for testing
-    runtime.RegisterExecutorFactory(compiler.ExecutorMock, &MockFactory{})
-    
-    assert.NoError(t, runtime.CompileAndValidate(ctx))
-    
-    result, err := runtime.ExecuteVerb(ctx, "ValidatePayment", args)
-    assert.NoError(t, err)
-    assert.True(t, result["valid"].(bool))
-}
-```
+## Compatibility paths
 
-## Future Enhancements
+Embedded Go applications can use legacy specifications and continuations. These values contain process-local behavior and cannot form checked artifacts.
 
-1. **Distributed Execution**: Support for distributed verb execution
-2. **Caching**: Cache compiled units for faster startup
-3. **Metrics**: Detailed execution metrics and tracing
-4. **Security**: Enhanced capability-based security model
-5. **Optimization**: Advanced execution plan optimization
-
-This coherent flow ensures that Effectus maintains consistency across all operational phases while providing the flexibility needed for diverse deployment scenarios. 
+Production effectusd rejects legacy in-memory specifications and in-process plugins.

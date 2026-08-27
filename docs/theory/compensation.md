@@ -1,164 +1,103 @@
-# Saga-Based Compensation in Effectus
+# Compensation Model
 
-> **Status:** This document describes target algebraic properties. The runtime guarantees effect identity, order, replay of recorded success, and error reporting. It does not guarantee semantic inversion or exactly-once execution. See [`../GUARANTEES.md`](../GUARANTEES.md).
+This document models durable forward execution and reverse compensation.
 
-## 1. Introduction to Compensation
+Read [Durable Saga Protocol](../DURABLE_SAGA_PROTOCOL.md) for the normative state machine.
 
-Effectus implements a robust compensation mechanism based on the saga pattern, enabling reliable execution of complex effect sequences with transactional semantics, even across distributed systems where atomic transactions are not available.
+## Effect occurrences
 
-```math
-\begin{align}
-\text{Saga} &: \text{List}(\text{Effect} \times \text{Effect}^{-1}) \\
-\text{Effect}^{-1} &: \text{InverseVerb} \times \text{Args}
-\end{align}
-```
-
-Each effect in a saga is paired with a compensating effect that reverses its action. This creates a mathematical structure for reliable execution with rollback capabilities.
-
-## 2. Theoretical Foundation
-
-### 2.1. Sagas as Categorical Structures
-
-A saga can be understood as a particular kind of categorical structure:
+A workflow plan contains ordered effect occurrences:
 
 ```math
-\begin{align}
-\text{Saga} \cong \sum_{i=1}^{n} (e_i \times c_i)
-\end{align}
+\pi = [e_0, e_1, \ldots, e_{n-1}]
 ```
 
-Where:
+Each occurrence has its own stable identity and sequence number. Two occurrences of the same verb are not the same effect.
 
-- $e_i$ is the forward effect
-- $c_i$ is the compensating effect
-- The structure forms a sequence of effect-compensation pairs
+An effect can declare an inverse operation $c_i$. The inverse is another external verb invocation.
 
-This structure provides a natural foundation for transactional semantics in a distributed context.
+## Durable dispatch
 
-### 2.2. Algebraic Properties
-
-The saga pattern exhibits important algebraic properties:
-
-1. **Composition**: Sagas compose sequentially, with compensation occurring in reverse order
-2. **Identity**: The empty saga acts as an identity element
-3. **Associativity**: Saga composition is associative
-
-These properties enable modular reasoning about compensating transactions.
-
-## 3. Operational Semantics
-
-The operational semantics of saga execution can be defined as:
+Before an invocation, the runtime records a dispatch intent:
 
 ```math
-\begin{align}
-\text{execSaga}(\emptyset, \text{ctx}) &\Rightarrow \text{ctx} \\
-\text{execSaga}((e, c) :: \text{rest}, \text{ctx}) &\Rightarrow 
-\begin{cases}
-\text{execSaga}(\text{rest}, \text{ctx}') & \text{if interp}(e, \text{ctx}) = (\_, \text{ctx}') \\
-\text{compensate}(\text{executed}, \text{ctx}) & \text{if interp}(e, \text{ctx}) = \text{error}
-\end{cases}
-\end{align}
+d_i = (id_i, sequence_i, attempt_i, lease_i, token_i, state_i)
 ```
 
-Where `compensate` applies the compensation effects in reverse order:
+The dispatch state records whether the outcome is pending, successful, retryable, permanent, unknown, or blocked.
+
+A worker can complete a dispatch only with its current lease owner and fencing token.
+
+## Forward transition
+
+For the next effect $e_i$, the runtime performs this abstract sequence:
+
+1. Persist the dispatch intent.
+2. Get or renew a lease.
+3. Invoke the external destination.
+4. Validate the returned result.
+5. Persist the classified outcome.
+
+A process can stop between invocation and outcome persistence. The runtime then cannot know whether the destination committed the operation.
+
+## Unknown outcome
+
+An unknown outcome is not a normal retryable failure.
+
+The runtime records `blocked_unknown` and stops automatic compensation for the affected dependency chain.
+
+An operator or destination-specific reconciliation process must resolve the ambiguity.
+
+## Reverse order
+
+If a later forward effect fails with a known outcome, the runtime considers recorded successful effects in reverse source order:
 
 ```math
-\begin{align}
-\text{compensate}(\emptyset, \text{ctx}) &\Rightarrow \text{ctx} \\
-\text{compensate}(\text{executed} \oplus (e, c), \text{ctx}) &\Rightarrow \text{compensate}(\text{executed}, \text{interp}(c, \text{ctx}))
-\end{align}
+[e_0, e_1, \ldots, e_k]
+\mapsto
+[c_k, c_{k-1}, \ldots, c_0]
 ```
 
-This rule attempts each inverse in reverse order. The runtime returns every compensation failure to the caller.
+Each compensation receives its own durable dispatch state. A compensation can fail or become blocked.
 
-## 4. Key Properties
+## Semantic inverse obligation
 
-### 4.1. Compensation Correctness
+The runtime does not prove that $c_i$ reverses $e_i$.
 
-A key property of the saga system is **compensation correctness**:
-
-**Required verb law:** For an effect $e$ and inverse $c$, the verb owner must define the state equivalence that $c$ restores. The runtime does not prove this law.
-
-This is formalized as:
+The verb owner must define the relevant equivalence relation and maintain this law:
 
 ```math
-\forall \text{ctx}, e, c. \quad \text{interp}(c, \text{interp}(e, \text{ctx})) \approx \text{ctx}
+\mathrm{invoke}(c_i, \mathrm{invoke}(e_i, W)) \approx W
 ```
 
-Where $\approx$ indicates equivalence up to observable side effects.
+The relation $\approx$ can ignore approved observations, such as audit records. It must not hide business state that the caller expects to restore.
 
-### 4.2. Idempotence
+## Idempotency obligation
 
-The saga store replays recorded successful results for the same saga and effect IDs.
+Recovery can invoke a pending dispatch more than once. The destination must enforce the stable idempotency key when duplicate application is unsafe.
 
-A pending effect can run again after a process stop. Exactly-once behavior therefore requires an idempotent external verb or idempotency key.
+A recorded successful result replays without another invocation.
 
-## 5. Implementation in Effectus
+## Fencing obligation
 
-Effectus implements sagas through:
+A durable monotonic token orders Effectus workers. End-to-end fencing requires the destination to reject a stale token.
 
-1. **Transaction Logs**: Each effect is logged with its parameters and status
-2. **Inverse Verbs**: Each verb specifies its inverse for compensation
-3. **Recovery Mechanism**: A recovery process can replay compensation for incomplete transactions
+A local advisory token cannot fence another process.
 
-The storage mechanism defines these operations:
+## Unsupported composition
 
-```math
-\begin{align}
-\text{StartTransaction} &: \text{Name} \rightarrow \text{TxID} \\
-\text{RecordEffect} &: \text{TxID} \times \text{EffectID} \times \text{Sequence} \times \text{Verb} \times \text{Args} \rightarrow \text{Unit} \\
-\text{MarkSuccess} &: \text{TxID} \times \text{EffectID} \times \text{Result} \rightarrow \text{Unit} \\
-\text{MarkCompensated} &: \text{TxID} \times \text{EffectID} \rightarrow \text{Unit} \\
-\text{GetTxEffects} &: \text{TxID} \rightarrow \text{List}(\text{Effect} \times \text{Status})
-\end{align}
-```
+Nested saga transactions are not supported. The runtime rejects them instead of ignoring an inner boundary.
 
-## 6. Relationship to Free Monads
+Parallel saga branches are also outside this sequential compensation model.
 
-There is a deep connection between sagas and the free monad representation used in flow rules:
+## Model properties
 
-```math
-\begin{align}
-\text{Program} &: \mu X. \, A + (\text{Effect} \times (R \rightarrow X)) \\
-\text{Saga} &: \text{List}(\text{Effect} \times \text{Effect}^{-1})
-\end{align}
-```
+Under durable-store and destination assumptions, the model targets these properties:
 
-A saga can be derived from a Program by extracting the sequence of effects and their inverse operations. This connection helps unify the theoretical treatment of both list and flow rule semantics.
+- A recorded success has one stable effect identity.
+- Recovery keeps source order for forward dependencies.
+- Compensation considers successful effects in reverse source order.
+- A stale lease token cannot complete a durable dispatch.
+- An unknown outcome does not trigger automatic compensation.
 
-## 7. Advanced Patterns
-
-### 7.1. Nested Sagas
-
-Nested sagas are a planned extension. The current executor handles one transaction boundary.
-
-```math
-\begin{align}
-\text{NestedSaga} &: \text{List}(\text{Effect} \times \text{Effect}^{-1} \times \text{SubSaga}) \\
-\text{SubSaga} &: \text{Saga} \cup \{\bot\}
-\end{align}
-```
-
-This enables hierarchical compensation strategies for complex workflows.
-
-### 7.2. Partial Compensation
-
-Not all effects require full compensation:
-
-```math
-\begin{align}
-\text{Effect}^{-1} &: \text{InverseVerb} \times \text{Args} \cup \{\bot\}
-\end{align}
-```
-
-Where $\bot$ indicates that no compensation is required for an effect (e.g., for read-only operations).
-
-## 8. Future Work
-
-Potential extensions to the saga system include:
-
-1. **Parallel Sagas**: Allowing concurrent execution of independent saga branches
-2. **Compensation Policies**: Customizable strategies for handling compensation failures
-3. **Stochastic Compensation**: Probabilistic models for compensation effectiveness in unreliable systems
-
-These extensions would further enhance the resilience and expressiveness of the compensation mechanism in Effectus.
+The TLA+ saga model checks bounded instances of these properties. It does not prove destination idempotency or semantic inversion.

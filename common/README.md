@@ -1,90 +1,50 @@
-# Effectus Common Package
+# Common Package
 
-This package provides the core types, interfaces, and implementations used across the Effectus codebase.
+The `common` package contains shared fact, path, argument, sorting, and execution values.
 
-## Architecture
+It is not the production execution engine. Use `runtime.Engine` for durable checked execution.
 
-The Effectus path and type system follows a simple, unified architecture:
+## Facts
 
-### Types
-
-The `Type` structure represents types in the Effectus type system:
-
-- Primitive types (bool, int, float, string, etc.)
-- Container types (lists and maps)
-- Named types (user-defined types)
-- Reference types (types defined elsewhere)
-
-### Paths
-
-Paths in Effectus navigate structured data:
-
-- `Path` contains a namespace and elements with built-in type information
-- `PathElement` supports named access, array indices, and map keys
-- Parsing and resolution are handled through a single consistent API
-
-### Facts
-
-Facts are immutable typed data structures:
-
-- `Facts` interface provides path-based access to data
-- `BasicFacts` implementation ensures immutability through deep copying
-- `WithData` creates a new Facts instance with modified data
-- Resolution integrates seamlessly with type information
-
-## Immutability
-
-All components in this package embrace immutability:
-
-- Path operations return new Path instances
-- Facts are not modifiable after creation
-- Type definitions are immutable
-
-## Core APIs
+`BasicFacts` provides path-based access to a copied data snapshot and its type system.
 
 ```go
-// Parse a path string
-path, err := common.ParseString("app.users[0].name")
-
-// Access data with paths
-facts := common.NewBasicFacts(data, schema)
-value, exists := facts.Get("app.users[0].name")
-
-// Get detailed resolution results
-value, result := facts.GetWithContext("app.users[0]")
-if result.Exists && result.Type != nil {
-    // Work with typed result
-}
-
-// Create a modified copy with new data
-updatedData := prepareNewData()
-newFacts := originalFacts.WithData(updatedData)
+facts := common.NewBasicFacts(data, typeSystem)
+value, exists := facts.Get("order.customer.id")
 ```
 
-## Design Philosophy
+`WithData` creates another fact value. Callers must not depend on mutable input maps after construction.
 
-1. **Simplicity**: Single implementations with no redundancy
-2. **Immutability**: Values are never modified in place
-3. **Type Safety**: Type information travels with paths
-4. **Functional Style**: Operations return new values
+## Paths
 
-## Implementation Details
-
-- The base `path` package provides core path functionality without dependencies
-- The `common` package defines types and interfaces used across packages
-- Schema packages use these common types to perform validation and resolution
-
-## Usage Examples
+Use the shared path parser for structured access:
 
 ```go
-// Create a path with type information
-element := path.NewElement("user").WithType(&common.Type{PrimType: common.TypeObject})
-userPath := path.NewPath("app", []path.PathElement{element})
+parsed, err := common.ParseString("app.users[0].name")
+```
 
-// Resolve a path against data
-resolver := path.NewPathResolver(nil, false)
-result, _ := resolver.ResolvePath("app.user", data)
-if result.Exists {
-    // Process the result...
-}
-``` 
+The parser supports named fields, list indexes, and map keys. The schema type system validates rule paths during compilation.
+
+## Arguments
+
+Argument helpers normalize literals, fact paths, and result references for compatibility executors.
+
+The checked compiler uses distinct protobuf variants for these sources. Do not collapse them into an untyped map before checking.
+
+## Ordering
+
+Shared sorting helpers preserve source order for equal priorities.
+
+Stable ordering is part of checked plan selection. It does not make external operations deterministic.
+
+## Execution values
+
+The package includes compatibility execution types used by list and flow libraries.
+
+Production transports use checked IR and `runtime.Engine.Execute`. Legacy Go continuations cannot enter a production generation.
+
+## Test
+
+```bash
+go test ./common
+```

@@ -1,245 +1,97 @@
 # Effectus Examples
 
-This directory contains examples showing how to extend Effectus with your own business logic.
+The examples module contains library examples, daemon clients, and local service stacks.
 
-## Philosophy
+Run commands from the `examples` directory unless a section says otherwise.
 
-Effectus core is designed to be a **clean slate** - it provides the mathematical foundations and runtime, but doesn't include predefined business logic. This ensures the system remains flexible and doesn't impose domain assumptions.
-
-## Examples
-
-### [Extension System](./extension_system/) **START HERE**
-Comprehensive demonstration of the unified extension loading system.
+## Build all Go examples
 
 ```bash
-cd extension_system
-go run main.go
+go test ./...
+go vet ./...
 ```
 
-**What it demonstrates:**
-- Static (compile-time) extension registration
-- Dynamic (runtime) extension loading from JSON
-- Protocol Buffer and OCI bundle support (placeholders)
-- Unified interface for all extension types
-- Directory scanning for automatic discovery
+The examples have their own `go.mod`. Keep it tidy when you change an example.
 
-### [Business Verbs](./business_verbs/)
-Shows how to register domain-specific verbs for your business operations.
+## Rule and compiler examples
+
+| Directory | Purpose |
+| --- | --- |
+| `business_facts` | Register domain facts and functions |
+| `business_rules` | Compile domain rules |
+| `business_verbs` | Register static Go verb executors |
+| `coherent_flow` | Connect extension loading, compilation, and execution |
+| `expr` | Evaluate typed expressions |
+| `flow` | Use flow bindings and step results |
+| `list` | Use ordered list rules |
+| `proto_driven_development` | Build schemas and rules from protobuf declarations |
+
+These examples can use compatibility library APIs. They do not define the production daemon boundary.
+
+## Runtime examples
+
+| Directory | Purpose |
+| --- | --- |
+| `fraud_e2e` | Run a complete fraud workflow with compensation |
+| `flow_ui_demo` | Run flow-heavy rules with the status UI |
+| `grpc_execution` | Call the generated ruleset execution service |
+| `multi_bundle_runtime` | Resolve and activate multiple local bundle versions |
+| `modern_sql_usage` | Use the current SQL adapter API |
+| `adapter_library_usage` | Embed source adapters in a Go application |
+
+Use the directory README when one exists. It lists required services and environment variables.
+
+## Streaming and CDC examples
+
+| Directory | Purpose |
+| --- | --- |
+| `amqp_streaming` | Consume AMQP deliveries |
+| `grpc_streaming` | Consume a server-streaming gRPC source |
+| `mysql_cdc` | Read MySQL binlog events |
+| `postgres_cdc` | Read PostgreSQL logical changes |
+| `cdc_all` | Run PostgreSQL, MySQL, and AMQP sources together |
+| `cdc_stack` | Start the local CDC service stack |
+
+CDC examples require database privileges, retention settings, and output plugins. They are not zero-configuration production templates.
+
+## Durable workflow stack
+
+Start PostgreSQL and Redis for saga integration work:
 
 ```bash
-cd business_verbs
-go run main.go
+docker compose -f saga_stack/docker-compose.yml up -d
 ```
 
-**What it demonstrates:**
-- Creating custom verb executors
-- Registering verbs with capabilities and resource requirements
-- Setting up inverse verbs for compensation
-- Handling idempotent, commutative, and exclusive operations
-
-### [Business Facts](./business_facts/)
-Shows how to load business data and register domain-specific functions.
+Stop the stack and delete its volumes:
 
 ```bash
-cd business_facts
-go run main.go
+docker compose -f saga_stack/docker-compose.yml down -v
 ```
 
-**What it demonstrates:**
-- Loading structured business data into the registry
-- Registering custom functions for expression evaluation
-- Using pathutil for fact access
-- Type introspection and validation
+## Warehouse examples
 
-### [Fraud E2E](./fraud_e2e/)
-End-to-end fraud workflow: list rules, flow execution, and saga compensation.
+The `warehouse_sources` tree contains:
 
-```bash
-go run ./fraud_e2e
-```
+- Snowflake SQL configurations
+- Iceberg and Trino configurations
+- A local MinIO development stack
+- An S3 Parquet reader example
 
-Convenience scripts:
-```bash
-./fraud_e2e/scripts/run-local.sh
-./fraud_e2e/scripts/run-compose.sh
-./fraud_e2e/scripts/run-compose-failure.sh
-```
+Read [Warehouse Sources](warehouse_sources/README.md) before you start the local stack.
 
-**What it demonstrates:**
-- Typed fact schemas and fact loading
-- Rule evaluation with list specs
-- Flow execution with saga compensation
-- Verb registry wiring with inverse verbs
+## UI demos
 
-### [Flow UI Demo](./flow_ui_demo/)
-Flow-heavy UI demo with streaming facts and a SQL scrape mock.
+From the repository root, run:
 
 ```bash
+just ui-demo
 just ui-flow-demo
 ```
 
-SQL scrape mock (Postgres):
-```bash
-just ui-flow-demo-sql-up
-just ui-flow-demo-sql-scrape
-just ui-flow-demo-sql-bump
-```
+## Production differences
 
-### [Multi-Bundle Runtime](./multi_bundle_runtime/)
-Manifest-driven bundle resolution, merged rule execution, and hot reload.
+Production effectusd requires durable PostgreSQL workflow state. It uses checked IR and one shared execution engine.
 
-```bash
-go run ./multi_bundle_runtime
-./multi_bundle_runtime/scripts/hot-reload.sh
-```
+The daemon rejects in-process plugins and legacy in-memory rule specifications. It requires digest-pinned and verified OCI bundles.
 
-**What it demonstrates:**
-- Resolving multiple bundles from a manifest
-- Loading schemas/verbs/rules across bundles
-- Hot reload by swapping bundle versions
-
-### [Postgres CDC](./postgres_cdc/)
-Stream logical changes from Postgres using wal2json.
-
-```bash
-go run ./postgres_cdc
-```
-
-### [MySQL CDC](./mysql_cdc/)
-Stream row changes from MySQL binlog.
-
-```bash
-go run ./mysql_cdc
-```
-
-### [AMQP Streaming](./amqp_streaming/)
-Consume RabbitMQ/AMQP messages as facts.
-
-```bash
-go run ./amqp_streaming
-```
-
-### [gRPC Streaming](./grpc_streaming/)
-Consume a server-streaming gRPC method that returns `Struct`.
-
-```bash
-go run ./grpc_streaming
-```
-
-### [CDC All-In-One](./cdc_all/)
-Run Postgres CDC, MySQL CDC, and AMQP adapters together.
-
-```bash
-go run ./cdc_all
-```
-
-### [CDC Stack](./cdc_stack/)
-Docker compose stack for Postgres CDC, MySQL CDC, and RabbitMQ.
-
-```bash
-docker compose -f ./cdc_stack/docker-compose.yml up -d
-```
-
-### [Saga Stack](./saga_stack/)
-Docker compose stack for saga integration tests (Postgres + Redis).
-
-```bash
-docker compose -f ./saga_stack/docker-compose.yml up -d
-```
-
-### [Warehouse Sources](./warehouse_sources/)
-Concrete configs for Snowflake (SQL adapter) and Iceberg via Trino (Iceberg adapter).
-
-```bash
-ls ./warehouse_sources
-```
-
-**What it demonstrates:**
-- Production-style config shapes for warehouse ingestion
-- Batch Snowflake snapshots and streaming Iceberg tables
-- Scheduled SQL polling via `warehouse_sources/sql_scheduled_scrape.yaml`
-- Local Trino + Iceberg + MinIO devstack in `warehouse_sources/devstack`
-- S3 Parquet reader demo in `warehouse_sources/s3_parquet_demo`
-
-## Integration Patterns
-
-### 1. **Unified Extension Pattern** **RECOMMENDED**
-```go
-// Create extension manager
-em := loader.NewExtensionManager()
-
-// Add static extensions (compile-time)
-em.AddLoader(loader.NewStaticVerbLoader("business", myVerbs))
-em.AddLoader(loader.NewStaticSchemaLoader("business").AddFunction("tax", calculateTax))
-
-// Add dynamic extensions (runtime)
-em.AddLoader(loader.NewJSONVerbLoader("external", "verbs.json"))
-em.AddLoader(loader.NewJSONSchemaLoader("config", "schema.json"))
-
-// Load all extensions
-registry := schema.NewRegistry()
-verbRegistry := verb.NewRegistry(nil)
-schema.LoadExtensionsIntoRegistries(em, registry, verbRegistry)
-```
-
-### 2. **Directory Scanning Pattern**
-```go
-// Automatically discover extensions in directories
-em, err := schema.CreateExtensionManagerWithDefaults(
-    "./config/extensions",
-    "./business/extensions",
-)
-if err != nil {
-    log.Fatal(err)
-}
-
-// Load everything
-schema.LoadExtensionsIntoRegistries(em, registry, verbRegistry)
-```
-
-### 3. **Registry-First Pattern**
-```go
-// Direct registry manipulation (less flexible)
-registry := schema.NewRegistry()
-registry.RegisterFunction("validateCustomer", myValidationFunc)
-registry.LoadFromMap(myBusinessData)
-
-verbRegistry := verb.NewRegistry(nil)
-verbRegistry.RegisterVerb(&verb.Spec{...})
-```
-
-### 4. **Fact Provider Pattern**
-```go
-// Use pathutil for structured fact access
-factProvider := pathutil.NewRegistryFactProvider()
-factProvider.GetRegistry().LoadFromMap(data)
-
-// Access facts with dot notation
-if value, exists := factProvider.Get("customer.vip"); exists {
-    // Use the value
-}
-```
-
-## Building Your Application
-
-1. **Start with core Effectus** - no business logic included
-2. **Register your domain verbs** - define what operations your system can perform
-3. **Register your domain functions** - define expression functions for your business rules
-4. **Load your data** - facts from databases, APIs, etc.
-5. **Define your rules** - using `.eff` files with your domain language
-
-## Key Benefits
-
-- OK **No vendor lock-in** - your business logic is separate from the framework
-- OK **Clean testing** - test your verbs and functions independently  
-- OK **Domain-driven** - use your own business terminology
-- OK **Flexible** - add new verbs and functions as your business evolves
-- OK **Composable** - mix and match capabilities as needed
-
-## See Also
-
-- [Extension System Documentation](../loader/README.md) *
-- [Core Architecture](../docs/ARCHITECTURE.md)
-- [Design Principles](../docs/design.md)  
-- [Verb System Documentation](../schema/verb/)
-- [Expression Registry](../schema/) 
+Read [Runtime Guarantees](../docs/GUARANTEES.md) before you adapt an example for production.
