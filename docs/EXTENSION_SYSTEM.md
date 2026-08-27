@@ -188,9 +188,11 @@ effectusc bundle \
   --rules ./rules \
   --oci-ref ghcr.io/myorg/customer-rules:v1.2.0
 
-# Resolve the published tag to its immutable digest, then load that digest.
-# Example digest shown for syntax only.
-effectusd --oci-ref ghcr.io/myorg/customer-rules@sha256:<manifest-digest>
+# Resolve and sign the published digest before deployment.
+EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+effectusd \
+  --oci-ref ghcr.io/myorg/customer-rules@sha256:<manifest-digest> \
+  --oci-signature-verifier /usr/local/bin/effectus-verify-oci
 ```
 
 ### 4. Extension Manifest Resolution
@@ -516,14 +518,19 @@ effectusc bundle push \
 ### Running with Extensions
 
 ```bash
-# From local bundle
-effectusd --bundle ./bundle.json
+# From a local bundle
+EFFECTUS_SAGA_POSTGRES_DSN="$POSTGRES_DSN" \
+  effectusd --bundle ./bundle.json
 
-# From OCI registry with hot-reload
-effectusd --oci-ref ghcr.io/company/order-processing:latest --reload-interval 60s
+# From a signed immutable OCI digest
+EFFECTUS_SAGA_POSTGRES_DSN="$POSTGRES_DSN" \
+  effectusd \
+  --oci-ref ghcr.io/company/order-processing@sha256:<manifest-digest> \
+  --oci-signature-verifier /usr/local/bin/effectus-verify-oci
 
-# From directory with automatic discovery
-effectusd --extensions-dir ./extensions
+# Add extension manifests and .eff/.effx sources
+EFFECTUS_SAGA_POSTGRES_DSN="$POSTGRES_DSN" \
+  effectusd --bundle ./bundle.json --extensions-dir ./extensions
 ```
 
 ## Advanced Features
@@ -575,8 +582,8 @@ bundle.PiiMasks = []string{
 
 ### Durable workflow execution
 
-`effectusd --saga` is rejected because the daemon compatibility executor is not connected to V2.
-Use `runtime.ExecutionRuntime.ConfigureDurableWorkflowExecution` and `ExecuteWorkflowWithIdentity`.
+Effectusd uses the V2 outbox for checked workflows by default and rejects the obsolete `--saga` compatibility switch. Embedded callers configure `runtime.ExecutionRuntime.ConfigureDurableWorkflowExecution` and use `runtime.Engine` or `ExecuteWorkflowWithIdentity`.
+
 The checked runtime commits each step intent before invocation and preserves unknown outcomes instead of claiming rollback.
 
 ## Integration Examples

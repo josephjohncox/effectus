@@ -22,6 +22,7 @@ grpc:
 bundle:
   ociRef: ""
   cacheDir: "/data/bundles"
+  signatureVerifier: ""
   reloadInterval: "0s"
 
 api:

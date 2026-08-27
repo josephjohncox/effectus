@@ -74,7 +74,7 @@ var (
 	extensionsOCI            = flag.String("extensions-oci", "", "OCI references for extension bundles (comma-separated)")
 	extensionsReloadInterval = flag.Duration("extensions-reload-interval", 0, "Interval for reloading extension manifests (0 to disable)")
 	schemaSourcesFile        = flag.String("schema-sources", "", "Path to schema sources config (YAML/JSON)")
-	reloadInterval           = flag.Duration("reload-interval", 30*time.Second, "Interval for hot-reloading")
+	reloadInterval           = flag.Duration("reload-interval", 0, "Interval for reloading local schema and extension sources (immutable OCI bundles cannot be polled)")
 	shutdownTimeout          = flag.Duration("shutdown-timeout", 30*time.Second, "Deadline for graceful shutdown and queue drain")
 
 	// Runtime flags
@@ -321,14 +321,8 @@ func main() {
 		}
 	}
 
-	preparedBundle, err := compileBundleRules(bundle, typeSystem, verbReg, *verbose)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error compiling bundle rules: %v\n", err)
-		os.Exit(1)
-	}
-	bundle = preparedBundle
 	if bundle.ListSpec != nil || bundle.FlowSpec != nil {
-		fmt.Fprintln(os.Stderr, "Bundle uses legacy callback-based execution, which effectusd does not permit; migrate workflows to canonical .eff or .effx sources.")
+		fmt.Fprintln(os.Stderr, "Bundle contains in-memory legacy specifications; effectusd accepts embedded .eff or .effx RuleSources only.")
 		os.Exit(1)
 	}
 	if *sagaEnabled {

@@ -38,11 +38,15 @@ spec:
           args:
             {{- if .Values.config.enabled }}
             - "--config={{ .Values.config.mountPath }}/{{ .Values.config.key }}"
+            {{- if .Values.bundle.signatureVerifier }}
+            - "--oci-signature-verifier={{ .Values.bundle.signatureVerifier }}"
+            {{- end }}
             {{- else }}
             - "--http-addr=:{{ .Values.service.port }}"
             - "--metrics-addr=:{{ .Values.service.metricsPort }}"
             - "--oci-ref={{ required "bundle.ociRef is required when config.enabled is false" .Values.bundle.ociRef }}"
             - "--oci-cache-dir={{ .Values.bundle.cacheDir }}"
+            - "--oci-signature-verifier={{ required "bundle.signatureVerifier is required for OCI loading" .Values.bundle.signatureVerifier }}"
             {{- if .Values.bundle.reloadInterval }}
             - "--reload-interval={{ .Values.bundle.reloadInterval }}"
             {{- end }}

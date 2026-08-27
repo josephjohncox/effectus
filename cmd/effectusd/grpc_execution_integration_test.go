@@ -34,14 +34,13 @@ func TestEffectusdGeneratedGRPCServiceUsesDurableEngine(t *testing.T) {
 	directory := t.TempDir()
 	manifest := fmt.Sprintf(`{"name":"test","version":"1","verbs":[{"name":"charge","capabilities":["write"],"resources":[{"resource":"payment","capabilities":["write"]}],"argTypes":{"amount":"int"},"requiredArgs":["amount"],"returnType":"void","target":{"type":"http","config":{"url":%q,"method":"POST","timeout":"2s","allowPrivateNetwork":true}}}]}`, sink.URL)
 	require.NoError(t, os.WriteFile(filepath.Join(directory, "extension.verbs.json"), []byte(manifest), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(directory, "workflow.effx"), []byte(`flow "charge" priority 1 { when {} steps { charge(amount: 1) } }`), 0o600))
 
 	oldDSN, oldAddr, oldInsecure, oldAuth := *sagaPgDSN, *grpcAddr, *grpcAllowInsecure, *apiAuthMode
 	t.Cleanup(func() {
 		*sagaPgDSN, *grpcAddr, *grpcAllowInsecure, *apiAuthMode = oldDSN, oldAddr, oldInsecure, oldAuth
 	})
 	*sagaPgDSN, *grpcAddr, *grpcAllowInsecure, *apiAuthMode = dsn, "127.0.0.1:0", true, "disabled"
-	bundle := &unified.Bundle{Name: "orders", Version: "1"}
+	bundle := &unified.Bundle{Name: "orders", Version: "1", RuleSources: []unified.RuleSource{{Path: "workflow.effx", Format: "effx", Content: `flow "charge" priority 1 { when {} steps { charge(amount: 1) } }`}}}
 	execution, db, err := configureDaemonExecutionEngine(t.Context(), bundle, []string{directory}, nil)
 	require.NoError(t, err)
 	defer execution.Close()

@@ -78,8 +78,7 @@ Run `effectusd` with a YAML/JSON config to operate as a standalone service:
 ```yaml
 # effectusd.yaml
 bundle:
-  oci: "ghcr.io/myorg/bundles/fraud-demo:1.0.0"
-  reload_interval: "60s"
+  oci: "ghcr.io/myorg/bundles/fraud-demo@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 http:
   addr: ":8080"
@@ -115,7 +114,10 @@ extensions:
 Run it:
 
 ```bash
-EFFECTUS_API_TOKEN="..." effectusd --config effectusd.yaml --allow-legacy-execution
+EFFECTUS_API_TOKEN="..." \
+EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+  effectusd --config effectusd.yaml \
+  --oci-signature-verifier /usr/local/bin/effectus-verify-oci
 ```
 
 Bundle/compiler example (creates a distributable bundle):
@@ -138,7 +140,7 @@ Effectus supports multiple extension styles:
 
 - Static: Go executors via `loader.NewStaticVerbLoader(...)`
 - Dynamic: JSON verb manifests (`*.verbs.json`)
-- OCI bundles: publish and hot-reload bundles from GHCR
+- OCI bundles: publish digest-pinned, signed bundles and deploy a new digest for each release
 
 Dynamic verb example (HTTP target):
 
@@ -160,60 +162,11 @@ Dynamic verb example (HTTP target):
 
 See `docs/EXTENSION_SYSTEM.md` for full manifest schema and OCI publishing.
 
-### Go-backed verbs (OCI-distributed executors)
+### Go-backed verbs
 
-If you want verbs implemented in Go (in-process), use plugins and distribute them via OCI as an artifact, then mount the
-plugin directory into `effectusd`:
+Production effectusd rejects in-process Go plugins. Run Go-backed executors as separate HTTP or gRPC services and describe them with checked extension manifests.
 
-```bash
-# Build plugin (.so) with Go executors
-go build -buildmode=plugin -o plugins/payments.so ./examples/verbs/payments
-
-# Publish the plugin directory as an OCI artifact
-oras push ghcr.io/myorg/effectus-plugins:1.0.0 ./plugins
-```
-
-Run `effectusd` with the plugin directory mounted (e.g., via Helm/ConfigMap/init container) and enable plugin loading:
-
-```yaml
-verbs:
-  plugin_dirs:
-    - "/plugins"
-```
-
-Helm values example (pull OCI plugin bundle at startup):
-
-```yaml
-bundle:
-  ociRef: "ghcr.io/myorg/bundles/fraud-demo:1.0.0"
-
-initContainers:
-  - name: pull-plugins
-    image: ghcr.io/oras-project/oras:v1.2.0
-    command: ["sh", "-c"]
-    args:
-      - "oras pull ghcr.io/myorg/effectus-plugins:1.0.0 -o /plugins"
-    volumeMounts:
-      - name: plugins
-        mountPath: /plugins
-
-extraVolumes:
-  - name: plugins
-    emptyDir: {}
-
-extraVolumeMounts:
-  - name: plugins
-    mountPath: /plugins
-
-config:
-  enabled: true
-  contents: |
-    verbs:
-      plugin_dirs:
-        - "/plugins"
-```
-
-For cross-container Go executors, publish JSON verb manifests to OCI and target your Go service via `http` or `grpc`.
+A trusted embedded Go application can still register a static executor with `loader.NewStaticVerbLoader`. This library-only compatibility path is outside the daemon's process-isolation boundary.
 
 ## Runtime UI + API
 
@@ -222,7 +175,9 @@ For cross-container Go executors, publish JSON verb manifests to OCI and target 
 Enable `/api/rules/validate` + `/api/rules/hotload` (and the in-UI rule editor) with `--rules-hotload` or `api.hotload_rules`.
 
 ```bash
-effectusd --bundle bundle.json --api-token devtoken
+EFFECTUS_API_TOKEN=devtoken \
+EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+  effectusd --bundle bundle.json
 curl -X POST http://localhost:8080/api/facts \
   -H 'Authorization: Bearer devtoken' \
   -H 'Content-Type: application/json' \

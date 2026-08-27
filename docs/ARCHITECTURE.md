@@ -204,8 +204,11 @@ effectusc bundle \
   --rules-dir rules/ \
   --oci-ref ghcr.io/myorg/my-rules:v1.0.0
 
-# Deploy to production
-effectusd --oci-ref ghcr.io/myorg/my-rules:v1.0.0
+# Deploy the signed immutable digest to production
+EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+effectusd \
+  --oci-ref ghcr.io/myorg/my-rules@sha256:<manifest-digest> \
+  --oci-signature-verifier /usr/local/bin/effectus-verify-oci
 ```
 
 ### Hot Reload Pipeline

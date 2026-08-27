@@ -22,7 +22,7 @@ The generated gRPC service sends execution requests to the shared checked engine
 Each request pins the ruleset version and generation digest during durable admission.
 The server does not accept mutable method registrations.
 
-The `effectusd` list and flow bundle executor is a legacy callback-based compatibility path. It is not a checked IR execution path. The daemon rejects it unless the operator sets `--allow-legacy-execution`. The daemon also rejects `--saga` because that legacy path does not use the V2 outbox.
+Effectusd compiles bundle and extension `.eff` and `.effx` sources into checked IR before publication. HTTP, Kafka, and generated gRPC requests use the same durable engine. The daemon rejects the old `--saga` switch because it refers to the legacy callback path rather than the V2 outbox.
 
 The following paths fail closed:
 
@@ -32,15 +32,13 @@ The following paths fail closed:
 
 A fail-closed path does not provide partial service. It returns a configuration or execution error.
 
-## Remediation limits
+## Protocol limits
 
-The repository does not yet contain a canonical lowering pass from daemon `list.Spec` and `flow.Spec` values to `ir.Checked`. Those values contain Go continuations. For this reason, `effectusd` requires `--allow-legacy-execution` and rejects `--saga` instead of claiming V2 durability.
+Directly constructed `list.Spec` and `flow.Spec` values can contain unrestricted Go continuations. They cannot be converted safely into checked IR. Production entry points therefore accept source or checked artifacts, not arbitrary host-language programs.
 
-The inbound gRPC protocol accepts `google.protobuf.Struct` facts and uses the generated execution service.
-Descriptor-driven protobuf calls remain an outbound verb executor feature.
+The inbound gRPC protocol accepts `google.protobuf.Struct` facts and uses the generated execution service. Descriptor-driven protobuf calls remain an outbound verb executor feature.
 
-The checked extension runtime stages immutable loader output before compilation.
-It rejects JSON manifests that contain workflows. Use `.eff` or `.effx` files for ordered workflows.
+The checked extension runtime stages immutable loader output before compilation. It rejects JSON manifests that contain workflows. Use `.eff` or `.effx` files for ordered workflows.
 
 Kafka DLQ publication and source-offset commit use separate broker operations. The durable ledger deduplicates records after a poison acknowledgement, but process death between first DLQ publication and acknowledgement can still duplicate the DLQ record. A Kafka transactional producer is required to close that final window.
 
@@ -49,11 +47,11 @@ Kafka DLQ publication and source-offset commit use separate broker operations. T
 Effectus provides a canonical protobuf-backed checked IR.
 Some legacy compiler and execution APIs still use compatibility structures.
 
-The daemon compiles rule sources before it publishes a compatibility generation. This compilation produces legacy `list.Spec` and `flow.Spec` values, including Go continuations. It does not produce `ir.Checked`. CLI parse and type-check commands return an error when any input fails.
+The daemon compiles rule sources to `ir.Checked` before it publishes a production generation. CLI parse and type-check commands return an error when any input fails.
 
-Some library APIs can still construct programs directly with Go values and continuation functions. These APIs can bypass source-level checks.
+Some library APIs can still construct programs directly with Go values and continuation functions. These compatibility APIs can bypass source-level checks and are not used by production daemon transports.
 
-Production callers that require checked semantics must use `runtime.ExecutionRuntime` with checked workflows and a configured durable outbox. Do not treat daemon compatibility execution or direct Go program construction as proof of type safety.
+Production callers that require checked semantics must use `runtime.Engine` or `runtime.ExecutionRuntime` with checked workflows and a configured durable outbox. Do not treat direct Go program construction as proof of type safety.
 
 The target design has two explicit API classes:
 
@@ -62,66 +60,17 @@ The target design has two explicit API classes:
 3. The unchecked API name must state that it bypasses validation.
 4. All production entry points must require checked IR.
 
-## Saga identity
+## Saga identity and recovery
 
-A saga has a stable `saga_id`. Each effect occurrence has a stable `effect_id` and source-order sequence.
+A saga has stable saga, execution, plan, effect, dispatch, and idempotency identities. Each effect occurrence has a source-order sequence. Repeated calls to the same verb remain separate occurrences.
 
-The current effect ID format is:
+The V2 store commits dispatch intent before external invocation. A worker claims the dispatch with an attempt and lease token. Completion uses compare-and-swap, so an expired worker cannot complete after a newer claim.
 
-```text
-step-000001
-step-000002
-step-000003
-```
+A retry keeps the same idempotency key and uses a larger attempt number. Invocation metadata carries the saga, effect, direction, attempt, contract hash, idempotency key, and fencing grants to the transport executor.
 
-A status update uses `(saga_id, effect_id)`. It does not use the verb name. Repeated calls to the same verb therefore remain separate effect occurrences.
+If a connection fails after the destination may have committed, the outcome is unknown. Effectus retries only under the configured idempotency contract and eventually enters `blocked_unknown` rather than assuming failure or starting compensation.
 
-The store records these fields:
-
-- Effect ID.
-- Sequence.
-- Verb.
-- Arguments.
-- Forward result.
-- Status.
-- Error text.
-- Timestamp.
-
-## Saga state machine
-
-An effect uses these states:
-
-```text
-pending -> success -> compensated
-pending -> failed
-```
-
-A repeated transition to the same terminal state is idempotent. Other transitions return an error.
-
-Forward execution follows source order. Compensation follows reverse successful-execution order.
-
-The runtime returns compensation failures to the caller. It does not only write them to a log.
-
-## Saga replay semantics
-
-A replay with the same saga ID and effect IDs reads stored successful results. It does not run those successful effects again.
-
-A pending effect is different. The runtime retries a pending effect because it cannot know if the external action completed.
-
-This crash window exists:
-
-```text
-external action succeeds
-process stops before MarkSuccess
-stored state remains pending
-recovery retries the action
-```
-
-The current pending-effect guarantee is **at least once**. It is not exactly once.
-
-A verb must use an external idempotency key to close this window. A future invocation protocol must pass `(saga_id, effect_id, attempt)` to every external verb.
-
-A durable outbox can close database-local publish windows. It cannot make an arbitrary external API exactly once without API support.
+The outbox closes database-local publish windows. It cannot make an arbitrary external API exactly once. The destination must atomically enforce the supplied idempotency key or fencing token with its business mutation.
 
 ## Compensation limits
 
@@ -144,27 +93,13 @@ Nested sagas are not implemented.
 
 ## Ingestion and acknowledgement
 
-The HTTP fact endpoint uses a bounded in-memory execution queue.
+The effectusd HTTP fact endpoint requires an idempotency key and durably admits the request through the checked engine before returning HTTP 202. A repeated identity with different content is rejected. A repeated matching request returns the recorded execution.
 
-When the queue is full, the server returns HTTP 503 and a `Retry-After` header. It does not acknowledge work that it cannot queue.
+The optional local fact store is a projection, not the durable execution ledger. A projection failure does not erase an accepted execution and can be retried with the same identity.
 
-The file fact store persists merged facts before queue admission. The client must retry a 503 response to request execution again.
+The Kafka consumer uses consumer groups and synchronous offset commits. It processes one application-level record at a time and supports completed-processing or durable-acceptance acknowledgement. A crash before the offset commit causes redelivery; the stable delivery identity replays the durable execution instead of creating a second one.
 
-The queue is not a durable broker. A process stop can lose queued work.
-
-Production deployments that require durable delivery need a durable inbox or broker consumer with explicit offsets and idempotency keys.
-
-The Kafka consumer uses consumer groups and synchronous offset commits.
-It processes one application-level record at a time.
-It commits only after the selected handler contract succeeds.
-
-The daemon currently selects `completed_processing`.
-A crash before the offset commit causes redelivery.
-Kafka offsets are not atomic with Effectus state or external effects.
-The stable Kafka delivery ID supports replay and idempotency.
-
-The adapter also supports `durable_acceptance` for an injected checked engine handler.
-The daemon rejects that mode until its fact admission transaction is durable.
+Kafka source offsets are not atomic with arbitrary external effects. DLQ publication is acknowledged before the source offset commit, but those two Kafka operations are non-transactional and can produce a duplicate DLQ record after a crash.
 
 ## Reload generations
 

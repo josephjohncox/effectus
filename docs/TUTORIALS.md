@@ -156,8 +156,9 @@ When to choose each loader:
 - Use `loader.NewStaticVerbLoader` for in-process Go executors.
 - Use JSON/OCI loaders for HTTP/gRPC/stream targets or cross-team verb distribution.
 
-## 7) Bundle-only run (OCI + hot reload)
-Create a bundle, push to a registry, and run `effectusd` using only the OCI reference.
+## 7) Immutable OCI deployment
+
+Create a bundle, push and sign it, then run `effectusd` with the published digest.
 
 ```bash
 effectusc bundle \
@@ -168,11 +169,12 @@ effectusc bundle \
   --rules-dir examples/fraud_e2e/rules \
   --oci-ref ghcr.io/myorg/bundles/fraud-demo:1.0.0
 
+EFFECTUS_API_TOKEN=demo-token \
+EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
 effectusd \
-  --oci-ref ghcr.io/myorg/bundles/fraud-demo:1.0.0 \
-  --reload-interval 60s \
-  --http-addr :8080 \
-  --api-token demo-token
+  --oci-ref ghcr.io/myorg/bundles/fraud-demo@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --oci-signature-verifier /usr/local/bin/effectus-verify-oci \
+  --http-addr :8080
 ```
 
 Health and readiness:
