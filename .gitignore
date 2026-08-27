@@ -48,6 +48,7 @@ gen/effectus/*
 gen/effectus/v1/*
 !gen/effectus/v1/*.pb.go
 node_modules/
+*.vsix
 coverage.html
 
 # Buf Generated
