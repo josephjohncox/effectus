@@ -42,11 +42,13 @@ on:
         required: false
         type: string
       bundle_verb_dir:
-        description: "Verb spec directory (default: examples/flow_ui_demo/verbs)"
+        description: >-
+          Verb spec directory (default: examples/flow_ui_demo/verbs)
         required: false
         type: string
       bundle_oci_ref:
-        description: "OCI reference override (e.g., ghcr.io/org/bundles/demo:v1)"
+        description: >-
+          OCI reference override (e.g., ghcr.io/org/bundles/demo:v1)
         required: false
         type: string
 
@@ -60,18 +62,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+      - uses: >-
+          bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99
+        # v1.50.0
+        with:
+          github_token: ${{ github.token }}
       - name: Validate release source
         run: |
           go test ./...
           go vet ./...
           buf format -d --exit-code
           buf lint
-          buf breaking --against '.git#branch=main'
+          git update-ref refs/heads/buf-breaking-main refs/remotes/origin/main
+          buf breaking --against '.git#branch=buf-breaking-main'
 
   publish-image:
     needs: validate
@@ -93,14 +102,19 @@ jobs:
             VERSION="${GITHUB_REF_NAME}"
           fi
           VERSION="${VERSION#v}"
-          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'; then
+          SEMVER_RE='^[0-9]+\.[0-9]+\.[0-9]+'
+          SEMVER_RE="${SEMVER_RE}(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?"
+          SEMVER_RE="${SEMVER_RE}(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$"
+          if ! printf '%s' "$VERSION" | grep -Eq "$SEMVER_RE"; then
             echo "invalid semantic version: $VERSION" >&2
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        uses: >-
+          docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        # v3
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -110,14 +124,17 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
-        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        uses: >-
+          docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
+        # v5
+        env:
+          IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/effectusd
         with:
           context: .
           file: Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/effectusd:${{ steps.version.outputs.version }}
+          tags: ${{ env.IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
 
   publish-bundle:
     needs: validate
@@ -145,7 +162,10 @@ jobs:
             VERSION="${GITHUB_REF_NAME}"
           fi
           VERSION="${VERSION#v}"
-          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'; then
+          SEMVER_RE='^[0-9]+\.[0-9]+\.[0-9]+'
+          SEMVER_RE="${SEMVER_RE}(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?"
+          SEMVER_RE="${SEMVER_RE}(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$"
+          if ! printf '%s' "$VERSION" | grep -Eq "$SEMVER_RE"; then
             echo "invalid semantic version: $VERSION" >&2
             exit 1
           fi
@@ -189,7 +209,8 @@ jobs:
 
           OCI_REF="${{ inputs.bundle_oci_ref }}"
           if [ -z "$OCI_REF" ]; then
-            OCI_REF="ghcr.io/${{ github.repository_owner }}/bundles/${BUNDLE_NAME}:${BUNDLE_VERSION}"
+            OCI_REPO="ghcr.io/${{ github.repository_owner }}/bundles"
+            OCI_REF="${OCI_REPO}/${BUNDLE_NAME}:${BUNDLE_VERSION}"
           fi
 
           echo "Publishing ${BUNDLE_NAME} v${BUNDLE_VERSION} -> ${OCI_REF}"
@@ -224,26 +245,40 @@ jobs:
             VERSION="${GITHUB_REF_NAME}"
           fi
           VERSION="${VERSION#v}"
-          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'; then
+          SEMVER_RE='^[0-9]+\.[0-9]+\.[0-9]+'
+          SEMVER_RE="${SEMVER_RE}(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?"
+          SEMVER_RE="${SEMVER_RE}(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$"
+          if ! printf '%s' "$VERSION" | grep -Eq "$SEMVER_RE"; then
             echo "invalid semantic version: $VERSION" >&2
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Set up Helm
-        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4  # v4
 
       - name: Log in to GHCR (Helm)
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" |
+            helm registry login ghcr.io \
+              -u "${{ github.actor }}" --password-stdin
 
       - name: Package chart
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          sed -i "s/^version:.*/version: ${VERSION}/" charts/effectusd/Chart.yaml
-          sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" charts/effectusd/Chart.yaml
-          sed -i "s#^  repository:.*#  repository: ghcr.io/${{ github.repository_owner }}/effectusd#" charts/effectusd/values.yaml
-          sed -i "s/^  tag:.*/  tag: \"${VERSION}\"/" charts/effectusd/values.yaml
+          CHART_FILE="charts/effectusd/Chart.yaml"
+          VALUES_FILE="charts/effectusd/values.yaml"
+          IMAGE_REPO="ghcr.io/${{ github.repository_owner }}/effectusd"
+          sed -i "s/^version:.*/version: ${VERSION}/" "$CHART_FILE"
+          sed -i \
+            "s/^appVersion:.*/appVersion: \"${VERSION}\"/" \
+            "$CHART_FILE"
+          sed -i \
+            "s#^  repository:.*#  repository: ${IMAGE_REPO}#" \
+            "$VALUES_FILE"
+          sed -i \
+            "s/^  tag:.*/  tag: \"${VERSION}\"/" \
+            "$VALUES_FILE"
           helm package charts/effectusd --destination dist
 
       - name: Push chart to GHCR
@@ -251,7 +286,8 @@ jobs:
           HELM_EXPERIMENTAL_OCI: 1
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          helm push dist/effectusd-${VERSION}.tgz oci://ghcr.io/${{ github.repository_owner }}/helm
+          CHART_REPO="oci://ghcr.io/${{ github.repository_owner }}/helm"
+          helm push "dist/effectusd-${VERSION}.tgz" "$CHART_REPO"
 
   publish-release-assets:
     needs: [validate, publish-image, publish-bundle, publish-chart]
@@ -261,16 +297,16 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 
       - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
           node-version: "22"
           cache: npm
@@ -280,7 +316,9 @@ jobs:
         run: |
           set -e
           mkdir -p dist
-          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+          for target in \
+            linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 \
+            windows/amd64; do
             GOOS="${target%/*}"
             GOARCH="${target#*/}"
             suffix=""
@@ -291,8 +329,12 @@ jobs:
             fi
             work="dist/effectus-${GOOS}-${GOARCH}"
             mkdir -p "$work"
-            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath -ldflags="-s -w" -o "$work/effectusc$suffix" ./cmd/effectusc
-            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath -ldflags="-s -w" -o "$work/effectusd$suffix" ./cmd/effectusd
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+              go build -trimpath -ldflags="-s -w" \
+              -o "$work/effectusc$suffix" ./cmd/effectusc
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+              go build -trimpath -ldflags="-s -w" \
+              -o "$work/effectusd$suffix" ./cmd/effectusd
             if [ "$GOOS" = windows ]; then
               (cd "$work" && zip -q "../$archive" ./*)
             else
@@ -313,5 +355,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --verify-tag --generate-notes
+          fi
           gh release upload "$GITHUB_REF_NAME" dist/* --clobber
