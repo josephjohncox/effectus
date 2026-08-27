@@ -8,7 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Placeholder for effectus schema types until we have proper imports
+// Schema is the transport-neutral source schema boundary used by adapters.
 type Schema struct {
 	Name    string
 	Version string

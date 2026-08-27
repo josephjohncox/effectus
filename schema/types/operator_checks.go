@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/effectus/effectus-go/ast"
 )
@@ -328,8 +329,13 @@ func (ts *TypeSystem) TypeCheckLiteralArgument(lit *ast.Literal, requiredType *T
 	return nil
 }
 
-// TypeCheckArgValue checks if an argument value matches the expected type
+// TypeCheckArgValue checks an argument without flow result bindings.
 func (ts *TypeSystem) TypeCheckArgValue(value *ast.ArgValue, requiredType *Type, facts Facts) error {
+	return ts.TypeCheckArgValueWithBindings(value, requiredType, facts, nil)
+}
+
+// TypeCheckArgValueWithBindings checks an argument against fact and flow-result types.
+func (ts *TypeSystem) TypeCheckArgValueWithBindings(value *ast.ArgValue, requiredType *Type, facts Facts, bindings map[string]*Type) error {
 	if value == nil {
 		return fmt.Errorf("argument value is nil")
 	}
@@ -354,9 +360,19 @@ func (ts *TypeSystem) TypeCheckArgValue(value *ast.ArgValue, requiredType *Type,
 	}
 
 	if value.VarRef != "" {
-		// Variable references would be checked against a symbol table
-		// This would require context about variables in scope
-		return fmt.Errorf("variable reference type checking not implemented")
+		name := strings.TrimPrefix(value.VarRef, "$")
+		valueType, exists := bindings[name]
+		if !exists {
+			valueType, exists = bindings[value.VarRef]
+		}
+		if !exists {
+			return fmt.Errorf("unknown variable reference: %s", value.VarRef)
+		}
+		if !AreTypesCompatible(valueType, requiredType) {
+			return fmt.Errorf("variable %s has type %s which is not compatible with required type %s",
+				value.VarRef, valueType.String(), requiredType.String())
+		}
+		return nil
 	}
 
 	return fmt.Errorf("invalid argument value: neither literal, path, nor variable reference")

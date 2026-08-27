@@ -772,42 +772,7 @@ func (ts *TypeSystem) AutoRegisterTypes(facts effectus.Facts) {
 
 // TypeCheckArgumentValue type checks an argument value against the required type
 func (ts *TypeSystem) TypeCheckArgumentValue(arg *ast.ArgValue, requiredType *Type, facts Facts) error {
-	if arg == nil {
-		return fmt.Errorf("argument value is nil")
-	}
-
-	// Handle different value sources
-	if arg.Literal != nil {
-		// For literals, directly check against required type
-		valueType := InferTypeFromInterface(arg.Literal)
-		if !AreTypesCompatible(valueType, requiredType) {
-			return fmt.Errorf("literal value type %s not compatible with required type %s",
-				valueType.String(), requiredType.String())
-		}
-		return nil
-	}
-
-	if arg.PathExpr != nil {
-		// For path expressions, first get the fact type, then check compatibility
-		factType, err := ts.GetFactType(arg.PathExpr.Path)
-		if err != nil {
-			return fmt.Errorf("unknown fact path: %s", arg.PathExpr.Path)
-		}
-
-		if !AreTypesCompatible(factType, requiredType) {
-			return fmt.Errorf("fact path %s has type %s which is not compatible with required type %s",
-				arg.PathExpr.Path, factType.String(), requiredType.String())
-		}
-		return nil
-	}
-
-	if arg.VarRef != "" {
-		// Variable references would be checked against a symbol table
-		// For now we'll just show a placeholder implementation
-		return fmt.Errorf("variable reference type checking not fully implemented")
-	}
-
-	return fmt.Errorf("invalid argument value: neither literal, path, nor variable reference")
+	return ts.TypeCheckArgValue(arg, requiredType, facts)
 }
 
 // CanAssign checks if a value of sourceType can be assigned to a variable of targetType

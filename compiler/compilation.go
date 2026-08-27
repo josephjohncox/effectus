@@ -657,7 +657,7 @@ type Optimizer interface {
 	Optimize(plan *ExecutionPlan) *ExecutionPlan
 }
 
-// Placeholder implementations
+// Validators and conservative no-op optimizers used by extension compilation.
 type TypeValidator struct{}
 type DependencyValidator struct{}
 type CapabilityValidator struct{}
