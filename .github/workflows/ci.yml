@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -31,13 +33,17 @@ jobs:
         run: go vet ./...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        # v9
+        uses: >-
+          golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
         with:
           version: v2.7.2
           args: --config=.golangci.yml --timeout=5m
 
       - name: Set up Buf
-        uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        # v1.50.0
+        uses: >-
+          bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99
 
       - name: Buf format
         run: buf format -d --exit-code
@@ -128,7 +134,9 @@ jobs:
           cache: true
 
       - name: Set up Buf
-        uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        # v1.50.0
+        uses: >-
+          bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99
 
       - name: Check generated protobuf examples
         run: |
@@ -187,17 +195,22 @@ jobs:
 
       - name: Scan fixed high and critical findings
         run: |
+          trivy="aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe0"
+          trivy+="86a917230e818dc9f8528e3c852f7b1aff648949b6258d1c"
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c \
-            image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 effectus:audit
+            "$trivy" image --scanners vuln --severity HIGH,CRITICAL \
+            --ignore-unfixed --exit-code 1 effectus:audit
 
       - name: Scan pinned Redis image
         run: |
-          image="redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
+          image="redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcb"
+          image+="beee91773b6aa36c49dac28ecfe28eadf"
+          trivy="aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe0"
+          trivy+="86a917230e818dc9f8528e3c852f7b1aff648949b6258d1c"
           docker pull "$image"
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c \
-            image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$image"
+            "$trivy" image --scanners vuln --severity HIGH,CRITICAL \
+            --ignore-unfixed --exit-code 1 "$image"
 
   example-container-audit:
     runs-on: ubuntu-latest
@@ -222,13 +235,17 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Build example image
-        run: docker build -t "effectus/${{ matrix.name }}:audit" "${{ matrix.context }}"
+        run: >-
+          docker build -t "effectus/${{ matrix.name }}:audit"
+          "${{ matrix.context }}"
 
       - name: Scan fixed high and critical findings
         run: |
+          trivy="aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe0"
+          trivy+="86a917230e818dc9f8528e3c852f7b1aff648949b6258d1c"
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c \
-            image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+            "$trivy" image --scanners vuln --severity HIGH,CRITICAL \
+            --ignore-unfixed --exit-code 1 \
             "effectus/${{ matrix.name }}:audit"
 
   integration:
@@ -250,19 +267,23 @@ jobs:
         run: |
           set -e
           for i in $(seq 1 30); do
-            if docker compose -f examples/cdc_stack/docker-compose.yml exec -T postgres pg_isready -U effectus >/dev/null 2>&1; then
+            if docker compose -f examples/cdc_stack/docker-compose.yml \
+              exec -T postgres pg_isready -U effectus >/dev/null 2>&1; then
               break
             fi
             sleep 2
           done
           for i in $(seq 1 30); do
-            if docker compose -f examples/cdc_stack/docker-compose.yml exec -T mysql mysqladmin ping -proot >/dev/null 2>&1; then
+            if docker compose -f examples/cdc_stack/docker-compose.yml \
+              exec -T mysql mysqladmin ping -proot >/dev/null 2>&1; then
               break
             fi
             sleep 2
           done
           for i in $(seq 1 30); do
-            if docker compose -f examples/cdc_stack/docker-compose.yml exec -T rabbitmq rabbitmq-diagnostics -q ping >/dev/null 2>&1; then
+            if docker compose -f examples/cdc_stack/docker-compose.yml \
+              exec -T rabbitmq rabbitmq-diagnostics -q ping \
+              >/dev/null 2>&1; then
               break
             fi
             sleep 2
@@ -270,13 +291,15 @@ jobs:
 
       - name: CDC integration tests
         env:
-          POSTGRES_DSN: postgres://effectus:effectus@localhost:5432/effectus_cdc?sslmode=disable
+          POSTGRES_DSN: "postgres://effectus:effectus@localhost:5432/\
+            effectus_cdc?sslmode=disable"
           MYSQL_HOST: localhost
           MYSQL_PORT: "3306"
           MYSQL_USER: effectus
           MYSQL_PASSWORD: effectus
           MYSQL_DATABASE: effectus_cdc
-          MYSQL_DSN: effectus:effectus@tcp(localhost:3306)/effectus_cdc?parseTime=true
+          MYSQL_DSN: >-
+            effectus:effectus@tcp(localhost:3306)/effectus_cdc?parseTime=true
         run: go test -tags=integration ./adapters/postgres ./adapters/mysql
 
       - name: Stop CDC stack
@@ -302,13 +325,15 @@ jobs:
         run: |
           set -e
           for i in $(seq 1 30); do
-            if docker compose -f examples/saga_stack/docker-compose.yml exec -T postgres pg_isready -U effectus >/dev/null 2>&1; then
+            if docker compose -f examples/saga_stack/docker-compose.yml \
+              exec -T postgres pg_isready -U effectus >/dev/null 2>&1; then
               break
             fi
             sleep 2
           done
           for i in $(seq 1 30); do
-            if docker compose -f examples/saga_stack/docker-compose.yml exec -T redis redis-cli ping >/dev/null 2>&1; then
+            if docker compose -f examples/saga_stack/docker-compose.yml \
+              exec -T redis redis-cli ping >/dev/null 2>&1; then
               break
             fi
             sleep 2
@@ -316,8 +341,10 @@ jobs:
 
       - name: Saga integration tests
         env:
-          DB_DSN: postgres://effectus:effectus@localhost:55433/effectus_saga?sslmode=disable
-          POSTGRES_DSN: postgres://effectus:effectus@localhost:55433/effectus_saga?sslmode=disable
+          DB_DSN: "postgres://effectus:effectus@localhost:55433/\
+            effectus_saga?sslmode=disable"
+          POSTGRES_DSN: "postgres://effectus:effectus@localhost:55433/\
+            effectus_saga?sslmode=disable"
           REDIS_ADDR: localhost:56379
         run: go test -tags=integration ./cmd/effectusd ./schema
 
