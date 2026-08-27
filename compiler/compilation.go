@@ -2,17 +2,16 @@ package compiler
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"sort"
+	"strings"
+	"time"
 
+	"github.com/effectus/effectus-go/ir"
 	"github.com/effectus/effectus-go/loader"
 	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/schema/verb"
 )
-
-// ErrExtensionExecutionPlanUnsupported reports that extension workflow
-// planning is intentionally unavailable rather than returning an empty plan.
-var ErrExtensionExecutionPlanUnsupported = errors.New("extension workflow execution planning is not implemented")
 
 // CompilationResult represents the outcome of compilation
 type CompilationResult struct {
@@ -40,12 +39,16 @@ type CompilationWarning struct {
 
 // CompiledUnit represents a fully validated and ready-to-execute unit
 type CompiledUnit struct {
-	VerbSpecs     map[string]*CompiledVerbSpec
-	Functions     map[string]*CompiledFunction
-	TypeSystem    *TypeSystem
-	ExecutionPlan *ExecutionPlan
-	Dependencies  []string // External dependencies required
-	Capabilities  []string // Required capabilities
+	VerbSpecs         map[string]*CompiledVerbSpec
+	Functions         map[string]*CompiledFunction
+	TypeSystem        *TypeSystem
+	ExecutionPlan     *ExecutionPlan
+	CheckedIR         *ir.Checked
+	IREnvironment     ir.Environment
+	InitialData       map[string]interface{}
+	Dependencies      []string // External dependencies required
+	Capabilities      []string // Required capabilities
+	ExtensionSnapshot *loader.ExtensionSnapshot
 }
 
 // CompiledVerbSpec represents a validated verb specification
@@ -91,11 +94,12 @@ func (lec *LocalExecutorConfig) Validate() error {
 
 // HTTPExecutorConfig for HTTP-based execution
 type HTTPExecutorConfig struct {
-	URL         string            `json:"url"`
-	Method      string            `json:"method"`
-	Headers     map[string]string `json:"headers"`
-	Timeout     string            `json:"timeout"`
-	RetryPolicy *RetryPolicy      `json:"retryPolicy,omitempty"`
+	URL                 string            `json:"url"`
+	Method              string            `json:"method"`
+	Headers             map[string]string `json:"headers"`
+	Timeout             string            `json:"timeout"`
+	AllowPrivateNetwork bool              `json:"allowPrivateNetwork,omitempty"`
+	RetryPolicy         *RetryPolicy      `json:"retryPolicy,omitempty"`
 }
 
 func (hec *HTTPExecutorConfig) GetType() ExecutorType { return ExecutorHTTP }
@@ -103,8 +107,17 @@ func (hec *HTTPExecutorConfig) Validate() error {
 	if hec.URL == "" {
 		return fmt.Errorf("HTTP executor requires URL")
 	}
+	if _, err := (loader.OutboundNetworkPolicy{AllowPrivate: hec.AllowPrivateNetwork}).ValidateURL(hec.URL); err != nil {
+		return fmt.Errorf("HTTP executor URL: %w", err)
+	}
 	if hec.Method == "" {
 		hec.Method = "POST"
+	}
+	if strings.TrimSpace(hec.Timeout) != "" {
+		timeout, err := time.ParseDuration(hec.Timeout)
+		if err != nil || timeout <= 0 {
+			return fmt.Errorf("HTTP executor timeout must be a positive duration")
+		}
 	}
 	return nil
 }
@@ -116,6 +129,9 @@ type GRPCExecutorConfig struct {
 	Timeout     string            `json:"timeout"`
 	Metadata    map[string]string `json:"metadata"`
 	UseTLS      bool              `json:"useTLS"`
+	Insecure    bool              `json:"insecure,omitempty"`
+	ServerName  string            `json:"serverName,omitempty"`
+	RetrySafe   bool              `json:"retrySafe,omitempty"`
 	RetryPolicy *RetryPolicy      `json:"retryPolicy,omitempty"`
 }
 
@@ -127,21 +143,34 @@ func (gec *GRPCExecutorConfig) Validate() error {
 	if gec.Method == "" {
 		return fmt.Errorf("gRPC executor requires method")
 	}
+	if strings.TrimSpace(gec.Timeout) != "" {
+		timeout, err := time.ParseDuration(gec.Timeout)
+		if err != nil || timeout <= 0 {
+			return fmt.Errorf("gRPC executor timeout must be a positive duration")
+		}
+	}
+	if !gec.UseTLS && !gec.Insecure {
+		return fmt.Errorf("gRPC executor requires TLS unless insecure is explicitly enabled")
+	}
+	if gec.UseTLS && gec.Insecure {
+		return fmt.Errorf("gRPC executor TLS and insecure modes are mutually exclusive")
+	}
 	return nil
 }
 
 // MessageExecutorConfig for message queue execution
 type MessageExecutorConfig struct {
-	Publisher   string            `json:"publisher,omitempty"` // "kafka" or "http"
-	Brokers     []string          `json:"brokers,omitempty"`
-	URL         string            `json:"url,omitempty"`
-	Headers     map[string]string `json:"headers,omitempty"`
-	Topic       string            `json:"topic"`
-	Queue       string            `json:"queue"`
-	Exchange    string            `json:"exchange"`
-	RoutingKey  string            `json:"routingKey"`
-	Timeout     string            `json:"timeout"`
-	RetryPolicy *RetryPolicy      `json:"retryPolicy,omitempty"`
+	Publisher           string            `json:"publisher,omitempty"` // "kafka" or "http"
+	Brokers             []string          `json:"brokers,omitempty"`
+	URL                 string            `json:"url,omitempty"`
+	Headers             map[string]string `json:"headers,omitempty"`
+	Topic               string            `json:"topic"`
+	Queue               string            `json:"queue"`
+	Exchange            string            `json:"exchange"`
+	RoutingKey          string            `json:"routingKey"`
+	Timeout             string            `json:"timeout"`
+	AllowPrivateNetwork bool              `json:"allowPrivateNetwork,omitempty"`
+	RetryPolicy         *RetryPolicy      `json:"retryPolicy,omitempty"`
 }
 
 func (mec *MessageExecutorConfig) GetType() ExecutorType { return ExecutorMessage }
@@ -161,6 +190,9 @@ func (mec *MessageExecutorConfig) Validate() error {
 	case "http":
 		if mec.URL == "" {
 			return fmt.Errorf("message executor requires url for http publisher")
+		}
+		if _, err := (loader.OutboundNetworkPolicy{AllowPrivate: mec.AllowPrivateNetwork}).ValidateURL(mec.URL); err != nil {
+			return fmt.Errorf("message HTTP URL: %w", err)
 		}
 	case "kafka":
 		if len(mec.Brokers) == 0 {
@@ -190,10 +222,11 @@ type RetryPolicy struct {
 
 // CompiledFunction represents a validated function
 type CompiledFunction struct {
-	Name           string
-	Implementation interface{}
-	TypeSignature  *TypeSignature
-	Dependencies   []string
+	Name               string
+	Implementation     interface{}
+	ResolverDescriptor any
+	TypeSignature      *TypeSignature
+	Dependencies       []string
 }
 
 // TypeSignature represents the type information for a verb or function
@@ -272,7 +305,6 @@ type FunctionDefinition struct {
 
 // ExtensionCompiler orchestrates the compilation process for extensions
 type ExtensionCompiler struct {
-	typeSystem    *TypeSystem
 	validators    []Validator
 	optimizers    []Optimizer
 	errorReporter *ErrorReporter
@@ -281,10 +313,6 @@ type ExtensionCompiler struct {
 // NewExtensionCompiler creates a new extension compiler instance
 func NewExtensionCompiler() *ExtensionCompiler {
 	return &ExtensionCompiler{
-		typeSystem: &TypeSystem{
-			types:     make(map[string]*TypeDefinition),
-			functions: make(map[string]*FunctionDefinition),
-		},
 		validators: []Validator{
 			&TypeValidator{},
 			&DependencyValidator{},
@@ -299,19 +327,42 @@ func NewExtensionCompiler() *ExtensionCompiler {
 	}
 }
 
-// Compile takes loaded extensions and produces a validated, executable unit
+// Compile stages mutable loaders before it compiles. Production callers should
+// use Stage and CompileSnapshot as separate bounded phases.
 func (c *ExtensionCompiler) Compile(ctx context.Context, em *loader.ExtensionManager) (*CompilationResult, error) {
+	if em == nil {
+		return nil, fmt.Errorf("extension manager is required")
+	}
+	snapshot, err := em.Stage(ctx, loader.StageOptions{})
+	if err != nil {
+		return nil, err
+	}
+	result, err := c.CompileSnapshot(ctx, snapshot)
+	if err != nil || result == nil || !result.Success {
+		_ = snapshot.Retire()
+		return result, err
+	}
+	return result, nil
+}
+
+// CompileSnapshot compiles only immutable in-memory loader output. It does not
+// call mutable filesystem, HTTP, DNS, or OCI loaders.
+func (c *ExtensionCompiler) CompileSnapshot(ctx context.Context, snapshot *loader.ExtensionSnapshot) (*CompilationResult, error) {
 	result := &CompilationResult{
 		Success:  true,
 		Errors:   make([]CompilationError, 0),
 		Warnings: make([]CompilationWarning, 0),
 	}
 
-	// Phase 1: Load and extract information
+	if snapshot == nil {
+		return nil, fmt.Errorf("extension snapshot is required")
+	}
+	// Phase 1: Load immutable data into candidate-only registries.
 	registry := schema.NewRegistry()
 	verbRegistry := verb.NewRegistry(registry)
+	candidateTarget := newExtensionCandidateTarget(registry, verbRegistry)
 
-	if err := schema.LoadExtensionsIntoRegistries(em, registry, verbRegistry); err != nil {
+	if err := snapshot.Load(ctx, candidateTarget); err != nil {
 		result.Success = false
 		result.Errors = append(result.Errors, CompilationError{
 			Type:      "load_error",
@@ -321,9 +372,11 @@ func (c *ExtensionCompiler) Compile(ctx context.Context, em *loader.ExtensionMan
 		return result, nil
 	}
 
-	// Phase 2: Build type system
-	c.typeSystem.registry = registry
-	if err := c.buildTypeSystem(registry, verbRegistry); err != nil {
+	// Phase 2: Build a candidate type system. Failed candidates never mutate a published unit.
+	candidateTypeSystem := &TypeSystem{
+		types: make(map[string]*TypeDefinition), functions: make(map[string]*FunctionDefinition), registry: registry,
+	}
+	if err := c.buildTypeSystem(candidateTypeSystem, registry, verbRegistry); err != nil {
 		result.Success = false
 		result.Errors = append(result.Errors, CompilationError{
 			Type:      "type_error",
@@ -335,11 +388,25 @@ func (c *ExtensionCompiler) Compile(ctx context.Context, em *loader.ExtensionMan
 
 	// Phase 3: Compile verb specifications
 	compiledVerbs := make(map[string]*CompiledVerbSpec)
-	compiledFunctions := make(map[string]*CompiledFunction)
+	compiledFunctions := make(map[string]*CompiledFunction, len(candidateTarget.functions))
+	for name, implementation := range candidateTarget.functions {
+		var descriptor any
+		if provider, ok := implementation.(CheckedFunctionProvider); ok {
+			descriptor = provider.CheckedFunctionDescriptor()
+			implementation = provider.CheckedFunctionImplementation()
+		}
+		compiledFunctions[name] = &CompiledFunction{Name: name, Implementation: implementation, ResolverDescriptor: descriptor}
+	}
 
-	// Process verbs
-	for name, verbSpec := range c.getAllVerbs(verbRegistry) {
-		compiled, errs, warnings := c.compileVerbSpec(name, verbSpec)
+	// Process verbs in a stable order.
+	allVerbs := c.getAllVerbs(verbRegistry)
+	verbNames := make([]string, 0, len(allVerbs))
+	for name := range allVerbs {
+		verbNames = append(verbNames, name)
+	}
+	sort.Strings(verbNames)
+	for _, name := range verbNames {
+		compiled, errs, warnings := c.compileVerbSpec(name, allVerbs[name])
 		if len(errs) > 0 {
 			result.Success = false
 			result.Errors = append(result.Errors, errs...)
@@ -353,7 +420,7 @@ func (c *ExtensionCompiler) Compile(ctx context.Context, em *loader.ExtensionMan
 
 	// Phase 4: Run validators
 	for _, validator := range c.validators {
-		errs, warnings := validator.Validate(c.typeSystem, compiledVerbs)
+		errs, warnings := validator.Validate(candidateTypeSystem, compiledVerbs)
 		if len(errs) > 0 {
 			result.Success = false
 			result.Errors = append(result.Errors, errs...)
@@ -361,40 +428,69 @@ func (c *ExtensionCompiler) Compile(ctx context.Context, em *loader.ExtensionMan
 		result.Warnings = append(result.Warnings, warnings...)
 	}
 
-	// Phase 5: Create execution plan
+	// Phase 5: Invoke the same checked compiler used by standalone sources.
 	if result.Success {
-		executionPlan, err := c.createExecutionPlan(compiledVerbs)
+		environment, err := buildExtensionEnvironment(candidateTarget, compiledVerbs)
+		if err == nil {
+			sources := make([]Source, len(candidateTarget.sources))
+			for index, source := range candidateTarget.sources {
+				sources[index] = Source{Path: source.Path, Data: append([]byte(nil), source.Data...)}
+			}
+			var checked *ir.Checked
+			checked, err = CompileChecked(ctx, sources, environment, CompileOptions{})
+			if err == nil {
+				executionPlan := compatibilityExecutionPlan(checked)
+				for name, compiledVerb := range compiledVerbs {
+					executionPlan.Executors[name] = compiledVerb.ExecutorConfig
+					executionPlan.Dependencies[name] = append([]string(nil), compiledVerb.Dependencies...)
+					executionPlan.Capabilities[name] = capabilityNames(compiledVerb.Spec.Capability)
+				}
+				for _, optimizer := range c.optimizers {
+					executionPlan = optimizer.Optimize(executionPlan)
+				}
+				result.CompiledUnit = &CompiledUnit{
+					VerbSpecs: compiledVerbs, Functions: compiledFunctions, TypeSystem: candidateTypeSystem,
+					ExecutionPlan: executionPlan, CheckedIR: checked, IREnvironment: environment,
+					InitialData:  cloneInterfaceMap(candidateTarget.initialData),
+					Dependencies: c.extractDependencies(compiledVerbs), Capabilities: c.extractCapabilities(compiledVerbs),
+					ExtensionSnapshot: snapshot,
+				}
+			}
+		}
 		if err != nil {
 			result.Success = false
 			result.Errors = append(result.Errors, CompilationError{
-				Type:      "planning_error",
-				Component: "execution_plan",
-				Message:   fmt.Sprintf("Failed to create execution plan: %v", err),
+				Type: "planning_error", Component: "execution_plan", Message: fmt.Sprintf("Failed to create checked execution plan: %v", err),
 			})
-		} else {
-			// Phase 6: Optimize
-			for _, optimizer := range c.optimizers {
-				executionPlan = optimizer.Optimize(executionPlan)
-			}
-
-			result.CompiledUnit = &CompiledUnit{
-				VerbSpecs:     compiledVerbs,
-				Functions:     compiledFunctions,
-				TypeSystem:    c.typeSystem,
-				ExecutionPlan: executionPlan,
-				Dependencies:  c.extractDependencies(compiledVerbs),
-				Capabilities:  c.extractCapabilities(compiledVerbs),
-			}
 		}
 	}
 
 	return result, nil
 }
 
+func compatibilityExecutionPlan(checked *ir.Checked) *ExecutionPlan {
+	plan := &ExecutionPlan{
+		Dependencies: make(map[string][]string), Capabilities: make(map[string][]string), Executors: make(map[string]ExecutorConfig),
+	}
+	if checked == nil {
+		return plan
+	}
+	for _, checkedPlan := range checked.CloneArtifact().Plans {
+		verbs := make([]string, 0, len(checkedPlan.Steps))
+		for _, step := range checkedPlan.Steps {
+			verbs = append(verbs, step.Verb)
+		}
+		plan.Phases = append(plan.Phases, ExecutionPhase{Name: checkedPlan.Id, Verbs: verbs, ErrorPolicy: ErrorPolicyFail})
+	}
+	return plan
+}
+
 // Helper methods
 
-func (c *ExtensionCompiler) buildTypeSystem(registry *schema.Registry, verbRegistry *verb.Registry) error {
-	// Implementation for building type system
+func (c *ExtensionCompiler) buildTypeSystem(typeSystem *TypeSystem, registry *schema.Registry, verbRegistry *verb.Registry) error {
+	if typeSystem == nil || registry == nil || verbRegistry == nil {
+		return fmt.Errorf("candidate type system and registries are required")
+	}
 	return nil
 }
 
@@ -415,6 +511,9 @@ func (c *ExtensionCompiler) compileVerbSpec(name string, spec *verb.Spec) (*Comp
 
 	// Determine executor type and config
 	executorType, config, err := c.determineExecutorConfig(spec)
+	if err == nil && config != nil {
+		err = config.Validate()
+	}
 	if err != nil {
 		errors = append(errors, CompilationError{
 			Type:      "executor_error",
@@ -467,17 +566,26 @@ func (c *ExtensionCompiler) determineExecutorConfig(spec *verb.Spec) (ExecutorTy
 }
 
 func (c *ExtensionCompiler) validateTypeSignature(sig *TypeSignature) error {
-	// Validate that all types exist and are compatible
+	if sig == nil {
+		return fmt.Errorf("type signature is required")
+	}
+	if strings.TrimSpace(sig.OutputType) == "" {
+		return fmt.Errorf("output type is required")
+	}
+	for name, typeName := range sig.InputTypes {
+		if strings.TrimSpace(name) == "" || name != strings.TrimSpace(name) {
+			return fmt.Errorf("invalid argument name %q", name)
+		}
+		if strings.TrimSpace(typeName) == "" {
+			return fmt.Errorf("argument %q type is required", name)
+		}
+	}
 	return nil
 }
 
 func (c *ExtensionCompiler) extractVerbDependencies(spec *verb.Spec) []string {
 	// Extract dependencies from verb specification
 	return []string{}
-}
-
-func (c *ExtensionCompiler) createExecutionPlan(verbs map[string]*CompiledVerbSpec) (*ExecutionPlan, error) {
-	return nil, ErrExtensionExecutionPlanUnsupported
 }
 
 func (c *ExtensionCompiler) extractDependencies(verbs map[string]*CompiledVerbSpec) []string {
@@ -492,7 +600,25 @@ func (c *ExtensionCompiler) extractDependencies(verbs map[string]*CompiledVerbSp
 	for dep := range deps {
 		result = append(result, dep)
 	}
+	sort.Strings(result)
 	return result
+}
+
+func capabilityNames(capability verb.Capability) []string {
+	var names []string
+	checks := []struct {
+		value verb.Capability
+		name  string
+	}{
+		{verb.CapRead, "read"}, {verb.CapWrite, "write"}, {verb.CapCreate, "create"}, {verb.CapDelete, "delete"},
+		{verb.CapIdempotent, "idempotent"}, {verb.CapExclusive, "exclusive"}, {verb.CapCommutative, "commutative"},
+	}
+	for _, check := range checks {
+		if capability&check.value != 0 {
+			names = append(names, check.name)
+		}
+	}
+	return names
 }
 
 func (c *ExtensionCompiler) extractCapabilities(verbs map[string]*CompiledVerbSpec) []string {
@@ -517,6 +643,7 @@ func (c *ExtensionCompiler) extractCapabilities(verbs map[string]*CompiledVerbSp
 	for cap := range caps {
 		result = append(result, cap)
 	}
+	sort.Strings(result)
 	return result
 }
 
@@ -540,19 +667,74 @@ type DependencyOptimizer struct{}
 type MockExecutorConfig struct{}
 
 func (tv *TypeValidator) Validate(ts *TypeSystem, verbs map[string]*CompiledVerbSpec) ([]CompilationError, []CompilationWarning) {
-	return nil, nil
+	var failures []CompilationError
+	if ts == nil {
+		return []CompilationError{{Type: "type_error", Component: "type_system", Message: "candidate type system is required"}}, nil
+	}
+	for name, compiled := range verbs {
+		if compiled == nil || compiled.Spec == nil {
+			failures = append(failures, CompilationError{Type: "type_error", Component: "verb", Location: name, Message: "compiled verb specification is required"})
+			continue
+		}
+		seen := map[string]struct{}{}
+		for _, required := range compiled.Spec.RequiredArgs {
+			if _, duplicate := seen[required]; duplicate {
+				failures = append(failures, CompilationError{Type: "type_error", Component: "verb", Location: name, Message: fmt.Sprintf("required argument %q is duplicated", required)})
+			}
+			seen[required] = struct{}{}
+			if _, ok := compiled.Spec.ArgTypes[required]; !ok {
+				failures = append(failures, CompilationError{Type: "type_error", Component: "verb", Location: name, Message: fmt.Sprintf("required argument %q is not declared", required)})
+			}
+		}
+	}
+	return failures, nil
 }
 
-func (dv *DependencyValidator) Validate(ts *TypeSystem, verbs map[string]*CompiledVerbSpec) ([]CompilationError, []CompilationWarning) {
-	return nil, nil
+func (dv *DependencyValidator) Validate(_ *TypeSystem, verbs map[string]*CompiledVerbSpec) ([]CompilationError, []CompilationWarning) {
+	var failures []CompilationError
+	for name, compiled := range verbs {
+		if compiled == nil || compiled.Spec == nil || compiled.Spec.Inverse == "" {
+			continue
+		}
+		if _, ok := verbs[compiled.Spec.Inverse]; !ok {
+			failures = append(failures, CompilationError{Type: "dependency_error", Component: "verb", Location: name, Message: fmt.Sprintf("inverse verb %q is not registered", compiled.Spec.Inverse)})
+		}
+	}
+	return failures, nil
 }
 
-func (cv *CapabilityValidator) Validate(ts *TypeSystem, verbs map[string]*CompiledVerbSpec) ([]CompilationError, []CompilationWarning) {
-	return nil, nil
+func (cv *CapabilityValidator) Validate(_ *TypeSystem, verbs map[string]*CompiledVerbSpec) ([]CompilationError, []CompilationWarning) {
+	var failures []CompilationError
+	for name, compiled := range verbs {
+		if compiled == nil || compiled.Spec == nil {
+			continue
+		}
+		capability := compiled.Spec.Capability
+		if capability&verb.CapExclusive != 0 && capability&verb.CapCommutative != 0 {
+			failures = append(failures, CompilationError{Type: "capability_error", Component: "verb", Location: name, Message: "exclusive and commutative capabilities conflict"})
+			continue
+		}
+		for _, resource := range compiled.Spec.Resources {
+			if resource.Cap&capability != resource.Cap {
+				failures = append(failures, CompilationError{Type: "capability_error", Component: "verb", Location: name, Message: fmt.Sprintf("resource %q exceeds verb capabilities", resource.Resource)})
+			}
+		}
+	}
+	return failures, nil
 }
 
-func (sv *SecurityValidator) Validate(ts *TypeSystem, verbs map[string]*CompiledVerbSpec) ([]CompilationError, []CompilationWarning) {
-	return nil, nil
+func (sv *SecurityValidator) Validate(_ *TypeSystem, verbs map[string]*CompiledVerbSpec) ([]CompilationError, []CompilationWarning) {
+	var failures []CompilationError
+	for name, compiled := range verbs {
+		if compiled == nil || compiled.ExecutorConfig == nil {
+			failures = append(failures, CompilationError{Type: "security_error", Component: "verb", Location: name, Message: "executor configuration is required"})
+			continue
+		}
+		if err := compiled.ExecutorConfig.Validate(); err != nil {
+			failures = append(failures, CompilationError{Type: "security_error", Component: "verb", Location: name, Message: err.Error()})
+		}
+	}
+	return failures, nil
 }
 
 func (epo *ExecutionPlanOptimizer) Optimize(plan *ExecutionPlan) *ExecutionPlan {

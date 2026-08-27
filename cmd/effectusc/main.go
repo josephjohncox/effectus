@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/effectus/effectus-go"
@@ -579,6 +582,7 @@ func defineCommands() {
 	commands["facts"] = newFactsCommand()
 	commands["format"] = newFormatCommand()
 	commands["resolve"] = newResolveCommand()
+	commands["migrate-workflows"] = newMigrateWorkflowsCommand()
 }
 
 // outputReport outputs the report to file or stdout
@@ -785,4 +789,298 @@ func (f *testFacts) Type(path string) interface{} {
 		return nil
 	}
 	return typ
+}
+
+type legacyWorkflowDefinition struct {
+	Name        string                         `json:"name"`
+	Description string                         `json:"description,omitempty"`
+	Priority    int32                          `json:"priority,omitempty"`
+	Facts       map[string]string              `json:"facts,omitempty"`
+	ErrorPolicy string                         `json:"errorPolicy,omitempty"`
+	Parallel    bool                           `json:"parallel,omitempty"`
+	Steps       []legacyWorkflowStepDefinition `json:"steps"`
+}
+
+type legacyWorkflowStepDefinition struct {
+	ID        string                         `json:"id"`
+	Verb      string                         `json:"verb"`
+	Arguments map[string]legacyWorkflowValue `json:"arguments,omitempty"`
+	Result    string                         `json:"result,omitempty"`
+}
+
+type legacyWorkflowValue struct {
+	Literal  json.RawMessage `json:"literal,omitempty"`
+	FactPath string          `json:"factPath,omitempty"`
+	Result   string          `json:"result,omitempty"`
+}
+
+func newMigrateWorkflowsCommand() *Command {
+	command := &Command{
+		Name:        "migrate-workflows",
+		Description: "Convert legacy JSON workflows to .effx source",
+		FlagSet:     flag.NewFlagSet("migrate-workflows", flag.ContinueOnError),
+	}
+	output := command.FlagSet.String("output", "", "Output .effx file (defaults to stdout)")
+	command.Run = func() error {
+		arguments := command.FlagSet.Args()
+		if len(arguments) != 1 {
+			return fmt.Errorf("migrate-workflows requires exactly one legacy verb manifest")
+		}
+		data, err := os.ReadFile(arguments[0])
+		if err != nil {
+			return err
+		}
+		workflows, err := decodeLegacyWorkflows(data)
+		if err != nil {
+			return err
+		}
+		if len(workflows) == 0 {
+			return fmt.Errorf("manifest contains no workflows")
+		}
+		converted, err := renderLegacyWorkflows(workflows)
+		if err != nil {
+			return err
+		}
+		if *output == "" {
+			fmt.Print(converted)
+			return nil
+		}
+		if filepath.Ext(*output) != ".effx" {
+			return fmt.Errorf("migration output must use .effx")
+		}
+		return os.WriteFile(*output, []byte(converted), 0o600)
+	}
+	return command
+}
+
+func decodeLegacyWorkflows(data []byte) ([]legacyWorkflowDefinition, error) {
+	if err := rejectDuplicateMigrationJSON(data); err != nil {
+		return nil, fmt.Errorf("decode legacy workflow manifest: %w", err)
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, fmt.Errorf("decode legacy workflow manifest: %w", err)
+	}
+	raw, ok := envelope["workflows"]
+	if !ok {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	decoder.UseNumber()
+	var workflows []legacyWorkflowDefinition
+	if err := decoder.Decode(&workflows); err != nil {
+		return nil, fmt.Errorf("decode legacy workflows: %w", err)
+	}
+	var extra interface{}
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("decode legacy workflows: multiple JSON values")
+		}
+		return nil, fmt.Errorf("decode legacy workflows: %w", err)
+	}
+	return workflows, nil
+}
+
+func rejectDuplicateMigrationJSON(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var scan func() error
+	scan = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delimiter, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delimiter {
+		case '{':
+			seen := make(map[string]struct{})
+			for decoder.More() {
+				keyToken, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyToken.(string)
+				if !ok {
+					return fmt.Errorf("JSON object key is not a string")
+				}
+				if _, duplicate := seen[key]; duplicate {
+					return fmt.Errorf("duplicate JSON object key %q", key)
+				}
+				seen[key] = struct{}{}
+				if err := scan(); err != nil {
+					return err
+				}
+			}
+			_, err := decoder.Token()
+			return err
+		case '[':
+			for decoder.More() {
+				if err := scan(); err != nil {
+					return err
+				}
+			}
+			_, err := decoder.Token()
+			return err
+		default:
+			return fmt.Errorf("unexpected JSON delimiter %q", delimiter)
+		}
+	}
+	if err := scan(); err != nil {
+		return err
+	}
+	var extra interface{}
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func renderLegacyWorkflows(workflows []legacyWorkflowDefinition) (string, error) {
+	var output strings.Builder
+	seen := make(map[string]struct{}, len(workflows))
+	for index, workflow := range workflows {
+		if strings.TrimSpace(workflow.Name) == "" || workflow.Name != strings.TrimSpace(workflow.Name) {
+			return "", fmt.Errorf("workflow %d has an invalid name", index+1)
+		}
+		if _, duplicate := seen[workflow.Name]; duplicate {
+			return "", fmt.Errorf("workflow %q is ambiguous because its name is duplicated", workflow.Name)
+		}
+		seen[workflow.Name] = struct{}{}
+		if workflow.Parallel {
+			return "", fmt.Errorf("workflow %q uses unsupported parallel execution", workflow.Name)
+		}
+		if workflow.ErrorPolicy != "" && workflow.ErrorPolicy != "fail" {
+			return "", fmt.Errorf("workflow %q uses unsupported error policy %q", workflow.Name, workflow.ErrorPolicy)
+		}
+		if len(workflow.Facts) != 0 {
+			return "", fmt.Errorf("workflow %q embeds fact declarations; move them to a schema manifest before migration", workflow.Name)
+		}
+		fmt.Fprintf(&output, "flow %s priority %d {\n  when {}\n  steps {\n", strconv.Quote(workflow.Name), workflow.Priority)
+		bindings := make(map[string]struct{})
+		for stepIndex, step := range workflow.Steps {
+			if strings.TrimSpace(step.Verb) == "" || step.Verb != strings.TrimSpace(step.Verb) {
+				return "", fmt.Errorf("workflow %q step %d has an invalid verb", workflow.Name, stepIndex+1)
+			}
+			if step.Result != "" {
+				if strings.TrimSpace(step.Result) != step.Result {
+					return "", fmt.Errorf("workflow %q step %d has an invalid result binding", workflow.Name, stepIndex+1)
+				}
+				if _, duplicate := bindings[step.Result]; duplicate {
+					return "", fmt.Errorf("workflow %q repeats result binding %q", workflow.Name, step.Result)
+				}
+				bindings[step.Result] = struct{}{}
+				fmt.Fprintf(&output, "    %s = ", step.Result)
+			} else {
+				output.WriteString("    ")
+			}
+			output.WriteString(step.Verb)
+			output.WriteByte('(')
+			names := make([]string, 0, len(step.Arguments))
+			for name := range step.Arguments {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for argumentIndex, name := range names {
+				if argumentIndex > 0 {
+					output.WriteString(", ")
+				}
+				value, err := renderLegacyWorkflowValue(step.Arguments[name], bindings)
+				if err != nil {
+					return "", fmt.Errorf("workflow %q step %d argument %q: %w", workflow.Name, stepIndex+1, name, err)
+				}
+				fmt.Fprintf(&output, "%s: %s", name, value)
+			}
+			output.WriteString(")\n")
+		}
+		output.WriteString("  }\n}\n")
+		if index+1 < len(workflows) {
+			output.WriteByte('\n')
+		}
+	}
+	return output.String(), nil
+}
+
+func renderLegacyWorkflowValue(value legacyWorkflowValue, bindings map[string]struct{}) (string, error) {
+	kinds := 0
+	if value.Literal != nil {
+		kinds++
+	}
+	if value.FactPath != "" {
+		kinds++
+	}
+	if value.Result != "" {
+		kinds++
+	}
+	if kinds != 1 {
+		return "", fmt.Errorf("value must contain exactly one literal, factPath, or result")
+	}
+	if value.FactPath != "" {
+		return value.FactPath, nil
+	}
+	if value.Result != "" {
+		if _, ok := bindings[value.Result]; !ok {
+			return "", fmt.Errorf("result binding %q is not available", value.Result)
+		}
+		return "$" + value.Result, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(value.Literal))
+	decoder.UseNumber()
+	var decoded interface{}
+	if err := decoder.Decode(&decoded); err != nil {
+		return "", fmt.Errorf("decode literal: %w", err)
+	}
+	return renderEffectusLiteral(decoded)
+}
+
+func renderEffectusLiteral(value interface{}) (string, error) {
+	switch value := value.(type) {
+	case nil:
+		return "", fmt.Errorf("null literals are not representable in .effx")
+	case bool:
+		return strconv.FormatBool(value), nil
+	case string:
+		return strconv.Quote(value), nil
+	case json.Number:
+		if _, err := strconv.ParseInt(string(value), 10, 64); err == nil {
+			return string(value), nil
+		}
+		if _, err := strconv.ParseFloat(string(value), 64); err == nil {
+			return string(value), nil
+		}
+		return "", fmt.Errorf("invalid number %q", value)
+	case []interface{}:
+		items := make([]string, len(value))
+		for index, item := range value {
+			rendered, err := renderEffectusLiteral(item)
+			if err != nil {
+				return "", err
+			}
+			items[index] = rendered
+		}
+		return "[" + strings.Join(items, " ") + "]", nil
+	case map[string]interface{}:
+		names := make([]string, 0, len(value))
+		for name := range value {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		fields := make([]string, 0, len(names))
+		for _, name := range names {
+			rendered, err := renderEffectusLiteral(value[name])
+			if err != nil {
+				return "", err
+			}
+			fields = append(fields, name+": "+rendered)
+		}
+		return "{" + strings.Join(fields, " ") + "}", nil
+	default:
+		return "", fmt.Errorf("unsupported literal type %T", value)
+	}
 }

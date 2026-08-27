@@ -2,9 +2,9 @@ syntax = "proto3";
 
 package effectus.v1;
 
+import "effectus/v1/common.proto";
 import "google/protobuf/any.proto";
 import "google/protobuf/timestamp.proto";
-import "effectus/v1/common.proto";
 
 option go_package = "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1";
 
@@ -12,19 +12,19 @@ option go_package = "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1"
 service VerbRegistryService {
   // RegisterVerbInterface registers a new verb interface
   rpc RegisterVerbInterface(RegisterVerbInterfaceRequest) returns (RegisterVerbInterfaceResponse);
-  
+
   // GetVerbInterface retrieves a verb interface by name and version
   rpc GetVerbInterface(GetVerbInterfaceRequest) returns (GetVerbInterfaceResponse);
-  
+
   // ListVerbInterfaces lists all registered verb interfaces
   rpc ListVerbInterfaces(ListVerbInterfacesRequest) returns (ListVerbInterfacesResponse);
-  
+
   // ValidateVerbCall validates a verb call against its interface
   rpc ValidateVerbCall(ValidateVerbCallRequest) returns (ValidateVerbCallResponse);
-  
+
   // CheckInterfaceCompatibility checks if interface changes are backward compatible
   rpc CheckInterfaceCompatibility(CheckInterfaceCompatibilityRequest) returns (CheckInterfaceCompatibilityResponse);
-  
+
   // GenerateVerbCode generates implementation stubs for verb interfaces
   rpc GenerateVerbCode(GenerateVerbCodeRequest) returns (GenerateVerbCodeResponse);
 }
@@ -34,36 +34,36 @@ message VerbInterface {
   string name = 1;
   string version = 2; // Buf-managed semantic version
   string description = 3;
-  
+
   // Input and output schemas
   Schema input_schema = 4;
   Schema output_schema = 5;
-  
+
   // Capability required to execute this verb
   string required_capability = 6;
-  
+
   // Execution constraints
   VerbConstraints constraints = 7;
-  
+
   // Error definitions
   repeated ErrorDefinition error_definitions = 8;
-  
+
   // Documentation and examples
   string documentation = 9;
   repeated VerbExample examples = 10;
-  
+
   // Buf schema registry information
   string buf_module = 11;
   string buf_commit = 12;
   google.protobuf.Timestamp created_at = 13;
   google.protobuf.Timestamp updated_at = 14;
-  
+
   // Compatibility information
   CompatibilityInfo compatibility = 15;
-  
+
   // Tags for categorization and discovery
   repeated string tags = 16;
-  
+
   // Metadata
   map<string, string> metadata = 17;
 }
@@ -72,19 +72,19 @@ message VerbInterface {
 message VerbConstraints {
   // Maximum execution time
   int32 max_execution_time_seconds = 1;
-  
+
   // Resource limits
   ResourceLimits resource_limits = 2;
-  
+
   // Retry policy
   RetryPolicy retry_policy = 3;
-  
+
   // Idempotency settings
   bool idempotent = 4;
-  
+
   // Rate limiting
   RateLimits rate_limits = 5;
-  
+
   // Security constraints
   SecurityConstraints security = 6;
 }
@@ -112,7 +112,7 @@ message RateLimits {
   int32 calls_per_minute = 2;
   int32 calls_per_hour = 3;
   int32 calls_per_day = 4;
-  
+
   // Burst limits
   int32 burst_capacity = 5;
 }
@@ -121,17 +121,17 @@ message RateLimits {
 message SecurityConstraints {
   // Authentication requirements
   repeated string required_auth_methods = 1;
-  
+
   // Authorization requirements
   repeated string required_permissions = 2;
-  
+
   // Audit requirements
   bool audit_all_calls = 3;
   bool audit_failures_only = 4;
-  
+
   // Data sensitivity level
   DataSensitivityLevel data_sensitivity = 5;
-  
+
   // Encryption requirements
   bool require_encryption = 6;
 }
@@ -180,10 +180,10 @@ message VerbCall {
   string interface_version = 2;
   google.protobuf.Any input = 3;
   google.protobuf.Timestamp requested_at = 4;
-  
+
   // Execution context
   ExecutionContext context = 5;
-  
+
   // Tracing information
   string trace_id = 6;
   string span_id = 7;
@@ -196,7 +196,7 @@ message ExecutionContext {
   string request_id = 3;
   map<string, string> headers = 4;
   repeated string capabilities = 5;
-  
+
   // Security context
   SecurityContext security = 6;
 }
@@ -216,18 +216,18 @@ message VerbResult {
   string interface_version = 2;
   google.protobuf.Any output = 3;
   VerbExecutionStatus status = 4;
-  
+
   // Timing information
   google.protobuf.Timestamp started_at = 5;
   google.protobuf.Timestamp completed_at = 6;
   int64 execution_duration_ms = 7;
-  
+
   // Error information (if status is ERROR)
   VerbError error = 8;
-  
+
   // Resource usage
   ResourceUsage resource_usage = 9;
-  
+
   // Tracing information
   string trace_id = 10;
   string span_id = 11;
@@ -364,11 +364,11 @@ message VerbRegistry {
   map<string, VerbInterface> interfaces = 1;
   string registry_version = 2;
   google.protobuf.Timestamp last_updated = 3;
-  
+
   // Buf registry integration
   string buf_module = 4;
   string buf_commit = 5;
-  
+
   // Interface evolution tracking
   map<string, InterfaceEvolution> interface_evolution = 6;
 }
@@ -380,4 +380,4 @@ message InterfaceEvolution {
   map<string, CompatibilityInfo> version_compatibility = 3;
   repeated string deprecated_versions = 4;
   string recommended_version = 5;
-} 
+}

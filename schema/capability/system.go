@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/effectus/effectus-go"
+	"github.com/effectus/effectus-go/invocation"
+	"github.com/effectus/effectus-go/schema/fencing"
 	"github.com/effectus/effectus-go/schema/types"
 )
 
@@ -65,10 +67,12 @@ type CapabilityContext struct {
 
 // LockResult represents the result of acquiring a lock
 type LockResult struct {
-	LockID     string
-	FenceToken int64
-	ExpiresAt  time.Time
-	Unlock     func()
+	LockID        string
+	FenceToken    int64
+	Guarantee     fencing.Guarantee
+	FencingStatus invocation.FencingStatus
+	ExpiresAt     time.Time
+	Unlock        func()
 }
 
 // NewCapabilitySystem creates a new capability system
@@ -148,10 +152,12 @@ func (cs *CapabilitySystem) AcquireLock(capability types.Capability, key, holder
 	}
 
 	return &LockResult{
-		LockID:     fmt.Sprintf("%s:%s:%s", capability.String(), key, holder),
-		FenceToken: fenceToken,
-		ExpiresAt:  lock.expires,
-		Unlock:     unlock,
+		LockID:        fmt.Sprintf("%s:%s:%s", capability.String(), key, holder),
+		FenceToken:    fenceToken,
+		Guarantee:     fencing.GuaranteeLocalAdvisory,
+		FencingStatus: invocation.FencingLocalLockOnly,
+		ExpiresAt:     lock.expires,
+		Unlock:        unlock,
 	}, nil
 }
 

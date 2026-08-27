@@ -218,8 +218,8 @@ func (r *Registry) DuplicatePolicy() string {
 
 // GetVerbHash returns a hash of all registered verbs
 func (r *Registry) GetVerbHash() string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	// Return cached hash if available
 	if r.verbHash != "" {

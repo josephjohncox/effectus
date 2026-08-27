@@ -57,8 +57,11 @@ func (le *Executor) ExecuteRule(ctx context.Context, rule *CompiledRule, facts c
 	// Create adapter to use with schema evaluation system
 	factsAdapter := &effectusFactsAdapter{facts: facts}
 
-	// Check if rule predicates match using the schema evaluator
-	matched := schema.EvaluatePredicatesWithFacts(rule.Predicates, factsAdapter)
+	// Check if rule predicates match using the schema evaluator.
+	matched, err := schema.EvaluatePredicatesWithFactsE(rule.Predicates, factsAdapter)
+	if err != nil {
+		return nil, fmt.Errorf("evaluating predicates for rule %s: %w", rule.Name, err)
+	}
 	if !matched {
 		return nil, nil
 	}
@@ -83,7 +86,7 @@ func (le *Executor) ExecuteRule(ctx context.Context, rule *CompiledRule, facts c
 	}
 
 	// Execute using the unified execution system
-	_, err := le.executeProgram(ctx, rule.Name, program, facts)
+	_, err = le.executeProgram(ctx, rule.Name, program, facts)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +115,7 @@ func (le *Executor) executeProgram(ctx context.Context, name string, program *fl
 	} else {
 		executor = common.NewExecutorAdapter(le.verbRegistry, facts)
 	}
-	return flow.Run(program, executor)
+	return flow.RunContext(ctx, program, executor)
 }
 
 // effectusFactsAdapter adapts common.Facts to eff.Facts

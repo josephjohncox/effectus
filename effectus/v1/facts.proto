@@ -2,8 +2,8 @@ syntax = "proto3";
 
 package effectus.v1;
 
-import "google/protobuf/any.proto";
 import "effectus/v1/common.proto";
+import "google/protobuf/any.proto";
 
 option go_package = "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1";
 
@@ -11,16 +11,16 @@ option go_package = "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1"
 service FactRegistryService {
   // RegisterFactSchema registers a new fact schema
   rpc RegisterFactSchema(RegisterFactSchemaRequest) returns (RegisterFactSchemaResponse);
-  
+
   // GetFactSchema retrieves a fact schema by name and version
   rpc GetFactSchema(GetFactSchemaRequest) returns (GetFactSchemaResponse);
-  
+
   // ListFactSchemas lists all registered fact schemas
   rpc ListFactSchemas(ListFactSchemasRequest) returns (ListFactSchemasResponse);
-  
+
   // ValidateFactData validates fact data against a schema
   rpc ValidateFactData(ValidateFactDataRequest) returns (ValidateFactDataResponse);
-  
+
   // CheckCompatibility checks if schema changes are backward compatible
   rpc CheckCompatibility(CheckCompatibilityRequest) returns (CheckCompatibilityResponse);
 }

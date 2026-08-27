@@ -7,23 +7,25 @@ import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/effectus/effectus-go/runtime";
 
-// RulesetExecutionService provides gRPC interface for executing rulesets
+// RulesetExecutionService is the deprecated pre-v1 compatibility API.
+// New clients must use effectus.v1.RulesetExecutionService.
 service RulesetExecutionService {
+  option deprecated = true;
   // ExecuteRuleset executes a ruleset with provided facts
   rpc ExecuteRuleset(ExecutionRequest) returns (ExecutionResponse);
-  
+
   // GetRulesetInfo returns information about a registered ruleset
   rpc GetRulesetInfo(RulesetInfoRequest) returns (RulesetInfo);
-  
+
   // ListRulesets returns all registered rulesets
   rpc ListRulesets(ListRulesetsRequest) returns (ListRulesetsResponse);
-  
+
   // RegisterRuleset dynamically registers a new ruleset
   rpc RegisterRuleset(RegisterRulesetRequest) returns (RegisterRulesetResponse);
-  
+
   // UnregisterRuleset removes a registered ruleset
   rpc UnregisterRuleset(UnregisterRulesetRequest) returns (UnregisterRulesetResponse);
-  
+
   // StreamExecution provides streaming execution for long-running rules
   rpc StreamExecution(ExecutionRequest) returns (stream ExecutionUpdate);
 }
@@ -203,4 +205,4 @@ enum ExecutionPhase {
   EXECUTION_PHASE_EXECUTION = 3;
   EXECUTION_PHASE_COMPLETION = 4;
   EXECUTION_PHASE_ERROR = 5;
-} 
+}

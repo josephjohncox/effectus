@@ -121,7 +121,7 @@ func (fe *Executor) executeSagaProgram(ctx context.Context, flowName string, pro
 		ctx:          ctx,
 	}
 
-	result, err := Run(transaction.Program, sagaExecutor)
+	result, err := RunContext(ctx, transaction.Program, sagaExecutor)
 	if err != nil {
 		return nil, err
 	}

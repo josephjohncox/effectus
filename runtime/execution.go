@@ -5,34 +5,47 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/effectus/effectus-go/common"
 	"github.com/effectus/effectus-go/compiler"
 	"github.com/effectus/effectus-go/loader"
+	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/fencing"
 	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // ExecutionRuntime orchestrates the complete flow from extension loading to execution
 type ExecutionRuntime struct {
-	extensionManager *loader.ExtensionManager
-	compiler         *compiler.ExtensionCompiler
-	compiledUnit     *compiler.CompiledUnit
-	executors        map[compiler.ExecutorType]ExecutorFactory
-	mu               sync.RWMutex
-	state            RuntimeState
+	extensionManager     *loader.ExtensionManager
+	compiler             *compiler.ExtensionCompiler
+	compiledUnit         *compiler.CompiledUnit
+	executors            map[compiler.ExecutorType]ExecutorFactory
+	workflowStore        schema.OutboxStore
+	workflowFencing      fencing.Provider
+	workflowOptions      schema.DispatcherOptions
+	engine               *Engine
+	snapshotManager      loader.ExtensionSnapshotManager
+	allowLegacyExecution bool
+	mu                   sync.RWMutex
+	compileMu            sync.Mutex
+	state                RuntimeState
 }
 
 // RuntimeState represents the current state of the runtime
@@ -55,6 +68,7 @@ func NewExecutionRuntime() *ExecutionRuntime {
 		executors:        make(map[compiler.ExecutorType]ExecutorFactory),
 		state:            StateInitializing,
 	}
+	runtime.engine = newRuntimeEngine(runtime)
 
 	// Register default executor factories
 	runtime.RegisterExecutorFactory(compiler.ExecutorLocal, &LocalExecutorFactory{})
@@ -64,6 +78,27 @@ func NewExecutionRuntime() *ExecutionRuntime {
 	runtime.RegisterExecutorFactory(compiler.ExecutorMock, &MockExecutorFactory{})
 
 	return runtime
+}
+
+// Close releases executor connection pools. It is safe to call more than once.
+func (er *ExecutionRuntime) Close() error {
+	if er == nil {
+		return nil
+	}
+	er.mu.Lock()
+	factories := make([]ExecutorFactory, 0, len(er.executors))
+	for _, factory := range er.executors {
+		factories = append(factories, factory)
+	}
+	er.mu.Unlock()
+	var result error
+	result = errors.Join(result, er.snapshotManager.Close())
+	for _, factory := range factories {
+		if closer, ok := factory.(interface{ Close() error }); ok {
+			result = errors.Join(result, closer.Close())
+		}
+	}
+	return result
 }
 
 // RegisterExtensionLoader adds an extension loader to the runtime
@@ -78,97 +113,136 @@ func (er *ExecutionRuntime) RegisterExecutorFactory(executorType compiler.Execut
 
 // CompileAndValidate loads extensions, compiles them, and validates everything
 func (er *ExecutionRuntime) CompileAndValidate(ctx context.Context) error {
+	er.compileMu.Lock()
+	defer er.compileMu.Unlock()
+
 	er.mu.Lock()
-	defer er.mu.Unlock()
+	hasActiveGeneration := er.state == StateReady && er.compiledUnit != nil
+	if !hasActiveGeneration {
+		er.state = StateCompiling
+	}
+	er.mu.Unlock()
 
-	er.state = StateLoading
-
-	// Compile extensions
-	er.state = StateCompiling
-	result, err := er.compiler.Compile(ctx, er.extensionManager)
+	snapshot, err := er.extensionManager.Stage(ctx, loader.StageOptions{})
 	if err != nil {
-		er.state = StateFailed
+		er.markInitialCompilationFailed(hasActiveGeneration)
+		return fmt.Errorf("extension staging failed: %w", err)
+	}
+	result, err := er.compiler.CompileSnapshot(ctx, snapshot)
+	if err != nil {
+		_ = snapshot.Retire()
+		er.markInitialCompilationFailed(hasActiveGeneration)
 		return fmt.Errorf("compilation failed: %w", err)
 	}
-
 	if !result.Success {
-		er.state = StateFailed
+		_ = snapshot.Retire()
+		er.markInitialCompilationFailed(hasActiveGeneration)
 		return fmt.Errorf("compilation errors: %v", result.Errors)
 	}
-
-	// Store compiled unit
+	er.mu.Lock()
+	if err := er.snapshotManager.Publish(snapshot); err != nil {
+		er.mu.Unlock()
+		_ = snapshot.Retire()
+		er.markInitialCompilationFailed(hasActiveGeneration)
+		return fmt.Errorf("publish extension snapshot: %w", err)
+	}
 	er.compiledUnit = result.CompiledUnit
 	er.state = StateReady
+	er.mu.Unlock()
 
-	// Log warnings if any
-	if len(result.Warnings) > 0 {
-		for _, warning := range result.Warnings {
-			log.Printf("Warning: %s in %s: %s", warning.Type, warning.Location, warning.Message)
-		}
+	for _, warning := range result.Warnings {
+		log.Printf("Warning: %s in %s: %s", warning.Type, warning.Location, warning.Message)
 	}
-
 	log.Printf("Runtime compiled successfully with %d verbs, %d functions",
-		len(er.compiledUnit.VerbSpecs),
-		len(er.compiledUnit.Functions))
-
+		len(result.CompiledUnit.VerbSpecs), len(result.CompiledUnit.Functions))
 	return nil
+}
+
+func (er *ExecutionRuntime) markInitialCompilationFailed(hasActiveGeneration bool) {
+	if hasActiveGeneration {
+		return
+	}
+	er.mu.Lock()
+	er.state = StateFailed
+	er.mu.Unlock()
 }
 
 // ExecuteVerb executes a specific verb with the given arguments
 func (er *ExecutionRuntime) ExecuteVerb(ctx context.Context, verbName string, args map[string]interface{}) (interface{}, error) {
 	er.mu.RLock()
-	defer er.mu.RUnlock()
-
-	if er.state != StateReady || er.compiledUnit == nil {
-		return nil, fmt.Errorf("runtime not ready (state: %s)", er.state)
+	state, unit, allowed := er.state, er.compiledUnit, er.allowLegacyExecution
+	er.mu.RUnlock()
+	if state != StateReady || unit == nil {
+		return nil, fmt.Errorf("runtime not ready (state: %s)", state)
 	}
-
-	verbSpec, exists := er.compiledUnit.VerbSpecs[verbName]
-	if !exists {
-		return nil, fmt.Errorf("verb not found: %s", verbName)
+	if !allowed {
+		return nil, fmt.Errorf("direct verb execution is legacy compatibility only; use Engine.Execute")
 	}
-
-	// Validate arguments (strict mode only)
-	if err := common.ValidateVerbArgs(verbSpec.Spec, args, runtimeVerbRegistry{specs: er.compiledUnit.VerbSpecs}); err != nil {
-		return nil, fmt.Errorf("argument validation failed: %w", err)
-	}
-
-	// Create executor
-	executorFactory, exists := er.executors[verbSpec.ExecutorType]
-	if !exists {
-		return nil, fmt.Errorf("no executor factory for type: %s", verbSpec.ExecutorType)
-	}
-
-	executor, err := executorFactory.CreateExecutor(verbSpec.ExecutorConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create executor: %w", err)
-	}
-
-	// Execute verb
-	result, err := executor.Execute(ctx, args)
-	if err != nil {
-		return nil, fmt.Errorf("verb execution failed: %w", err)
-	}
-
-	if err := common.ValidateVerbReturn(verbSpec.Spec, result, runtimeVerbRegistry{specs: er.compiledUnit.VerbSpecs}); err != nil {
-		return nil, fmt.Errorf("return validation failed: %w", err)
-	}
-
-	return result, nil
+	return er.executeVerbOnUnit(ctx, unit, verbName, args)
 }
 
-// ExecuteWorkflow executes a complete workflow using the execution plan
-func (er *ExecutionRuntime) ExecuteWorkflow(_ context.Context, _ map[string]interface{}) error {
-	er.mu.RLock()
-	defer er.mu.RUnlock()
+// EnableLegacyExecutionForCompatibility permits unrestricted Go continuations.
+// It must not be enabled by production deployments because callback-only
+// executors cannot be reconstructed or guaranteed to preserve invocation metadata.
+func (er *ExecutionRuntime) EnableLegacyExecutionForCompatibility() {
+	if er == nil {
+		return
+	}
+	er.mu.Lock()
+	er.allowLegacyExecution = true
+	er.mu.Unlock()
+}
 
-	if er.state != StateReady {
-		return fmt.Errorf("runtime not ready (state: %s)", er.state)
+// ConfigureDurableWorkflowExecution installs the mandatory outbox boundary for
+// checked DURABLE_* workflows. Configure this before execution or hot reload.
+func (er *ExecutionRuntime) ConfigureDurableWorkflowExecution(store schema.OutboxStore, provider fencing.Provider, options schema.DispatcherOptions) error {
+	if store == nil {
+		return fmt.Errorf("durable workflow outbox store is required")
 	}
-	if er.compiledUnit == nil || er.compiledUnit.ExecutionPlan == nil {
-		return fmt.Errorf("no execution plan available")
+	if strings.TrimSpace(options.Owner) == "" {
+		return fmt.Errorf("durable workflow dispatcher owner is required")
 	}
-	return compiler.ErrExtensionExecutionPlanUnsupported
+	er.mu.Lock()
+	er.workflowStore = store
+	er.workflowFencing = provider
+	er.workflowOptions = options
+	er.mu.Unlock()
+	if ledger, ok := store.(schema.ExecutionLedger); ok {
+		return er.engine.ConfigureLedger(ledger, nil)
+	}
+	return nil
+}
+
+// ConfigureExecutionLedger installs durable admission/recovery persistence and
+// an immutable resolver for generations loaded after restart.
+func (er *ExecutionRuntime) ConfigureExecutionLedger(ledger schema.ExecutionLedger, resolver ArtifactResolver) error {
+	if er == nil {
+		return fmt.Errorf("execution runtime is required")
+	}
+	return er.Engine().ConfigureLedger(ledger, resolver)
+}
+
+// ExecuteWorkflow is retained as a fail-closed compatibility method. Durable
+// recovery requires a caller-supplied stable execution identity.
+func (er *ExecutionRuntime) ExecuteWorkflow(ctx context.Context, facts map[string]interface{}) error {
+	return fmt.Errorf("checked durable workflow requires ExecuteWorkflowWithIdentity")
+}
+
+// Engine returns the shared checked execution API.
+func (er *ExecutionRuntime) Engine() *Engine {
+	engine, _ := NewEngine(er)
+	return engine
+}
+
+// ExecuteWorkflowWithIdentity is a compatibility facade over Engine.Execute.
+func (er *ExecutionRuntime) ExecuteWorkflowWithIdentity(ctx context.Context, namespace, executionID string, facts map[string]interface{}) error {
+	if er == nil || er.engine == nil {
+		return fmt.Errorf("runtime engine is unavailable")
+	}
+	_, err := er.engine.Execute(ctx, ExecuteRequest{Admission: &Admission{
+		ExecutionID: executionID, TenantNamespace: namespace, Ruleset: "default", Version: "active", Facts: facts,
+	}, WaitMode: WaitTerminal})
+	return err
 }
 
 // GetRuntimeInfo returns information about the current runtime state
@@ -184,6 +258,9 @@ func (er *ExecutionRuntime) GetRuntimeInfo() *RuntimeInfo {
 	if er.compiledUnit != nil {
 		info.VerbCount = len(er.compiledUnit.VerbSpecs)
 		info.FunctionCount = len(er.compiledUnit.Functions)
+		if er.compiledUnit.CheckedIR != nil {
+			info.PlanCount = len(er.compiledUnit.CheckedIR.CloneArtifact().Plans)
+		}
 		info.Dependencies = er.compiledUnit.Dependencies
 		info.Capabilities = er.compiledUnit.Capabilities
 	}
@@ -193,17 +270,29 @@ func (er *ExecutionRuntime) GetRuntimeInfo() *RuntimeInfo {
 
 // HotReload reloads and recompiles all extensions
 func (er *ExecutionRuntime) HotReload(ctx context.Context) error {
+	er.compileMu.Lock()
+	defer er.compileMu.Unlock()
 	log.Println("Starting hot reload...")
 
-	result, err := er.compiler.Compile(ctx, er.extensionManager)
+	snapshot, err := er.extensionManager.Stage(ctx, loader.StageOptions{})
 	if err != nil {
+		return fmt.Errorf("hot reload staging failed: %w", err)
+	}
+	result, err := er.compiler.CompileSnapshot(ctx, snapshot)
+	if err != nil {
+		_ = snapshot.Retire()
 		return fmt.Errorf("hot reload failed: %w", err)
 	}
 	if !result.Success {
+		_ = snapshot.Retire()
 		return fmt.Errorf("hot reload failed: %v", result.Errors)
 	}
-
 	er.mu.Lock()
+	if err := er.snapshotManager.Publish(snapshot); err != nil {
+		er.mu.Unlock()
+		_ = snapshot.Retire()
+		return fmt.Errorf("hot reload publish failed: %w", err)
+	}
 	er.compiledUnit = result.CompiledUnit
 	er.state = StateReady
 	er.mu.Unlock()
@@ -318,6 +407,7 @@ type RuntimeInfo struct {
 	LoaderCount   int          `json:"loaderCount"`
 	VerbCount     int          `json:"verbCount"`
 	FunctionCount int          `json:"functionCount"`
+	PlanCount     int          `json:"planCount"`
 	Dependencies  []string     `json:"dependencies"`
 	Capabilities  []string     `json:"capabilities"`
 }
@@ -359,7 +449,7 @@ func (hef *HTTPExecutorFactory) CreateExecutor(config compiler.ExecutorConfig) (
 		return nil, err
 	}
 	timeout := parseDuration(httpConfig.Timeout, 10*time.Second)
-	client := &http.Client{Timeout: timeout}
+	client := (loader.OutboundNetworkPolicy{AllowPrivate: httpConfig.AllowPrivateNetwork}).HTTPClient(timeout, httpConfig.Headers)
 	return &HTTPExecutor{config: httpConfig, client: client}, nil
 }
 
@@ -372,11 +462,10 @@ func (gef *GRPCExecutorFactory) CreateExecutor(config compiler.ExecutorConfig) (
 		return nil, err
 	}
 
-	conn, err := gef.getConn(grpcConfig)
-	if err != nil {
+	if _, err := gef.getConn(grpcConfig); err != nil {
 		return nil, err
 	}
-	return &GRPCExecutor{config: grpcConfig, conn: conn}, nil
+	return &GRPCExecutor{config: grpcConfig, factory: gef}, nil
 }
 
 func (gef *GRPCExecutorFactory) getConn(config *compiler.GRPCExecutorConfig) (*grpc.ClientConn, error) {
@@ -387,25 +476,60 @@ func (gef *GRPCExecutorFactory) getConn(config *compiler.GRPCExecutorConfig) (*g
 		gef.conns = make(map[string]*grpc.ClientConn)
 	}
 
-	if conn, ok := gef.conns[config.Address]; ok {
-		return conn, nil
+	key := grpcConnectionKey(config)
+	if conn, ok := gef.conns[key]; ok {
+		if conn.GetState() != connectivity.Shutdown {
+			return conn, nil
+		}
+		_ = conn.Close()
+		delete(gef.conns, key)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	var transport credentials.TransportCredentials
 	if config.UseTLS {
-		opts = []grpc.DialOption{grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{}))}
+		serverName := config.ServerName
+		if serverName == "" {
+			serverName, _, _ = net.SplitHostPort(config.Address)
+		}
+		transport = credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, ServerName: serverName})
+	} else if config.Insecure {
+		transport = insecure.NewCredentials()
+	} else {
+		return nil, fmt.Errorf("gRPC transport security is not configured")
 	}
-
-	conn, err := grpc.DialContext(ctx, config.Address, opts...)
+	conn, err := grpc.DialContext(ctx, config.Address, grpc.WithTransportCredentials(transport), grpc.WithBlock())
 	if err != nil {
 		return nil, fmt.Errorf("dial gRPC %s: %w", config.Address, err)
 	}
 
-	gef.conns[config.Address] = conn
+	gef.conns[key] = conn
 	return conn, nil
+}
+
+func grpcConnectionKey(config *compiler.GRPCExecutorConfig) string {
+	return fmt.Sprintf("%s|tls=%t|insecure=%t|server=%s", config.Address, config.UseTLS, config.Insecure, config.ServerName)
+}
+func (gef *GRPCExecutorFactory) invalidate(config *compiler.GRPCExecutorConfig, expected *grpc.ClientConn) {
+	gef.mu.Lock()
+	defer gef.mu.Unlock()
+	key := grpcConnectionKey(config)
+	if current := gef.conns[key]; current == expected {
+		delete(gef.conns, key)
+		_ = current.Close()
+	}
+}
+func (gef *GRPCExecutorFactory) Close() error {
+	gef.mu.Lock()
+	defer gef.mu.Unlock()
+	var result error
+	for key, conn := range gef.conns {
+		result = errors.Join(result, conn.Close())
+		delete(gef.conns, key)
+	}
+	return result
 }
 
 func (mef *MessageExecutorFactory) CreateExecutor(config compiler.ExecutorConfig) (VerbExecutor, error) {
@@ -442,6 +566,9 @@ type HTTPExecutor struct {
 }
 
 func (he *HTTPExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if he.client == nil || he.client.Timeout <= 0 {
+		return nil, fmt.Errorf("HTTP executor requires a finite timeout")
+	}
 	payload, err := json.Marshal(args)
 	if err != nil {
 		return nil, fmt.Errorf("encode args: %w", err)
@@ -463,7 +590,14 @@ func (he *HTTPExecutor) Execute(ctx context.Context, args map[string]interface{}
 		}
 		defer resp.Body.Close()
 
-		body, _ := io.ReadAll(resp.Body)
+		const maxRuntimeHTTPResponse = 1 << 20
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxRuntimeHTTPResponse+1))
+		if err != nil {
+			return nil, fmt.Errorf("read HTTP response: %w", err)
+		}
+		if len(body) > maxRuntimeHTTPResponse {
+			return nil, fmt.Errorf("HTTP response exceeds %d bytes", maxRuntimeHTTPResponse)
+		}
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 			return nil, fmt.Errorf("http status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 		}
@@ -482,15 +616,14 @@ func (he *HTTPExecutor) Execute(ctx context.Context, args map[string]interface{}
 }
 
 type GRPCExecutor struct {
-	config *compiler.GRPCExecutorConfig
-	conn   *grpc.ClientConn
+	config  *compiler.GRPCExecutorConfig
+	factory *GRPCExecutorFactory
 }
 
 func (ge *GRPCExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	if ge.conn == nil {
-		return nil, fmt.Errorf("gRPC connection is nil")
+	if ge.factory == nil {
+		return nil, fmt.Errorf("gRPC connection factory is nil")
 	}
-
 	req, err := structpb.NewStruct(args)
 	if err != nil {
 		return nil, fmt.Errorf("encode args: %w", err)
@@ -509,14 +642,43 @@ func (ge *GRPCExecutor) Execute(ctx context.Context, args map[string]interface{}
 		callCtx = metadata.NewOutgoingContext(callCtx, md)
 	}
 
-	var resp structpb.Struct
 	result, err := executeWithRetry(callCtx, ge.config.RetryPolicy, func() (interface{}, error) {
-		if err := grpc.Invoke(callCtx, ge.config.Method, req, &resp, ge.conn); err != nil {
-			return nil, err
+		conn, err := ge.factory.getConn(ge.config)
+		if err != nil {
+			return nil, grpcInvocationError{err: err, retrySafe: ge.config.RetrySafe}
+		}
+		var resp structpb.Struct
+		if err := grpc.Invoke(callCtx, ge.config.Method, req, &resp, conn); err != nil {
+			if status.Code(err) == codes.Unavailable || conn.GetState() == connectivity.Shutdown {
+				ge.factory.invalidate(ge.config, conn)
+			}
+			return nil, grpcInvocationError{err: err, retrySafe: ge.config.RetrySafe && grpcRetryEligible(callCtx, err)}
 		}
 		return resp.AsMap(), nil
 	})
 	return result, err
+}
+
+type grpcInvocationError struct {
+	err       error
+	retrySafe bool
+}
+
+func (failure grpcInvocationError) Error() string   { return failure.err.Error() }
+func (failure grpcInvocationError) Unwrap() error   { return failure.err }
+func (failure grpcInvocationError) Retryable() bool { return failure.retrySafe }
+func grpcRetryEligible(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	switch status.Code(err) {
+	case codes.Unavailable, codes.ResourceExhausted, codes.Aborted:
+		return true
+	case codes.DeadlineExceeded:
+		return ctx.Err() == nil
+	default:
+		return false
+	}
 }
 
 type MessageExecutor struct {
@@ -582,7 +744,10 @@ func (hp *httpPublisher) Publish(ctx context.Context, payload []byte) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+		if len(body) > 1<<20 {
+			return fmt.Errorf("publisher status %d response exceeds %d bytes", resp.StatusCode, 1<<20)
+		}
 		return fmt.Errorf("publisher status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
@@ -613,7 +778,7 @@ func newMessageExecutor(config *compiler.MessageExecutorConfig) (*MessageExecuto
 
 	switch strings.ToLower(strings.TrimSpace(config.Publisher)) {
 	case "http":
-		client := &http.Client{Timeout: timeout}
+		client := (loader.OutboundNetworkPolicy{AllowPrivate: config.AllowPrivateNetwork}).HTTPClient(timeout, config.Headers)
 		return &MessageExecutor{
 			config: config,
 			publisher: &httpPublisher{
@@ -695,6 +860,10 @@ func executeWithRetry(ctx context.Context, policy *compiler.RetryPolicy, fn func
 		}
 		lastErr = err
 		if attempt == policy.MaxRetries {
+			break
+		}
+		var retryable interface{ Retryable() bool }
+		if !errors.As(err, &retryable) || !retryable.Retryable() {
 			break
 		}
 

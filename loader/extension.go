@@ -3,34 +3,46 @@ package loader
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/effectus/effectus-go/internal/safetar"
+	"github.com/effectus/effectus-go/invocation"
 	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protodesc"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/descriptorpb"
+	"google.golang.org/protobuf/types/dynamicpb"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // ExtensionManager provides a unified way to extend Effectus with verbs and schemas
 type ExtensionManager struct {
+	mu      sync.RWMutex
 	loaders []Loader
 }
 
@@ -43,7 +55,19 @@ func NewExtensionManager() *ExtensionManager {
 
 // LoadExtensions loads all registered extensions into the provided registries
 func (em *ExtensionManager) LoadExtensions(ctx context.Context, target LoadTarget) error {
-	for _, loader := range em.loaders {
+	if em == nil || target == nil {
+		return fmt.Errorf("extension manager and load target are required")
+	}
+	em.mu.RLock()
+	loaders := append([]Loader(nil), em.loaders...)
+	em.mu.RUnlock()
+	for _, loader := range loaders {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if loader == nil {
+			return fmt.Errorf("extension loader is nil")
+		}
 		if err := loader.Load(ctx, target); err != nil {
 			return fmt.Errorf("failed to load extension %s: %w", loader.Name(), err)
 		}
@@ -53,12 +77,16 @@ func (em *ExtensionManager) LoadExtensions(ctx context.Context, target LoadTarge
 
 // AddLoader registers a loader for static or dynamic extensions
 func (em *ExtensionManager) AddLoader(loader Loader) {
+	em.mu.Lock()
+	defer em.mu.Unlock()
 	em.loaders = append(em.loaders, loader)
 }
 
-// GetLoaders returns all registered loaders
+// GetLoaders returns a copy of the registered loader list.
 func (em *ExtensionManager) GetLoaders() []Loader {
-	return em.loaders
+	em.mu.RLock()
+	defer em.mu.RUnlock()
+	return append([]Loader(nil), em.loaders...)
 }
 
 // === Core Interfaces ===
@@ -69,6 +97,17 @@ type LoadTarget interface {
 	RegisterFunction(name string, fn interface{}) error
 	LoadData(path string, value interface{}) error
 	RegisterType(name string, typeDef TypeDefinition) error
+}
+
+// SourceLoadTarget receives checked-compiler source files from extensions.
+type SourceLoadTarget interface {
+	RegisterSource(SourceFile) error
+}
+
+// SourceFile is one immutable .eff or .effx compiler input.
+type SourceFile struct {
+	Path string
+	Data []byte
 }
 
 // Loader defines the interface for extension loaders
@@ -103,7 +142,117 @@ type TypeDefinition struct {
 	Name        string      `json:"name"`
 	Type        string      `json:"type"` // "object", "array", "string", etc.
 	Properties  interface{} `json:"properties,omitempty"`
+	Required    []string    `json:"required,omitempty"`
 	Description string      `json:"description,omitempty"`
+}
+
+const maxExtensionManifestBytes = 4 << 20
+
+func readBoundedManifest(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxExtensionManifestBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxExtensionManifestBytes {
+		return nil, fmt.Errorf("manifest exceeds %d bytes", maxExtensionManifestBytes)
+	}
+	return data, nil
+}
+
+func decodeStrictJSON(data []byte, target interface{}) error {
+	if err := rejectDuplicateJSONKeys(data); err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	decoder.UseNumber()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra interface{}
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func rejectDuplicateJSONKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := scanJSONValue(decoder); err != nil {
+		return err
+	}
+	var extra interface{}
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func scanJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return fmt.Errorf("JSON object key is not a string")
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("duplicate JSON object key %q", key)
+			}
+			seen[key] = struct{}{}
+			if err := scanJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if closing != json.Delim('}') {
+			return fmt.Errorf("invalid JSON object terminator")
+		}
+	case '[':
+		for decoder.More() {
+			if err := scanJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if closing != json.Delim(']') {
+			return fmt.Errorf("invalid JSON array terminator")
+		}
+	default:
+		return fmt.Errorf("unexpected JSON delimiter %q", delimiter)
+	}
+	return nil
 }
 
 // === Static Loaders ===
@@ -139,6 +288,28 @@ func (svl *StaticVerbLoader) Load(ctx context.Context, target LoadTarget) error 
 		}
 	}
 	return nil
+}
+
+// StaticSourceLoader loads one in-memory .eff or .effx source file.
+type StaticSourceLoader struct {
+	name   string
+	source SourceFile
+}
+
+func NewStaticSourceLoader(name, path string, data []byte) *StaticSourceLoader {
+	return &StaticSourceLoader{name: name, source: SourceFile{Path: path, Data: append([]byte(nil), data...)}}
+}
+
+func (loader *StaticSourceLoader) Name() string {
+	return fmt.Sprintf("StaticSource:%s", loader.name)
+}
+
+func (loader *StaticSourceLoader) Load(_ context.Context, target LoadTarget) error {
+	sourceTarget, ok := target.(SourceLoadTarget)
+	if !ok {
+		return fmt.Errorf("target does not support extension sources")
+	}
+	return sourceTarget.RegisterSource(SourceFile{Path: loader.source.Path, Data: append([]byte(nil), loader.source.Data...)})
 }
 
 // StaticSchemaLoader loads schemas and functions from code
@@ -280,13 +451,13 @@ func (jvl *JSONVerbLoader) Name() string {
 }
 
 func (jvl *JSONVerbLoader) Load(ctx context.Context, target LoadTarget) error {
-	data, err := os.ReadFile(jvl.filePath)
+	data, err := readBoundedManifest(jvl.filePath)
 	if err != nil {
 		return fmt.Errorf("reading verb manifest: %w", err)
 	}
 
 	var manifest VerbManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
+	if err := decodeStrictJSON(data, &manifest); err != nil {
 		return fmt.Errorf("parsing verb manifest: %w", err)
 	}
 
@@ -389,13 +560,13 @@ func (jsl *JSONSchemaLoader) Name() string {
 }
 
 func (jsl *JSONSchemaLoader) Load(ctx context.Context, target LoadTarget) error {
-	data, err := os.ReadFile(jsl.filePath)
+	data, err := readBoundedManifest(jsl.filePath)
 	if err != nil {
 		return fmt.Errorf("reading schema manifest: %w", err)
 	}
 
 	var manifest SchemaManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
+	if err := decodeStrictJSON(data, &manifest); err != nil {
 		return fmt.Errorf("parsing schema manifest: %w", err)
 	}
 
@@ -542,17 +713,26 @@ func (psl *ProtoSchemaLoader) Load(ctx context.Context, target LoadTarget) error
 // === OCI Bundle Loader ===
 
 // OCIBundleLoader loads extensions from OCI registry bundles
+type OCISignatureVerifier interface {
+	Verify(context.Context, string, string) error
+}
+type OCIVerificationPolicy struct {
+	RequireSignature bool
+	Verifier         OCISignatureVerifier
+}
+
 type OCIBundleLoader struct {
-	name string
-	ref  string // OCI reference like "registry.io/my-effectus-bundle:v1.0.0"
+	name   string
+	ref    string
+	policy OCIVerificationPolicy
 }
 
 // NewOCIBundleLoader creates an OCI bundle loader
 func NewOCIBundleLoader(name, ref string) *OCIBundleLoader {
-	return &OCIBundleLoader{
-		name: name,
-		ref:  ref,
-	}
+	return NewOCIBundleLoaderWithPolicy(name, ref, OCIVerificationPolicy{})
+}
+func NewOCIBundleLoaderWithPolicy(name, ref string, policy OCIVerificationPolicy) *OCIBundleLoader {
+	return &OCIBundleLoader{name: name, ref: ref, policy: policy}
 }
 
 func (obl *OCIBundleLoader) Name() string {
@@ -560,7 +740,7 @@ func (obl *OCIBundleLoader) Name() string {
 }
 
 func (obl *OCIBundleLoader) Load(ctx context.Context, target LoadTarget) error {
-	loaders, cleanup, err := loadOCIBundleLoaders(obl.ref)
+	loaders, cleanup, err := loadOCIBundleLoaders(ctx, obl.ref, obl.policy)
 	if err != nil {
 		return err
 	}
@@ -574,7 +754,7 @@ func (obl *OCIBundleLoader) Load(ctx context.Context, target LoadTarget) error {
 	return nil
 }
 
-func loadOCIBundleLoaders(ref string) ([]Loader, func(), error) {
+func loadOCIBundleLoaders(ctx context.Context, ref string, policy OCIVerificationPolicy) ([]Loader, func(), error) {
 	if strings.TrimSpace(ref) == "" {
 		return nil, func() {}, fmt.Errorf("oci ref is required")
 	}
@@ -586,7 +766,7 @@ func loadOCIBundleLoaders(ref string) ([]Loader, func(), error) {
 		_ = os.RemoveAll(dir)
 	}
 
-	if err := pullOCIExtensionBundle(ref, dir); err != nil {
+	if err := pullOCIExtensionBundle(ctx, ref, dir, policy); err != nil {
 		cleanup()
 		return nil, func() {}, err
 	}
@@ -599,15 +779,25 @@ func loadOCIBundleLoaders(ref string) ([]Loader, func(), error) {
 	return loaders, cleanup, nil
 }
 
-func pullOCIExtensionBundle(ref string, outputDir string) error {
+func pullOCIExtensionBundle(ctx context.Context, ref string, outputDir string, policy OCIVerificationPolicy) error {
 	parsed, err := name.ParseReference(ref)
 	if err != nil {
 		return fmt.Errorf("parsing oci ref: %w", err)
 	}
+	if _, pinned := parsed.(name.Digest); !pinned {
+		return fmt.Errorf("OCI extension reference must be pinned by digest")
+	}
 
-	image, err := remote.Image(parsed, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	image, err := remote.Image(parsed, remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain))
 	if err != nil {
 		return fmt.Errorf("pulling image: %w", err)
+	}
+	actualDigest, err := image.Digest()
+	if err != nil {
+		return fmt.Errorf("read OCI image digest: %w", err)
+	}
+	if err := verifyOCIIdentity(ctx, parsed.Name(), parsed.Identifier(), actualDigest.String(), policy); err != nil {
+		return err
 	}
 
 	layers, err := image.Layers()
@@ -622,20 +812,50 @@ func pullOCIExtensionBundle(ref string, outputDir string) error {
 		return err
 	}
 
-	// Extract all layers except the last one (bundle metadata).
+	// Extract content layers. The unified bundle format uses a final JSON
+	// metadata layer, while ORAS directory artifacts can contain one tar layer.
 	for i, layer := range layers {
-		if i == len(layers)-1 {
-			break
-		}
 		rc, err := layer.Uncompressed()
 		if err != nil {
 			return fmt.Errorf("getting layer %d: %w", i, err)
+		}
+		if i == len(layers)-1 {
+			payload, readErr := io.ReadAll(io.LimitReader(rc, (64<<20)+1))
+			rc.Close()
+			if readErr != nil {
+				return fmt.Errorf("reading final OCI layer: %w", readErr)
+			}
+			if len(payload) > 64<<20 {
+				return fmt.Errorf("final OCI extension layer exceeds %d bytes", 64<<20)
+			}
+			if json.Valid(payload) {
+				continue
+			}
+			if err := extractTarLayer(bytes.NewReader(payload), outputDir); err != nil {
+				return fmt.Errorf("extracting final layer %d: %w", i, err)
+			}
+			continue
 		}
 		if err := extractTarLayer(rc, outputDir); err != nil {
 			rc.Close()
 			return fmt.Errorf("extracting layer %d: %w", i, err)
 		}
 		rc.Close()
+	}
+	return nil
+}
+
+func verifyOCIIdentity(ctx context.Context, reference, expectedDigest, actualDigest string, policy OCIVerificationPolicy) error {
+	if actualDigest != expectedDigest {
+		return fmt.Errorf("OCI image digest mismatch: expected %s, got %s", expectedDigest, actualDigest)
+	}
+	if policy.RequireSignature && policy.Verifier == nil {
+		return fmt.Errorf("OCI signature verification is required but no verifier is configured")
+	}
+	if policy.Verifier != nil {
+		if err := policy.Verifier.Verify(ctx, reference, actualDigest); err != nil {
+			return fmt.Errorf("verify OCI signature: %w", err)
+		}
 	}
 	return nil
 }
@@ -691,7 +911,7 @@ func (me *MockExecutor) SourceInfo() verb.SourceInfo {
 type NoOpExecutor struct{}
 
 func (noe *NoOpExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	return map[string]interface{}{"status": "noop"}, nil
+	return nil, nil
 }
 
 func (noe *NoOpExecutor) SourceInfo() verb.SourceInfo {
@@ -704,7 +924,8 @@ type HTTPExecutor struct {
 	Method  string
 	Headers map[string]string
 	Timeout time.Duration
-	Client  *http.Client
+	Policy  OutboundNetworkPolicy
+	client  *http.Client
 }
 
 func NewHTTPExecutor(config map[string]interface{}) (*HTTPExecutor, error) {
@@ -721,17 +942,29 @@ func NewHTTPExecutor(config map[string]interface{}) (*HTTPExecutor, error) {
 	headers := make(map[string]string)
 	if h, ok := config["headers"].(map[string]interface{}); ok {
 		for k, v := range h {
+			if isReservedInvocationHeader(k) {
+				return nil, fmt.Errorf("http executor header %q is reserved", k)
+			}
 			if str, ok := v.(string); ok {
 				headers[k] = str
 			}
 		}
 	}
+	policy := OutboundNetworkPolicy{}
+	if allowed, ok := config["allowPrivateNetwork"].(bool); ok {
+		policy.AllowPrivate = allowed
+	}
+	if _, err := policy.ValidateURL(url); err != nil {
+		return nil, fmt.Errorf("http executor URL: %w", err)
+	}
 
 	timeout := 5 * time.Second
 	if raw, ok := config["timeout"].(string); ok {
-		if parsed, err := time.ParseDuration(raw); err == nil {
-			timeout = parsed
+		parsed, err := time.ParseDuration(raw)
+		if err != nil || parsed <= 0 {
+			return nil, fmt.Errorf("http executor timeout must be a positive duration")
 		}
+		timeout = parsed
 	}
 
 	return &HTTPExecutor{
@@ -739,16 +972,58 @@ func NewHTTPExecutor(config map[string]interface{}) (*HTTPExecutor, error) {
 		Method:  method,
 		Headers: headers,
 		Timeout: timeout,
+		Policy:  policy,
+		client:  policy.HTTPClient(timeout, headers),
 	}, nil
 }
 
 func (he *HTTPExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	return he.execute(ctx, args, nil)
+}
+
+func (he *HTTPExecutor) Invoke(ctx context.Context, request invocation.Request) invocation.Outcome {
+	result, err := he.execute(ctx, request.Arguments, invocationHeaders(request))
+	if err != nil {
+		var classified *httpInvocationError
+		if errors.As(err, &classified) {
+			return invocation.Outcome{Class: classified.class, Err: classified}
+		}
+		return invocation.Outcome{Class: invocation.OutcomeUnknown, Err: err}
+	}
+	return invocation.Outcome{Class: invocation.OutcomeSuccess, Result: result}
+}
+
+type httpInvocationError struct {
+	class   invocation.OutcomeClass
+	status  int
+	message string
+}
+
+func (failure *httpInvocationError) Error() string {
+	return fmt.Sprintf("http status %d: %s", failure.status, failure.message)
+}
+func classifyHTTPOutcome(value string) invocation.OutcomeClass {
+	class := invocation.OutcomeClass(strings.TrimSpace(value))
+	switch class {
+	case invocation.OutcomeRetryableKnownNotCommitted, invocation.OutcomePermanentFailure, invocation.OutcomeUnknown, invocation.OutcomeStaleFence:
+		return class
+	default:
+		return invocation.OutcomeUnknown
+	}
+}
+
+func (he *HTTPExecutor) execute(ctx context.Context, args map[string]interface{}, systemHeaders map[string]string) (interface{}, error) {
+	if he.Timeout <= 0 {
+		return nil, fmt.Errorf("http executor timeout must be positive")
+	}
+	callContext, cancel := context.WithTimeout(ctx, he.Timeout)
+	defer cancel()
 	payload, err := json.Marshal(args)
 	if err != nil {
 		return nil, fmt.Errorf("marshal args: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, he.Method, he.URL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(callContext, he.Method, he.URL, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
@@ -756,10 +1031,13 @@ func (he *HTTPExecutor) Execute(ctx context.Context, args map[string]interface{}
 	for key, value := range he.Headers {
 		req.Header.Set(key, value)
 	}
+	for key, value := range systemHeaders {
+		req.Header.Set(key, value)
+	}
 
-	client := he.Client
+	client := he.client
 	if client == nil {
-		client = &http.Client{Timeout: he.Timeout}
+		return nil, fmt.Errorf("http executor client is not initialized")
 	}
 
 	resp, err := client.Do(req)
@@ -768,9 +1046,16 @@ func (he *HTTPExecutor) Execute(ctx context.Context, args map[string]interface{}
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	const maxExtensionHTTPResponse = 1 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxExtensionHTTPResponse+1))
+	if err != nil {
+		return nil, fmt.Errorf("read HTTP response: %w", err)
+	}
+	if len(body) > maxExtensionHTTPResponse {
+		return nil, fmt.Errorf("HTTP response exceeds %d bytes", maxExtensionHTTPResponse)
+	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("http status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, &httpInvocationError{class: classifyHTTPOutcome(resp.Header.Get("X-Effectus-Outcome")), status: resp.StatusCode, message: strings.TrimSpace(string(body))}
 	}
 
 	if len(body) == 0 {
@@ -785,6 +1070,18 @@ func (he *HTTPExecutor) Execute(ctx context.Context, args map[string]interface{}
 	return strings.TrimSpace(string(body)), nil
 }
 
+func (he *HTTPExecutor) Close() error {
+	if he == nil || he.client == nil {
+		return nil
+	}
+	he.client.CloseIdleConnections()
+	return nil
+}
+
+func (he *HTTPExecutor) InvocationResolverDescriptor() any {
+	return map[string]any{"type": "http", "url": he.URL, "method": he.Method, "headers": he.Headers, "timeout": he.Timeout.String(), "allow_private_network": he.Policy.AllowPrivate}
+}
+
 func (he *HTTPExecutor) SourceInfo() verb.SourceInfo {
 	method := strings.ToUpper(strings.TrimSpace(he.Method))
 	if method == "" {
@@ -795,12 +1092,18 @@ func (he *HTTPExecutor) SourceInfo() verb.SourceInfo {
 
 // GRPCExecutor executes verbs via gRPC calls.
 type GRPCExecutor struct {
-	Address  string
-	Method   string
-	Timeout  time.Duration
-	Metadata map[string]string
-	UseTLS   bool
-	conn     *grpc.ClientConn
+	Address            string
+	Method             string
+	Timeout            time.Duration
+	Metadata           map[string]string
+	UseTLS             bool
+	Insecure           bool
+	ServerName         string
+	requestDescriptor  protoreflect.MessageDescriptor
+	responseDescriptor protoreflect.MessageDescriptor
+	descriptorDigest   string
+	connMu             sync.Mutex
+	conn               *grpc.ClientConn
 }
 
 func NewGRPCExecutor(config map[string]interface{}) (*GRPCExecutor, error) {
@@ -814,9 +1117,11 @@ func NewGRPCExecutor(config map[string]interface{}) (*GRPCExecutor, error) {
 	}
 	timeout := 10 * time.Second
 	if raw, ok := config["timeout"].(string); ok {
-		if parsed, err := time.ParseDuration(raw); err == nil {
-			timeout = parsed
+		parsed, err := time.ParseDuration(raw)
+		if err != nil || parsed <= 0 {
+			return nil, fmt.Errorf("grpc executor timeout must be a positive duration")
 		}
+		timeout = parsed
 	}
 	metadata := make(map[string]string)
 	if raw, ok := config["metadata"].(map[string]interface{}); ok {
@@ -826,38 +1131,129 @@ func NewGRPCExecutor(config map[string]interface{}) (*GRPCExecutor, error) {
 			}
 		}
 	}
-	useTLS := false
+	insecureTransport, _ := config["insecure"].(bool)
+	useTLS := !insecureTransport
 	if raw, ok := config["useTLS"].(bool); ok {
+		if !raw && !insecureTransport {
+			return nil, fmt.Errorf("grpc plaintext transport requires insecure: true")
+		}
 		useTLS = raw
+	}
+	serverName, _ := config["serverName"].(string)
+	requestDescriptor, responseDescriptor, descriptorDigest, err := loadGRPCMethodDescriptors(config)
+	if err != nil {
+		return nil, err
 	}
 
 	return &GRPCExecutor{
-		Address:  address,
-		Method:   method,
-		Timeout:  timeout,
-		Metadata: metadata,
-		UseTLS:   useTLS,
+		Address:           address,
+		Method:            method,
+		Timeout:           timeout,
+		Metadata:          metadata,
+		UseTLS:            useTLS,
+		Insecure:          insecureTransport,
+		ServerName:        serverName,
+		requestDescriptor: requestDescriptor, responseDescriptor: responseDescriptor, descriptorDigest: descriptorDigest,
 	}, nil
 }
 
+func loadGRPCMethodDescriptors(config map[string]interface{}) (protoreflect.MessageDescriptor, protoreflect.MessageDescriptor, string, error) {
+	path, _ := config["descriptorSet"].(string)
+	if strings.TrimSpace(path) == "" {
+		return nil, nil, "", nil
+	}
+	requestType, _ := config["requestType"].(string)
+	responseType, _ := config["responseType"].(string)
+	if requestType == "" || responseType == "" {
+		return nil, nil, "", fmt.Errorf("grpc descriptorSet requires requestType and responseType")
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("read grpc descriptor set: %w", err)
+	}
+	if len(payload) > 4<<20 {
+		return nil, nil, "", fmt.Errorf("grpc descriptor set exceeds %d bytes", 4<<20)
+	}
+	set := new(descriptorpb.FileDescriptorSet)
+	if err := proto.Unmarshal(payload, set); err != nil {
+		return nil, nil, "", fmt.Errorf("decode grpc descriptor set: %w", err)
+	}
+	files, err := protodesc.NewFiles(set)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("validate grpc descriptor set: %w", err)
+	}
+	request, err := files.FindDescriptorByName(protoreflect.FullName(requestType))
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("find grpc request type: %w", err)
+	}
+	response, err := files.FindDescriptorByName(protoreflect.FullName(responseType))
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("find grpc response type: %w", err)
+	}
+	requestMessage, requestOK := request.(protoreflect.MessageDescriptor)
+	responseMessage, responseOK := response.(protoreflect.MessageDescriptor)
+	if !requestOK || !responseOK {
+		return nil, nil, "", fmt.Errorf("grpc descriptor types must be messages")
+	}
+	methodPath, _ := config["method"].(string)
+	parts := strings.Split(strings.TrimPrefix(methodPath, "/"), "/")
+	if len(parts) != 2 {
+		return nil, nil, "", fmt.Errorf("grpc method must be /package.Service/Method")
+	}
+	serviceValue, err := files.FindDescriptorByName(protoreflect.FullName(parts[0]))
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("find grpc service: %w", err)
+	}
+	service, ok := serviceValue.(protoreflect.ServiceDescriptor)
+	if !ok {
+		return nil, nil, "", fmt.Errorf("grpc method service descriptor is invalid")
+	}
+	method := service.Methods().ByName(protoreflect.Name(parts[1]))
+	if method == nil || method.IsStreamingClient() || method.IsStreamingServer() {
+		return nil, nil, "", fmt.Errorf("grpc descriptor method must be unary")
+	}
+	if method.Input().FullName() != requestMessage.FullName() || method.Output().FullName() != responseMessage.FullName() {
+		return nil, nil, "", fmt.Errorf("grpc descriptor method types do not match requestType and responseType")
+	}
+	digest := sha256.Sum256(payload)
+	return requestMessage, responseMessage, fmt.Sprintf("sha256:%x", digest[:]), nil
+}
+
 func (ge *GRPCExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	if ge.conn == nil {
-		var opts []grpc.DialOption
-		if ge.UseTLS {
-			opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
-		} else {
-			opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		}
-		conn, err := grpc.Dial(ge.Address, opts...)
-		if err != nil {
-			return nil, fmt.Errorf("grpc dial: %w", err)
-		}
-		ge.conn = conn
+	return ge.execute(ctx, args, nil)
+}
+
+func (ge *GRPCExecutor) Invoke(ctx context.Context, request invocation.Request) invocation.Outcome {
+	result, err := ge.execute(ctx, request.Arguments, invocationHeaders(request))
+	if err != nil {
+		return invocation.Outcome{Class: invocation.OutcomeUnknown, Err: err}
+	}
+	return invocation.Outcome{Class: invocation.OutcomeSuccess, Result: result}
+}
+
+func (ge *GRPCExecutor) execute(ctx context.Context, args map[string]interface{}, systemMetadata map[string]string) (interface{}, error) {
+	conn, err := ge.connection(ctx)
+	if err != nil {
+		return nil, err
 	}
 
-	req, err := structpb.NewStruct(args)
-	if err != nil {
-		return nil, fmt.Errorf("grpc encode args: %w", err)
+	var req proto.Message
+	if ge.requestDescriptor != nil {
+		message := dynamicpb.NewMessage(ge.requestDescriptor)
+		payload, marshalErr := json.Marshal(args)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("grpc encode args: %w", marshalErr)
+		}
+		if err := (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(payload, message); err != nil {
+			return nil, fmt.Errorf("grpc typed request: %w", err)
+		}
+		req = message
+	} else {
+		message, err := structpb.NewStruct(args)
+		if err != nil {
+			return nil, fmt.Errorf("grpc encode args: %w", err)
+		}
+		req = message
 	}
 
 	callCtx := ctx
@@ -867,21 +1263,119 @@ func (ge *GRPCExecutor) Execute(ctx context.Context, args map[string]interface{}
 		defer cancel()
 	}
 
-	if len(ge.Metadata) > 0 {
-		md := metadataFromMap(ge.Metadata)
-		callCtx = metadata.NewOutgoingContext(callCtx, md)
+	if len(ge.Metadata) > 0 || len(systemMetadata) > 0 {
+		values := make(map[string]string, len(ge.Metadata)+len(systemMetadata))
+		for key, value := range ge.Metadata {
+			values[key] = value
+		}
+		for key, value := range systemMetadata {
+			values[strings.ToLower(key)] = value
+		}
+		callCtx = metadata.NewOutgoingContext(callCtx, metadataFromMap(values))
 	}
 
-	var resp structpb.Struct
-	if err := grpc.Invoke(callCtx, ge.Method, req, &resp, ge.conn); err != nil {
+	var resp proto.Message
+	if ge.responseDescriptor != nil {
+		resp = dynamicpb.NewMessage(ge.responseDescriptor)
+	} else {
+		resp = new(structpb.Struct)
+	}
+	if err := grpc.Invoke(callCtx, ge.Method, req, resp, conn); err != nil {
 		return nil, err
 	}
-	return resp.AsMap(), nil
+	if value, ok := resp.(*structpb.Struct); ok {
+		return value.AsMap(), nil
+	}
+	payload, err := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(resp)
+	if err != nil {
+		return nil, fmt.Errorf("grpc typed response: %w", err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(payload, &result); err != nil {
+		return nil, fmt.Errorf("grpc decode response: %w", err)
+	}
+	return result, nil
+}
+
+func (ge *GRPCExecutor) connection(ctx context.Context) (*grpc.ClientConn, error) {
+	ge.connMu.Lock()
+	defer ge.connMu.Unlock()
+	if ge.conn != nil && ge.conn.GetState() == connectivity.Shutdown {
+		_ = ge.conn.Close()
+		ge.conn = nil
+	}
+	if ge.conn != nil {
+		return ge.conn, nil
+	}
+	var transport credentials.TransportCredentials
+	if ge.UseTLS {
+		serverName := ge.ServerName
+		if serverName == "" {
+			serverName, _, _ = net.SplitHostPort(ge.Address)
+		}
+		transport = credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, ServerName: serverName})
+	} else if ge.Insecure {
+		transport = insecure.NewCredentials()
+	} else {
+		return nil, fmt.Errorf("grpc transport security is not configured")
+	}
+	dialCtx := ctx
+	if ge.Timeout > 0 {
+		var cancel context.CancelFunc
+		dialCtx, cancel = context.WithTimeout(ctx, ge.Timeout)
+		defer cancel()
+	}
+	conn, err := grpc.DialContext(dialCtx, ge.Address, grpc.WithTransportCredentials(transport), grpc.WithBlock())
+	if err != nil {
+		return nil, fmt.Errorf("grpc dial: %w", err)
+	}
+	ge.conn = conn
+	return conn, nil
+}
+
+func (ge *GRPCExecutor) Close() error {
+	ge.connMu.Lock()
+	defer ge.connMu.Unlock()
+	if ge.conn == nil {
+		return nil
+	}
+	err := ge.conn.Close()
+	ge.conn = nil
+	return err
+}
+
+func (ge *GRPCExecutor) InvocationResolverDescriptor() any {
+	return map[string]any{"type": "grpc", "address": ge.Address, "method": ge.Method, "metadata": ge.Metadata, "timeout": ge.Timeout.String(), "tls": ge.UseTLS, "insecure": ge.Insecure, "server_name": ge.ServerName, "descriptor_digest": ge.descriptorDigest}
 }
 
 func (ge *GRPCExecutor) SourceInfo() verb.SourceInfo {
 	method := strings.TrimSpace(ge.Method)
 	return verb.SourceInfo{Type: verb.SourceGRPC, Ref: ge.Address, Detail: method}
+}
+
+func isReservedInvocationHeader(name string) bool {
+	normalized := http.CanonicalHeaderKey(strings.TrimSpace(name))
+	return normalized == "Idempotency-Key" || normalized == "X-Effectus-Outcome" || strings.HasPrefix(normalized, "X-Effectus-")
+}
+
+func invocationHeaders(request invocation.Request) map[string]string {
+	headers := map[string]string{
+		"X-Effectus-Request-ID":      request.Metadata.RequestID,
+		"X-Effectus-Execution-ID":    request.Metadata.ExecutionID,
+		"X-Effectus-Saga-ID":         request.Metadata.Saga.SagaID,
+		"X-Effectus-Effect-ID":       request.Metadata.Saga.EffectID,
+		"X-Effectus-Attempt":         strconv.FormatUint(request.Metadata.Saga.Attempt, 10),
+		"X-Effectus-Direction":       string(request.Metadata.Saga.Direction),
+		"Idempotency-Key":            request.Metadata.Saga.IdempotencyKey,
+		"X-Effectus-Idempotency-Key": request.Metadata.Saga.IdempotencyKey,
+		"X-Effectus-Argument-Hash":   request.ArgumentHash,
+		"X-Effectus-Contract-Hash":   request.ContractHash,
+		"X-Effectus-Deadline":        request.Metadata.Deadline.UTC().Format(time.RFC3339Nano),
+	}
+	if grants, err := json.Marshal(request.Metadata.FencingGrants); err == nil {
+		headers["X-Effectus-Fencing-Grants"] = string(grants)
+	}
+	return headers
 }
 
 func metadataFromMap(values map[string]string) metadata.MD {
@@ -894,12 +1388,17 @@ func metadataFromMap(values map[string]string) metadata.MD {
 
 // StreamExecutor emits verbs to a stream publisher.
 type StreamExecutor struct {
-	publisher streamPublisher
-	source    verb.SourceInfo
+	publisher  streamPublisher
+	source     verb.SourceInfo
+	descriptor map[string]any
 }
 
 type streamPublisher interface {
 	Publish(ctx context.Context, payload []byte) error
+}
+
+type invocationStreamPublisher interface {
+	PublishInvocation(context.Context, []byte, invocation.Request) error
 }
 
 type stdoutPublisher struct{}
@@ -915,7 +1414,20 @@ type httpStreamPublisher struct {
 	client  *http.Client
 }
 
+func (hp *httpStreamPublisher) Close() error {
+	if hp != nil && hp.client != nil {
+		hp.client.CloseIdleConnections()
+	}
+	return nil
+}
+
 func (hp *httpStreamPublisher) Publish(ctx context.Context, payload []byte) error {
+	return hp.publish(ctx, payload, nil)
+}
+func (hp *httpStreamPublisher) PublishInvocation(ctx context.Context, payload []byte, request invocation.Request) error {
+	return hp.publish(ctx, payload, invocationHeaders(request))
+}
+func (hp *httpStreamPublisher) publish(ctx context.Context, payload []byte, systemHeaders map[string]string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hp.url, bytes.NewReader(payload))
 	if err != nil {
 		return err
@@ -924,13 +1436,19 @@ func (hp *httpStreamPublisher) Publish(ctx context.Context, payload []byte) erro
 	for key, value := range hp.headers {
 		req.Header.Set(key, value)
 	}
+	for key, value := range systemHeaders {
+		req.Header.Set(key, value)
+	}
 	resp, err := hp.client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+		if len(body) > 1<<20 {
+			return fmt.Errorf("stream http status %d response exceeds %d bytes", resp.StatusCode, 1<<20)
+		}
 		return fmt.Errorf("stream http status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
@@ -941,13 +1459,34 @@ type kafkaStreamPublisher struct {
 }
 
 func (kp *kafkaStreamPublisher) Publish(ctx context.Context, payload []byte) error {
-	return kp.writer.WriteMessages(ctx, kafka.Message{
-		Value: payload,
-		Time:  time.Now(),
-	})
+	return kp.writer.WriteMessages(ctx, kafka.Message{Value: payload, Time: time.Now()})
+}
+func (kp *kafkaStreamPublisher) PublishInvocation(ctx context.Context, payload []byte, request invocation.Request) error {
+	return kp.writer.WriteMessages(ctx, kafka.Message{Value: payload, Time: time.Now(), Headers: kafkaInvocationHeaders(request)})
+}
+func kafkaInvocationHeaders(request invocation.Request) []kafka.Header {
+	headers := invocationHeaders(request)
+	names := make([]string, 0, len(headers))
+	for name := range headers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	result := make([]kafka.Header, 0, len(names))
+	for _, name := range names {
+		result = append(result, kafka.Header{Key: name, Value: []byte(headers[name])})
+	}
+	return result
+}
+
+func cloneStringAnyMap(input map[string]any) map[string]any {
+	if input == nil {
+		return nil
+	}
+	return cloneSnapshotValue(input).(map[string]any)
 }
 
 func NewStreamExecutor(config map[string]interface{}) (*StreamExecutor, error) {
+	descriptor := cloneStringAnyMap(config)
 	publisher := "stdout"
 	if raw, ok := config["publisher"].(string); ok && raw != "" {
 		publisher = raw
@@ -956,7 +1495,7 @@ func NewStreamExecutor(config map[string]interface{}) (*StreamExecutor, error) {
 	case "stdout":
 		return &StreamExecutor{
 			publisher: &stdoutPublisher{},
-			source:    verb.SourceInfo{Type: verb.SourceStream, Detail: "stdout"},
+			source:    verb.SourceInfo{Type: verb.SourceStream, Detail: "stdout"}, descriptor: descriptor,
 		}, nil
 	case "http":
 		url, _ := config["url"].(string)
@@ -966,21 +1505,33 @@ func NewStreamExecutor(config map[string]interface{}) (*StreamExecutor, error) {
 		headers := map[string]string{}
 		if raw, ok := config["headers"].(map[string]interface{}); ok {
 			for k, v := range raw {
+				if isReservedInvocationHeader(k) {
+					return nil, fmt.Errorf("stream HTTP header %q is reserved", k)
+				}
 				if s, ok := v.(string); ok {
 					headers[k] = s
 				}
 			}
 		}
+		policy := OutboundNetworkPolicy{}
+		if allowed, ok := config["allowPrivateNetwork"].(bool); ok {
+			policy.AllowPrivate = allowed
+		}
+		if _, err := policy.ValidateURL(url); err != nil {
+			return nil, fmt.Errorf("stream http URL: %w", err)
+		}
 		timeout := 5 * time.Second
 		if raw, ok := config["timeout"].(string); ok {
-			if parsed, err := time.ParseDuration(raw); err == nil {
-				timeout = parsed
+			parsed, err := time.ParseDuration(raw)
+			if err != nil || parsed <= 0 {
+				return nil, fmt.Errorf("stream http timeout must be positive")
 			}
+			timeout = parsed
 		}
-		client := &http.Client{Timeout: timeout}
+		client := policy.HTTPClient(timeout, headers)
 		return &StreamExecutor{
 			publisher: &httpStreamPublisher{url: url, headers: headers, client: client},
-			source:    verb.SourceInfo{Type: verb.SourceStream, Ref: url, Detail: "http"},
+			source:    verb.SourceInfo{Type: verb.SourceStream, Ref: url, Detail: "http"}, descriptor: descriptor,
 		}, nil
 	case "kafka":
 		var brokers []string
@@ -1013,7 +1564,7 @@ func NewStreamExecutor(config map[string]interface{}) (*StreamExecutor, error) {
 		}
 		return &StreamExecutor{
 			publisher: &kafkaStreamPublisher{writer: writer},
-			source:    verb.SourceInfo{Type: verb.SourceStream, Ref: topic, Detail: detail},
+			source:    verb.SourceInfo{Type: verb.SourceStream, Ref: topic, Detail: detail}, descriptor: descriptor,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported stream publisher: %s", publisher)
@@ -1021,14 +1572,48 @@ func NewStreamExecutor(config map[string]interface{}) (*StreamExecutor, error) {
 }
 
 func (se *StreamExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	return se.publish(ctx, args, nil)
+}
+
+func (se *StreamExecutor) Invoke(ctx context.Context, request invocation.Request) invocation.Outcome {
+	result, err := se.publish(ctx, request.Arguments, &request)
+	if err != nil {
+		return invocation.Outcome{Class: invocation.OutcomeUnknown, Err: err}
+	}
+	return invocation.Outcome{Class: invocation.OutcomeSuccess, Result: result}
+}
+
+func (se *StreamExecutor) publish(ctx context.Context, args map[string]interface{}, request *invocation.Request) (interface{}, error) {
 	payload, err := json.Marshal(args)
 	if err != nil {
 		return nil, fmt.Errorf("marshal args: %w", err)
 	}
-	if err := se.publisher.Publish(ctx, payload); err != nil {
+	if request != nil {
+		publisher, ok := se.publisher.(invocationStreamPublisher)
+		if !ok {
+			return nil, fmt.Errorf("stream publisher does not propagate invocation metadata")
+		}
+		if err := publisher.PublishInvocation(ctx, payload, *request); err != nil {
+			return nil, err
+		}
+	} else if err := se.publisher.Publish(ctx, payload); err != nil {
 		return nil, err
 	}
 	return map[string]interface{}{"status": "queued"}, nil
+}
+
+func (se *StreamExecutor) Close() error {
+	if se == nil {
+		return nil
+	}
+	if closer, ok := se.publisher.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+func (se *StreamExecutor) InvocationResolverDescriptor() any {
+	return map[string]any{"type": "stream", "config": cloneStringAnyMap(se.descriptor), "source_type": se.source.Type, "reference": se.source.Ref, "detail": se.source.Detail}
 }
 
 func (se *StreamExecutor) SourceInfo() verb.SourceInfo {
@@ -1037,11 +1622,13 @@ func (se *StreamExecutor) SourceInfo() verb.SourceInfo {
 
 // OCIExecutor resolves a verb executor from an OCI extension bundle.
 type OCIExecutor struct {
-	ref      string
-	verbName string
-	once     sync.Once
-	executor VerbExecutor
-	err      error
+	ref          string
+	verbName     string
+	verification OCIVerificationPolicy
+	verifierPath string
+	once         sync.Once
+	executor     VerbExecutor
+	err          error
 }
 
 func NewOCIExecutor(verbName string, config map[string]interface{}) (*OCIExecutor, error) {
@@ -1052,7 +1639,11 @@ func NewOCIExecutor(verbName string, config map[string]interface{}) (*OCIExecuto
 	if raw, ok := config["verb"].(string); ok && raw != "" {
 		verbName = raw
 	}
-	return &OCIExecutor{ref: ref, verbName: verbName}, nil
+	verifierPath, _ := config["signatureVerifier"].(string)
+	if strings.TrimSpace(verifierPath) == "" {
+		return nil, fmt.Errorf("oci target requires signatureVerifier")
+	}
+	return &OCIExecutor{ref: ref, verbName: verbName, verifierPath: verifierPath, verification: OCIVerificationPolicy{RequireSignature: true, Verifier: CommandOCISignatureVerifier{Path: verifierPath}}}, nil
 }
 
 func (oe *OCIExecutor) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -1062,8 +1653,31 @@ func (oe *OCIExecutor) Execute(ctx context.Context, args map[string]interface{})
 	return oe.executor.Execute(ctx, args)
 }
 
+func (oe *OCIExecutor) Invoke(ctx context.Context, request invocation.Request) invocation.Outcome {
+	if err := oe.resolve(ctx); err != nil {
+		return invocation.Outcome{Class: invocation.OutcomePermanentFailure, Err: err}
+	}
+	aware, ok := any(oe.executor).(invocation.Executor)
+	if !ok {
+		return invocation.Outcome{Class: invocation.OutcomePermanentFailure, Err: fmt.Errorf("OCI-resolved executor is not invocation-aware")}
+	}
+	return aware.Invoke(ctx, request)
+}
+
 func (oe *OCIExecutor) Warmup(ctx context.Context) error {
 	return oe.resolve(ctx)
+}
+
+func (oe *OCIExecutor) Close() error {
+	oe.once.Do(func() { oe.err = fmt.Errorf("OCI executor was closed before resolution") })
+	if closer, ok := oe.executor.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+func (oe *OCIExecutor) InvocationResolverDescriptor() any {
+	return map[string]any{"type": "oci", "reference": oe.ref, "verb": oe.verbName, "signature_verification": "required", "signature_verifier": oe.verifierPath}
 }
 
 func (oe *OCIExecutor) SourceInfo() verb.SourceInfo {
@@ -1072,7 +1686,7 @@ func (oe *OCIExecutor) SourceInfo() verb.SourceInfo {
 
 func (oe *OCIExecutor) resolve(ctx context.Context) error {
 	oe.once.Do(func() {
-		executors, err := loadOCIBundleExecutors(ctx, oe.ref)
+		executors, err := loadOCIBundleExecutors(ctx, oe.ref, oe.verification)
 		if err != nil {
 			oe.err = err
 			return
@@ -1093,8 +1707,8 @@ func (oe *OCIExecutor) resolve(ctx context.Context) error {
 	return nil
 }
 
-func loadOCIBundleExecutors(ctx context.Context, ref string) (map[string]VerbExecutor, error) {
-	loaders, cleanup, err := loadOCIBundleLoaders(ref)
+func loadOCIBundleExecutors(ctx context.Context, ref string, policy OCIVerificationPolicy) (map[string]VerbExecutor, error) {
+	loaders, cleanup, err := loadOCIBundleLoaders(ctx, ref, policy)
 	if err != nil {
 		return nil, err
 	}
@@ -1131,6 +1745,16 @@ func LoadFromDirectory(dirPath string) ([]Loader, error) {
 		case strings.HasSuffix(path, ".schema.json"):
 			name := filepath.Base(path[:len(path)-12]) // Remove .schema.json
 			loaders = append(loaders, NewJSONSchemaLoader(name, path))
+		case filepath.Ext(path) == ".eff" || filepath.Ext(path) == ".effx":
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return readErr
+			}
+			relative, relativeErr := filepath.Rel(dirPath, path)
+			if relativeErr != nil {
+				return relativeErr
+			}
+			loaders = append(loaders, NewStaticSourceLoader(filepath.Base(path), filepath.ToSlash(relative), data))
 		}
 
 		return nil

@@ -72,8 +72,12 @@ func (s *Spec) Execute(ctx context.Context, facts effectus.Facts, ex effectus.Ex
 			return ctx.Err()
 		}
 
-		// Evaluate rule predicates using facts directly
-		if !schema.EvaluatePredicatesWithFacts(rule.Predicates, facts) {
+		// Evaluate rule predicates using facts directly.
+		matched, err := schema.EvaluatePredicatesWithFactsE(rule.Predicates, facts)
+		if err != nil {
+			return fmt.Errorf("evaluating predicates for rule %s: %w", rule.Name, err)
+		}
+		if !matched {
 			continue
 		}
 

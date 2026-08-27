@@ -5,6 +5,8 @@ import (
 	"time"
 
 	effectus "github.com/effectus/effectus-go"
+	"github.com/effectus/effectus-go/invocation"
+	"github.com/effectus/effectus-go/schema/fencing"
 	"github.com/effectus/effectus-go/schema/types"
 	"github.com/stretchr/testify/require"
 )
@@ -25,6 +27,8 @@ func TestStaleUnlockDoesNotDeleteReplacementLock(t *testing.T) {
 
 	second, err := system.AcquireLock(types.CapabilityModify, "account-1", "second")
 	require.NoError(t, err)
+	require.Equal(t, fencing.GuaranteeLocalAdvisory, second.Guarantee)
+	require.Equal(t, invocation.FencingLocalLockOnly, second.FencingStatus)
 	require.Greater(t, second.FenceToken, first.FenceToken)
 
 	first.Unlock()

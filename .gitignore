@@ -40,7 +40,13 @@ bin/
 **/.DS_Store
 
 # Generated assets
-gen/
+# Commit reproducible Go protobuf bindings. Ignore other generated clients.
+gen/*
+!gen/effectus/
+gen/effectus/*
+!gen/effectus/v1/
+gen/effectus/v1/*
+!gen/effectus/v1/*.pb.go
 node_modules/
 coverage.html
 

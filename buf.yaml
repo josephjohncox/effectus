@@ -21,3 +21,4 @@ build:
   excludes:
     - examples/
     - tests/
+    - tools/vscode-extension/node_modules/

@@ -1,0 +1,184 @@
+syntax = "proto3";
+
+package effectus.v1;
+
+option go_package = "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1";
+
+// RuleArtifact is the portable, callback-free execution representation.
+message RuleArtifact {
+  uint32 format_version = 1;
+  CompilerMetadata compiler = 2;
+  string environment_digest = 3;
+  repeated Plan plans = 4;
+}
+
+message CompilerMetadata {
+  string name = 1;
+  string version = 2;
+  string build_digest = 3;
+}
+
+enum SourceDialect {
+  SOURCE_DIALECT_UNSPECIFIED = 0;
+  SOURCE_DIALECT_LIST = 1;
+  SOURCE_DIALECT_FLOW = 2;
+}
+
+message Plan {
+  string id = 1;
+  SourceDialect source_dialect = 2;
+  uint32 source_order = 3;
+  sint32 priority = 4;
+  Predicate predicate = 5;
+  ExecutionPolicy execution_policy = 6;
+  repeated Step steps = 7;
+}
+
+enum ExecutionPolicy {
+  EXECUTION_POLICY_UNSPECIFIED = 0;
+  EXECUTION_POLICY_DURABLE_FAIL_FAST = 1;
+  EXECUTION_POLICY_DURABLE_COMPENSATING = 2;
+}
+
+message Predicate {
+  Expression expression = 1;
+}
+
+message Expression {
+  oneof kind {
+    Literal literal = 1;
+    string fact_path = 2;
+    UnaryExpression unary = 3;
+    BinaryExpression binary = 4;
+    FunctionCall call = 5;
+  }
+}
+
+enum UnaryOperator {
+  UNARY_OPERATOR_UNSPECIFIED = 0;
+  UNARY_OPERATOR_NOT = 1;
+  UNARY_OPERATOR_NEGATE = 2;
+}
+
+message UnaryExpression {
+  UnaryOperator operator = 1;
+  Expression operand = 2;
+}
+
+enum BinaryOperator {
+  BINARY_OPERATOR_UNSPECIFIED = 0;
+  BINARY_OPERATOR_EQUAL = 1;
+  BINARY_OPERATOR_NOT_EQUAL = 2;
+  BINARY_OPERATOR_GREATER = 3;
+  BINARY_OPERATOR_GREATER_EQUAL = 4;
+  BINARY_OPERATOR_LESS = 5;
+  BINARY_OPERATOR_LESS_EQUAL = 6;
+  BINARY_OPERATOR_AND = 7;
+  BINARY_OPERATOR_OR = 8;
+  BINARY_OPERATOR_IN = 9;
+  BINARY_OPERATOR_CONTAINS = 10;
+  BINARY_OPERATOR_ADD = 11;
+  BINARY_OPERATOR_SUBTRACT = 12;
+  BINARY_OPERATOR_MULTIPLY = 13;
+  BINARY_OPERATOR_DIVIDE = 14;
+  BINARY_OPERATOR_MODULO = 15;
+  BINARY_OPERATOR_MATCHES = 16;
+  BINARY_OPERATOR_STARTS_WITH = 17;
+  BINARY_OPERATOR_ENDS_WITH = 18;
+}
+
+message BinaryExpression {
+  BinaryOperator operator = 1;
+  Expression left = 2;
+  Expression right = 3;
+}
+
+message FunctionCall {
+  string function = 1;
+  repeated Expression arguments = 2;
+}
+
+message Step {
+  string id = 1;
+  uint32 ordinal = 2;
+  string verb = 3;
+  string contract_hash = 4;
+  repeated Argument arguments = 5;
+  optional uint32 result_slot = 6;
+  CompensationContract compensation = 7;
+  CheckedRetryPolicy retry_policy = 8;
+  IdempotencyPolicy idempotency_policy = 9;
+  FencingRequirement fencing_requirement = 10;
+}
+
+// CompensationContract freezes the inverse selected during compilation.
+message CompensationContract {
+  string inverse_verb = 1;
+  string inverse_contract_hash = 2;
+}
+
+// RetryPolicy is part of a checked verb contract, not mutable adapter state.
+message CheckedRetryPolicy {
+  uint32 max_attempts = 1;
+  uint64 initial_backoff_millis = 2;
+  uint64 max_backoff_millis = 3;
+}
+
+enum IdempotencyPolicy {
+  IDEMPOTENCY_POLICY_UNSPECIFIED = 0;
+  IDEMPOTENCY_POLICY_NONE = 1;
+  IDEMPOTENCY_POLICY_KEY_REQUIRED = 2;
+  IDEMPOTENCY_POLICY_SINK_GUARANTEED = 3;
+}
+
+enum FencingRequirement {
+  FENCING_REQUIREMENT_UNSPECIFIED = 0;
+  FENCING_REQUIREMENT_NONE = 1;
+  FENCING_REQUIREMENT_REQUIRED = 2;
+}
+
+message Argument {
+  string name = 1;
+  Value value = 2;
+}
+
+// Value deliberately distinguishes literals, fact paths, and prior results.
+message Value {
+  oneof kind {
+    Literal literal = 1;
+    string fact_path = 2;
+    uint32 result_slot = 3;
+  }
+}
+
+message Literal {
+  oneof kind {
+    NullValue null = 1;
+    bool bool_value = 2;
+    sint64 int_value = 3;
+    double double_value = 4;
+    string string_value = 5;
+    bytes bytes_value = 6;
+    LiteralList list_value = 7;
+    LiteralObject object_value = 8;
+  }
+}
+
+enum NullValue {
+  NULL_VALUE_UNSPECIFIED = 0;
+  NULL_VALUE_NULL = 1;
+}
+
+message LiteralList {
+  repeated Literal values = 1;
+}
+
+message LiteralObject {
+  // Fields are ordered lexicographically by name in checked artifacts.
+  repeated LiteralField fields = 1;
+}
+
+message LiteralField {
+  string name = 1;
+  Literal value = 2;
+}

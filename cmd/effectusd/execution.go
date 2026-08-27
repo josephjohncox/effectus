@@ -206,11 +206,20 @@ func (s *serverState) ExecuteFacts(ctx context.Context, env factEnvelope) error 
 	if s == nil {
 		return fmt.Errorf("runtime not initialized")
 	}
+	return s.executeFactsOnGeneration(ctx, env, s.generationSnapshot())
+}
+
+func (s *serverState) executeFactsOnGeneration(ctx context.Context, env factEnvelope, generation *runtimeGeneration) error {
+	if generation == nil {
+		return fmt.Errorf("runtime generation is required")
+	}
 	if env.Universe == "" {
 		env.Universe = "default"
 	}
 
-	bundle, executionTypes, verbRegistry := s.executionRuntimeSnapshot()
+	bundle := generation.bundle
+	executionTypes := generation.execTypes
+	verbRegistry := generation.verbs
 	if bundle == nil {
 		return fmt.Errorf("bundle not loaded")
 	}
@@ -229,7 +238,11 @@ func (s *serverState) ExecuteFacts(ctx context.Context, env factEnvelope) error 
 		ctx = context.Background()
 	}
 	if ctx.Value(requestIDContextKey) == nil {
-		ctx = context.WithValue(ctx, requestIDContextKey, fmt.Sprintf("%s-%d", env.Universe, time.Now().UnixNano()))
+		requestID := env.ExecutionID
+		if requestID == "" {
+			requestID = fmt.Sprintf("%s-%d", env.Universe, time.Now().UnixNano())
+		}
+		ctx = context.WithValue(ctx, requestIDContextKey, requestID)
 	}
 
 	if executionTypes == nil {

@@ -3,15 +3,18 @@ package unified
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"archive/tar"
 
 	"github.com/effectus/effectus-go/internal/safetar"
+	"github.com/effectus/effectus-go/loader"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
@@ -174,34 +177,62 @@ func (p *OCIBundlePusher) createLayerTar(dir string, files []string) ([]byte, er
 
 // OCIBundlePuller handles pulling bundles from OCI registries
 type OCIBundlePuller struct {
-	outputDir string
+	outputDir    string
+	verification loader.OCIVerificationPolicy
 }
 
 // NewOCIBundlePuller creates a new OCI bundle puller
 func NewOCIBundlePuller(outputDir string) *OCIBundlePuller {
-	return &OCIBundlePuller{
-		outputDir: outputDir,
-	}
+	return NewOCIBundlePullerWithPolicy(outputDir, loader.OCIVerificationPolicy{})
+}
+func NewOCIBundlePullerWithPolicy(outputDir string, verification loader.OCIVerificationPolicy) *OCIBundlePuller {
+	return &OCIBundlePuller{outputDir: outputDir, verification: verification}
 }
 
 // Pull pulls a bundle from an OCI registry
 func (p *OCIBundlePuller) Pull(imageRef string) (*Bundle, error) {
-	bundle, _, err := p.PullWithData(imageRef)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	bundle, _, err := p.PullWithDataContext(ctx, imageRef)
 	return bundle, err
 }
 
 // PullWithData pulls a bundle and returns the raw bundle metadata bytes.
 func (p *OCIBundlePuller) PullWithData(imageRef string) (*Bundle, []byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return p.PullWithDataContext(ctx, imageRef)
+}
+
+func (p *OCIBundlePuller) PullWithDataContext(ctx context.Context, imageRef string) (*Bundle, []byte, error) {
 	// Parse the reference
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parsing reference: %w", err)
 	}
+	if _, pinned := ref.(name.Digest); !pinned {
+		return nil, nil, fmt.Errorf("OCI bundle reference must be pinned by digest")
+	}
 
 	// Pull the image
-	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	img, err := remote.Image(ref, remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain))
 	if err != nil {
 		return nil, nil, fmt.Errorf("pulling image: %w", err)
+	}
+	actualDigest, err := img.Digest()
+	if err != nil {
+		return nil, nil, fmt.Errorf("read OCI bundle digest: %w", err)
+	}
+	if actualDigest.String() != ref.Identifier() {
+		return nil, nil, fmt.Errorf("OCI bundle digest mismatch: expected %s, got %s", ref.Identifier(), actualDigest.String())
+	}
+	if p.verification.RequireSignature && p.verification.Verifier == nil {
+		return nil, nil, fmt.Errorf("OCI bundle signature verification is required but no verifier is configured")
+	}
+	if p.verification.Verifier != nil {
+		if err := p.verification.Verifier.Verify(ctx, ref.Name(), actualDigest.String()); err != nil {
+			return nil, nil, fmt.Errorf("verify OCI bundle signature: %w", err)
+		}
 	}
 
 	// Get the layers
@@ -223,9 +254,13 @@ func (p *OCIBundlePuller) PullWithData(imageRef string) (*Bundle, []byte, error)
 	}
 	defer bundleContent.Close()
 
-	bundleData, err := io.ReadAll(bundleContent)
+	const maxBundleMetadataBytes = 4 << 20
+	bundleData, err := io.ReadAll(io.LimitReader(bundleContent, maxBundleMetadataBytes+1))
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading bundle data: %w", err)
+	}
+	if len(bundleData) > maxBundleMetadataBytes {
+		return nil, nil, fmt.Errorf("OCI bundle metadata exceeds %d bytes", maxBundleMetadataBytes)
 	}
 
 	var bundle Bundle

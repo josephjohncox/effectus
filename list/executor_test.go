@@ -57,3 +57,16 @@ func TestListSagaRequiresStore(t *testing.T) {
 	)
 	require.EqualError(t, err, "saga execution requires a saga store")
 }
+
+func TestExecuteRulePropagatesPredicateErrors(t *testing.T) {
+	predicateRegistry := schema.NewRegistry()
+	predicate, err := predicateRegistry.NewPredicate("missing.value > 0")
+	require.NoError(t, err)
+
+	executor := NewExecutor(verb.NewRegistry(nil))
+	_, err = executor.ExecuteRule(context.Background(), &CompiledRule{
+		Name:       "predicate-error",
+		Predicates: []*schema.Predicate{predicate},
+	}, common.NewBasicFacts(map[string]interface{}{"present": true}, nil))
+	require.ErrorContains(t, err, "evaluating predicates")
+}

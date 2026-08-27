@@ -168,7 +168,7 @@ loader := loader.NewProtoVerbLoader("proto-verbs", myProtoMessage)
 Use for distributed extension packages:
 
 ```go
-loader := loader.NewOCIBundleLoader("external", "registry.io/my-extensions:v1.0.0")
+loader := loader.NewOCIBundleLoader("external", "registry.io/my-extensions@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 ```
 
 **Benefits:**
@@ -245,7 +245,7 @@ func initializeExtensions() (*schema.Registry, *verb.VerbRegistry, error) {
     }
     
     // External packages
-    em.AddLoader(loader.NewOCIBundleLoader("external", "registry.io/effectus-extensions:latest"))
+    em.AddLoader(loader.NewOCIBundleLoader("external", "registry.io/effectus-extensions@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"))
     
     // Load everything
     if err := schema.LoadExtensionsIntoRegistries(em, registry, verbRegistry); err != nil {

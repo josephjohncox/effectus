@@ -184,10 +184,17 @@ func TestCompileArgs(t *testing.T) {
 					Value: nil,
 				},
 			},
-			expected: map[string]interface{}{
-				"empty_arg": nil,
+			expected: nil,
+			wantErr:  true,
+		},
+		{
+			name: "Duplicate argument",
+			args: []*ast.StepArg{
+				{Name: "value", Value: &ast.ArgValue{Literal: &ast.Literal{Int: intPtr(1)}}},
+				{Name: "value", Value: &ast.ArgValue{Literal: &ast.Literal{Int: intPtr(2)}}},
 			},
-			wantErr: false,
+			expected: nil,
+			wantErr:  true,
 		},
 		{
 			name: "Complex literals",

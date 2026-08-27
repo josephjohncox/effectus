@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -243,14 +244,24 @@ func TestVerbRegistrySwapPublishesCoherentExecutionTypes(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestValidateFactSourceRejectsUnimplementedAndUnknownSources(t *testing.T) {
+func TestValidateFactSourceAcceptsKafkaAndRejectsUnsupportedContracts(t *testing.T) {
 	originalSource := *factSource
 	originalBrokers := *kafkaBrokers
 	originalTopic := *kafkaTopic
+	originalGroup := *kafkaConsumerGroup
+	originalCluster := *kafkaClusterNamespace
+	originalContract := *kafkaAckContract
+	originalLedger := *kafkaDeliveryLedger
+	originalDSN := *sagaPgDSN
 	t.Cleanup(func() {
 		*factSource = originalSource
 		*kafkaBrokers = originalBrokers
 		*kafkaTopic = originalTopic
+		*kafkaConsumerGroup = originalGroup
+		*kafkaClusterNamespace = originalCluster
+		*kafkaAckContract = originalContract
+		*kafkaDeliveryLedger = originalLedger
+		*sagaPgDSN = originalDSN
 	})
 
 	*factSource = "http"
@@ -259,10 +270,41 @@ func TestValidateFactSourceRejectsUnimplementedAndUnknownSources(t *testing.T) {
 	*factSource = "kafka"
 	*kafkaBrokers = "broker:9092"
 	*kafkaTopic = "facts"
-	require.ErrorContains(t, validateFactSource(), "Kafka fact source is not implemented")
+	*kafkaConsumerGroup = "effectusd-test"
+	*kafkaClusterNamespace = "test"
+	*kafkaAckContract = "completed_processing"
+	*kafkaDeliveryLedger = filepath.Join(t.TempDir(), "deliveries.jsonl")
+	*sagaPgDSN = "postgres://configured"
+	require.NoError(t, validateFactSource())
+
+	*kafkaAckContract = "durable_acceptance"
+	require.NoError(t, validateFactSource())
 
 	*factSource = "unknown"
 	require.ErrorContains(t, validateFactSource(), "unsupported fact source")
+}
+
+func TestAPIAuthenticationDoesNotReadTokensFromURLs(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/status?token=secret", nil)
+	require.Empty(t, extractToken(request))
+	request.Header.Set("Authorization", "Bearer secret")
+	require.Equal(t, "secret", extractToken(request))
+}
+
+func TestExecutableGenerationDigestIncludesVerbSource(t *testing.T) {
+	bundle := &unified.Bundle{Name: "orders", Version: "1"}
+	first := verb.NewRegistry(types.NewTypeSystem())
+	second := verb.NewRegistry(types.NewTypeSystem())
+	for _, registry := range []*verb.Registry{first, second} {
+		require.NoError(t, registry.RegisterVerb(&verb.Spec{Name: "charge", ArgTypes: map[string]string{}, ReturnType: "void"}))
+	}
+	first.SetVerbSource("charge", verb.SourceInfo{Type: verb.SourceHTTP, Ref: "https://one.example"})
+	second.SetVerbSource("charge", verb.SourceInfo{Type: verb.SourceHTTP, Ref: "https://two.example"})
+	firstDigest, err := executableGenerationDigest(bundle, first)
+	require.NoError(t, err)
+	secondDigest, err := executableGenerationDigest(bundle, second)
+	require.NoError(t, err)
+	require.NotEqual(t, firstDigest, secondDigest)
 }
 
 func TestFileFactStorePersists(t *testing.T) {
@@ -472,6 +514,22 @@ func TestBuildAPIAuthRejectsIncompleteConfiguration(t *testing.T) {
 	require.ErrorContains(t, err, "requires at least one configured token")
 	_, err = buildAPIAuth("unknown", "token", "")
 	require.ErrorContains(t, err, "unsupported API authentication mode")
+}
+
+type kafkaReadinessFunc func() error
+
+func (function kafkaReadinessFunc) Ready() error { return function() }
+
+func TestReadyEndpointIncludesKafkaConsumerState(t *testing.T) {
+	typeSystem := types.NewTypeSystem()
+	state := newServerState(&unified.Bundle{Name: "bundle", Version: "1"}, nil, nil, factStoreConfig{}, apiAuth{}, nil, nil, typeSystem, nil, verb.NewRegistry(typeSystem), false, nil, false, nil, nil)
+	state.SetPhase(phaseRunning)
+	state.SetKafkaSource(kafkaReadinessFunc(func() error { return errors.New("commit coordinator unavailable") }))
+	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	response := httptest.NewRecorder()
+	state.handleReady(response, request)
+	require.Equal(t, http.StatusServiceUnavailable, response.Code)
+	require.Contains(t, response.Body.String(), "commit coordinator unavailable")
 }
 
 func TestHealthAndReadyEndpoints(t *testing.T) {

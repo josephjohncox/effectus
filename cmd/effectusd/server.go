@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/effectus/effectus-go/adapters"
 	"github.com/effectus/effectus-go/pathutil"
+	effectusruntime "github.com/effectus/effectus-go/runtime"
 	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/schema/capability"
 	"github.com/effectus/effectus-go/schema/types"
@@ -28,11 +30,14 @@ import (
 )
 
 type factEnvelope struct {
-	Universe  string                 `json:"universe"`
-	Facts     map[string]interface{} `json:"facts"`
-	Source    string                 `json:"source,omitempty"`
-	Received  time.Time              `json:"received_at"`
-	Namespace string                 `json:"namespace,omitempty"`
+	Universe         string                 `json:"universe"`
+	Facts            map[string]interface{} `json:"facts"`
+	Source           string                 `json:"source,omitempty"`
+	Received         time.Time              `json:"received_at"`
+	Namespace        string                 `json:"namespace,omitempty"`
+	DeliveryID       string                 `json:"-"`
+	ExecutionID      string                 `json:"-"`
+	GenerationDigest string                 `json:"-"`
 }
 
 type runtimeGeneration struct {
@@ -55,22 +60,25 @@ const (
 )
 
 type serverState struct {
-	mu         sync.RWMutex
-	generation *runtimeGeneration
-	phase      processPhase
-	startedAt  time.Time
-	sources    []adapters.SchemaSourceConfig
-	rulesOn    bool
-	history    *bundleHistory
-	sagaOn     bool
-	sagaStore  schema.SagaStore
-	capSystem  *capability.CapabilitySystem
-	factStore  factStore
-	factConfig factStoreConfig
-	factCh     chan<- factEnvelope
-	auth       apiAuth
-	limiter    *rateLimiter
-	acl        *aclMatcher
+	mu            sync.RWMutex
+	generation    *runtimeGeneration
+	phase         processPhase
+	startedAt     time.Time
+	sources       []adapters.SchemaSourceConfig
+	rulesOn       bool
+	history       *bundleHistory
+	sagaOn        bool
+	sagaStore     schema.SagaStore
+	capSystem     *capability.CapabilitySystem
+	factStore     factStore
+	factConfig    factStoreConfig
+	factCh        chan<- factEnvelope
+	auth          apiAuth
+	limiter       *rateLimiter
+	acl           *aclMatcher
+	kafkaReady    interface{ Ready() error }
+	grpcReady     interface{ Ready() error }
+	checkedEngine *effectusruntime.Engine
 }
 
 func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store factStore, config factStoreConfig, auth apiAuth, limiter *rateLimiter, acl *aclMatcher, typeSystem *types.TypeSystem, sources []adapters.SchemaSourceConfig, verbReg *verb.Registry, rulesHotload bool, history *bundleHistory, sagaEnabled bool, sagaStore schema.SagaStore, capSystem *capability.CapabilitySystem) *serverState {
@@ -94,9 +102,20 @@ func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store fa
 	return state
 }
 
+func (s *serverState) SetCheckedEngine(engine *effectusruntime.Engine) {
+	s.mu.Lock()
+	s.checkedEngine = engine
+	s.mu.Unlock()
+}
+
 func (s *serverState) buildGeneration(id uint64, bundle *unified.Bundle, typeSystem *types.TypeSystem, verbRegistry *verb.Registry) *runtimeGeneration {
 	configuredBundle := configuredBundleCopy(bundle, verbRegistry, s.sagaOn, s.sagaStore, s.capSystem)
-	digest, _ := unified.BundleDigest(configuredBundle)
+	digest, err := executableGenerationDigest(configuredBundle, verbRegistry)
+	if err != nil {
+		// Generation construction has no error return for compatibility. An
+		// invalid digest is never treated as a stable execution identity.
+		digest = fmt.Sprintf("invalid-generation-%d", id)
+	}
 	return &runtimeGeneration{
 		id:           id,
 		bundle:       configuredBundle,
@@ -106,6 +125,46 @@ func (s *serverState) buildGeneration(id uint64, bundle *unified.Bundle, typeSys
 		verbs:        verbRegistry,
 		publishedAt:  time.Now(),
 	}
+}
+
+func executableGenerationDigest(bundle *unified.Bundle, registry *verb.Registry) (string, error) {
+	bundleDigest, err := unified.BundleDigest(bundle)
+	if err != nil {
+		return "", err
+	}
+	type executableSource struct {
+		Name   string          `json:"name"`
+		Source verb.SourceInfo `json:"source"`
+		Type   string          `json:"executor_type"`
+	}
+	sources := make([]executableSource, 0)
+	if registry != nil {
+		for _, spec := range registry.GetAllVerbs() {
+			if spec == nil {
+				continue
+			}
+			source, _ := registry.GetVerbSource(spec.Name)
+			executorType := "<nil>"
+			if executor := unwrapExecutor(spec.Executor); executor != nil {
+				executorType = reflect.TypeOf(executor).String()
+			}
+			sources = append(sources, executableSource{Name: spec.Name, Source: source, Type: executorType})
+		}
+	}
+	verbHash := ""
+	if registry != nil {
+		verbHash = registry.GetVerbHash()
+	}
+	payload, err := json.Marshal(struct {
+		BundleDigest string             `json:"bundle_digest"`
+		VerbHash     string             `json:"verb_hash"`
+		Sources      []executableSource `json:"sources"`
+	}{BundleDigest: bundleDigest, VerbHash: verbHash, Sources: sources})
+	if err != nil {
+		return "", fmt.Errorf("marshal executable generation identity: %w", err)
+	}
+	sum := sha256.Sum256(payload)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func (s *serverState) SetBundle(bundle *unified.Bundle) {
@@ -194,6 +253,18 @@ func (s *serverState) generationSnapshot() *runtimeGeneration {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.generation
+}
+
+func (s *serverState) SetKafkaSource(source interface{ Ready() error }) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.kafkaReady = source
+}
+
+func (s *serverState) SetGRPCServer(server interface{ Ready() error }) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.grpcReady = server
 }
 
 func (s *serverState) SetPhase(phase processPhase) {
@@ -307,9 +378,6 @@ func extractToken(r *http.Request) string {
 		return token
 	}
 	if token := strings.TrimSpace(r.Header.Get("X-Effectus-Read-Token")); token != "" {
-		return token
-	}
-	if token := strings.TrimSpace(r.URL.Query().Get("token")); token != "" {
 		return token
 	}
 	return ""
@@ -1503,6 +1571,21 @@ func (s *serverState) handleReady(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "runtime generation is incomplete")
 		return
 	}
+	s.mu.RLock()
+	kafkaReady, grpcReady := s.kafkaReady, s.grpcReady
+	s.mu.RUnlock()
+	if kafkaReady != nil {
+		if err := kafkaReady.Ready(); err != nil {
+			writeJSONError(w, http.StatusServiceUnavailable, fmt.Sprintf("Kafka consumer is not ready: %v", err))
+			return
+		}
+	}
+	if grpcReady != nil {
+		if err := grpcReady.Ready(); err != nil {
+			writeJSONError(w, http.StatusServiceUnavailable, fmt.Sprintf("gRPC execution service is not ready: %v", err))
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ready",
 		"bundle":  bundle.Name,
@@ -1527,16 +1610,51 @@ func (s *serverState) handleFacts(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "facts are required")
 			return
 		}
-		if err := s.IngestFacts(factEnvelope{Universe: req.Universe, Facts: req.Facts}); err != nil {
-			if errors.Is(err, errFactQueueFull) {
-				w.Header().Set("Retry-After", "1")
-				writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+		s.mu.RLock()
+		engine, generation := s.checkedEngine, s.generation
+		s.mu.RUnlock()
+		if engine == nil { // Compatibility-only embedded server states; effectusd always installs the checked engine.
+			if err := s.IngestFacts(factEnvelope{Universe: req.Universe, Facts: req.Facts}); err != nil {
+				if errors.Is(err, errFactQueueFull) {
+					w.Header().Set("Retry-After", "1")
+					writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+					return
+				}
+				writeJSONError(w, http.StatusConflict, err.Error())
 				return
 			}
+			writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+			return
+		}
+		key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+		if key == "" {
+			writeJSONError(w, http.StatusBadRequest, "Idempotency-Key header is required")
+			return
+		}
+		if generation == nil || generation.bundle == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "checked execution generation is unavailable")
+			return
+		}
+		namespace := strings.TrimSpace(req.Universe)
+		if namespace == "" {
+			namespace = "default"
+		}
+		ruleset := generation.bundle.Name
+		version := generation.bundle.Version
+		executionID := schema.StableExecutionID(namespace, key, ruleset, version)
+		admissionID := schema.StableAdmissionID(namespace, key, ruleset, version)
+		result, err := engine.Execute(r.Context(), effectusruntime.ExecuteRequest{Admission: &effectusruntime.Admission{ExecutionID: executionID, AdmissionID: admissionID, TenantNamespace: namespace, Ruleset: ruleset, Version: version, Facts: req.Facts}, WaitMode: effectusruntime.WaitAccepted})
+		if err != nil {
 			writeJSONError(w, http.StatusConflict, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+		if s.factStore != nil {
+			if err := s.factStore.Update(namespace, req.Facts); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "facts were accepted but local projection failed")
+				return
+			}
+		}
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted", "execution_id": result.ExecutionID, "generation_digest": result.GenerationDigest})
 	case http.MethodGet:
 		universe := r.URL.Query().Get("universe")
 		if universe == "" {

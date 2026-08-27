@@ -353,10 +353,13 @@ sql-validate: sql-generate-check
 	cd runtime && sqlc vet
 	@echo "OK Validation complete"
 
-# Lint SQL files (requires sqlfluff)
+# Lint style-clean durable migrations. Older migrations remain a frozen baseline.
 sql-lint:
-	@echo "Linting SQL files..."
-	@if command -v sqlfluff >/dev/null 2>&1; then sqlfluff lint {{MIGRATIONS_DIR}}; else echo "WARN  sqlfluff not installed. Install with: pip install sqlfluff"; fi
+	@echo "Linting durable runtime migrations..."
+	@command -v sqlfluff >/dev/null 2>&1 || { echo "ERROR sqlfluff is required. Install sqlfluff 3.5.0"; exit 1; }
+	sqlfluff lint --dialect postgres \
+		schema/migrations/10002_execution_ledger.sql \
+		schema/migrations/10003_kafka_delivery_ledger.sql
 
 # Format SQL files (requires sqlfluff)
 sql-format:
@@ -599,13 +602,22 @@ docs-serve:
 release version:
 	git tag v{{version}}
 	git push origin v{{version}}
+	gh release view v{{version}} >/dev/null 2>&1 || gh release create v{{version}} --verify-tag --generate-notes
 	just buf-push
 
 # Create release binaries
 release-build:
-	GOOS=linux GOARCH=amd64 go build -o bin/effectusc-linux-amd64 ./cmd/effectusc
-	GOOS=darwin GOARCH=amd64 go build -o bin/effectusc-darwin-amd64 ./cmd/effectusc
-	GOOS=windows GOARCH=amd64 go build -o bin/effectusc-windows-amd64.exe ./cmd/effectusc
+	#!/usr/bin/env sh
+	set -eu
+	mkdir -p bin
+	for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+		os="${target%/*}"
+		arch="${target#*/}"
+		suffix=""
+		if [ "$os" = windows ]; then suffix=".exe"; fi
+		CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -o "bin/effectusc-$os-$arch$suffix" ./cmd/effectusc
+		CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -o "bin/effectusd-$os-$arch$suffix" ./cmd/effectusd
+	done
 
 # Create GitHub release (requires gh CLI)
 release-gh version:

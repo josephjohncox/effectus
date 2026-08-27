@@ -7,7 +7,22 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
+
+func TestExtractTarLayerRejectsLinks(t *testing.T) {
+	for _, typeFlag := range []byte{tar.TypeSymlink, tar.TypeLink} {
+		t.Run(string(rune(typeFlag)), func(t *testing.T) {
+			var archive bytes.Buffer
+			writer := tar.NewWriter(&archive)
+			require.NoError(t, writer.WriteHeader(&tar.Header{Name: "link", Linkname: "../outside", Typeflag: typeFlag, Mode: 0o777}))
+			require.NoError(t, writer.Close())
+			err := extractTarLayer(bytes.NewReader(archive.Bytes()), t.TempDir())
+			require.Error(t, err)
+		})
+	}
+}
 
 func TestExtractTarLayerRejectsTraversal(t *testing.T) {
 	parent := t.TempDir()

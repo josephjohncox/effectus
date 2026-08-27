@@ -6,9 +6,10 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net"
+	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/effectus/effectus-go/runtime/internal/db"
@@ -22,8 +23,6 @@ import (
 
 //go:embed migrations/*.sql
 var embeddedMigrations embed.FS
-
-var migrationMu sync.Mutex
 
 // PostgresStorage implements RuleStorageBackend using sqlc and goose
 type PostgresStorage struct {
@@ -121,33 +120,32 @@ func NewPostgresStorage(config *PostgresStorageConfig) (*PostgresStorage, error)
 
 // runMigrations runs database migrations using goose
 func (p *PostgresStorage) runMigrations() error {
-	migrationMu.Lock()
-	defer migrationMu.Unlock()
-
-	migrationPath := p.config.MigrationsPath
-	if migrationPath == "" {
-		goose.SetBaseFS(embeddedMigrations)
-		defer goose.SetBaseFS(nil)
-		migrationPath = "migrations"
+	// Use a per-call provider. The legacy goose setters mutate package-global
+	// state and can race with the independently versioned saga migrations.
+	var migrations fs.FS
+	if p.config.MigrationsPath != "" {
+		migrations = os.DirFS(p.config.MigrationsPath)
+	} else {
+		var err error
+		migrations, err = fs.Sub(embeddedMigrations, "migrations")
+		if err != nil {
+			return fmt.Errorf("open embedded migrations: %w", err)
+		}
 	}
 
-	// Get a regular sql.DB connection for goose
 	db, err := sql.Open("postgres", p.config.DSN)
 	if err != nil {
 		return fmt.Errorf("failed to open database for migrations: %w", err)
 	}
 	defer db.Close()
 
-	// Set goose dialect
-	if err := goose.SetDialect("postgres"); err != nil {
-		return fmt.Errorf("failed to set goose dialect: %w", err)
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations)
+	if err != nil {
+		return fmt.Errorf("create migration provider: %w", err)
 	}
-
-	// Run migrations
-	if err := goose.Up(db, migrationPath); err != nil {
+	if _, err := provider.Up(context.Background()); err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
-
 	return nil
 }
 

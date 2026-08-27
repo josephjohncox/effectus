@@ -1,7 +1,11 @@
 package verb
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"plugin"
@@ -15,6 +19,13 @@ type Plugin interface {
 
 // LoadPlugins loads verb plugins from a directory
 func (r *Registry) LoadPlugins(dir string) error {
+	directoryInfo, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("stat verb plugins directory: %w", err)
+	}
+	if !directoryInfo.IsDir() || directoryInfo.Mode().Perm()&0o222 != 0 {
+		return fmt.Errorf("verb plugins directory must be a read-only directory")
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("reading verb plugins directory: %w", err)
@@ -32,6 +43,13 @@ func (r *Registry) LoadPlugins(dir string) error {
 		}
 
 		path := filepath.Join(dir, entry.Name())
+		info, err := os.Lstat(path)
+		if err != nil {
+			return fmt.Errorf("stat plugin %s: %w", entry.Name(), err)
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm()&0o222 != 0 {
+			return fmt.Errorf("plugin %s must be a read-only regular file", entry.Name())
+		}
 		if err := r.loadPlugin(path); err != nil {
 			return fmt.Errorf("loading plugin %s: %w", entry.Name(), err)
 		}
@@ -42,6 +60,18 @@ func (r *Registry) LoadPlugins(dir string) error {
 
 // loadPlugin loads a verb plugin from a .so file
 func (r *Registry) loadPlugin(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open plugin for digest: %w", err)
+	}
+	hash := sha256.New()
+	_, hashErr := io.Copy(hash, file)
+	closeErr := file.Close()
+	if hashErr != nil || closeErr != nil {
+		return fmt.Errorf("digest plugin: %v", errors.Join(hashErr, closeErr))
+	}
+	digest := hex.EncodeToString(hash.Sum(nil))
+
 	// Open the plugin
 	p, err := plugin.Open(path)
 	if err != nil {
@@ -66,7 +96,7 @@ func (r *Registry) loadPlugin(path string) error {
 		if err := r.RegisterVerb(verb); err != nil {
 			return fmt.Errorf("registering verb %s: %w", verb.Name, err)
 		}
-		r.SetVerbSource(verb.Name, SourceInfo{Type: SourcePlugin, Ref: path})
+		r.SetVerbSource(verb.Name, SourceInfo{Type: SourcePlugin, Ref: path, Detail: "sha256:" + digest})
 	}
 
 	return nil
