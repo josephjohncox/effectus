@@ -5,6 +5,7 @@ This example demonstrates how developers use protobuf schemas as the **single so
 ## 🎯 Why Proto-First?
 
 **Traditional Approach (JSON → Proto)**:
+
 ```json
 // verb.json (gets converted to proto)
 {
@@ -15,6 +16,7 @@ This example demonstrates how developers use protobuf schemas as the **single so
 ```
 
 **Proto-First Approach**:
+
 ```protobuf
 // send_email.proto (source of truth)
 message SendEmailInput {
@@ -139,13 +141,13 @@ buf generate
 **Go service implementation**:
 
 `company_example/service_implementation.go.example` is a source template. Generate the protocol packages before you rename it to a `.go` file.
+
 ```go
 package main
 
 import (
-    verbsv1 "acme.com/gen/go/acme/v1/verbs"
-    factsv1 "acme.com/gen/go/acme/v1/facts"
-    effectusv1 "github.com/effectus/effectus-go/gen/effectus/v1"
+    verbsv1 "github.com/effectus/examples/proto_driven_development/company_example/gen/go/acme/v1/verbs"
+    factsv1 "github.com/effectus/examples/proto_driven_development/company_example/gen/go/acme/v1/facts"
 )
 
 type NotificationService struct {
@@ -181,6 +183,7 @@ func (s *NotificationService) sendEmail(
 ```
 
 **Python Client**:
+
 ```python
 from acme.v1.verbs import send_notification_pb2
 from effectus.v1 import execution_pb2, execution_pb2_grpc
@@ -201,6 +204,7 @@ response = client.ExecuteRuleset(execution_pb2.ExecutionRequest(
 ```
 
 **TypeScript Client**:
+
 ```typescript
 import { SendNotificationInput, NotificationType } from './gen/acme/v1/verbs/SendNotification_pb';
 import { RulesetExecutionServiceClient } from './gen/effectus/v1/execution_connect';
@@ -297,6 +301,7 @@ git push origin feature/add-priority-field
 ```
 
 **CI/CD Integration**:
+
 ```yaml
 # .github/workflows/schemas.yml
 name: Schema Validation
@@ -448,4 +453,4 @@ func (s *NotificationService) ValidateInput(req proto.Message) error {
 3. **Implement adapters** for legacy systems
 4. **Phase out old systems** over time
 
-This proto-first approach transforms Effectus from a Go-centric system into a truly polyglot platform where schemas are the foundation for type-safe, multi-language rule execution across your entire organization. 
+This proto-first approach transforms Effectus from a Go-centric system into a truly polyglot platform where schemas are the foundation for type-safe, multi-language rule execution across your entire organization.

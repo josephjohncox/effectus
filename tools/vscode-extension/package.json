@@ -298,9 +298,8 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js",
+    "test": "npm run compile && npm run lint",
     "package": "vsce package",
     "deploy": "vsce publish"
   },
@@ -310,16 +309,14 @@
     "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^5.31.0",
     "@typescript-eslint/parser": "^5.31.0",
+    "@vscode/vsce": "^3.9.2",
     "eslint": "^8.20.0",
-    "typescript": "^4.9.4",
-    "vsce": "^2.10.0"
+    "typescript": "^4.9.4"
   },
   "dependencies": {
-    "axios": "^0.27.2",
-    "protobufjs": "^7.1.1",
     "vscode-languageclient": "^8.1.0",
-    "ws": "^8.8.1",
-    "yaml": "^2.1.1"
+    "ws": "^8.21.3",
+    "yaml": "^2.9.0"
   },
   "repository": {
     "type": "git",
@@ -328,7 +325,7 @@
   "bugs": {
     "url": "https://github.com/effectus/effectus-vscode/issues"
   },
-  "license": "MIT",
+  "license": "BSD-3-Clause",
   "author": "",
   "type": "commonjs",
   "homepage": "https://github.com/effectus/effectus-vscode#readme"

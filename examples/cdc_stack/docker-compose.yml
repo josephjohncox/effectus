@@ -19,7 +19,9 @@ services:
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
 
   mysql:
-    image: mysql:8.0
+    build:
+      context: ./mysql
+    image: effectus/mysql:8.0-secure
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: effectus_cdc
@@ -36,7 +38,9 @@ services:
       - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
 
   rabbitmq:
-    image: rabbitmq:3-management
+    build:
+      context: ./rabbitmq
+    image: effectus/rabbitmq:3-management-secure
     ports:
       - "5672:5672"
       - "15672:15672"

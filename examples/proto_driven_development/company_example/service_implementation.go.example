@@ -11,9 +11,9 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	// Generated from our proto files
-	verbsv1 "acme.com/gen/go/acme/v1/verbs"
-	effectusv1 "github.com/effectus/effectus-go/gen/effectus/v1"
+	// Generated from the example proto files.
+	"github.com/effectus/effectus-go/schema/verb"
+	verbsv1 "github.com/effectus/examples/proto_driven_development/company_example/gen/go/acme/v1/verbs"
 )
 
 // NotificationService implements the send_notification verb
@@ -109,21 +109,20 @@ func (s *NotificationService) Execute(
 	}, nil
 }
 
-// Integration with Effectus runtime - register the verb
-func (s *NotificationService) RegisterWithEffectus(runtime *effectusv1.ExecutionRuntime) error {
-	// Register this verb implementation with Effectus
-	// The runtime will handle routing based on the proto schema
-	verbSpec := &effectusv1.VerbSpec{
-		Name:    "send_notification",
-		Version: "1.0.0",
-		// Proto schema is automatically derived from the protobuf definition
-		InputSchema:   getProtoSchema[verbsv1.SendNotificationInput](),
-		OutputSchema:  getProtoSchema[verbsv1.SendNotificationOutput](),
-		Capabilities:  []string{"notification.send"},
-		ExecutionType: effectusv1.ExecutionType_EXECUTION_TYPE_LOCAL,
-	}
-
-	return runtime.RegisterVerb(verbSpec, s.Execute)
+// RegisterWithEffectus registers a map-to-protobuf adapter for this typed service.
+// The adapter must validate and convert the map before it calls Execute.
+func (s *NotificationService) RegisterWithEffectus(registry *verb.Registry, executor verb.Executor) error {
+	return registry.RegisterVerb(&verb.Spec{
+		Name:         "send_notification",
+		ArgTypes:     map[string]string{"input": "SendNotificationInput"},
+		RequiredArgs: []string{"input"},
+		ReturnType:   "SendNotificationOutput",
+		Capability:   verb.CapCreate | verb.CapIdempotent,
+		Resources: verb.ResourceSet{
+			{Resource: "notification", Cap: verb.CapCreate},
+		},
+		Executor: executor,
+	})
 }
 
 // Real-world usage example showing how teams use this
