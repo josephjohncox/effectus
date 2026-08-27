@@ -12,6 +12,7 @@ import (
 
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/effectus/effectus-go/adapters"
 )
@@ -284,6 +285,12 @@ func normalizeConfig(config *Config) (*Config, error) {
 	}
 	if strings.Contains(resolved.ClusterNamespace, "/") {
 		return nil, fmt.Errorf("cluster namespace must not contain '/'")
+	}
+	if resolved.SchemaFormat == "" {
+		resolved.SchemaFormat = "json"
+	}
+	if resolved.SchemaFormat != "json" {
+		return nil, fmt.Errorf("schema format must be json; checked Kafka protobuf ingestion requires a descriptor-backed decoder")
 	}
 	if resolved.StartOffset == "" {
 		resolved.StartOffset = "latest"
@@ -819,21 +826,7 @@ func (c *MessageConverter) ConvertMessage(msg kafka.Message) (*adapters.TypedFac
 		}
 	}
 
-	// Convert message based on format
-	var protoMsg proto.Message
-	var err error
-
-	switch c.config.SchemaFormat {
-	case "json":
-		protoMsg, err = c.convertJSONMessage(msg.Value, factType)
-	case "protobuf":
-		protoMsg, err = c.convertProtobufMessage(msg.Value, factType)
-	case "avro":
-		return nil, fmt.Errorf("avro format not yet supported")
-	default:
-		return nil, fmt.Errorf("unsupported schema format: %s", c.config.SchemaFormat)
-	}
-
+	protoMsg, err := c.convertJSONMessage(msg.Value, factType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert message: %w", err)
 	}
@@ -866,45 +859,16 @@ func (c *MessageConverter) ConvertMessage(msg kafka.Message) (*adapters.TypedFac
 }
 
 // convertJSONMessage converts JSON message to proto message
-func (c *MessageConverter) convertJSONMessage(data []byte, factType string) (proto.Message, error) {
-	// Parse JSON
+func (c *MessageConverter) convertJSONMessage(data []byte, _ string) (proto.Message, error) {
 	var jsonData map[string]interface{}
 	if err := json.Unmarshal(data, &jsonData); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+		return nil, fmt.Errorf("parse JSON fact: %w", err)
 	}
-
-	// Convert to proto based on fact type
-	// This is a simplified conversion - in practice you'd use reflection
-	// or code generation based on the proto schemas
-	switch factType {
-	case "acme.v1.facts.UserProfile":
-		return c.convertToUserProfile(jsonData)
-	case "acme.v1.facts.SystemEvent":
-		return c.convertToSystemEvent(jsonData)
-	default:
-		// Generic proto message - would need proper schema-driven conversion
-		return nil, fmt.Errorf("unsupported fact type for JSON conversion: %s", factType)
+	message, err := structpb.NewStruct(jsonData)
+	if err != nil {
+		return nil, fmt.Errorf("convert JSON fact: %w", err)
 	}
-}
-
-// convertProtobufMessage converts protobuf message
-func (c *MessageConverter) convertProtobufMessage(data []byte, factType string) (proto.Message, error) {
-	// This would use proto.Unmarshal with the appropriate message type
-	// For now, return an error since we don't have the generated types
-	return nil, fmt.Errorf("protobuf conversion not implemented for fact type: %s", factType)
-}
-
-// Helper conversion functions (simplified examples)
-func (c *MessageConverter) convertToUserProfile(data map[string]interface{}) (proto.Message, error) {
-	// This would create an actual UserProfile proto message
-	// For now, return nil as we don't have the generated types
-	return nil, fmt.Errorf("UserProfile conversion not implemented")
-}
-
-func (c *MessageConverter) convertToSystemEvent(data map[string]interface{}) (proto.Message, error) {
-	// This would create an actual SystemEvent proto message
-	// For now, return nil as we don't have the generated types
-	return nil, fmt.Errorf("SystemEvent conversion not implemented")
+	return message, nil
 }
 
 // Factory for Kafka sources

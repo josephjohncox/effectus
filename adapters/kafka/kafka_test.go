@@ -10,6 +10,7 @@ import (
 
 	segmentio "github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 type fakeConsumer struct {
@@ -162,6 +163,34 @@ func headerValue(headers []segmentio.Header, name string) string {
 func runUntilMessagesConsumed(t *testing.T, source *KafkaSource, handler Handler) error {
 	t.Helper()
 	return source.Run(t.Context(), handler)
+}
+
+func TestConfigDefaultsToJSONAndRejectsUnconfiguredProtobuf(t *testing.T) {
+	base := &Config{SourceID: "source", Brokers: []string{"broker:9092"}, Topic: "facts", ConsumerGroup: "group"}
+	resolved, err := normalizeConfig(base)
+	require.NoError(t, err)
+	require.Equal(t, "json", resolved.SchemaFormat)
+
+	protobufConfig := *base
+	protobufConfig.SchemaFormat = "protobuf"
+	_, err = normalizeConfig(&protobufConfig)
+	require.ErrorContains(t, err, "descriptor-backed decoder")
+}
+
+func TestMessageConverterProducesGenericJSONStruct(t *testing.T) {
+	config, err := normalizeConfig(&Config{
+		SourceID: "source", Brokers: []string{"broker:9092"}, Topic: "facts", ConsumerGroup: "group",
+		FactMappings: map[string]string{"facts": "acme.v1.Order"},
+	})
+	require.NoError(t, err)
+	converter := &MessageConverter{config: config, factMappings: config.FactMappings}
+	fact, err := converter.ConvertMessage(segmentio.Message{Topic: "facts", Partition: 1, Offset: 2, Value: []byte(`{"id":"order-1","amount":42}`)})
+	require.NoError(t, err)
+	require.Equal(t, "acme.v1.Order", fact.SchemaName)
+	message, ok := fact.Data.(*structpb.Struct)
+	require.True(t, ok)
+	require.Equal(t, "order-1", message.AsMap()["id"])
+	require.Equal(t, float64(42), message.AsMap()["amount"])
 }
 
 func TestRunCommitsOnlyAfterCompletedProcessing(t *testing.T) {
