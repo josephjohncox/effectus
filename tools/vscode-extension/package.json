@@ -325,8 +325,8 @@
   "bugs": {
     "url": "https://github.com/effectus/effectus-vscode/issues"
   },
-  "license": "BSD-3-Clause",
-  "author": "",
+  "license": "MIT",
+  "author": "Joseph Cox",
   "type": "commonjs",
   "homepage": "https://github.com/effectus/effectus-vscode#readme"
 }
