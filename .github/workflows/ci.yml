@@ -44,6 +44,8 @@ jobs:
         # v1.50.0
         uses: >-
           bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99
+        with:
+          github_token: ${{ github.token }}
 
       - name: Buf format
         run: buf format -d --exit-code
@@ -55,7 +57,8 @@ jobs:
         run: |
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.0
-          buf breaking --against '.git#branch=main'
+          git update-ref refs/heads/buf-breaking-main refs/remotes/origin/main
+          buf breaking --against '.git#branch=buf-breaking-main'
           buf generate --template buf.gen.go.yaml
           git diff --exit-code -- gen
 
@@ -137,6 +140,8 @@ jobs:
         # v1.50.0
         uses: >-
           bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99
+        with:
+          github_token: ${{ github.token }}
 
       - name: Check generated protobuf examples
         run: |
