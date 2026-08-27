@@ -13,36 +13,47 @@ The documentation uses these terms:
 - **Experimental**: The path exists, but production evidence is incomplete.
 - **Planned**: The repository contains a design or placeholder only.
 
-## Supported execution path
+## Supported execution paths
 
-The `effectusd` bundle runtime is the supported execution path.
+The checked extension runtime supports canonical `ir.Checked` workflows through `ExecuteWorkflowWithIdentity`.
+A caller must configure an `OutboxStore` before execution. Each step is committed as a durable dispatch before invocation.
 
-It supports these operations:
+The generated gRPC service sends execution requests to the shared checked engine.
+Each request pins the ruleset version and generation digest during durable admission.
+The server does not accept mutable method registrations.
 
-- Load a checked bundle.
-- Execute list rules and flow rules.
-- Resolve registered verbs.
-- Record saga effects in memory, PostgreSQL, or Redis.
-- Reload bundles, schemas, and verb registries with generation swaps.
+The `effectusd` list and flow bundle executor is a legacy callback-based compatibility path. It is not a checked IR execution path. The daemon rejects it unless the operator sets `--allow-legacy-execution`. The daemon also rejects `--saga` because that legacy path does not use the V2 outbox.
 
 The following paths fail closed:
 
-- Kafka fact ingestion in `effectusd`.
-- Dynamic gRPC ruleset registration and execution.
-- Extension workflow execution planning.
+- Parallel checked workflows and non-fail-fast checked error policies.
+- JSON manifests that contain a `workflows` field. Use `.eff` or `.effx` source files.
 - Verbs that have no executable implementation.
 
 A fail-closed path does not provide partial service. It returns a configuration or execution error.
 
+## Remediation limits
+
+The repository does not yet contain a canonical lowering pass from daemon `list.Spec` and `flow.Spec` values to `ir.Checked`. Those values contain Go continuations. For this reason, `effectusd` requires `--allow-legacy-execution` and rejects `--saga` instead of claiming V2 durability.
+
+The inbound gRPC protocol accepts `google.protobuf.Struct` facts and uses the generated execution service.
+Descriptor-driven protobuf calls remain an outbound verb executor feature.
+
+The checked extension runtime stages immutable loader output before compilation.
+It rejects JSON manifests that contain workflows. Use `.eff` or `.effx` files for ordered workflows.
+
+Kafka DLQ publication and source-offset commit use separate broker operations. The durable ledger deduplicates records after a poison acknowledgement, but process death between first DLQ publication and acknowledgement can still duplicate the DLQ record. A Kafka transactional producer is required to close that final window.
+
 ## Checked and unchecked boundaries
 
-Effectus has multiple compiler and execution APIs. They do not yet share one canonical checked IR.
+Effectus provides a canonical protobuf-backed checked IR.
+Some legacy compiler and execution APIs still use compatibility structures.
 
-The daemon compiles rule sources before it publishes a bundle generation. CLI parse and type-check commands now return an error when any input fails.
+The daemon compiles rule sources before it publishes a compatibility generation. This compilation produces legacy `list.Spec` and `flow.Spec` values, including Go continuations. It does not produce `ir.Checked`. CLI parse and type-check commands return an error when any input fails.
 
 Some library APIs can still construct programs directly with Go values and continuation functions. These APIs can bypass source-level checks.
 
-Production callers must use the checked bundle path. Do not treat direct Go program construction as proof of type safety.
+Production callers that require checked semantics must use `runtime.ExecutionRuntime` with checked workflows and a configured durable outbox. Do not treat daemon compatibility execution or direct Go program construction as proof of type safety.
 
 The target design has two explicit API classes:
 
@@ -143,7 +154,17 @@ The queue is not a durable broker. A process stop can lose queued work.
 
 Production deployments that require durable delivery need a durable inbox or broker consumer with explicit offsets and idempotency keys.
 
-Kafka selection currently returns an error because the daemon consumer is not implemented.
+The Kafka consumer uses consumer groups and synchronous offset commits.
+It processes one application-level record at a time.
+It commits only after the selected handler contract succeeds.
+
+The daemon currently selects `completed_processing`.
+A crash before the offset commit causes redelivery.
+Kafka offsets are not atomic with Effectus state or external effects.
+The stable Kafka delivery ID supports replay and idempotency.
+
+The adapter also supports `durable_acceptance` for an injected checked engine handler.
+The daemon rejects that mode until its fact admission transaction is durable.
 
 ## Reload generations
 
@@ -212,14 +233,21 @@ Define the external verb request with these fields:
 ```text
 saga_id
 effect_id
+direction
 attempt
 verb
+contract_hash
 arguments
+argument_hash
 idempotency_key
+fencing_grants
 deadline
 ```
 
-Define success, retryable failure, permanent failure, and unknown outcome as separate results.
+Define success, retryable failure, permanent failure, unknown outcome, and stale fence as separate results.
+
+The V2 implementation is in `invocation/` and the `schema` outbox store.
+See `DURABLE_SAGA_PROTOCOL.md` for the external destination contract.
 
 ### Saga and reload models
 
@@ -241,6 +269,6 @@ Do not claim these properties without additional implementation and evidence:
 - Generic exactly-once external effects.
 - Unconditional termination.
 - Automatic semantic rollback.
-- Implemented dynamic gRPC execution.
-- Implemented Kafka daemon ingestion.
+- Inbound gRPC streaming execution or server reflection.
+- Atomic Kafka offsets, Effectus state, and external effects.
 - Complete correspondence between the theory documents and every runtime API.

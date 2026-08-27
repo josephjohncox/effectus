@@ -109,13 +109,13 @@ verbs:
 extensions:
   dirs: ["./extensions"]
   oci:
-    - "ghcr.io/myorg/extension-bundles/payments:1.2.0"
+    - "ghcr.io/myorg/extension-bundles/payments@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 ```
 
 Run it:
 
 ```bash
-effectusd --config effectusd.yaml
+EFFECTUS_API_TOKEN="..." effectusd --config effectusd.yaml --allow-legacy-execution
 ```
 
 Bundle/compiler example (creates a distributable bundle):
@@ -277,7 +277,6 @@ just ui-flow-demo
 ## Screenshots & video
 
 ![Flow UI demo placeholder](docs/media/ui-flow-demo.gif)
-
 
 ## Key docs
 

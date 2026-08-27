@@ -19,6 +19,8 @@ This directory contains the documentation for Effectus. Start here and follow th
 - `PRODUCTION_RUNBOOK.md` - production checklist, hotload, rollback
 - `FACT_SOURCES.md` - adapters for Kafka/CDC/SQL/S3/Iceberg/AMQP/gRPC
 - `GRPC_EXECUTION.md` - gRPC execution interface
+- `DURABLE_SAGA_PROTOCOL.md` - outbox, idempotency, outcomes, and fencing contract
+- `DEPENDENCY_AUDIT.md` - scan results, dependency fixes, and residual findings
 - `charts/effectusd/` - Helm chart (OCI)
 
 ## Extension system

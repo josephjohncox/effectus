@@ -13,5 +13,11 @@ spec:
     - name: metrics
       port: {{ .Values.service.metricsPort }}
       targetPort: metrics
+    {{- if .Values.grpc.enabled }}
+    - name: grpc
+      port: {{ .Values.grpc.port }}
+      targetPort: grpc
+      appProtocol: grpc
+    {{- end }}
   selector:
     {{- include "effectusd.selectorLabels" . | nindent 4 }}

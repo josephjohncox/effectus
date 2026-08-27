@@ -1,8 +1,9 @@
 # Effectus Extension System
 
-> **Status:** Manifest and OCI verb loading are implemented. Extension workflow planning is not implemented and fails closed. See [`GUARANTEES.md`](GUARANTEES.md) before production use.
+> **Status:** `runtime.ExecutionRuntime` loads `.eff` and `.effx` workflows and lowers them into canonical checked IR.
 
-The Effectus Extension System provides a comprehensive, unified approach to extending the rule engine with new verbs, schemas, and rules. It supports both static registration (compile-time) and dynamic loading (runtime) through multiple distribution mechanisms.
+JSON manifests define verbs and their targets. They do not define workflows.
+The extension runtime supports static loaders, JSON manifests, protobuf sources, and OCI bundles.
 
 ## Overview
 
@@ -14,6 +15,13 @@ The extension system enables:
 - **Type Safety**: Full compile-time verification of extensions
 - **Version Management**: Schema evolution and compatibility checking
 - **Hot Reloading**: Dynamic updates without service restart
+
+Compiled generations retain registered initial data and function implementations. Workflow fact lookup merges immutable initial data with caller facts. Caller facts override the same path. Current workflow IR does not call registered functions; function implementations remain available as generation metadata.
+
+OCI extension references must use an immutable digest such as `registry.example/extension@sha256:...`.
+Mutable tags are rejected. A caller can also require a configured `OCISignatureVerifier`.
+
+Go plugins are trusted native code, not capability sandboxes. Plugin directories and `.so` files must be read-only. The loader rejects writable files, writable directories, links, and non-regular files. Do not mount an untrusted plugin directory.
 
 ## Architecture
 
@@ -126,6 +134,34 @@ args explicitly:
 }
 ```
 
+HTTP targets reject loopback, private, link-local, multicast, and unspecified addresses by default.
+The HTTP client validates every DNS answer and redirect destination.
+Set `allowPrivateNetwork: true` only for a trusted private target.
+
+### Checked workflows
+
+Put each workflow in an `.eff` or `.effx` file.
+The JSON verb manifest must not contain a `workflows` field.
+
+```effx
+flow "charge-order" priority 10 {
+  when { order.id != "" }
+  steps {
+    receipt = Charge(order_id: order.id, amount: 12500)
+    RecordReceipt(receipt: $receipt)
+  }
+}
+```
+
+The extension manager first creates an immutable staged snapshot.
+The checked compiler reads only this snapshot.
+The compiler does not call filesystem, DNS, HTTP, or OCI loaders.
+
+The compiler validates capabilities, resource subsets, types, required arguments, inverse contracts, result bindings, and fact paths.
+It publishes a snapshot only after `ir.Check` accepts the artifact.
+A failed reload closes candidate resources and keeps the active snapshot.
+An active execution keeps its snapshot until the execution ends.
+
 #### Protocol Buffer-based
 
 ```protobuf
@@ -152,8 +188,9 @@ effectusc bundle \
   --rules ./rules \
   --oci-ref ghcr.io/myorg/customer-rules:v1.2.0
 
-# Load from OCI
-effectusd --oci-ref ghcr.io/myorg/customer-rules:v1.2.0
+# Resolve the published tag to its immutable digest, then load that digest.
+# Example digest shown for syntax only.
+effectusd --oci-ref ghcr.io/myorg/customer-rules@sha256:<manifest-digest>
 ```
 
 ### 4. Extension Manifest Resolution
@@ -265,7 +302,7 @@ Then load it at runtime:
 
 ```go
 mgr := loader.NewExtensionManager()
-ociLoader := loader.NewOCIBundleLoader("payments", "ghcr.io/myorg/effectus-extensions:1.0.0")
+ociLoader := loader.NewOCIBundleLoader("payments", "ghcr.io/myorg/effectus-extensions@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 mgr.AddLoader(ociLoader)
 
 rt := runtime.NewExecutionRuntime()
@@ -355,7 +392,7 @@ Use JSON verbs with `target.type: "grpc"` to call a gRPC service from rules:
           "address": "validation:9090",
           "method": "/validation.v1.ValidationService/Validate",
           "timeout": "5s",
-          "useTLS": false,
+          "insecure": true,
           "metadata": { "x-tenant": "acme" }
         }
       }
@@ -364,7 +401,9 @@ Use JSON verbs with `target.type: "grpc"` to call a gRPC service from rules:
 }
 ```
 
-The built-in gRPC executor sends/receives `google.protobuf.Struct` payloads. Example service:
+The gRPC executor uses TLS by default. Set `insecure: true` only for a trusted plaintext endpoint.
+
+The default request and response type is `google.protobuf.Struct`. Example service:
 
 ```proto
 syntax = "proto3";
@@ -377,6 +416,9 @@ service ValidationService {
   rpc Validate(google.protobuf.Struct) returns (google.protobuf.Struct);
 }
 ```
+
+For other protobuf messages, configure `descriptorSet`, `requestType`, and `responseType`.
+The executor validates the unary method against the descriptor set before it sends a request.
 
 ### Message Queue Execution
 
@@ -531,17 +573,11 @@ bundle.PiiMasks = []string{
 // Logged:   {"customer": {"ssn": "***"}}
 ```
 
-### Saga Compensation
+### Durable workflow execution
 
-```go
-// Enable compensation for transactional integrity
-effectusd --bundle ./bundle.json --saga --saga-store postgres
-
-// On failure, system automatically:
-// 1. Logs all successful effects
-// 2. Calls compensate() on each executor in reverse order
-// 3. Ensures transactional rollback
-```
+`effectusd --saga` is rejected because the daemon compatibility executor is not connected to V2.
+Use `runtime.ExecutionRuntime.ConfigureDurableWorkflowExecution` and `ExecuteWorkflowWithIdentity`.
+The checked runtime commits each step intent before invocation and preserves unknown outcomes instead of claiming rollback.
 
 ## Integration Examples
 

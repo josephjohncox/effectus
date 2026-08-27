@@ -51,8 +51,8 @@ What these types represent in practice:
 
 There are two key properties about our type system:
 
-* Facts are **open‐world**: You can add new $\Sigma$-components in later proto packages without breaking compatibility.  
-* Verbs are **closed‐world**: Adding a new verb requires changing the code and adding a new interpreter case.
+- Facts are **open‐world**: You can add new $\Sigma$-components in later proto packages without breaking compatibility.
+- Verbs are **closed‐world**: Adding a new verb requires changing the code and adding a new interpreter case.
 
 This distinction is crucial for system evolution: you can freely extend what information your rules can access, but carefully control what actions they can perform.
 
@@ -61,7 +61,7 @@ This distinction is crucial for system evolution: you can freely extend what inf
 We interpret our terms in the mathematical **Set** category, giving them precise meaning:
 
 | Term | Meaning in Set theory |
-|------|------------|
+| ------ | ------------ |
 | `Facts` | Product set $\prod_{i} \llbracket\tau_i\rrbracket$ |
 | `Effect` | Coproduct $\sum_{i}(\text{Verb}_i \times \llbracket\text{Payload}_i\rrbracket)$ |
 | `Program A` | Free monad $T^E(A) \cong \mu X. \, A + (\text{Effect} \times X)$ |
@@ -69,16 +69,17 @@ We interpret our terms in the mathematical **Set** category, giving them precise
 | `SpecFlow` | Function $\llbracket\text{Facts}\rrbracket \rightarrow T^E(\text{Unit})$ |
 
 In practical terms:
+
 - Facts are like a database record with multiple fields
 - An Effect is one of several possible actions with its associated data
 - A Program is a sequence of effects that can adapt based on intermediate results
 - A SpecList is a rule that maps input data to a list of actions
 - A SpecFlow is a rule that maps input data to a complex process with multiple steps
 
-Two important observations:  
+Two important observations:
 
-* `List(Effect)` is the **free monoid** on `Effect` - essentially a sequence with no additional structure.  
-* `Program` is the **free monad** on the endofunctor $F(X) = \text{Effect} \times X$. This means `List` can be embedded into `Program` via the canonical monoid‐to‐monad conversion $\text{Sequence} : \text{List}(\text{Effect}) \rightarrow \text{Program}(\text{Unit})$.  
+- `List(Effect)` is the **free monoid** on `Effect` - essentially a sequence with no additional structure.
+- `Program` is the **free monad** on the endofunctor $F(X) = \text{Effect} \times X$. This means `List` can be embedded into `Program` via the canonical monoid‐to‐monad conversion $\text{Sequence} : \text{List}(\text{Effect}) \rightarrow \text{Program}(\text{Unit})$.
   This `Sequence` function is the left adjoint to the forgetful functor from monads to monoids.
 
 What this means in practice: any rule written in the simpler list style can be automatically converted to the more powerful flow style, but not vice versa. This is like how any simple sequential script can be rewritten as a complex program with branches and conditions, but the reverse isn't always possible.
@@ -96,6 +97,7 @@ This section explains how rules are executed step by step. The mathematical form
 ```
 
 This rule describes how we evaluate conditions in our rules. In plain English:
+
 1. First, we look up a value at a certain path in our facts
 2. Then, we compare that value with a constant using some operator (like equals, greater than, etc.)
 3. The result is a boolean - true or false
@@ -113,6 +115,7 @@ Path lookup always works thanks to schema validation at compile time. When a mod
 ```
 
 This defines how list-style rules execute:
+
 1. A rule triggers when all its conditions evaluate to true (the `when` function)
 2. For an empty list of effects, we just return the current context (we're done)
 3. For a non-empty list, we interpret the first effect, update the context, and then continue with the rest
@@ -133,6 +136,7 @@ The inductive rules for `Program` follow Plotkin-style operational semantics:
 ```
 
 These rules define how flow-style programs execute:
+
 1. The β-step rule handles the core operation: perform an effect, get a result and updated context, then continue with the next operation that can depend on the result
 2. The ret rule handles the end of a computation, just returning a value
 
@@ -142,13 +146,14 @@ The system is deterministic because both `interp` (given a fixed executor) and r
 
 Our type system prevents runtime errors through two key properties:
 
-* **Progress**: A well-typed `Facts` value plus a compiled `SpecList` (or `SpecFlow`) always produces either:  
-  * A completed value ($\emptyset$ or $\text{Pure}(\text{unit})$), or  
-  * A configuration that can take another step ($e::es$ or $\text{Do}(e) \gg= k$).  
+- **Progress**: A well-typed `Facts` value plus a compiled `SpecList` (or `SpecFlow`) always produces either:
+  - A completed value ($\emptyset$ or $\text{Pure}(\text{unit})$), or
+  - A configuration that can take another step ($e::es$ or $\text{Do}(e) \gg= k$).
 
-* **Preservation**: Each reduction step maintains well-typedness; `interp` is defined for all values in the closed set of `Verb`.
+- **Preservation**: Each reduction step maintains well-typedness; `interp` is defined for all values in the closed set of `Verb`.
 
 In simpler terms, our system guarantees that:
+
 1. Rules will never get "stuck" in the middle of execution
 2. Types remain consistent throughout execution
 3. Every possible action is handled by the interpreter
@@ -165,6 +170,7 @@ $\llbracket\rho\rrbracket$ behaves identically when run on the extended data: th
 This makes the system **monotone with respect to fact growth** - adding fields doesn't break existing rules.
 
 In practical terms:
+
 - You can add new data fields to your system without breaking existing rules
 - Older rules simply ignore the new fields they don't know about
 - This allows for graceful system evolution without requiring updates to all existing rules
@@ -178,6 +184,7 @@ The *Include* mechanism works at the text level, making rule elaboration both as
 Before elaboration, we establish a **total order** on rules, ensuring that mix-ins combine predictably with compilation.
 
 This property enables a modular approach to rule development:
+
 - Teams can develop rule sets independently
 - Common rules can be shared via includes
 - The system guarantees consistent behavior regardless of how rules are combined
@@ -187,11 +194,12 @@ This property enables a modular approach to rule development:
 
 Why this matters for actual systems:
 
-* **List rules** are *monoids*. Their effects run sequentially in source order.
-* **Flow rules** are *free monads*—more powerful, supporting sequential operations when you need them.  
-* Shared grammar and schema validation catch errors early, before runtime.  
+- **List rules** are *monoids*. Their effects run sequentially in source order.
+- **Flow rules** are *free monads*—more powerful, supporting sequential operations when you need them.
+- Shared grammar and schema validation catch errors early, before runtime.
 
 The mathematical foundations directly translate to real-world benefits:
+
 - Simple rules for simple cases (list dialect)
 - Powerful rules when you need them (flow dialect)
 - Strong guarantees about system behavior

@@ -5,6 +5,7 @@ This document describes the command-line tools available in Effectus.
 ## Overview
 
 Effectus provides two main CLI tools:
+
 - **`effectusc`**: Compiler and development utilities
 - **`effectusd`**: Runtime daemon for executing rules
 
@@ -32,6 +33,7 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc parse rules/customer.eff rules/payment.eff --verbose
 ```
@@ -53,6 +55,7 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc typecheck \
   --schema schemas/customer.json,schemas/payment.json \
@@ -80,6 +83,7 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc check \
   --schema schemas/customer.json,schemas/payment.json \
@@ -110,21 +114,25 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc format --check rules/*.eff
 ```
 
 **Example (bound flow formatting):**
+
 ```bash
 effectusc format --stdout rules/case_hold.effx
 ```
 
 Input:
+
 ```effx
 flow "CaseHold" priority 5 { when { order.amount>1000 } steps { caseId=OpenCase(orderId:order.id,reason:"risk") UpdateCase(caseId:$caseId,status:"held") } }
 ```
 
 Output:
+
 ```effx
 flow "CaseHold" priority 5 {
   when {
@@ -153,6 +161,7 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc graph --schema schemas/ --format dot rules/*.eff
 ```
@@ -173,6 +182,7 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc facts --schema schemas/ rules/*.eff
 ```
@@ -193,6 +203,7 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc compile \
   --schema schemas/ \
@@ -225,6 +236,7 @@ Options:
 **Examples:**
 
 Create local bundle:
+
 ```bash
 effectusc bundle \
   --name customer-rules \
@@ -238,6 +250,7 @@ effectusc bundle \
 ```
 
 Create and push to OCI registry:
+
 ```bash
 effectusc bundle \
   --name customer-rules \
@@ -266,6 +279,7 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc resolve \
   --registry public=ghcr.io/myorg \
@@ -286,6 +300,7 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc capabilities \
   --output capability-report.md \
@@ -294,7 +309,7 @@ effectusc capabilities \
 
 ## effectusd - Runtime Daemon
 
-The `effectusd` command is the runtime server that executes bundled rules against facts.
+The `effectusd` command is the compatibility runtime server that executes legacy bundled rules against facts. Bundle execution requires `--allow-legacy-execution` and does not provide checked IR guarantees.
 
 ### Usage
 
@@ -305,6 +320,7 @@ effectusd [options]
 ### Options
 
 #### Bundle Configuration
+
 ```bash
 --bundle           Path to bundle file
 --oci-ref          OCI reference for bundle (e.g., ghcr.io/user/bundle:v1)
@@ -321,26 +337,33 @@ effectusd [options]
 ```
 
 #### Runtime Configuration
+
 ```bash
---saga             Enable saga-style compensation
---saga-store       Saga store (memory, redis, postgres) (default: memory)
---saga-redis-addr  Redis address for saga store
---saga-redis-password Redis password for saga store
---saga-redis-db    Redis DB for saga store
---saga-redis-prefix Redis key prefix for saga store
---saga-redis-ttl   TTL for saga keys (0 to disable)
---saga-postgres-dsn Postgres DSN for saga store
+--allow-legacy-execution Explicitly permit callback-based bundle execution
+--saga             Deprecated legacy mode; effectusd rejects this option
 --fixed-time       Fixed time for deterministic evaluation (RFC3339/RFC3339Nano)
 ```
 
 #### Fact Sources
+
 ```bash
---fact-source      Fact source (http, kafka) (default: http)
---kafka-brokers    Kafka brokers (default: localhost:9092)
---kafka-topic      Kafka topic (default: facts)
+--fact-source             Fact source (http, kafka) (default: http)
+--kafka-brokers           Kafka brokers (default: localhost:9092)
+--kafka-topic             Kafka topic (default: facts)
+--kafka-consumer-group    Kafka consumer group (default: effectusd)
+--kafka-cluster-namespace Stable cluster name used in delivery IDs
+--kafka-ack-contract      Acknowledgement contract (default: completed_processing)
+--kafka-max-attempts      Attempts before poison handling (default: 3)
+--kafka-retry-initial     Initial same-record retry delay (default: 1s)
+--kafka-retry-max         Maximum same-record retry delay (default: 30s)
+--kafka-poison-policy     Poison policy: halt, skip, or dlq (default: halt)
+--kafka-dlq-topic         DLQ topic for the dlq policy
+--kafka-delivery-ledger   Durable JSONL attempt and poison ledger (required)
+--kafka-poison-audit      Deprecated alias for --kafka-delivery-ledger
 ```
 
 #### Server Configuration
+
 ```bash
 --http-addr        HTTP server address (default: :8080)
 --metrics-addr     Address to expose metrics (default: :9090)
@@ -348,6 +371,7 @@ effectusd [options]
 ```
 
 #### API Security + Rate Limits
+
 ```bash
 --api-auth             API auth mode (token, disabled)
 --api-token            Write token for /api endpoints (comma-separated)
@@ -363,6 +387,7 @@ effectusd [options]
 Example ACL file: `docs/acl.example.yml`.
 
 #### Facts Store
+
 ```bash
 --facts-store           Facts store (file, memory)
 --facts-path            Facts store path (file store)
@@ -374,6 +399,7 @@ Example ACL file: `docs/acl.example.yml`.
 ```
 
 #### Debug Options
+
 ```bash
 --verbose          Enable verbose logging
 ```
@@ -383,23 +409,18 @@ Example ACL file: `docs/acl.example.yml`.
 #### Run with Local Bundle
 
 ```bash
-effectusd --bundle ./bundle.json --verbose
+effectusd --bundle ./bundle.json --allow-legacy-execution --verbose
 ```
 
 #### Run with OCI Registry Bundle
 
 ```bash
-effectusd --oci-ref ghcr.io/myorg/customer-rules:v1.2.0
+effectusd --oci-ref ghcr.io/myorg/customer-rules:v1.2.0 --allow-legacy-execution
 ```
 
-#### Enable Saga Compensation
+#### Durable checked workflows
 
-```bash
-effectusd \
-  --bundle ./bundle.json \
-  --saga \
-  --saga-store postgres
-```
+`effectusd` rejects `--saga` because its compatibility executor is not connected to the V2 outbox. Embed `runtime.ExecutionRuntime`, configure an `OutboxStore`, and call `ExecuteWorkflowWithIdentity`.
 
 #### Hot Reload from OCI Registry
 
@@ -413,7 +434,7 @@ effectusd \
 #### Status UI and Playground
 
 ```bash
-effectusd --bundle ./bundle.json --http-addr :8080 --api-token devtoken
+EFFECTUS_API_TOKEN=devtoken effectusd --bundle ./bundle.json --allow-legacy-execution --http-addr :8080
 # open http://localhost:8080/ui
 ```
 
@@ -472,19 +493,21 @@ curl -X POST http://localhost:8080/api/facts \
 ```bash
 effectusd \
   --bundle ./bundle.json \
+  --allow-legacy-execution \
   --fact-source kafka \
+  --kafka-delivery-ledger /data/kafka-deliveries.jsonl \
   --kafka-brokers kafka1:9092,kafka2:9092 \
   --kafka-topic customer-events
 ```
 
-#### Full Production Configuration
+#### Full compatibility configuration
 
 ```bash
-effectusd \
+EFFECTUS_API_TOKEN="..." effectusd \
   --oci-ref ghcr.io/myorg/customer-rules:v1.0.0 \
-  --saga \
-  --saga-store postgres \
+  --allow-legacy-execution \
   --fact-source kafka \
+  --kafka-delivery-ledger /data/kafka-deliveries.jsonl \
   --kafka-brokers kafka-cluster:9092 \
   --kafka-topic events \
   --http-addr :8080 \
@@ -538,12 +561,12 @@ effectusc bundle \
 ### 4. Runtime Deployment
 
 ```bash
-# Run in production
+# Run the legacy compatibility path explicitly
 effectusd \
   --oci-ref ghcr.io/myorg/my-rules:v1.0.0 \
-  --saga \
-  --saga-store postgres \
-  --fact-source kafka
+  --allow-legacy-execution \
+  --fact-source kafka \
+  --kafka-delivery-ledger /data/kafka-deliveries.jsonl
 ```
 
 ### HTTP Endpoints
@@ -560,12 +583,14 @@ GET /api/status
 ```
 
 Notes:
+
 - `/healthz` and `/readyz` are unauthenticated by default.
 - `/api/*` endpoints are protected and rate-limited when auth is enabled.
 
 ## Error Handling
 
 All commands return appropriate exit codes:
+
 - **0**: Success
 - **1**: Error (compilation failure, invalid arguments, etc.)
 

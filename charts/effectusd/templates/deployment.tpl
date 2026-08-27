@@ -56,18 +56,27 @@ spec:
             - "--facts-cache-max-universes={{ .Values.facts.cacheMaxUniverses }}"
             - "--facts-cache-max-namespaces={{ .Values.facts.cacheMaxNamespaces }}"
             {{- end }}
+            {{- if .Values.grpc.enabled }}
+            - "--grpc-addr=:{{ .Values.grpc.port }}"
+            - "--grpc-tls-cert=/etc/effectus-grpc-tls/{{ .Values.grpc.certKey }}"
+            - "--grpc-tls-key=/etc/effectus-grpc-tls/{{ .Values.grpc.keyKey }}"
+            - "--grpc-max-receive-bytes={{ .Values.grpc.maxReceiveBytes }}"
+            - "--grpc-max-send-bytes={{ .Values.grpc.maxSendBytes }}"
+            - "--grpc-max-concurrent={{ .Values.grpc.maxConcurrent }}"
+            {{- end }}
             - "--api-auth={{ .Values.api.authMode }}"
             - "--api-rate-limit={{ .Values.api.rateLimit }}"
             - "--api-rate-burst={{ .Values.api.rateBurst }}"
-            {{- if eq .Values.api.authMode "token" }}
-            - "--api-token=$(EFFECTUS_API_TOKEN)"
-            - "--api-read-token=$(EFFECTUS_API_READ_TOKEN)"
-            {{- end }}
             {{- if .Values.api.aclFile }}
             - "--api-acl-file={{ .Values.api.aclFile }}"
             {{- end }}
-          {{- if eq .Values.api.authMode "token" }}
           env:
+            - name: EFFECTUS_SAGA_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "postgres.existingSecret is required" .Values.postgres.existingSecret }}
+                  key: {{ .Values.postgres.dsnKey }}
+          {{- if eq .Values.api.authMode "token" }}
             - name: EFFECTUS_API_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -85,6 +94,10 @@ spec:
               containerPort: {{ .Values.service.port }}
             - name: metrics
               containerPort: {{ .Values.service.metricsPort }}
+            {{- if .Values.grpc.enabled }}
+            - name: grpc
+              containerPort: {{ .Values.grpc.port }}
+            {{- end }}
           startupProbe:
             httpGet:
               path: /healthz
@@ -106,6 +119,11 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            {{- if .Values.grpc.enabled }}
+            - name: grpc-tls
+              mountPath: /etc/effectus-grpc-tls
+              readOnly: true
+            {{- end }}
             {{- if .Values.config.enabled }}
             - name: config
               mountPath: {{ .Values.config.mountPath }}
@@ -122,6 +140,11 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if .Values.grpc.enabled }}
+        - name: grpc-tls
+          secret:
+            secretName: {{ required "grpc.existingTLSSecret is required when gRPC is enabled" .Values.grpc.existingTLSSecret }}
+        {{- end }}
         {{- if .Values.config.enabled }}
         - name: config
           configMap:

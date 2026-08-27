@@ -5,9 +5,13 @@ This chart deploys the `effectusd` runtime with an OCI bundle reference.
 ## Install
 
 ```bash
-helm install effectusd oci://ghcr.io/myorg/helm/effectusd \
+helm install effectusd oci://ghcr.io/OWNER/helm/effectusd \
   --version 1.0.0 \
-  --set bundle.ociRef=ghcr.io/myorg/bundles/fraud-demo:1.0.0
+  --set image.repository=ghcr.io/OWNER/effectusd \
+  --set image.tag=1.0.0 \
+  --set bundle.ociRef=ghcr.io/OWNER/bundles/fraud-demo:1.0.0 \
+  --set runtime.allowLegacyExecution=true \
+  --set api.existingSecret=effectusd-api
 ```
 
 ## Configuration
@@ -15,6 +19,7 @@ helm install effectusd oci://ghcr.io/myorg/helm/effectusd \
 Key values in `values.yaml`:
 
 - `image.repository` / `image.tag`
+- `runtime.allowLegacyExecution` (required for legacy list/flow bundles)
 - `bundle.ociRef` (required)
 - `bundle.reloadInterval`
 - `api.*` (auth, ACLs, rate limits)
@@ -25,14 +30,22 @@ Key values in `values.yaml`:
 ### ConfigMap usage
 
 ```yaml
+image:
+  tag: "1.0.0"
+api:
+  authMode: "token"
+  existingSecret: "effectusd-api"
 config:
   enabled: true
   contents: |
     bundle:
-      oci: "ghcr.io/myorg/bundles/fraud-demo:1.0.0"
+      oci: "ghcr.io/OWNER/bundles/fraud-demo:1.0.0"
     http:
       addr: ":8080"
     api:
       auth: "token"
-      token: "write-token"
+```
+
+Create `effectusd-api` as a Kubernetes Secret with the keys `api-token` and,
+optionally, `api-read-token`. Do not put token values in the ConfigMap.
 ```

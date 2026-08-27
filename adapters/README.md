@@ -6,7 +6,7 @@ A pluggable library for ingesting facts from multiple data sources into Effectus
 
 The Effectus adapters library provides a unified interface for connecting various data sources to Effectus:
 
-- **Kafka Streams** - High-throughput message streaming
+- **Kafka Streams** - Consumer-group ingestion with explicit acknowledgement
 - **HTTP Webhooks** - Real-time API integration  
 - **Database Polling** - Poll database tables at regular intervals
 - **Redis Streams** - Real-time event streaming from Redis
@@ -555,7 +555,7 @@ for fact := range factChan {
 | Type | Description | Status |
 |------|-------------|--------|
 | `http` | HTTP webhooks and REST APIs | Stable |
-| `kafka` | Kafka message streaming | Stable |
+| `kafka` | Kafka consumer groups with blocking acknowledgement | Stable |
 | `postgres_poller` | PostgreSQL database polling | Stable |
 | `redis_streams` | Redis streams and consumer groups | Stable |
 | `file_watcher` | File system change monitoring | Stable |
@@ -570,8 +570,8 @@ for fact := range factChan {
 ## **Best Practices**
 
 ### Performance
-- Use buffered channels with appropriate buffer sizes
-- Implement backpressure handling for high-throughput sources
+- Use the Kafka `Run` API when offset acknowledgement matters.
+- Keep handlers blocking so that backpressure reaches the broker.
 - Monitor memory usage for long-running sources
 
 ### Reliability

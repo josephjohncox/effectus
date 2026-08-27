@@ -18,7 +18,7 @@ runtime.RegisterExtensionLoader(loader.NewStaticVerbLoader("business", verbs))
 runtime.RegisterExtensionLoader(loader.NewJSONVerbLoader("external", "verbs.json"))
 
 // OCI bundle support (future)
-runtime.RegisterExtensionLoader(loader.NewOCIBundleLoader("registry", "bundle"))
+runtime.RegisterExtensionLoader(loader.NewOCIBundleLoader("registry", "registry.example/bundle@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"))
 ```
 
 **Key Features**:

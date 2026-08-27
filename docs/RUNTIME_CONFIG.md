@@ -1,12 +1,13 @@
 # Runtime Configuration (Non‑Library Mode)
 
-Use a YAML (or JSON) config to run `effectusd` without embedding Effectus in a Go program. This is the recommended
-path for production deployments and for mixing multiple verb sources (HTTP, OCI, stream, plugins).
+Use a YAML (or JSON) config to run the `effectusd` compatibility runtime without embedding Effectus in a Go program.
+This path executes legacy callback-based list and flow specifications and requires `--allow-legacy-execution`. It is not a checked IR production path.
 
 Run with:
 
 ```bash
-effectusd --config effectusd.yaml
+EFFECTUS_API_TOKEN="..." EFFECTUS_API_READ_TOKEN="..." \
+  effectusd --config effectusd.yaml --allow-legacy-execution
 ```
 
 ## Example: Mixed HTTP + OCI verb sources
@@ -23,8 +24,6 @@ metrics:
 
 api:
   auth: "token"
-  token: "write-token"
-  read_token: "read-token"
   rate_limit: 120
   rate_burst: 60
   hotload_rules: false
@@ -67,7 +66,7 @@ extensions:
 
   # OCI bundles that contain *.verbs.json / *.schema.json
   oci:
-    - "ghcr.io/myorg/extension-bundles/payments:1.2.0"
+    - "ghcr.io/myorg/extension-bundles/payments@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
   # Optional: hot-reload extension schemas + verbs
   reload_interval: "60s"
@@ -83,9 +82,52 @@ verbs:
 fixed_time: "" # Optional RFC3339 timestamp for deterministic runs
 ```
 
-## Production baseline example
+## Kafka fact ingestion
 
-Use this as a starting point for production deployments (bundle from OCI, persisted facts, ACLs, hotload, metrics):
+Use a stable consumer group and cluster namespace.
+The daemon supports the completed-processing contract.
+It rejects durable acceptance until checked execution has durable fact admission.
+
+```yaml
+fact_source: "kafka"
+kafka:
+  brokers:
+    - "kafka-1:9092"
+    - "kafka-2:9092"
+  topic: "facts"
+  consumer_group: "effectusd-production"
+  cluster_namespace: "production-kafka"
+  ack_contract: "completed_processing"
+  max_attempts: 5
+  retry_initial: "1s"
+  retry_max: "30s"
+  poison_policy: "halt"
+  delivery_ledger: "/data/kafka-deliveries.jsonl"
+```
+
+The durable delivery ledger increments the stable delivery attempt before each handler call. Attempt limits therefore survive rebalances and process restarts.
+The default poison policy leaves the failed offset uncommitted and stops the daemon.
+For `skip`, the same ledger records and deduplicates the poison acknowledgement.
+For `dlq`, set `dlq_topic` to a Kafka topic.
+Effectus waits for DLQ publication before it commits the source offset.
+
+Each message value uses this JSON shape:
+
+```json
+{
+  "universe": "default",
+  "namespace": "tenant-a",
+  "facts": {
+    "order": {
+      "id": "order-42"
+    }
+  }
+}
+```
+
+## Compatibility deployment example
+
+Use this as a starting point only for an explicitly accepted legacy deployment (bundle from OCI, persisted facts, ACLs, hotload, metrics):
 
 ```yaml
 bundle:
@@ -97,10 +139,9 @@ http:
 metrics:
   addr: ":9090"
 
+# Supply EFFECTUS_API_TOKEN and EFFECTUS_API_READ_TOKEN through the secret manager.
 api:
   auth: "token"
-  token: "replace-with-write-token"
-  read_token: "replace-with-read-token"
   acl_file: "/etc/effectus/acl.yaml"
   rate_limit: 300
   rate_burst: 120
@@ -131,7 +172,7 @@ extensions:
   dirs:
     - "/etc/effectus/extensions"
   oci:
-    - "ghcr.io/myorg/extension-bundles/payments:1.2.0"
+    - "ghcr.io/myorg/extension-bundles/payments@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   reload_interval: "60s"
 
 verbs:
@@ -139,17 +180,13 @@ verbs:
   oci_warmup: true
   strict: true
 
+# effectusd rejects legacy saga mode because it is not connected to V2.
 saga:
-  enabled: true
-  store: "redis"
-  redis:
-    addr: "redis:6379"
-    db: 0
-    prefix: "effectus:"
-    ttl: "24h"
+  enabled: false
 ```
 
 ### Local extension manifest (HTTP verbs)
+
 Put this file in `./extensions/external.verbs.json`:
 
 ```json

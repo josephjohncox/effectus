@@ -127,16 +127,16 @@ const (
 - Runtime enforcement through executor implementations
 - Audit trail of all capability usage
 
-### Distributed Locking (Redis)
-**Fencing token-based coordination:**
-```go
-// Acquire lock with fencing token
-token, unlock, err := Lock(capability, resourceKey)
-defer unlock()
+### Resource locking and fencing
 
-// Include fencing token in all operations
-headers["X-Effectus-Fence"] = fmt.Sprintf("%d", token)
-```
+The legacy capability lock is local and advisory.
+Its counter does not survive a process restart.
+Do not use its token as a distributed fencing guarantee.
+
+Hardened dispatch uses a configured fencing provider.
+A durable provider issues monotonic tokens and stores them with the dispatch attempt.
+The destination must reject stale tokens for fencing enforcement.
+See [Durable saga dispatch protocol](DURABLE_SAGA_PROTOCOL.md).
 
 ## 🔄 Development Workflow
 
