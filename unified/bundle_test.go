@@ -8,7 +8,22 @@ import (
 	"time"
 
 	"github.com/effectus/effectus-go/loader"
+	"github.com/stretchr/testify/require"
 )
+
+func TestBundleDigestIdentifiesReleaseContent(t *testing.T) {
+	first := &Bundle{Name: "orders", Version: "1.0.0", RuleSources: []RuleSource{{Path: "rules/orders.eff", Content: "first"}}}
+	second := &Bundle{Name: "orders", Version: "1.0.0", RuleSources: []RuleSource{{Path: "rules/orders.eff", Content: "second"}}}
+
+	firstDigest, err := BundleDigest(first)
+	require.NoError(t, err)
+	repeatedDigest, err := BundleDigest(first)
+	require.NoError(t, err)
+	secondDigest, err := BundleDigest(second)
+	require.NoError(t, err)
+	require.Equal(t, firstDigest, repeatedDigest)
+	require.NotEqual(t, firstDigest, secondDigest)
+}
 
 func TestBundleBuilder(t *testing.T) {
 	// Create temporary directories for test

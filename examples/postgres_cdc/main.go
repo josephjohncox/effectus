@@ -10,7 +10,6 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"github.com/effectus/effectus-go/adapters"
 	"github.com/effectus/effectus-go/adapters/postgres"
 )
 

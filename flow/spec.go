@@ -34,6 +34,9 @@ func (s *Spec) RequiredFacts() []string {
 
 // Execute runs all flows in the spec with saga and capability support
 func (s *Spec) Execute(ctx context.Context, facts effectus.Facts, ex effectus.Executor) error {
+	if s.SagaEnabled && s.SagaStore == nil {
+		return schema.ErrSagaStoreRequired
+	}
 	// Sort flows by priority using common utility (make a copy first)
 	flows := make([]*CompiledFlow, len(s.Flows))
 	copy(flows, s.Flows)
@@ -62,8 +65,12 @@ func (s *Spec) Execute(ctx context.Context, facts effectus.Facts, ex effectus.Ex
 			return ctx.Err()
 		}
 
-		// Evaluate flow predicates using facts directly
-		if !schema.EvaluatePredicatesWithFacts(flow.Predicates, facts) {
+		// Evaluate flow predicates using facts directly.
+		matched, err := schema.EvaluatePredicatesWithFactsE(flow.Predicates, facts)
+		if err != nil {
+			return fmt.Errorf("evaluating predicates for flow %s: %w", flow.Name, err)
+		}
+		if !matched {
 			continue
 		}
 
@@ -99,7 +106,7 @@ func (s *Spec) executeFlowWithEnhancedExecutor(ctx context.Context, flow *Compil
 // executeFlowSimple executes a flow using simple execution without saga/capability support
 func (s *Spec) executeFlowSimple(ctx context.Context, flow *CompiledFlow, facts effectus.Facts, ex effectus.Executor) error {
 	// Execute the program using standard executor
-	_, err := Run(flow.Program, ex)
+	_, err := RunContext(ctx, flow.Program, ex)
 	return err
 }
 

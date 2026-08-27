@@ -23,6 +23,12 @@ WHERE name = $1 AND version = $2 AND environment = $3;
 SELECT * FROM rulesets 
 WHERE id = $1;
 
+-- name: GetRulesetAnyEnvironment :one
+SELECT * FROM rulesets
+WHERE name = $1 AND version = $2
+ORDER BY updated_at DESC, environment ASC
+LIMIT 1;
+
 -- name: GetLatestRuleset :one
 SELECT * FROM rulesets 
 WHERE name = $1 AND environment = $2
@@ -36,15 +42,15 @@ SELECT r.*,
 FROM rulesets r
 LEFT JOIN deployments d ON r.id = d.ruleset_id AND d.environment = r.environment
 WHERE 
-    ($1::text IS NULL OR r.name = ANY($1::text[]))
+    ($1::text[] IS NULL OR r.name = ANY($1::text[]))
     AND ($2::text[] IS NULL OR r.environment = ANY($2::text[]))
     AND ($3::ruleset_status[] IS NULL OR r.status = ANY($3::ruleset_status[]))
-    AND ($4::text IS NULL OR r.owner = $4)
-    AND ($5::text IS NULL OR r.team = $5)
+    AND (NULLIF($4::text, '') IS NULL OR r.owner = $4)
+    AND (NULLIF($5::text, '') IS NULL OR r.team = $5)
     AND ($6::text[] IS NULL OR r.tags && $6::text[])
     AND ($7::timestamptz IS NULL OR r.created_at >= $7)
-    AND ($8::text IS NULL OR r.created_by = $8)
-    AND ($9::text IS NULL OR r.git_commit = $9)
+    AND (NULLIF($8::text, '') IS NULL OR r.created_by = $8)
+    AND (NULLIF($9::text, '') IS NULL OR r.git_commit = $9)
 ORDER BY r.created_at DESC
 LIMIT $10;
 
@@ -75,12 +81,37 @@ RETURNING *;
 DELETE FROM rulesets 
 WHERE id = $1;
 
+-- name: DeleteRulesetByNameVersion :execrows
+DELETE FROM rulesets
+WHERE name = $1 AND version = $2;
+
 -- name: GetRulesetVersions :many
 SELECT r.version, r.created_at, r.created_by, r.git_commit, r.status,
        EXISTS(SELECT 1 FROM deployments d WHERE d.ruleset_id = r.id AND d.status = 'active') as is_deployed
 FROM rulesets r
 WHERE r.name = $1 AND r.environment = $2
 ORDER BY r.created_at DESC;
+
+-- name: GetRulesetVersionsAll :many
+SELECT
+    r.version,
+    MIN(r.created_at)::timestamptz AS created_at,
+    COALESCE(MAX(r.created_by), '')::text AS created_by,
+    COALESCE(MAX(r.git_commit), '')::text AS git_commit,
+    BOOL_OR(r.status = 'deployed') AS is_active,
+    COALESCE(
+        ARRAY_AGG(DISTINCT r.environment) FILTER (WHERE r.status = 'deployed'),
+        ARRAY[]::text[]
+    )::text[] AS deployed_envs
+FROM rulesets r
+WHERE r.name = $1
+GROUP BY r.version
+ORDER BY MIN(r.created_at) DESC;
+
+-- name: DeactivateRulesetVersions :exec
+UPDATE rulesets
+SET status = 'ready', updated_at = CURRENT_TIMESTAMP
+WHERE name = $1 AND environment = $2 AND id != $3 AND status = 'deployed';
 
 -- name: SearchRulesets :many
 SELECT r.*, 

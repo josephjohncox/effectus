@@ -3,16 +3,17 @@ package flow
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
-	"time"
 
 	eff "github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/common"
 	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/schema/capability"
-	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/google/uuid"
 )
 
 // ExecutorOption defines an option for configuring the flow executor
@@ -58,80 +59,28 @@ func NewExecutor(verbRegistry common.VerbRegistry, options ...ExecutorOption) *E
 
 // ExecuteProgram executes a flow program with saga and capability support
 func (fe *Executor) ExecuteProgram(ctx context.Context, flowName string, program *Program, facts common.Facts) (interface{}, error) {
-	// If saga is enabled and program is not already transactional, add compensation
-	if fe.sagaEnabled && fe.sagaStore != nil && !program.IsTransactional() {
-		// Add compensation information if available
-		compensations := fe.extractCompensations(program)
-		if len(compensations) > 0 {
-			program = program.WithCompensation(func(verb string) string {
-				return compensations[verb]
-			})
+	if fe.sagaEnabled {
+		if fe.sagaStore == nil {
+			return nil, schema.ErrSagaStoreRequired
 		}
-
-		// Wrap in atomic transaction for saga support
-		program = program.ToAtomic(fmt.Sprintf("flow-%s", flowName))
+		if !program.IsTransactional() {
+			program = program.ToAtomic(fmt.Sprintf("flow-%s", flowName))
+		}
+		return fe.executeSagaProgram(ctx, flowName, program, facts)
 	}
 
-	// Create the appropriate executor based on configuration
 	var executor eff.Executor
-
-	if fe.sagaEnabled && fe.sagaStore != nil && fe.capSystem != nil {
-		// Check if program is transactional
-		if program.IsTransactional() {
-			// Use saga-aware execution for transactional programs
-			return fe.executeSagaProgram(ctx, flowName, program, facts)
-		}
-
-		// For non-transactional programs, use capability awareness
-		executor = capability.NewCapabilityAwareExecutor(
-			common.NewExecutorAdapter(fe.verbRegistry, facts),
-			fe.capSystem,
-			fmt.Sprintf("flow-%s", flowName),
-		)
-	} else if fe.capSystem != nil {
-		// Use capability-aware executor
+	if fe.capSystem != nil {
 		executor = capability.NewCapabilityAwareExecutor(
 			common.NewExecutorAdapter(fe.verbRegistry, facts),
 			fe.capSystem,
 			"flow-executor",
 		)
 	} else {
-		// Use simple executor
 		executor = common.NewExecutorAdapter(fe.verbRegistry, facts)
 	}
 
-	// Execute the program using the existing Run function
-	return Run(program, executor)
-}
-
-// extractCompensations extracts compensation verbs from program effects
-func (fe *Executor) extractCompensations(program *Program) map[string]string {
-	compensations := make(map[string]string)
-
-	var extract func(*Program)
-	extract = func(p *Program) {
-		if p == nil {
-			return
-		}
-
-		if p.Tag == EffectProgramTag {
-			if fe.verbRegistry != nil {
-				if spec, exists := fe.verbRegistry.GetVerb(p.Effect.Verb); exists {
-					if inverse := spec.Inverse; inverse != "" {
-						compensations[p.Effect.Verb] = inverse
-					}
-				}
-			}
-			// We can't statically follow continuations, but we've captured this effect
-		}
-
-		if p.Tag == TransactionProgramTag {
-			extract(p.Transaction.Program)
-		}
-	}
-
-	extract(program)
-	return compensations
+	return RunContext(ctx, program, executor)
 }
 
 // executeSagaProgram executes a transactional program with full saga support
@@ -144,17 +93,15 @@ func (fe *Executor) executeSagaProgram(ctx context.Context, flowName string, pro
 		return fe.ExecuteProgram(ctx, flowName, program, facts)
 	}
 
-	// For now, handle the first transaction
-	// TODO: Support nested transactions
+	if len(transactions) > 1 {
+		return nil, fmt.Errorf("nested saga transactions are not supported")
+	}
 	transaction := transactions[0]
 
-	// Generate saga ID if not provided
+	// Generate saga ID if not provided.
 	sagaID := transaction.SagaID
 	if sagaID == "" {
-		sagaID = fmt.Sprintf("saga-flow-%s-%d", flowName, ctx.Value("request_id"))
-		if sagaID == fmt.Sprintf("saga-flow-%s-<nil>", flowName) {
-			sagaID = fmt.Sprintf("saga-flow-%s-%d", flowName, time.Now().UnixNano())
-		}
+		sagaID = newSagaID(ctx, "saga-flow-"+flowName)
 	}
 
 	executor := common.NewExecutorAdapter(fe.verbRegistry, facts)
@@ -174,7 +121,7 @@ func (fe *Executor) executeSagaProgram(ctx context.Context, flowName string, pro
 		ctx:          ctx,
 	}
 
-	result, err := Run(transaction.Program, sagaExecutor)
+	result, err := RunContext(ctx, transaction.Program, sagaExecutor)
 	if err != nil {
 		return nil, err
 	}
@@ -186,56 +133,144 @@ func (fe *Executor) executeSagaProgram(ctx context.Context, flowName string, pro
 	return result, nil
 }
 
+func newSagaID(ctx context.Context, prefix string) string {
+	if ctx != nil {
+		requestID := strings.TrimSpace(fmt.Sprint(ctx.Value("request_id")))
+		if requestID != "" && requestID != "<nil>" {
+			return prefix + "-" + requestID
+		}
+	}
+	return prefix + "-" + uuid.NewString()
+}
+
 type sagaProgramExecutor struct {
-	executor     eff.Executor
-	sagaStore    schema.SagaStore
-	capSystem    *capability.CapabilitySystem
-	verbRegistry common.VerbRegistry
-	holderID     string
-	sagaID       string
-	ctx          context.Context
-	mu           sync.Mutex
-	compensated  bool
+	executor         eff.Executor
+	sagaStore        schema.SagaStore
+	capSystem        *capability.CapabilitySystem
+	verbRegistry     common.VerbRegistry
+	holderID         string
+	sagaID           string
+	ctx              context.Context
+	executionMu      sync.Mutex
+	nextSequence     int
+	executed         []sagaExecutedEffect
+	compensationOnce sync.Once
+	compensationErr  error
+}
+
+type sagaExecutedEffect struct {
+	id     string
+	effect eff.Effect
 }
 
 func (se *sagaProgramExecutor) Do(effect eff.Effect) (interface{}, error) {
-	if se.ctx != nil {
+	return se.DoContext(se.ctx, effect)
+}
+
+func (se *sagaProgramExecutor) DoContext(ctx context.Context, effect eff.Effect) (interface{}, error) {
+	if ctx != nil {
 		select {
-		case <-se.ctx.Done():
-			se.compensate()
-			return nil, se.ctx.Err()
+		case <-ctx.Done():
+			return nil, errors.Join(ctx.Err(), se.compensate())
 		default:
 		}
 	}
 
-	if args, ok := effect.Payload.(map[string]interface{}); ok {
-		if err := se.sagaStore.RecordEffect(se.sagaID, effect.Verb, args); err != nil {
-			return nil, fmt.Errorf("recording effect in saga: %w", err)
-		}
+	var args map[string]interface{}
+	switch payload := effect.Payload.(type) {
+	case nil:
+		args = make(map[string]interface{})
+	case map[string]interface{}:
+		args = payload
+	default:
+		return nil, fmt.Errorf("recording effect %s: saga payload must be an argument map", effect.Verb)
+	}
+	se.executionMu.Lock()
+	se.nextSequence++
+	sequence := se.nextSequence
+	se.executionMu.Unlock()
+	effectID := schema.SagaEffectID(sequence)
+	if err := se.sagaStore.RecordEffect(se.sagaID, effectID, sequence, effect.Verb, args); err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("recording effect in saga: %w", err),
+			se.compensate(),
+		)
+	}
+	recorded, err := schema.GetSagaEffect(se.sagaStore, se.sagaID, effectID)
+	if err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("loading recorded effect %s: %w", effectID, err),
+			se.compensate(),
+		)
+	}
+	switch recorded.Status {
+	case schema.SagaEffectSuccess:
+		se.executionMu.Lock()
+		se.executed = append(se.executed, sagaExecutedEffect{id: effectID, effect: effect})
+		se.executionMu.Unlock()
+		return recorded.Result, nil
+	case schema.SagaEffectFailed:
+		return nil, errors.Join(
+			fmt.Errorf("effect %s previously failed: %s", effectID, recorded.Error),
+			se.compensate(),
+		)
+	case schema.SagaEffectCompensated:
+		return nil, errors.Join(
+			fmt.Errorf("effect %s was already compensated", effectID),
+			se.compensate(),
+		)
+	case schema.SagaEffectPending:
+		// Pending effects are retried. The external-effect/MarkSuccess crash
+		// window therefore remains at-least-once unless the verb is idempotent.
+	default:
+		return nil, errors.Join(
+			fmt.Errorf("effect %s has unknown saga status %q", effectID, recorded.Status),
+			se.compensate(),
+		)
 	}
 
 	locks, err := se.acquireLocks(effect)
 	if err != nil {
-		se.compensate()
-		return nil, fmt.Errorf("acquiring locks for %s: %w", effect.Verb, err)
+		markErr := se.sagaStore.MarkFailed(se.sagaID, effectID, err)
+		return nil, errors.Join(
+			fmt.Errorf("acquiring locks for %s: %w", effect.Verb, err),
+			wrapSagaStoreError("marking effect failed", markErr),
+			se.compensate(),
+		)
 	}
 	for _, lock := range locks {
 		defer lock.Unlock()
 	}
 
-	result, err := se.executor.Do(effect)
+	result, err := eff.Invoke(ctx, se.executor, effect)
 	if err != nil {
-		se.sagaStore.MarkFailed(se.sagaID, effect.Verb, err)
-		se.compensate()
-		return nil, fmt.Errorf("executing effect %s: %w", effect.Verb, err)
+		markErr := se.sagaStore.MarkFailed(se.sagaID, effectID, err)
+		return nil, errors.Join(
+			fmt.Errorf("executing effect %s: %w", effect.Verb, err),
+			wrapSagaStoreError("marking effect failed", markErr),
+			se.compensate(),
+		)
 	}
 
-	if err := se.sagaStore.MarkSuccess(se.sagaID, effect.Verb); err != nil {
-		se.compensate()
-		return nil, fmt.Errorf("marking effect success in saga: %w", err)
+	se.executionMu.Lock()
+	se.executed = append(se.executed, sagaExecutedEffect{id: effectID, effect: effect})
+	se.executionMu.Unlock()
+
+	if err := se.sagaStore.MarkSuccess(se.sagaID, effectID, result); err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("marking effect success in saga: %w", err),
+			se.compensate(),
+		)
 	}
 
 	return result, nil
+}
+
+func wrapSagaStoreError(action string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", action, err)
 }
 
 func (se *sagaProgramExecutor) acquireLocks(effect eff.Effect) ([]*capability.LockResult, error) {
@@ -251,7 +286,7 @@ func (se *sagaProgramExecutor) acquireLocks(effect eff.Effect) ([]*capability.Lo
 	var locks []*capability.LockResult
 	for _, resource := range spec.Resources {
 		lock, err := se.capSystem.AcquireLock(
-			convertVerbCapabilityToTypes(resource.Cap),
+			resource.Cap.RuntimeCapability(),
 			resource.Resource,
 			se.holderID,
 		)
@@ -267,85 +302,82 @@ func (se *sagaProgramExecutor) acquireLocks(effect eff.Effect) ([]*capability.Lo
 	return locks, nil
 }
 
-func (se *sagaProgramExecutor) compensate() {
-	se.mu.Lock()
-	if se.compensated {
-		se.mu.Unlock()
-		return
-	}
-	se.compensated = true
-	se.mu.Unlock()
+func (se *sagaProgramExecutor) compensate() error {
+	se.compensationOnce.Do(func() {
+		se.compensationErr = se.runCompensation()
+	})
+	return se.compensationErr
+}
 
-	sagaEffects, err := se.sagaStore.GetTransactionEffects(se.sagaID)
-	if err != nil {
-		return
-	}
+func (se *sagaProgramExecutor) runCompensation() error {
+	se.executionMu.Lock()
+	executed := append([]sagaExecutedEffect(nil), se.executed...)
+	se.executionMu.Unlock()
 
-	for i := len(sagaEffects) - 1; i >= 0; i-- {
-		sagaEffect := sagaEffects[i]
-		if sagaEffect.Status != "success" {
-			continue
-		}
-
-		spec, exists := se.verbRegistry.GetVerb(sagaEffect.Verb)
+	var failures []error
+	for i := len(executed) - 1; i >= 0; i-- {
+		executedEffect := executed[i]
+		effect := executedEffect.effect
+		spec, exists := se.verbRegistry.GetVerb(effect.Verb)
 		if !exists {
+			failures = append(failures, fmt.Errorf("compensating %s: verb is not registered", effect.Verb))
 			continue
 		}
 		inverseVerb := spec.Inverse
 		if inverseVerb == "" {
+			failures = append(failures, fmt.Errorf("compensating %s: inverse verb is not configured", effect.Verb))
 			continue
 		}
 
 		inverseSpec, exists := se.verbRegistry.GetVerb(inverseVerb)
 		if !exists {
+			failures = append(failures, fmt.Errorf("compensating %s: inverse verb %s is not registered", effect.Verb, inverseVerb))
 			continue
 		}
 
-		var locks []*capability.LockResult
-		if se.capSystem != nil {
-			for _, resource := range inverseSpec.Resources {
-				lock, err := se.capSystem.AcquireLock(
-					convertVerbCapabilityToTypes(resource.Cap),
-					resource.Resource,
-					se.holderID,
-				)
-				if err != nil {
-					fmt.Printf("Warning: failed to acquire lock for compensation %s:%s: %v\n",
-						resource.Resource, resource.Cap.String(), err)
-					continue
-				}
-				locks = append(locks, lock)
-			}
+		locks, err := se.acquireCompensationLocks(inverseSpec)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("compensating %s: %w", effect.Verb, err))
+			continue
 		}
 
-		_, err = se.executor.Do(eff.Effect{
+		_, executeErr := se.executor.Do(eff.Effect{
 			Verb:    inverseVerb,
-			Payload: sagaEffect.Args,
+			Payload: effect.Payload,
 		})
-
 		for _, lock := range locks {
 			lock.Unlock()
 		}
-
-		if err != nil {
-			fmt.Printf("Warning: compensation failed for %s: %v\n", sagaEffect.Verb, err)
-		} else {
-			se.sagaStore.MarkCompensated(se.sagaID, sagaEffect.Verb)
+		if executeErr != nil {
+			failures = append(failures, fmt.Errorf("compensating %s with %s: %w", effect.Verb, inverseVerb, executeErr))
+			continue
+		}
+		if err := se.sagaStore.MarkCompensated(se.sagaID, executedEffect.id); err != nil {
+			failures = append(failures, fmt.Errorf("marking %s compensated: %w", effect.Verb, err))
 		}
 	}
+	return errors.Join(failures...)
 }
 
-func convertVerbCapabilityToTypes(verbCap verb.Capability) types.Capability {
-	switch {
-	case verbCap&verb.CapRead != 0:
-		return types.CapabilityRead
-	case verbCap&verb.CapCreate != 0:
-		return types.CapabilityCreate
-	case verbCap&verb.CapDelete != 0:
-		return types.CapabilityDelete
-	case verbCap&verb.CapWrite != 0:
-		return types.CapabilityModify
-	default:
-		return types.CapabilityModify
+func (se *sagaProgramExecutor) acquireCompensationLocks(spec *verb.Spec) ([]*capability.LockResult, error) {
+	if se.capSystem == nil {
+		return nil, nil
 	}
+
+	var locks []*capability.LockResult
+	for _, resource := range spec.Resources {
+		lock, err := se.capSystem.AcquireLock(
+			resource.Cap.RuntimeCapability(),
+			resource.Resource,
+			se.holderID,
+		)
+		if err != nil {
+			for _, held := range locks {
+				held.Unlock()
+			}
+			return nil, fmt.Errorf("acquiring lock for %s:%s: %w", resource.Resource, resource.Cap.String(), err)
+		}
+		locks = append(locks, lock)
+	}
+	return locks, nil
 }

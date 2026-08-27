@@ -16,6 +16,7 @@ import (
 
 	"github.com/effectus/effectus-go/adapters"
 	_ "github.com/effectus/effectus-go/adapters/sql"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 const (
@@ -81,7 +82,12 @@ func main() {
 				log.Println("Fact channel closed")
 				return
 			}
-			row := fact.Data.AsMap()
+			data, ok := fact.Data.(*structpb.Struct)
+			if !ok {
+				log.Printf("skip SQL fact with unsupported data type %T", fact.Data)
+				continue
+			}
+			row := data.AsMap()
 			updated := toInt64(row["updated_at_epoch"])
 			if updated > 0 && updated <= lastUpdated {
 				continue

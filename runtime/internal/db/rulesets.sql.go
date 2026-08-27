@@ -119,6 +119,17 @@ func (q *Queries) CreateRuleset(ctx context.Context, name string, version string
 	return &i, err
 }
 
+const DeactivateRulesetVersions = `-- name: DeactivateRulesetVersions :exec
+UPDATE rulesets
+SET status = 'ready', updated_at = CURRENT_TIMESTAMP
+WHERE name = $1 AND environment = $2 AND id != $3 AND status = 'deployed'
+`
+
+func (q *Queries) DeactivateRulesetVersions(ctx context.Context, name string, environment string, iD uuid.UUID) error {
+	_, err := q.db.Exec(ctx, DeactivateRulesetVersions, name, environment, iD)
+	return err
+}
+
 const DeleteRuleset = `-- name: DeleteRuleset :exec
 DELETE FROM rulesets 
 WHERE id = $1
@@ -127,6 +138,19 @@ WHERE id = $1
 func (q *Queries) DeleteRuleset(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, DeleteRuleset, id)
 	return err
+}
+
+const DeleteRulesetByNameVersion = `-- name: DeleteRulesetByNameVersion :execrows
+DELETE FROM rulesets
+WHERE name = $1 AND version = $2
+`
+
+func (q *Queries) DeleteRulesetByNameVersion(ctx context.Context, name string, version string) (int64, error) {
+	result, err := q.db.Exec(ctx, DeleteRulesetByNameVersion, name, version)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const GetLatestRuleset = `-- name: GetLatestRuleset :one
@@ -260,6 +284,46 @@ func (q *Queries) GetRuleset(ctx context.Context, name string, version string, e
 	return &i, err
 }
 
+const GetRulesetAnyEnvironment = `-- name: GetRulesetAnyEnvironment :one
+SELECT id, name, version, environment, status, ruleset_data, rule_count, description, tags, owner, team, metadata, git_commit, git_branch, git_tag, git_author, pull_request, compiled_at, compiler_version, schema_version, validation_hash, created_at, updated_at, created_by, updated_by FROM rulesets
+WHERE name = $1 AND version = $2
+ORDER BY updated_at DESC, environment ASC
+LIMIT 1
+`
+
+func (q *Queries) GetRulesetAnyEnvironment(ctx context.Context, name string, version string) (*Ruleset, error) {
+	row := q.db.QueryRow(ctx, GetRulesetAnyEnvironment, name, version)
+	var i Ruleset
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Version,
+		&i.Environment,
+		&i.Status,
+		&i.RulesetData,
+		&i.RuleCount,
+		&i.Description,
+		&i.Tags,
+		&i.Owner,
+		&i.Team,
+		&i.Metadata,
+		&i.GitCommit,
+		&i.GitBranch,
+		&i.GitTag,
+		&i.GitAuthor,
+		&i.PullRequest,
+		&i.CompiledAt,
+		&i.CompilerVersion,
+		&i.SchemaVersion,
+		&i.ValidationHash,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+	)
+	return &i, err
+}
+
 const GetRulesetByID = `-- name: GetRulesetByID :one
 SELECT id, name, version, environment, status, ruleset_data, rule_count, description, tags, owner, team, metadata, git_commit, git_branch, git_tag, git_author, pull_request, compiled_at, compiler_version, schema_version, validation_hash, created_at, updated_at, created_by, updated_by FROM rulesets 
 WHERE id = $1
@@ -362,6 +426,59 @@ func (q *Queries) GetRulesetVersions(ctx context.Context, name string, environme
 			&i.GitCommit,
 			&i.Status,
 			&i.IsDeployed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, &i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const GetRulesetVersionsAll = `-- name: GetRulesetVersionsAll :many
+SELECT
+    r.version,
+    MIN(r.created_at)::timestamptz AS created_at,
+    COALESCE(MAX(r.created_by), '')::text AS created_by,
+    COALESCE(MAX(r.git_commit), '')::text AS git_commit,
+    BOOL_OR(r.status = 'deployed') AS is_active,
+    COALESCE(
+        ARRAY_AGG(DISTINCT r.environment) FILTER (WHERE r.status = 'deployed'),
+        ARRAY[]::text[]
+    )::text[] AS deployed_envs
+FROM rulesets r
+WHERE r.name = $1
+GROUP BY r.version
+ORDER BY MIN(r.created_at) DESC
+`
+
+type GetRulesetVersionsAllRow struct {
+	Version      string             `db:"version" json:"version"`
+	CreatedAt    pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	CreatedBy    string             `db:"created_by" json:"created_by"`
+	GitCommit    string             `db:"git_commit" json:"git_commit"`
+	IsActive     bool               `db:"is_active" json:"is_active"`
+	DeployedEnvs []string           `db:"deployed_envs" json:"deployed_envs"`
+}
+
+func (q *Queries) GetRulesetVersionsAll(ctx context.Context, name string) ([]*GetRulesetVersionsAllRow, error) {
+	rows, err := q.db.Query(ctx, GetRulesetVersionsAll, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []*GetRulesetVersionsAllRow{}
+	for rows.Next() {
+		var i GetRulesetVersionsAllRow
+		if err := rows.Scan(
+			&i.Version,
+			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.GitCommit,
+			&i.IsActive,
+			&i.DeployedEnvs,
 		); err != nil {
 			return nil, err
 		}
@@ -538,15 +655,15 @@ SELECT r.id, r.name, r.version, r.environment, r.status, r.ruleset_data, r.rule_
 FROM rulesets r
 LEFT JOIN deployments d ON r.id = d.ruleset_id AND d.environment = r.environment
 WHERE 
-    ($1::text IS NULL OR r.name = ANY($1::text[]))
+    ($1::text[] IS NULL OR r.name = ANY($1::text[]))
     AND ($2::text[] IS NULL OR r.environment = ANY($2::text[]))
     AND ($3::ruleset_status[] IS NULL OR r.status = ANY($3::ruleset_status[]))
-    AND ($4::text IS NULL OR r.owner = $4)
-    AND ($5::text IS NULL OR r.team = $5)
+    AND (NULLIF($4::text, '') IS NULL OR r.owner = $4)
+    AND (NULLIF($5::text, '') IS NULL OR r.team = $5)
     AND ($6::text[] IS NULL OR r.tags && $6::text[])
     AND ($7::timestamptz IS NULL OR r.created_at >= $7)
-    AND ($8::text IS NULL OR r.created_by = $8)
-    AND ($9::text IS NULL OR r.git_commit = $9)
+    AND (NULLIF($8::text, '') IS NULL OR r.created_by = $8)
+    AND (NULLIF($9::text, '') IS NULL OR r.git_commit = $9)
 ORDER BY r.created_at DESC
 LIMIT $10
 `
@@ -581,7 +698,7 @@ type ListRulesetsRow struct {
 	LastDeployedAt   pgtype.Timestamptz `db:"last_deployed_at" json:"last_deployed_at"`
 }
 
-func (q *Queries) ListRulesets(ctx context.Context, column1 string, column2 []string, column3 []RulesetStatus, column4 string, column5 string, column6 []string, column7 pgtype.Timestamptz, column8 string, column9 string, limit int32) ([]*ListRulesetsRow, error) {
+func (q *Queries) ListRulesets(ctx context.Context, column1 []string, column2 []string, column3 []RulesetStatus, column4 string, column5 string, column6 []string, column7 pgtype.Timestamptz, column8 string, column9 string, limit int32) ([]*ListRulesetsRow, error) {
 	rows, err := q.db.Query(ctx, ListRulesets,
 		column1,
 		column2,

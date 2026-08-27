@@ -140,24 +140,58 @@ for fact := range ch {
 
 ## Tutorials by Source
 
-### Kafka (Streaming)
-Kafka is already supported by `adapters/kafka`. Typical setup:
+### Kafka (streaming)
+
+`adapters/kafka` uses a Kafka consumer group.
+The durable `Run` API fetches one application-level record at a time.
+It does not fetch the next record before it commits the current offset.
 
 ```yaml
-source_id: "kafka_events"
-type: "kafka"
-config:
+fact_source: "kafka"
+kafka:
   brokers: ["localhost:9092"]
   topic: "events"
-  consumer_group: "effectus"
-  schema_format: "json"
-mappings:
-  - source_key: "schema-id-123"  # or topic name if no schema registry
-    effectus_type: "acme.v1.facts.Transaction"
-    schema_version: "v1"
+  consumer_group: "effectusd-production"
+  cluster_namespace: "production-kafka"
+  ack_contract: "completed_processing"
+  max_attempts: 5
+  retry_initial: "1s"
+  retry_max: "30s"
+  poison_policy: "halt"
 ```
 
-**Schema registry integration:** store the schema ID in headers (e.g., `schema-id`) and map it via `FactMapping`. For a real registry, add a converter in the adapter that looks up schemas and populates `EffectusType` dynamically.
+The default poison policy is `halt`.
+The daemon stops and leaves the poison offset uncommitted.
+Use `skip` only with a durable poison audit file.
+Use `dlq` only with a configured DLQ topic.
+The adapter waits for DLQ publication before it commits the original offset.
+A crash between these operations can publish the DLQ record again.
+The DLQ key is the stable source delivery ID.
+
+A delivery ID has this form:
+
+```text
+kafka/<cluster-namespace>/<topic>/<partition>/<offset>
+```
+
+Kafka delivery is at least once.
+A crash after processing and before offset commit causes redelivery.
+Kafka offsets are not atomic with Effectus state or destination mutations.
+
+`NewCheckedHandler` pins a ruleset, version, and `ir.Checked` artifact.
+It derives the execution ID from the tenant and delivery identity.
+The durable-acceptance contract commits only after the checked engine reports durable admission.
+
+The legacy `Start` and `Subscribe` channel API commits after local channel handoff.
+It does not provide end-to-end acknowledgement.
+Use `Run` for durable processing contracts.
+
+Run the consumer-group integration harness against Kafka or Redpanda:
+
+```bash
+KAFKA_BROKERS="localhost:9092" \
+  go test -tags=integration ./adapters/kafka -run TestKafkaConsumerGroupCommitAndRestart
+```
 
 ---
 

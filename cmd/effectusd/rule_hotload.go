@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,9 +16,7 @@ import (
 	"github.com/alecthomas/participle/v2/lexer"
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/compiler"
-	"github.com/effectus/effectus-go/flow"
 	"github.com/effectus/effectus-go/lint"
-	"github.com/effectus/effectus-go/list"
 	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/schema/types"
@@ -65,6 +64,7 @@ type ruleCheckResponse struct {
 	SourceDiff    []ruleSourceDiff `json:"source_diff,omitempty"`
 	Canary        *canaryResult    `json:"canary,omitempty"`
 	HealthErrors  []string         `json:"health_errors,omitempty"`
+	Conflict      bool             `json:"-"`
 }
 
 type hotloadCanary struct {
@@ -110,7 +110,11 @@ func (s *serverState) handleRuleValidate(w http.ResponseWriter, r *http.Request)
 	}
 
 	result := s.evaluateRuleHotload(req, false)
-	writeJSON(w, http.StatusOK, result)
+	status := http.StatusOK
+	if !result.OK {
+		status = http.StatusUnprocessableEntity
+	}
+	writeJSON(w, status, result)
 }
 
 func (s *serverState) handleRuleHotload(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +134,13 @@ func (s *serverState) handleRuleHotload(w http.ResponseWriter, r *http.Request) 
 	}
 
 	result := s.evaluateRuleHotload(req, true)
-	writeJSON(w, http.StatusOK, result)
+	status := http.StatusOK
+	if result.Conflict {
+		status = http.StatusConflict
+	} else if !result.OK {
+		status = http.StatusUnprocessableEntity
+	}
+	writeJSON(w, status, result)
 }
 
 type rollbackRequest struct {
@@ -184,12 +194,20 @@ func (s *serverState) handleRuleRollback(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	current := s.Bundle()
-	if current != nil {
-		s.recordBundleHistory(current, "rollback-source")
+	generation := s.generationSnapshot()
+	candidate, err := compileBundleRules(snapshot.Bundle, generation.schemaTypes, generation.verbs, false)
+	if err != nil {
+		writeJSONError(w, http.StatusUnprocessableEntity, fmt.Sprintf("snapshot is incompatible with the active schema or verbs: %v", err))
+		return
 	}
-	s.SetBundle(snapshot.Bundle)
-	s.recordBundleHistory(snapshot.Bundle, "rollback")
+	if err := s.ActivateBundle(candidate, generation.id); err != nil {
+		writeJSONError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if generation.bundle != nil {
+		s.recordBundleHistory(generation.bundle, "rollback-source")
+	}
+	s.recordBundleHistory(candidate, "rollback")
 
 	response := rollbackResponse{
 		OK:       true,
@@ -220,7 +238,8 @@ func (s *serverState) evaluateRuleHotload(req ruleHotloadRequest, apply bool) ru
 		}
 	}
 
-	bundle := s.Bundle()
+	generation := s.generationSnapshot()
+	bundle := generation.bundle
 	if bundle == nil {
 		return ruleCheckResponse{
 			OK:          false,
@@ -244,7 +263,7 @@ func (s *serverState) evaluateRuleHotload(req ruleHotloadRequest, apply bool) ru
 	}
 	defer cleanup()
 
-	typeSystem := buildHotloadTypeSystem(s.typeSystem, bundle, s.verbReg)
+	typeSystem := buildHotloadTypeSystem(generation.schemaTypes, bundle, generation.verbs)
 	facts := newHotloadFacts(typeSystem)
 
 	comp := compiler.NewCompiler()
@@ -254,7 +273,7 @@ func (s *serverState) evaluateRuleHotload(req ruleHotloadRequest, apply bool) ru
 	}
 
 	typecheckStart := time.Now()
-	issues := typecheckRuleSources(comp, facts, prepared, s.verbReg)
+	issues := typecheckRuleSources(comp, facts, prepared, generation.verbs)
 	observeTypecheckDuration(time.Since(typecheckStart))
 	diagnostics := issuesToDiagnostics(issues)
 	if hasDiagnosticErrors(issues) {
@@ -274,7 +293,7 @@ func (s *serverState) evaluateRuleHotload(req ruleHotloadRequest, apply bool) ru
 
 	needsCompile := apply || req.Canary != nil
 	if needsCompile {
-		spec, err := comp.ParseAndCompileFiles(collectTempPaths(prepared), facts)
+		spec, err := comp.ParseAndCompileProgram(collectTempPaths(prepared), facts)
 		if err != nil {
 			issues = append(issues, issueFromError("compile", err))
 			if apply {
@@ -285,8 +304,8 @@ func (s *serverState) evaluateRuleHotload(req ruleHotloadRequest, apply bool) ru
 		recordRuleCompile()
 
 		next := *bundle
-		next.ListSpec = extractListSpec(spec)
-		next.FlowSpec = extractFlowSpec(spec)
+		next.ListSpec = spec.ListSpec()
+		next.FlowSpec = spec.FlowSpec()
 		next.Rules = unified.SummarizeRules(next.ListSpec)
 		next.Flows = unified.SummarizeFlows(next.FlowSpec)
 		next.RequiredFacts = spec.RequiredFacts()
@@ -327,6 +346,20 @@ func (s *serverState) evaluateRuleHotload(req ruleHotloadRequest, apply bool) ru
 		}
 	}
 
+	if len(healthErrors) > 0 {
+		recordHotloadFailure()
+		return ruleCheckResponse{
+			OK:           false,
+			Applied:      false,
+			Confirmed:    false,
+			HealthOK:     false,
+			HealthErrors: healthErrors,
+			Diagnostics:  diagnostics,
+			SourceDiff:   sourceDiff,
+			Canary:       canary,
+		}
+	}
+
 	confirm := true
 	if req.Confirm != nil {
 		confirm = *req.Confirm
@@ -347,21 +380,16 @@ func (s *serverState) evaluateRuleHotload(req ruleHotloadRequest, apply bool) ru
 		}
 	}
 
-	previous := bundle
-	s.SetBundle(staged)
-
-	if len(healthErrors) > 0 {
-		s.SetBundle(previous)
+	if err := s.ActivateBundle(staged, generation.id); err != nil {
 		recordHotloadFailure()
 		return ruleCheckResponse{
-			OK:           false,
-			Applied:      false,
-			Confirmed:    false,
-			HealthOK:     false,
-			HealthErrors: healthErrors,
-			Diagnostics:  diagnostics,
-			SourceDiff:   sourceDiff,
-			Canary:       canary,
+			OK:          false,
+			Applied:     false,
+			HealthOK:    true,
+			Diagnostics: append(diagnostics, ruleDiagnostic{Severity: lint.SeverityError, Message: err.Error(), Line: 1, Column: 1}),
+			SourceDiff:  sourceDiff,
+			Canary:      canary,
+			Conflict:    errors.Is(err, errGenerationConflict),
 		}
 	}
 
@@ -605,7 +633,7 @@ func prepareRuleSources(sources []unified.RuleSource) ([]preparedRuleSource, fun
 		if filepath.Ext(base) != ext {
 			base = strings.TrimSuffix(base, filepath.Ext(base)) + ext
 		}
-		tempPath := filepath.Join(dir, base)
+		tempPath := filepath.Join(dir, fmt.Sprintf("%06d-%s", idx+1, base))
 		if err := os.WriteFile(tempPath, []byte(source.Content), 0600); err != nil {
 			cleanup()
 			return nil, func() {}, fmt.Errorf("write temp rule file: %w", err)
@@ -1050,30 +1078,4 @@ func splitVersionedPath(path string) (string, string, bool) {
 		return "", "", false
 	}
 	return base, version, true
-}
-
-func extractListSpec(spec effectus.Spec) *list.Spec {
-	if spec == nil {
-		return nil
-	}
-	type specWithListField interface {
-		ListSpec() *list.Spec
-	}
-	if s, ok := spec.(specWithListField); ok {
-		return s.ListSpec()
-	}
-	return nil
-}
-
-func extractFlowSpec(spec effectus.Spec) *flow.Spec {
-	if spec == nil {
-		return nil
-	}
-	type specWithFlowField interface {
-		FlowSpec() *flow.Spec
-	}
-	if s, ok := spec.(specWithFlowField); ok {
-		return s.FlowSpec()
-	}
-	return nil
 }

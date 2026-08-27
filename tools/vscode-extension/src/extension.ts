@@ -34,7 +34,7 @@ export function activate(context: vscode.ExtensionContext) {
     setupFileWatchers(context);
 
     // Initialize workspace if .effectus directory exists
-    initializeWorkspace(context);
+    initializeWorkspace();
 }
 
 export function deactivate(): Thenable<void> | undefined {
@@ -87,7 +87,7 @@ function registerCommands(context: vscode.ExtensionContext) {
         }
 
         try {
-            await testRuleWithSyntheticData(editor.document);
+            await testRuleWithSyntheticData();
         } catch (error) {
             vscode.window.showErrorMessage(`Test failed: ${error}`);
         }
@@ -130,7 +130,7 @@ function registerCommands(context: vscode.ExtensionContext) {
         }
 
         try {
-            await formatRule(editor);
+            await formatRule();
         } catch (error) {
             vscode.window.showErrorMessage(`Formatting failed: ${error}`);
         }
@@ -218,7 +218,7 @@ function setupFileWatchers(context: vscode.ExtensionContext) {
     context.subscriptions.push(schemaWatcher, ruleWatcher);
 }
 
-function initializeWorkspace(context: vscode.ExtensionContext) {
+function initializeWorkspace() {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
         return;
@@ -263,13 +263,13 @@ async function validateRule(document: vscode.TextDocument): Promise<vscode.Diagn
     return [];
 }
 
-async function testRuleWithSyntheticData(document: vscode.TextDocument): Promise<void> {
+async function testRuleWithSyntheticData(): Promise<void> {
     // TODO: Implement rule testing with synthetic data
     // This would generate test data based on schemas and execute the rule
     vscode.window.showInformationMessage('Rule testing functionality coming soon');
 }
 
-async function formatRule(editor: vscode.TextEditor): Promise<void> {
+async function formatRule(): Promise<void> {
     // TODO: Implement rule formatting
     // This would format the rule according to Effectus style guidelines
     vscode.window.showInformationMessage('Rule formatting functionality coming soon');

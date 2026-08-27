@@ -30,8 +30,13 @@ func NewExecutorAdapter(verbRegistry VerbRegistry, facts Facts) *ExecutorAdapter
 	}
 }
 
-// Do implements effectus.Executor
+// Do implements the legacy context-free executor API.
 func (ea *ExecutorAdapter) Do(effect eff.Effect) (interface{}, error) {
+	return ea.DoContext(context.Background(), effect)
+}
+
+// DoContext executes a verb with the caller's cancellation and deadline.
+func (ea *ExecutorAdapter) DoContext(ctx context.Context, effect eff.Effect) (interface{}, error) {
 	// Get verb spec and executor
 	verbSpec, exists := ea.VerbRegistry.GetVerb(effect.Verb)
 	if !exists {
@@ -60,7 +65,7 @@ func (ea *ExecutorAdapter) Do(effect eff.Effect) (interface{}, error) {
 	}
 
 	// Execute the verb
-	result, err := executor.Execute(context.Background(), args)
+	result, err := executor.Execute(ctx, args)
 	if err != nil {
 		return nil, err
 	}

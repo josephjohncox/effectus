@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"os"
@@ -14,9 +15,11 @@ import (
 	"time"
 
 	"github.com/effectus/effectus-go/adapters"
+	kafkaadapter "github.com/effectus/effectus-go/adapters/kafka"
 	"github.com/effectus/effectus-go/internal/schemasources"
 	"github.com/effectus/effectus-go/loader"
 	"github.com/effectus/effectus-go/pathutil"
+	effectusruntime "github.com/effectus/effectus-go/runtime"
 	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/schema/capability"
 	"github.com/effectus/effectus-go/schema/types"
@@ -60,19 +63,22 @@ var (
 	configPath               = flag.String("config", "", "Path to YAML/JSON config file")
 	bundleFile               = flag.String("bundle", "", "Path to bundle file")
 	ociRef                   = flag.String("oci-ref", "", "OCI reference for bundle (e.g., ghcr.io/user/bundle:v1)")
+	ociCacheDir              = flag.String("oci-cache-dir", "./bundles", "Writable directory for OCI bundle cache")
+	ociSignatureVerifier     = flag.String("oci-signature-verifier", "", "Fixed executable used to verify an OCI reference and digest")
 	pluginDir                = flag.String("plugin-dir", "", "Directory containing verb plugins")
 	verbDir                  = flag.String("verb-dir", "", "Directory containing JSON verb specs")
 	verbDuplicatePolicy      = flag.String("verb-duplicate-policy", "error", "Duplicate verb policy (error, replace, ignore)")
 	verbOCIWarmup            = flag.Bool("verb-oci-warmup", false, "Warm OCI verb executors at startup")
-	verbStrict               = flag.Bool("verb-strict", false, "Enable strict verb arg/return checks at runtime")
+	verbStrict               = flag.Bool("verb-strict", true, "Validate verb arguments and return values")
 	extensionsDir            = flag.String("extensions-dir", "", "Directory containing extension manifests (*.verbs.json, *.schema.json)")
 	extensionsOCI            = flag.String("extensions-oci", "", "OCI references for extension bundles (comma-separated)")
 	extensionsReloadInterval = flag.Duration("extensions-reload-interval", 0, "Interval for reloading extension manifests (0 to disable)")
 	schemaSourcesFile        = flag.String("schema-sources", "", "Path to schema sources config (YAML/JSON)")
-	reloadInterval           = flag.Duration("reload-interval", 30*time.Second, "Interval for hot-reloading")
+	reloadInterval           = flag.Duration("reload-interval", 0, "Interval for reloading local schema and extension sources (immutable OCI bundles cannot be polled)")
+	shutdownTimeout          = flag.Duration("shutdown-timeout", 30*time.Second, "Deadline for graceful shutdown and queue drain")
 
 	// Runtime flags
-	sagaEnabled     = flag.Bool("saga", false, "Enable saga-style compensation")
+	sagaEnabled     = flag.Bool("saga", false, "Deprecated legacy saga mode (rejected by effectusd; use checked durable workflow runtime)")
 	sagaStoreType   = flag.String("saga-store", "memory", "Saga store (memory, redis, postgres)")
 	sagaRedisAddr   = flag.String("saga-redis-addr", "localhost:6379", "Redis address for saga store")
 	sagaRedisPass   = flag.String("saga-redis-password", "", "Redis password for saga store")
@@ -86,15 +92,33 @@ var (
 
 	// Monitoring flags
 	metricsAddr = flag.String("metrics-addr", ":9090", "Address to expose metrics")
-	pprofAddr   = flag.String("pprof-addr", ":6060", "Address to expose pprof")
 
 	// Fact source flags
-	factSource   = flag.String("fact-source", "http", "Fact source (http, kafka)")
-	kafkaBrokers = flag.String("kafka-brokers", "localhost:9092", "Kafka brokers")
-	kafkaTopic   = flag.String("kafka-topic", "facts", "Kafka topic")
+	factSource            = flag.String("fact-source", "http", "Fact source (http, kafka)")
+	kafkaBrokers          = flag.String("kafka-brokers", "localhost:9092", "Kafka brokers (comma-separated)")
+	kafkaTopic            = flag.String("kafka-topic", "facts", "Kafka topic")
+	kafkaConsumerGroup    = flag.String("kafka-consumer-group", "effectusd", "Kafka consumer group")
+	kafkaClusterNamespace = flag.String("kafka-cluster-namespace", "default", "Stable Kafka cluster namespace used in delivery IDs")
+	kafkaAckContract      = flag.String("kafka-ack-contract", "completed_processing", "Kafka acknowledgement contract (completed_processing, durable_acceptance)")
+	kafkaMaxAttempts      = flag.Int("kafka-max-attempts", 3, "Kafka handler attempts before poison policy")
+	kafkaRetryInitial     = flag.Duration("kafka-retry-initial", time.Second, "Kafka initial same-record retry delay")
+	kafkaRetryMax         = flag.Duration("kafka-retry-max", 30*time.Second, "Kafka maximum same-record retry delay")
+	kafkaPoisonPolicy     = flag.String("kafka-poison-policy", "halt", "Kafka poison policy (halt, skip, dlq)")
+	kafkaDLQTopic         = flag.String("kafka-dlq-topic", "", "Kafka DLQ topic for the dlq poison policy")
+	kafkaDLQMode          = flag.String("kafka-dlq-mode", string(kafkaadapter.DLQAtLeastOnceNonTransactional), "Kafka DLQ mode (at_least_once_non_transactional; DLQ publish and source offset are not atomic)")
+	kafkaPoisonAudit      = flag.String("kafka-poison-audit", "", "Deprecated; Kafka poison state is stored in the PostgreSQL execution ledger")
+	kafkaDeliveryLedger   = flag.String("kafka-delivery-ledger", "", "Deprecated; Kafka attempt state is stored in the PostgreSQL execution ledger")
 
-	// HTTP server flags
-	httpAddr = flag.String("http-addr", ":8080", "HTTP server address")
+	// HTTP and gRPC server flags
+	httpAddr          = flag.String("http-addr", ":8080", "HTTP server address")
+	grpcAddr          = flag.String("grpc-addr", "", "Generated gRPC execution service address (empty disables gRPC)")
+	grpcTLSCert       = flag.String("grpc-tls-cert", "", "PEM certificate for the gRPC execution service")
+	grpcTLSKey        = flag.String("grpc-tls-key", "", "PEM private key for the gRPC execution service")
+	grpcAllowInsecure = flag.Bool("grpc-allow-insecure", false, "Explicitly allow plaintext gRPC transport")
+	grpcMaxReceive    = flag.Int("grpc-max-receive-bytes", 4<<20, "Maximum gRPC request size")
+	grpcMaxSend       = flag.Int("grpc-max-send-bytes", 4<<20, "Maximum gRPC response size")
+	grpcMaxDuration   = flag.Duration("grpc-max-execution-duration", 30*time.Second, "Maximum gRPC execution duration")
+	grpcMaxConcurrent = flag.Int("grpc-max-concurrent", 128, "Maximum concurrent gRPC executions")
 
 	// API auth + rate limit flags
 	apiAuthMode   = flag.String("api-auth", "token", "API auth mode (token, disabled)")
@@ -129,6 +153,13 @@ func main() {
 		setFlags[f.Name] = true
 	})
 
+	for _, secretFlag := range []string{"api-token", "api-read-token", "saga-redis-password", "saga-postgres-dsn"} {
+		if setFlags[secretFlag] {
+			fmt.Fprintf(os.Stderr, "--%s is rejected because command arguments expose secrets; use environment variables or a protected config file\n", secretFlag)
+			os.Exit(1)
+		}
+	}
+
 	if strings.TrimSpace(*configPath) != "" {
 		cfg, err := loadRuntimeConfig(*configPath)
 		if err != nil {
@@ -147,6 +178,22 @@ func main() {
 				}
 			}
 		}
+	}
+
+	// Secret environment variables take effect only when the corresponding
+	// flag/config value is empty. This keeps chart-managed secrets out of the
+	// process argument list.
+	if *apiToken == "" {
+		*apiToken = os.Getenv("EFFECTUS_API_TOKEN")
+	}
+	if *apiReadToken == "" {
+		*apiReadToken = os.Getenv("EFFECTUS_API_READ_TOKEN")
+	}
+	if *sagaRedisPass == "" {
+		*sagaRedisPass = os.Getenv("EFFECTUS_SAGA_REDIS_PASSWORD")
+	}
+	if *sagaPgDSN == "" {
+		*sagaPgDSN = os.Getenv("EFFECTUS_SAGA_POSTGRES_DSN")
 	}
 
 	if strings.TrimSpace(*schemaSourcesFile) != "" {
@@ -173,6 +220,10 @@ func main() {
 	if *bundleFile == "" && *ociRef == "" {
 		fmt.Fprintln(os.Stderr, "Either -bundle or -oci-ref must be specified")
 		flag.PrintDefaults()
+		os.Exit(1)
+	}
+	if *bundleFile != "" && *ociRef != "" {
+		fmt.Fprintln(os.Stderr, "Use either -bundle or -oci-ref, not both")
 		os.Exit(1)
 	}
 
@@ -215,10 +266,14 @@ func main() {
 			os.Exit(1)
 		}
 	} else if *ociRef != "" {
+		if strings.TrimSpace(*ociSignatureVerifier) == "" {
+			fmt.Fprintln(os.Stderr, "OCI loading requires --oci-signature-verifier")
+			os.Exit(1)
+		}
 		if *verbose {
 			fmt.Printf("Pulling bundle from OCI registry: %s\n", *ociRef)
 		}
-		puller := unified.NewOCIBundlePuller("./bundles")
+		puller := unified.NewOCIBundlePullerWithPolicy(*ociCacheDir, daemonOCIVerificationPolicy())
 		bundle, err = puller.Pull(*ociRef)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error pulling bundle: %v\n", err)
@@ -234,19 +289,23 @@ func main() {
 	}
 
 	// Create verb registry
-	verbReg := verb.NewRegistry(typeSystem)
-	if err := verbReg.SetDuplicatePolicy(*verbDuplicatePolicy); err != nil {
-		fmt.Fprintf(os.Stderr, "Invalid verb duplicate policy: %v\n", err)
+	verbReg, err := newConfiguredVerbRegistry(typeSystem)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid verb configuration: %v\n", err)
 		os.Exit(1)
 	}
-	if *verbStrict {
-		val := true
-		verbReg.SetStrictArgs(&val)
-		verbReg.SetStrictReturn(&val)
-	}
 	extensionDirs := splitCommaList(*extensionsDir)
+	if strings.TrimSpace(*pluginDir) != "" {
+		fmt.Fprintln(os.Stderr, "--plugin-dir is not supported by production effectusd; use immutable invocation-aware extension targets")
+		os.Exit(1)
+	}
+	for _, directory := range splitCommaList(*verbDir) {
+		if directory != "" {
+			extensionDirs = append(extensionDirs, directory)
+		}
+	}
 	extensionOCIs := splitCommaList(*extensionsOCI)
-	if err := loadVerbsAndExtensions(typeSystem, verbReg, extensionDirs, extensionOCIs); err != nil {
+	if err := loadVerbsAndExtensions(verbReg, extensionDirs, extensionOCIs); err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading verbs/extensions: %v\n", err)
 		os.Exit(1)
 	}
@@ -262,52 +321,16 @@ func main() {
 		}
 	}
 
-	preparedBundle, err := compileBundleRules(bundle, typeSystem, verbReg, *verbose)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error compiling bundle rules: %v\n", err)
+	if bundle.ListSpec != nil || bundle.FlowSpec != nil {
+		fmt.Fprintln(os.Stderr, "Bundle contains in-memory legacy specifications; effectusd accepts embedded .eff or .effx RuleSources only.")
 		os.Exit(1)
 	}
-	bundle = preparedBundle
-
-	var sagaStore schema.SagaStore
 	if *sagaEnabled {
-		if *verbose {
-			fmt.Printf("Enabling saga with store: %s\n", *sagaStoreType)
-		}
-
-		switch strings.ToLower(*sagaStoreType) {
-		case "memory":
-			sagaStore = schema.NewInMemorySagaStore()
-		case "redis":
-			store, err := schema.NewRedisSagaStore(schema.RedisSagaStoreOptions{
-				Addr:     *sagaRedisAddr,
-				Password: *sagaRedisPass,
-				DB:       *sagaRedisDB,
-				Prefix:   *sagaRedisPrefix,
-				TTL:      *sagaRedisTTL,
-			})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error configuring redis saga store: %v\n", err)
-				os.Exit(1)
-			}
-			sagaStore = store
-		case "postgres":
-			if strings.TrimSpace(*sagaPgDSN) == "" {
-				fmt.Fprintln(os.Stderr, "Postgres saga store requires --saga-postgres-dsn")
-				os.Exit(1)
-			}
-			store, err := schema.NewPostgresSagaStore(*sagaPgDSN)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error configuring postgres saga store: %v\n", err)
-				os.Exit(1)
-			}
-			sagaStore = store
-		default:
-			fmt.Fprintf(os.Stderr, "Saga store %q not supported (use memory, redis, postgres)\n", *sagaStoreType)
-			os.Exit(1)
-		}
+		fmt.Fprintln(os.Stderr, "--saga is rejected: the legacy daemon executor does not use the V2 outbox. Use runtime.ExecuteWorkflowWithIdentity with a configured durable outbox.")
+		os.Exit(1)
 	}
 
+	var sagaStore schema.SagaStore
 	var capSystem *capability.CapabilitySystem
 
 	mergeDefault, err := parseMergeStrategy(*factsMergeDef)
@@ -341,15 +364,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	auth, generatedToken, err := buildAPIAuth(*apiAuthMode, *apiToken, *apiReadToken)
+	auth, err := buildAPIAuth(*apiAuthMode, *apiToken, *apiReadToken)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error configuring API auth: %v\n", err)
 		os.Exit(1)
 	}
-	if generatedToken != "" {
-		fmt.Printf("Generated API token: %s\n", generatedToken)
-	}
-
 	acl, err := loadACL(*apiACLFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading API ACL: %v\n", err)
@@ -366,18 +385,74 @@ func main() {
 	state := newServerState(bundle, factCh, store, storeConfig, auth, limiter, acl, typeSystem, schemaSources, verbReg, *rulesHotload, history, *sagaEnabled, sagaStore, capSystem)
 	state.recordBundleHistory(bundle, "startup")
 
-	// Start fact source (non-HTTP)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		startFactSource(ctx, state)
-	}()
+	if err := validateFactSource(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error configuring fact source: %v\n", err)
+		os.Exit(1)
+	}
+	var kafkaSource *kafkaadapter.KafkaSource
+	var kafkaHandler kafkaadapter.Handler
+	var recoveryWorker *effectusruntime.RecoveryWorker
+	var execution *effectusruntime.ExecutionRuntime
+	var executionDB *sql.DB
+	var grpcExecutionServer *effectusruntime.RulesetExecutionServer
+	needsCheckedEngine := true // HTTP, Kafka, and gRPC share one checked durable engine.
+	if needsCheckedEngine {
+		var configureErr error
+		execution, executionDB, configureErr = configureDaemonExecutionEngine(ctx, bundle, extensionDirs, extensionOCIs)
+		if configureErr != nil {
+			fmt.Fprintf(os.Stderr, "Error creating checked execution engine: %v\n", configureErr)
+			os.Exit(1)
+		}
+		state.SetCheckedEngine(execution.Engine())
+		recoveryWorker, err = newDaemonRecoveryWorker(execution, executionDB)
+		if err != nil {
+			_ = executionDB.Close()
+			fmt.Fprintf(os.Stderr, "Error creating recovery worker: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(*factSource), "kafka") {
+		kafkaHandler, err = newDaemonKafkaHandler(bundle, execution)
+		if err == nil {
+			kafkaSource, err = configureDaemonKafkaSource(executionDB)
+		}
+		if err != nil {
+			_ = executionDB.Close()
+			fmt.Fprintf(os.Stderr, "Error creating Kafka fact source: %v\n", err)
+			os.Exit(1)
+		}
+		state.SetKafkaSource(kafkaSource)
+	}
+	if strings.TrimSpace(*grpcAddr) != "" {
+		grpcExecutionServer, err = configureDaemonGRPCServer(execution, bundle)
+		if err == nil {
+			state.SetGRPCServer(grpcExecutionServer)
+		}
+		if err != nil {
+			_ = executionDB.Close()
+			fmt.Fprintf(os.Stderr, "Error creating gRPC execution service: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	if executionDB != nil {
+		defer executionDB.Close()
+	}
+	if execution != nil {
+		defer execution.Close()
+	}
 
-	// Start HTTP server for API
+	httpServer, httpListener, err := newHTTPServer(*httpAddr, state)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting HTTP server: %v\n", err)
+		os.Exit(1)
+	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		startHTTPServer(ctx, *httpAddr, state)
+		if err := serveHTTPServer(ctx, httpServer, httpListener); err != nil {
+			fmt.Fprintf(os.Stderr, "HTTP server error: %v\n", err)
+			cancel()
+		}
 	}()
 
 	// Start metrics server
@@ -391,46 +466,8 @@ func main() {
 
 	// Add hot-reloading if OCI reference is provided
 	if *ociRef != "" && *reloadInterval > 0 {
-		if *verbose {
-			fmt.Printf("Enabling hot-reloading every %s\n", *reloadInterval)
-		}
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ticker := time.NewTicker(*reloadInterval)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					if *verbose {
-						fmt.Println("Checking for bundle updates...")
-					}
-
-					puller := unified.NewOCIBundlePuller("./bundles")
-					newBundle, err := puller.Pull(*ociRef)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error pulling bundle update: %v\n", err)
-						continue
-					}
-
-					if newBundle.Version != bundle.Version {
-						fmt.Printf("Updated bundle from %s to %s\n", bundle.Version, newBundle.Version)
-						prepared, err := compileBundleRules(newBundle, typeSystem, verbReg, *verbose)
-						if err != nil {
-							fmt.Fprintf(os.Stderr, "Error compiling updated bundle: %v\n", err)
-							continue
-						}
-						bundle = prepared
-						state.SetBundle(prepared)
-						state.recordBundleHistory(prepared, "oci-reload")
-					}
-				}
-			}
-		}()
+		fmt.Fprintln(os.Stderr, "--reload-interval cannot poll an immutable OCI digest; publish and deploy a new digest instead")
+		cancel()
 	}
 
 	extReloadInterval := *extensionsReloadInterval
@@ -455,8 +492,14 @@ func main() {
 					if *verbose {
 						fmt.Println("Reloading extension manifests...")
 					}
-					if err := loadVerbsAndExtensions(typeSystem, verbReg, extensionDirs, extensionOCIs); err != nil {
-						fmt.Fprintf(os.Stderr, "Error reloading extensions: %v\n", err)
+					var reloadErr error
+					if execution != nil {
+						reloadErr = execution.HotReload(ctx)
+					} else {
+						reloadErr = reloadVerbsAndExtensions(state, extensionDirs, extensionOCIs)
+					}
+					if reloadErr != nil {
+						fmt.Fprintf(os.Stderr, "Error reloading extensions: %v\n", reloadErr)
 					}
 				}
 			}
@@ -485,11 +528,52 @@ func main() {
 					if *verbose {
 						fmt.Println("Reloading schema sources...")
 					}
-					typeSystem.ResetFactTypes()
-					if err := schemasources.Apply(context.Background(), typeSystem, schemaSources, *verbose); err != nil {
+					if err := reloadSchemaSources(ctx, state, schemaSources, *verbose); err != nil {
 						fmt.Fprintf(os.Stderr, "Error reloading schema sources: %v\n", err)
 					}
 				}
+			}
+		}()
+	}
+
+	state.SetPhase(phaseRunning)
+	if recoveryWorker != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := recoveryWorker.Run(ctx); err != nil && ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "Execution recovery worker error: %v\n", err)
+				cancel()
+			}
+		}()
+	}
+	if grpcExecutionServer != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			stop := make(chan struct{})
+			go func() {
+				select {
+				case <-ctx.Done():
+					grpcExecutionServer.Stop()
+				case <-stop:
+				}
+			}()
+			err := grpcExecutionServer.Start()
+			close(stop)
+			if err != nil && ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "gRPC execution service error: %v\n", err)
+				cancel()
+			}
+		}()
+	}
+	if kafkaSource != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := kafkaSource.Run(ctx, kafkaFactHandler{delegate: kafkaHandler}); err != nil && ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "Kafka source error: %v\n", err)
+				cancel()
 			}
 		}()
 	}
@@ -498,18 +582,107 @@ func main() {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("Shutting down, waiting for goroutines to finish...")
-			wg.Wait()
-			return
+			state.SetPhase(phaseDraining)
+			fmt.Println("Shutting down, stopping admission...")
+			shutdownCtx, stopShutdown := context.WithTimeout(context.WithoutCancel(ctx), *shutdownTimeout)
+			defer stopShutdown()
+			workersDone := make(chan struct{})
+			go func() {
+				wg.Wait()
+				close(workersDone)
+			}()
+			select {
+			case <-workersDone:
+			case <-shutdownCtx.Done():
+				fmt.Printf("Shutdown deadline reached: %v\n", shutdownCtx.Err())
+				state.SetPhase(phaseStopped)
+				return
+			}
+			for {
+				select {
+				case receivedFacts := <-factCh:
+					if err := processFactEnvelope(shutdownCtx, state, receivedFacts); err != nil {
+						fmt.Printf("Drain error: %v\n", err)
+					}
+				case <-shutdownCtx.Done():
+					state.SetPhase(phaseStopped)
+					return
+				default:
+					state.SetPhase(phaseStopped)
+					return
+				}
+			}
 		case receivedFacts := <-factCh:
-			if err := state.ExecuteFacts(ctx, receivedFacts); err != nil {
+			if err := processFactEnvelope(ctx, state, receivedFacts); err != nil {
 				fmt.Printf("Execution error: %v\n", err)
 			}
 		}
 	}
 }
 
-func loadVerbsAndExtensions(typeSystem *types.TypeSystem, verbReg *verb.Registry, extensionDirs []string, extensionOCIs []string) error {
+func processFactEnvelope(ctx context.Context, state *serverState, receivedFacts factEnvelope) error {
+	return processFactEnvelopeOnGeneration(ctx, state, receivedFacts, state.generationSnapshot())
+}
+
+func processFactEnvelopeOnGeneration(ctx context.Context, state *serverState, receivedFacts factEnvelope, generation *runtimeGeneration) error {
+	if generation == nil {
+		return fmt.Errorf("runtime generation is required")
+	}
+	if receivedFacts.GenerationDigest != "" && receivedFacts.GenerationDigest != generation.bundleDigest {
+		return fmt.Errorf("runtime generation digest changed before processing")
+	}
+	if state.factStore != nil {
+		if err := state.factStore.Update(receivedFacts.Universe, receivedFacts.Facts); err != nil {
+			return fmt.Errorf("persist facts: %w", err)
+		}
+	}
+	if err := state.executeFactsOnGeneration(ctx, receivedFacts, generation); err != nil {
+		return fmt.Errorf("execute facts: %w", err)
+	}
+	return nil
+}
+
+func reloadSchemaSources(ctx context.Context, state *serverState, sources []adapters.SchemaSourceConfig, verbose bool) error {
+	generation := state.generationSnapshot()
+	candidate := types.NewTypeSystem()
+	if err := schemasources.Apply(ctx, candidate, sources, verbose); err != nil {
+		return err
+	}
+	bundle, err := compileBundleRules(generation.bundle, candidate, generation.verbs, verbose)
+	if err != nil {
+		return fmt.Errorf("compile rules against schema candidate: %w", err)
+	}
+	return state.ActivateGeneration(bundle, candidate, generation.verbs, generation.id)
+}
+
+func newConfiguredVerbRegistry(typeSystem *types.TypeSystem) (*verb.Registry, error) {
+	registry := verb.NewRegistry(typeSystem)
+	if err := registry.SetDuplicatePolicy(*verbDuplicatePolicy); err != nil {
+		return nil, err
+	}
+	strict := *verbStrict
+	registry.SetStrictArgs(&strict)
+	registry.SetStrictReturn(&strict)
+	return registry, nil
+}
+
+func reloadVerbsAndExtensions(state *serverState, extensionDirs []string, extensionOCIs []string) error {
+	generation := state.generationSnapshot()
+	candidate, err := newConfiguredVerbRegistry(generation.schemaTypes)
+	if err != nil {
+		return err
+	}
+	if err := loadVerbsAndExtensions(candidate, extensionDirs, extensionOCIs); err != nil {
+		return err
+	}
+	bundle, err := compileBundleRules(generation.bundle, generation.schemaTypes, candidate, false)
+	if err != nil {
+		return fmt.Errorf("compile rules against verb candidate: %w", err)
+	}
+	return state.ActivateGeneration(bundle, generation.schemaTypes, candidate, generation.id)
+}
+
+func loadVerbsAndExtensions(verbReg *verb.Registry, extensionDirs []string, extensionOCIs []string) error {
 	if verbReg == nil {
 		return nil
 	}
@@ -567,8 +740,11 @@ func loadVerbsAndExtensions(typeSystem *types.TypeSystem, verbReg *verb.Registry
 			if ref == "" {
 				continue
 			}
+			if strings.TrimSpace(*ociSignatureVerifier) == "" {
+				return fmt.Errorf("OCI extensions require --oci-signature-verifier")
+			}
 			name := fmt.Sprintf("oci-%d", i+1)
-			em.AddLoader(loader.NewOCIBundleLoader(name, ref))
+			em.AddLoader(loader.NewOCIBundleLoaderWithPolicy(name, ref, daemonOCIVerificationPolicy()))
 		}
 
 		registry := schema.NewRegistry()
@@ -613,23 +789,19 @@ func parseFixedTime(value string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("expected RFC3339/RFC3339Nano timestamp")
 }
 
-// startFactSource starts the appropriate fact source
-func startFactSource(ctx context.Context, state *serverState) {
-	if *factSource == "kafka" {
-		startKafkaConsumer(ctx, state)
-		return
+func validateFactSource() error {
+	switch strings.ToLower(strings.TrimSpace(*factSource)) {
+	case "", "http":
+		return nil
+	case "kafka":
+		if err := kafkaadapter.ValidateConfig(daemonKafkaConfig()); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*sagaPgDSN) == "" {
+			return fmt.Errorf("Kafka requires --saga-postgres-dsn for durable engine admission")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported fact source %q", *factSource)
 	}
-}
-
-// startKafkaConsumer starts a Kafka consumer for facts
-func startKafkaConsumer(ctx context.Context, state *serverState) {
-	// Placeholder for Kafka consumer implementation
-	fmt.Println("Starting Kafka consumer...")
-	fmt.Printf("Brokers: %s\n", *kafkaBrokers)
-	fmt.Printf("Topic: %s\n", *kafkaTopic)
-
-	// In a real implementation, this would connect to Kafka
-	// and read messages into the factCh
-	<-ctx.Done()
-	fmt.Println("Stopping Kafka consumer...")
 }

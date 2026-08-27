@@ -1,111 +1,88 @@
-# Capability-Based Effects in Effectus
+# Capability Model
 
-## 1. Introduction to Capabilities
+Capability metadata describes access, conflict, and retry properties for verbs.
 
-Effectus implements a capability-based effect system that governs what actions rules can perform. This capability model provides a principled approach to resource access control and concurrency management.
+It is not a complete authorization system.
 
-```math
-\begin{align}
-\text{Capability} &: \text{Enum}\{Read, Modify, Create, Delete\} \\
-\text{Verb} &: \text{Name} \times \text{Capability} \times \text{ArgTypes} \times \text{ReturnType} \\
-\text{Effect} &: \text{Verb} \times \text{Args} \times \text{Result}
-\end{align}
-```
+## Declaration
 
-Every verb in the system is associated with exactly one capability, establishing what level of access it requires to execute. This creates a static permission model that can be reasoned about at compile time.
-
-## 2. Theoretical Foundation
-
-### 2.1. Capability Lattice
-
-The capabilities form a lattice with a natural ordering:
+Let a verb contract contain a capability bit set and resource declarations:
 
 ```math
-Read \leq Modify \leq Create \leq Delete
+v = (name, args, result, capabilities, resources)
 ```
 
-This ordering reflects increasing levels of authority, where each capability implies all capabilities below it in the lattice. The lattice structure enables formal reasoning about permission containment.
+A resource declaration identifies the protected resource class and required capability bits.
 
-### 2.2. Capability as a Type Refinement
+The compiler rejects a resource declaration that exceeds the verb declaration.
 
-Conceptually, capabilities refine the Effect type:
+## Bit sets, not an authority lattice
+
+Effectus combines capability flags as bit sets. Do not infer a universal order such as read below write below delete.
+
+Different flags describe different properties. For example, exclusive and commutative declarations conflict.
+
+The validator rejects known incompatible combinations.
+
+## Runtime lock selection
+
+The runtime derives a conservative lock requirement from the selected effects.
+
+For one protected resource, it selects the strongest applicable conflict requirement. Equal-priority source order remains stable.
+
+This policy coordinates workers that use the same lock provider and resource key.
+
+## Local advisory locks
+
+A process-local lock protects only that process. Its token is advisory.
+
+It cannot stop another process or an external service from accepting stale work.
+
+## Durable fencing
+
+The PostgreSQL fencing provider issues monotonic tokens for a protected resource.
+
+A destination must compare the supplied token with its last accepted token. It must reject a lower token.
+
+Without that destination check, the token is metadata rather than a fence.
+
+## Static property
+
+A useful static property is declaration containment:
 
 ```math
-\begin{align}
-\text{Effect}_C &: \{ e : \text{Effect} \mid \text{cap}(e) \leq C \}
-\end{align}
+cap(resource) \subseteq cap(verb)
 ```
 
-This refinement type restricts effects to those with capabilities not exceeding a given bound $C$. This enables static verification that a rule doesn't perform operations beyond its authority.
+The compiler can check this relation because both sets are part of the immutable environment.
 
-## 3. Operational Semantics with Capabilities
+## Runtime property
 
-Capabilities extend the operational semantics of Effectus by introducing resource locking:
+A useful runtime property is stale-completion rejection:
 
 ```math
-\begin{align}
-\text{acquireLock}(e) &: \text{Capability} \times \text{Key} \rightarrow \text{Lock} \\
-\text{releaseLock}(l) &: \text{Lock} \rightarrow \text{Unit}
-\end{align}
+token_{complete} = token_{lease}
 ```
 
-The execution of effects is governed by this lock discipline:
+The durable store rejects completion with a different owner or token.
 
-```math
-\begin{align}
-\frac{\text{cap}(e) = c \quad \text{key}(e) = k \quad l = \text{acquireLock}(c, k)}
-     {\langle e, \text{ctx} \rangle \Rightarrow \langle \text{result}, \text{ctx'} \rangle} \quad \text{releaseLock}(l)
-\end{align}
-```
+This property protects Effectus state. It does not undo external work performed by a stale worker.
 
-In practical terms, this means that before executing an effect, we must acquire the appropriate capability lock on the target resource. After execution, we release the lock.
+## Authorization boundary
 
-## 4. Key Properties
+Capability metadata does not identify a human or service principal. Transport authentication and destination authorization remain separate controls.
 
-### 4.1. Capability Safety
+A deployment must configure both controls when access policy depends on identity.
 
-A key property of the capability system is **capability safety**:
+## Proof obligations
 
-**Theorem (Capability Safety)**: A rule with maximum capability $C$ cannot perform any effect $e$ where $\text{cap}(e) > C$.
+A full concurrency proof would need to define:
 
-This is enforced statically during rule compilation, preventing unauthorized operations.
+- Resource-key derivation
+- Lock compatibility
+- Lock acquisition order
+- Lease-expiry behavior
+- Destination fencing enforcement
+- Failure and retry transitions
 
-### 4.2. Deadlock Freedom
-
-The capability order provides a natural locking order, which ensures deadlock freedom:
-
-**Theorem (Deadlock Freedom)**: If locks are always acquired in order of increasing capability, then no deadlock can occur.
-
-In the implementation, the lock manager enforces a total ordering of lock acquisition based on capability and resource key, preventing circular wait conditions.
-
-## 5. Practical Applications
-
-The capability system enables several important features:
-
-1. **Resource Protection**: Critical resources are protected by appropriate capability requirements
-2. **Concurrency Control**: The locking discipline ensures safe concurrent execution of rules
-3. **Authorization Modeling**: Business permissions map naturally to capability requirements
-4. **Static Verification**: Rule capabilities can be statically verified before deployment
-
-## 6. Relationship to Other Typed Effect Systems
-
-Effectus's capability model relates to other typed effect systems:
-
-| System | Approach | Notable Difference |
-|--------|----------|-------------------|
-| **Haskell IO Monad** | Type-based isolation | No fine-grained permission model |
-| **Rust Borrowing** | Ownership & lifetime | Focuses on memory safety |
-| **Object Capability** | Reference possession | Dynamically checked at runtime |
-| **Effectus** | Capability lattice | Statically verified, resource-oriented |
-
-The Effectus approach combines static verification with resource-oriented capabilities, providing safety guarantees while maintaining runtime efficiency.
-
-## 7. Future Extensions
-
-Possible extensions to the capability system include:
-
-1. **Delegated Capabilities**: Temporarily granting capabilities to sub-operations
-2. **Parametric Capabilities**: Capabilities that depend on rule parameters
-3. **Derived Capabilities**: Defining new capabilities as combinations of existing ones
-
-These extensions would further enhance the expressiveness while maintaining the core safety properties of the system. 
+The current TLA+ saga model covers bounded lease and token transitions. It does not model every destination.

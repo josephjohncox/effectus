@@ -24,10 +24,12 @@ func NewPostgresSagaStore(dsn string) (*PostgresSagaStore, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 	store := &PostgresSagaStore{db: db}
 	if err := store.ensureSchema(ctx); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	return store, nil
@@ -48,35 +50,55 @@ func (ps *PostgresSagaStore) StartTransaction(sagaID, ruleName string) error {
 	return err
 }
 
-func (ps *PostgresSagaStore) RecordEffect(sagaID, verb string, args map[string]interface{}) error {
+func (ps *PostgresSagaStore) RecordEffect(sagaID, effectID string, sequence int, verb string, args map[string]interface{}) error {
 	if ps == nil || ps.db == nil {
 		return fmt.Errorf("postgres saga store not initialized")
 	}
 	payload, err := json.Marshal(args)
 	if err != nil {
+		return fmt.Errorf("marshal saga effect arguments: %w", err)
+	}
+	result, err := ps.db.Exec(`
+		INSERT INTO effectus_saga_effects
+			(saga_id, effect_id, sequence, verb, status, args, created_at)
+		VALUES ($1, $2, $3, $4, 'pending', $5::jsonb, now())
+		ON CONFLICT (saga_id, effect_id) DO UPDATE
+		SET effect_id = EXCLUDED.effect_id
+		WHERE effectus_saga_effects.sequence = EXCLUDED.sequence
+		  AND effectus_saga_effects.verb = EXCLUDED.verb
+		  AND effectus_saga_effects.args = EXCLUDED.args
+	`, sagaID, effectID, sequence, verb, payload)
+	if err != nil {
 		return err
 	}
-	_, err = ps.db.Exec(`
-		INSERT INTO effectus_saga_effects (saga_id, verb, status, args, created_at)
-		VALUES ($1, $2, 'pending', $3, now())
-	`, sagaID, verb, payload)
-	return err
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("effect identity conflict for saga %s effect %s", sagaID, effectID)
+	}
+	return nil
 }
 
-func (ps *PostgresSagaStore) MarkSuccess(sagaID, verb string) error {
-	return ps.updateEffectStatus(sagaID, verb, "success", "")
+func (ps *PostgresSagaStore) MarkSuccess(sagaID, effectID string, result interface{}) error {
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("marshal saga effect result: %w", err)
+	}
+	return ps.updateEffectStatus(sagaID, effectID, SagaEffectSuccess, "", payload)
 }
 
-func (ps *PostgresSagaStore) MarkFailed(sagaID, verb string, reason error) error {
+func (ps *PostgresSagaStore) MarkFailed(sagaID, effectID string, reason error) error {
 	msg := ""
 	if reason != nil {
 		msg = reason.Error()
 	}
-	return ps.updateEffectStatus(sagaID, verb, "failed", msg)
+	return ps.updateEffectStatus(sagaID, effectID, SagaEffectFailed, msg, nil)
 }
 
-func (ps *PostgresSagaStore) MarkCompensated(sagaID, verb string) error {
-	return ps.updateEffectStatus(sagaID, verb, "compensated", "")
+func (ps *PostgresSagaStore) MarkCompensated(sagaID, effectID string) error {
+	return ps.updateEffectStatus(sagaID, effectID, SagaEffectCompensated, "", nil)
 }
 
 func (ps *PostgresSagaStore) GetTransactionEffects(sagaID string) ([]*SagaEffect, error) {
@@ -84,10 +106,10 @@ func (ps *PostgresSagaStore) GetTransactionEffects(sagaID string) ([]*SagaEffect
 		return nil, fmt.Errorf("postgres saga store not initialized")
 	}
 	rows, err := ps.db.Query(`
-		SELECT verb, status, args, error, created_at
+		SELECT effect_id, sequence, verb, status, args, result, error, created_at
 		FROM effectus_saga_effects
 		WHERE saga_id = $1
-		ORDER BY created_at ASC
+		ORDER BY sequence ASC, id ASC
 	`, sagaID)
 	if err != nil {
 		return nil, err
@@ -96,21 +118,32 @@ func (ps *PostgresSagaStore) GetTransactionEffects(sagaID string) ([]*SagaEffect
 
 	var effects []*SagaEffect
 	for rows.Next() {
-		var verb string
-		var status string
-		var argsJSON []byte
+		var effectID, verb, status string
+		var sequence int
+		var argsJSON, resultJSON []byte
 		var errMsg sql.NullString
 		var createdAt time.Time
-		if err := rows.Scan(&verb, &status, &argsJSON, &errMsg, &createdAt); err != nil {
+		if err := rows.Scan(&effectID, &sequence, &verb, &status, &argsJSON, &resultJSON, &errMsg, &createdAt); err != nil {
 			return nil, err
 		}
 		args := map[string]interface{}{}
 		if len(argsJSON) > 0 {
-			_ = json.Unmarshal(argsJSON, &args)
+			if err := json.Unmarshal(argsJSON, &args); err != nil {
+				return nil, fmt.Errorf("decode arguments for effect %s: %w", effectID, err)
+			}
+		}
+		var result interface{}
+		if len(resultJSON) > 0 {
+			if err := json.Unmarshal(resultJSON, &result); err != nil {
+				return nil, fmt.Errorf("decode result for effect %s: %w", effectID, err)
+			}
 		}
 		effect := &SagaEffect{
+			ID:        effectID,
+			Sequence:  sequence,
 			Verb:      verb,
 			Args:      args,
+			Result:    result,
 			Status:    status,
 			Timestamp: createdAt,
 		}
@@ -155,30 +188,33 @@ func (ps *PostgresSagaStore) CompleteSaga(sagaID string) error {
 	return err
 }
 
-func (ps *PostgresSagaStore) updateEffectStatus(sagaID, verb, status, errMsg string) error {
+func (ps *PostgresSagaStore) updateEffectStatus(sagaID, effectID, status, errMsg string, resultJSON []byte) error {
 	if ps == nil || ps.db == nil {
 		return fmt.Errorf("postgres saga store not initialized")
 	}
-	var id int64
-	err := ps.db.QueryRow(`
-		SELECT id
-		FROM effectus_saga_effects
-		WHERE saga_id = $1 AND verb = $2 AND status = 'pending'
-		ORDER BY created_at DESC
-		LIMIT 1
-	`, sagaID, verb).Scan(&id)
+	result, err := ps.db.Exec(`
+		UPDATE effectus_saga_effects
+		SET status = $3,
+		    error = $4,
+		    result = CASE WHEN $3 = 'success' THEN $5::jsonb ELSE result END
+		WHERE saga_id = $1
+		  AND effect_id = $2
+		  AND (
+		    ($3 IN ('success', 'failed') AND status IN ('pending', $3))
+		    OR ($3 = 'compensated' AND status IN ('success', 'compensated'))
+		  )
+	`, sagaID, effectID, status, nullableString(errMsg), resultJSON)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return fmt.Errorf("pending effect not found for saga %s verb %s", sagaID, verb)
-		}
 		return err
 	}
-	_, err = ps.db.Exec(`
-		UPDATE effectus_saga_effects
-		SET status = $2, error = $3
-		WHERE id = $1
-	`, id, status, nullableString(errMsg))
-	return err
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("effect %s for saga %s is missing or has an invalid status transition to %s", effectID, sagaID, status)
+	}
+	return nil
 }
 
 func (ps *PostgresSagaStore) ensureSchema(ctx context.Context) error {
@@ -196,12 +232,28 @@ func (ps *PostgresSagaStore) ensureSchema(ctx context.Context) error {
 		CREATE TABLE IF NOT EXISTS effectus_saga_effects (
 			id bigserial PRIMARY KEY,
 			saga_id text NOT NULL REFERENCES effectus_sagas(saga_id) ON DELETE CASCADE,
+			effect_id text,
+			sequence integer,
 			verb text NOT NULL,
 			status text NOT NULL,
 			args jsonb,
+			result jsonb,
 			error text,
 			created_at timestamptz NOT NULL DEFAULT now()
 		);
+		ALTER TABLE effectus_saga_effects ADD COLUMN IF NOT EXISTS effect_id text;
+		ALTER TABLE effectus_saga_effects ADD COLUMN IF NOT EXISTS sequence integer;
+		ALTER TABLE effectus_saga_effects ADD COLUMN IF NOT EXISTS result jsonb;
+		UPDATE effectus_saga_effects
+		SET effect_id = 'legacy-' || id::text
+		WHERE effect_id IS NULL;
+		UPDATE effectus_saga_effects
+		SET sequence = id::integer
+		WHERE sequence IS NULL;
+		ALTER TABLE effectus_saga_effects ALTER COLUMN effect_id SET NOT NULL;
+		ALTER TABLE effectus_saga_effects ALTER COLUMN sequence SET NOT NULL;
+		CREATE UNIQUE INDEX IF NOT EXISTS effectus_saga_effect_identity
+			ON effectus_saga_effects (saga_id, effect_id);
 	`)
 	return err
 }

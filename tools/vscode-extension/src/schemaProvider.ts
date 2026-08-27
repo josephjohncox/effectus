@@ -79,8 +79,6 @@ export class SchemaProvider {
         position: vscode.Position
     ): vscode.CompletionItem[] {
         const lineText = document.lineAt(position).text;
-        const wordRange = document.getWordRangeAtPosition(position);
-        const currentWord = wordRange ? document.getText(wordRange) : '';
 
         const completions: vscode.CompletionItem[] = [];
 
@@ -305,8 +303,8 @@ export class SchemaProvider {
             
             // Create snippet with required fields
             const requiredFields = Object.entries(schema.fields)
-                .filter(([_, field]) => field.required)
-                .map(([name, _], index) => `${name}: \${${index + 1}:value}`)
+                .filter(([, field]) => field.required)
+                .map(([name], index) => `${name}: \${${index + 1}:value}`)
                 .join('\n  ');
             
             if (requiredFields) {

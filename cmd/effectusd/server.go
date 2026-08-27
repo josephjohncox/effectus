@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/effectus/effectus-go/adapters"
 	"github.com/effectus/effectus-go/pathutil"
+	effectusruntime "github.com/effectus/effectus-go/runtime"
 	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/schema/capability"
 	"github.com/effectus/effectus-go/schema/types"
@@ -28,46 +30,62 @@ import (
 )
 
 type factEnvelope struct {
-	Universe  string                 `json:"universe"`
-	Facts     map[string]interface{} `json:"facts"`
-	Source    string                 `json:"source,omitempty"`
-	Received  time.Time              `json:"received_at"`
-	Namespace string                 `json:"namespace,omitempty"`
+	Universe         string                 `json:"universe"`
+	Facts            map[string]interface{} `json:"facts"`
+	Source           string                 `json:"source,omitempty"`
+	Received         time.Time              `json:"received_at"`
+	Namespace        string                 `json:"namespace,omitempty"`
+	DeliveryID       string                 `json:"-"`
+	ExecutionID      string                 `json:"-"`
+	GenerationDigest string                 `json:"-"`
 }
 
+type runtimeGeneration struct {
+	id           uint64
+	bundle       *unified.Bundle
+	bundleDigest string
+	schemaTypes  *types.TypeSystem
+	execTypes    *types.TypeSystem
+	verbs        *verb.Registry
+	publishedAt  time.Time
+}
+
+type processPhase string
+
+const (
+	phaseStarting processPhase = "starting"
+	phaseRunning  processPhase = "running"
+	phaseDraining processPhase = "draining"
+	phaseStopped  processPhase = "stopped"
+)
+
 type serverState struct {
-	mu         sync.RWMutex
-	bundle     *unified.Bundle
-	startedAt  time.Time
-	updatedAt  time.Time
-	typeSystem *types.TypeSystem
-	execTypes  *types.TypeSystem
-	sources    []adapters.SchemaSourceConfig
-	verbReg    *verb.Registry
-	rulesOn    bool
-	history    *bundleHistory
-	sagaOn     bool
-	sagaStore  schema.SagaStore
-	capSystem  *capability.CapabilitySystem
-	factStore  factStore
-	factConfig factStoreConfig
-	factCh     chan<- factEnvelope
-	auth       apiAuth
-	limiter    *rateLimiter
-	acl        *aclMatcher
+	mu            sync.RWMutex
+	generation    *runtimeGeneration
+	phase         processPhase
+	startedAt     time.Time
+	sources       []adapters.SchemaSourceConfig
+	rulesOn       bool
+	history       *bundleHistory
+	sagaOn        bool
+	sagaStore     schema.SagaStore
+	capSystem     *capability.CapabilitySystem
+	factStore     factStore
+	factConfig    factStoreConfig
+	factCh        chan<- factEnvelope
+	auth          apiAuth
+	limiter       *rateLimiter
+	acl           *aclMatcher
+	kafkaReady    interface{ Ready() error }
+	grpcReady     interface{ Ready() error }
+	checkedEngine *effectusruntime.Engine
 }
 
 func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store factStore, config factStoreConfig, auth apiAuth, limiter *rateLimiter, acl *aclMatcher, typeSystem *types.TypeSystem, sources []adapters.SchemaSourceConfig, verbReg *verb.Registry, rulesHotload bool, history *bundleHistory, sagaEnabled bool, sagaStore schema.SagaStore, capSystem *capability.CapabilitySystem) *serverState {
-	execTypes := buildHotloadTypeSystem(typeSystem, bundle, verbReg)
-	configureBundleExecution(bundle, verbReg, sagaEnabled, sagaStore, capSystem)
-	return &serverState{
-		bundle:     bundle,
+	state := &serverState{
+		phase:      phaseStarting,
 		startedAt:  time.Now(),
-		updatedAt:  time.Now(),
-		typeSystem: typeSystem,
-		execTypes:  execTypes,
 		sources:    sources,
-		verbReg:    verbReg,
 		rulesOn:    rulesHotload,
 		history:    history,
 		sagaOn:     sagaEnabled,
@@ -80,16 +98,148 @@ func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store fa
 		limiter:    limiter,
 		acl:        acl,
 	}
+	state.generation = state.buildGeneration(1, bundle, typeSystem, verbReg)
+	return state
+}
+
+func (s *serverState) SetCheckedEngine(engine *effectusruntime.Engine) {
+	s.mu.Lock()
+	s.checkedEngine = engine
+	s.mu.Unlock()
+}
+
+func (s *serverState) buildGeneration(id uint64, bundle *unified.Bundle, typeSystem *types.TypeSystem, verbRegistry *verb.Registry) *runtimeGeneration {
+	configuredBundle := configuredBundleCopy(bundle, verbRegistry, s.sagaOn, s.sagaStore, s.capSystem)
+	digest, err := executableGenerationDigest(configuredBundle, verbRegistry)
+	if err != nil {
+		// Generation construction has no error return for compatibility. An
+		// invalid digest is never treated as a stable execution identity.
+		digest = fmt.Sprintf("invalid-generation-%d", id)
+	}
+	return &runtimeGeneration{
+		id:           id,
+		bundle:       configuredBundle,
+		bundleDigest: digest,
+		schemaTypes:  typeSystem,
+		execTypes:    buildHotloadTypeSystem(typeSystem, configuredBundle, verbRegistry),
+		verbs:        verbRegistry,
+		publishedAt:  time.Now(),
+	}
+}
+
+func executableGenerationDigest(bundle *unified.Bundle, registry *verb.Registry) (string, error) {
+	bundleDigest, err := unified.BundleDigest(bundle)
+	if err != nil {
+		return "", err
+	}
+	type executableSource struct {
+		Name   string          `json:"name"`
+		Source verb.SourceInfo `json:"source"`
+		Type   string          `json:"executor_type"`
+	}
+	sources := make([]executableSource, 0)
+	if registry != nil {
+		for _, spec := range registry.GetAllVerbs() {
+			if spec == nil {
+				continue
+			}
+			source, _ := registry.GetVerbSource(spec.Name)
+			executorType := "<nil>"
+			if executor := unwrapExecutor(spec.Executor); executor != nil {
+				executorType = reflect.TypeOf(executor).String()
+			}
+			sources = append(sources, executableSource{Name: spec.Name, Source: source, Type: executorType})
+		}
+	}
+	verbHash := ""
+	if registry != nil {
+		verbHash = registry.GetVerbHash()
+	}
+	payload, err := json.Marshal(struct {
+		BundleDigest string             `json:"bundle_digest"`
+		VerbHash     string             `json:"verb_hash"`
+		Sources      []executableSource `json:"sources"`
+	}{BundleDigest: bundleDigest, VerbHash: verbHash, Sources: sources})
+	if err != nil {
+		return "", fmt.Errorf("marshal executable generation identity: %w", err)
+	}
+	sum := sha256.Sum256(payload)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func (s *serverState) SetBundle(bundle *unified.Bundle) {
-	execTypes := buildHotloadTypeSystem(s.typeSystem, bundle, s.verbReg)
-	configureBundleExecution(bundle, s.verbReg, s.sagaOn, s.sagaStore, s.capSystem)
 	s.mu.Lock()
-	s.bundle = bundle
-	s.execTypes = execTypes
-	s.updatedAt = time.Now()
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	s.generation = s.buildGeneration(s.generation.id+1, bundle, s.generation.schemaTypes, s.generation.verbs)
+}
+
+func (s *serverState) SetTypeSystem(typeSystem *types.TypeSystem) {
+	if typeSystem == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.generation = s.buildGeneration(s.generation.id+1, s.generation.bundle, typeSystem, s.generation.verbs)
+}
+
+func (s *serverState) SetVerbRegistry(verbRegistry *verb.Registry) {
+	if verbRegistry == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.generation = s.buildGeneration(s.generation.id+1, s.generation.bundle, s.generation.schemaTypes, verbRegistry)
+}
+
+var errGenerationConflict = errors.New("runtime generation changed while preparing candidate")
+
+func (s *serverState) ActivateGeneration(bundle *unified.Bundle, typeSystem *types.TypeSystem, verbRegistry *verb.Registry, expected uint64) error {
+	if bundle == nil || typeSystem == nil || verbRegistry == nil {
+		return fmt.Errorf("complete runtime generation is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.generation.id != expected {
+		return errGenerationConflict
+	}
+	s.generation = s.buildGeneration(expected+1, bundle, typeSystem, verbRegistry)
+	return nil
+}
+
+func (s *serverState) ActivateBundle(bundle *unified.Bundle, expected uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.generation.id != expected {
+		return errGenerationConflict
+	}
+	s.generation = s.buildGeneration(expected+1, bundle, s.generation.schemaTypes, s.generation.verbs)
+	return nil
+}
+
+func (s *serverState) ActivateTypeSystem(typeSystem *types.TypeSystem, expected uint64) error {
+	if typeSystem == nil {
+		return fmt.Errorf("type system is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.generation.id != expected {
+		return errGenerationConflict
+	}
+	s.generation = s.buildGeneration(expected+1, s.generation.bundle, typeSystem, s.generation.verbs)
+	return nil
+}
+
+func (s *serverState) ActivateVerbRegistry(verbRegistry *verb.Registry, expected uint64) error {
+	if verbRegistry == nil {
+		return fmt.Errorf("verb registry is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.generation.id != expected {
+		return errGenerationConflict
+	}
+	s.generation = s.buildGeneration(expected+1, s.generation.bundle, s.generation.schemaTypes, verbRegistry)
+	return nil
 }
 
 func (s *serverState) recordBundleHistory(bundle *unified.Bundle, reason string) {
@@ -99,11 +249,56 @@ func (s *serverState) recordBundleHistory(bundle *unified.Bundle, reason string)
 	_, _ = s.history.Add(bundle, reason)
 }
 
-func (s *serverState) Bundle() *unified.Bundle {
+func (s *serverState) generationSnapshot() *runtimeGeneration {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.bundle
+	return s.generation
 }
+
+func (s *serverState) SetKafkaSource(source interface{ Ready() error }) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.kafkaReady = source
+}
+
+func (s *serverState) SetGRPCServer(server interface{ Ready() error }) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.grpcReady = server
+}
+
+func (s *serverState) SetPhase(phase processPhase) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.phase = phase
+}
+
+func (s *serverState) lifecycleSnapshot() (*runtimeGeneration, processPhase) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.generation, s.phase
+}
+
+func (s *serverState) Bundle() *unified.Bundle {
+	return s.generationSnapshot().bundle
+}
+
+func (s *serverState) executionSnapshot() (*unified.Bundle, *types.TypeSystem) {
+	generation := s.generationSnapshot()
+	return generation.bundle, generation.execTypes
+}
+
+func (s *serverState) executionRuntimeSnapshot() (*unified.Bundle, *types.TypeSystem, *verb.Registry) {
+	generation := s.generationSnapshot()
+	return generation.bundle, generation.execTypes, generation.verbs
+}
+
+func (s *serverState) compilerSnapshot() (*types.TypeSystem, *verb.Registry) {
+	generation := s.generationSnapshot()
+	return generation.schemaTypes, generation.verbs
+}
+
+var errFactQueueFull = errors.New("fact execution queue is full")
 
 func (s *serverState) IngestFacts(env factEnvelope) error {
 	if env.Universe == "" {
@@ -112,15 +307,11 @@ func (s *serverState) IngestFacts(env factEnvelope) error {
 	if env.Received.IsZero() {
 		env.Received = time.Now()
 	}
-	if s.factStore != nil {
-		if err := s.factStore.Update(env.Universe, env.Facts); err != nil {
-			return err
-		}
-	}
 	if s.factCh != nil {
 		select {
 		case s.factCh <- env:
 		default:
+			return errFactQueueFull
 		}
 	}
 	return nil
@@ -187,9 +378,6 @@ func extractToken(r *http.Request) string {
 		return token
 	}
 	if token := strings.TrimSpace(r.Header.Get("X-Effectus-Read-Token")); token != "" {
-		return token
-	}
-	if token := strings.TrimSpace(r.URL.Query().Get("token")); token != "" {
 		return token
 	}
 	return ""
@@ -328,7 +516,7 @@ func clientKey(r *http.Request) string {
 	return host
 }
 
-func buildAPIAuth(mode, writeTokens, readTokens string) (apiAuth, string, error) {
+func buildAPIAuth(mode, writeTokens, readTokens string) (apiAuth, error) {
 	auth := apiAuth{
 		mode:   strings.ToLower(strings.TrimSpace(mode)),
 		tokens: make(map[string]apiRole),
@@ -336,8 +524,11 @@ func buildAPIAuth(mode, writeTokens, readTokens string) (apiAuth, string, error)
 	if auth.mode == "" {
 		auth.mode = "token"
 	}
+	if auth.mode != "token" && auth.mode != "disabled" {
+		return apiAuth{}, fmt.Errorf("unsupported API authentication mode %q", auth.mode)
+	}
 	if !auth.enabled() {
-		return auth, "", nil
+		return auth, nil
 	}
 
 	addTokens := func(raw string, role apiRole) {
@@ -353,17 +544,11 @@ func buildAPIAuth(mode, writeTokens, readTokens string) (apiAuth, string, error)
 	addTokens(writeTokens, roleWrite)
 	addTokens(readTokens, roleRead)
 
-	var generated string
 	if len(auth.tokens) == 0 {
-		token, err := generateToken()
-		if err != nil {
-			return apiAuth{}, "", err
-		}
-		auth.tokens[token] = roleWrite
-		generated = token
+		return apiAuth{}, fmt.Errorf("token authentication requires at least one configured token")
 	}
 
-	return auth, generated, nil
+	return auth, nil
 }
 
 func generateToken() (string, error) {
@@ -387,7 +572,9 @@ func parseMergeStrategy(input string) (pathutil.MergeStrategy, error) {
 	}
 }
 
-func startHTTPServer(ctx context.Context, addr string, state *serverState) {
+const maxAPIRequestBodyBytes int64 = 8 << 20
+
+func newHTTPServer(addr string, state *serverState) (*http.Server, net.Listener, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", state.handleUI)
 	mux.HandleFunc("/ui", state.handleUI)
@@ -408,11 +595,24 @@ func startHTTPServer(ctx context.Context, addr string, state *serverState) {
 	mux.HandleFunc("/api/playground/dry-run", state.handleDryRun)
 	mux.HandleFunc("/api/facts", state.handleFacts)
 
+	handler := state.withRequestTracing(state.withAPIMiddleware(mux))
 	server := &http.Server{
-		Addr:    addr,
-		Handler: state.withRequestTracing(state.withAPIMiddleware(mux)),
+		Addr:              addr,
+		Handler:           withRequestBodyLimit(handler, maxAPIRequestBodyBytes),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("listen on %s: %w", addr, err)
+	}
+	return server, listener, nil
+}
 
+func serveHTTPServer(ctx context.Context, server *http.Server, listener net.Listener) error {
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -420,11 +620,20 @@ func startHTTPServer(ctx context.Context, addr string, state *serverState) {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 
-	fmt.Printf("Starting HTTP server on %s\n", addr)
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		fmt.Printf("HTTP server error: %v\n", err)
+	fmt.Printf("Starting HTTP server on %s\n", listener.Addr())
+	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("serve HTTP API: %w", err)
 	}
-	fmt.Println("Shutting down HTTP server")
+	return nil
+}
+
+func withRequestBodyLimit(next http.Handler, limit int64) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil && limit > 0 {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 type factStore interface {
@@ -598,40 +807,46 @@ func (fs *fileFactStore) Update(universe string, facts map[string]interface{}) e
 	}
 
 	fs.mu.Lock()
-	snapshot, ok := fs.universes[universe]
+	defer fs.mu.Unlock()
+
+	nextUniverses := cloneUniverseSnapshots(fs.universes)
+	snapshot, ok := nextUniverses[universe]
 	if !ok {
 		snapshot = &universeSnapshot{
 			Facts:           make(map[string]interface{}),
 			NamespaceAccess: make(map[string]time.Time),
 		}
-		fs.universes[universe] = snapshot
+		nextUniverses[universe] = snapshot
 	}
 	nextFacts := copyMap(snapshot.Facts)
+	now := time.Now()
 	for namespace, payload := range facts {
 		existing := nextFacts[namespace]
 		strategy := fs.config.strategyFor(namespace)
 		merged, _, err := mergeValue(existing, payload, strategy)
 		if err != nil {
-			fs.mu.Unlock()
 			return fmt.Errorf("merge conflict in namespace %q: %w", namespace, err)
 		}
 		if existing == nil {
 			merged = payload
 		}
 		nextFacts[namespace] = merged
-		snapshot.NamespaceAccess[namespace] = time.Now()
+		snapshot.NamespaceAccess[namespace] = now
 	}
 	snapshot.Facts = nextFacts
-	snapshot.UpdatedAt = time.Now()
-	snapshot.LastAccess = time.Now()
+	snapshot.UpdatedAt = now
+	snapshot.LastAccess = now
 	if fs.config.cache.enabled() {
 		applyNamespaceLimit(snapshot, fs.config.cache.maxNamespaces)
-		applyUniverseLimit(fs.universes, fs.config.cache.maxUniverses)
+		applyUniverseLimit(nextUniverses, fs.config.cache.maxUniverses)
 	}
-	persisted := fs.snapshotLocked()
-	fs.mu.Unlock()
 
-	return fs.persist(persisted)
+	persisted := snapshotUniverses(nextUniverses)
+	committed, err := fs.persist(persisted)
+	if committed {
+		fs.universes = nextUniverses
+	}
+	return err
 }
 
 func (fs *fileFactStore) Snapshot(universe string) (map[string]interface{}, bool) {
@@ -676,12 +891,29 @@ type persistedUniverse struct {
 	AccessedAt time.Time              `json:"accessed_at,omitempty"`
 }
 
-func (fs *fileFactStore) snapshotLocked() persistedFacts {
+func cloneUniverseSnapshots(input map[string]*universeSnapshot) map[string]*universeSnapshot {
+	cloned := make(map[string]*universeSnapshot, len(input))
+	for name, snapshot := range input {
+		next := &universeSnapshot{
+			Facts:           copyMap(snapshot.Facts),
+			UpdatedAt:       snapshot.UpdatedAt,
+			LastAccess:      snapshot.LastAccess,
+			NamespaceAccess: make(map[string]time.Time, len(snapshot.NamespaceAccess)),
+		}
+		for namespace, accessed := range snapshot.NamespaceAccess {
+			next.NamespaceAccess[namespace] = accessed
+		}
+		cloned[name] = next
+	}
+	return cloned
+}
+
+func snapshotUniverses(universes map[string]*universeSnapshot) persistedFacts {
 	persisted := persistedFacts{
 		UpdatedAt: time.Now(),
-		Universes: make(map[string]persistedUniverse, len(fs.universes)),
+		Universes: make(map[string]persistedUniverse, len(universes)),
 	}
-	for name, snapshot := range fs.universes {
+	for name, snapshot := range universes {
 		persisted.Universes[name] = persistedUniverse{
 			Facts:      copyMap(snapshot.Facts),
 			UpdatedAt:  snapshot.UpdatedAt,
@@ -691,29 +923,52 @@ func (fs *fileFactStore) snapshotLocked() persistedFacts {
 	return persisted
 }
 
-func (fs *fileFactStore) persist(data persistedFacts) error {
+// persist returns committed=true once the new file has replaced the old path.
+// An error after that point means durability could not be confirmed, but memory
+// must still advance to match the file visible to subsequent readers.
+func (fs *fileFactStore) persist(data persistedFacts) (committed bool, err error) {
 	if fs == nil || fs.path == "" {
-		return nil
+		return true, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(fs.path), 0o755); err != nil {
-		return err
+	dir := filepath.Dir(fs.path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false, err
 	}
-	tempPath := fs.path + ".tmp"
-	file, err := os.Create(tempPath)
+
+	file, err := os.CreateTemp(dir, "."+filepath.Base(fs.path)+".tmp-*")
 	if err != nil {
-		return err
+		return false, err
 	}
+	tempPath := file.Name()
+	defer func() {
+		_ = file.Close()
+		_ = os.Remove(tempPath)
+	}()
+
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(data); err != nil {
-		_ = file.Close()
-		_ = os.Remove(tempPath)
-		return err
+		return false, err
+	}
+	if err := file.Sync(); err != nil {
+		return false, err
 	}
 	if err := file.Close(); err != nil {
-		return err
+		return false, err
 	}
-	return os.Rename(tempPath, fs.path)
+	if err := os.Rename(tempPath, fs.path); err != nil {
+		return false, err
+	}
+
+	directory, err := os.Open(dir)
+	if err != nil {
+		return true, err
+	}
+	defer directory.Close()
+	if err := directory.Sync(); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 func (fs *fileFactStore) load() error {
@@ -913,6 +1168,9 @@ func factConfigSummary(config factStoreConfig) *factStoreConfigSummary {
 }
 
 type statusResponse struct {
+	GenerationID     uint64                  `json:"generation_id"`
+	ArtifactDigest   string                  `json:"artifact_digest"`
+	Phase            processPhase            `json:"phase"`
 	Bundle           *bundleSummary          `json:"bundle"`
 	Counts           bundleCounts            `json:"counts"`
 	StartedAt        time.Time               `json:"started_at"`
@@ -995,14 +1253,18 @@ func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	bundle := s.Bundle()
+	generation, phase := s.lifecycleSnapshot()
+	bundle := generation.bundle
 	if bundle == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
 		return
 	}
-	runtimeFacts := summarizeRuntimeFacts(s.typeSystem)
+	runtimeFacts := summarizeRuntimeFacts(generation.schemaTypes)
 	combinedFacts := mergeFactTypeSummaries(runtimeFacts, bundle.FactTypes)
 	resp := statusResponse{
+		GenerationID:   generation.id,
+		ArtifactDigest: generation.bundleDigest,
+		Phase:          phase,
 		Bundle: &bundleSummary{
 			Name:        bundle.Name,
 			Version:     bundle.Version,
@@ -1018,13 +1280,13 @@ func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 			Flows: countFlows(bundle),
 		},
 		StartedAt:        s.startedAt,
-		LastReload:       s.updatedAt,
+		LastReload:       generation.publishedAt,
 		UptimeSec:        int64(time.Since(s.startedAt).Seconds()),
 		Universes:        summariesOrEmpty(s.factStore),
 		RequiredFact:     bundle.RequiredFacts,
 		FactStore:        storeTypeOrUnknown(s.factStore),
 		FactStoreConfig:  factConfigSummary(s.factConfig),
-		VerbCount:        verbCount(s.verbReg, bundle),
+		VerbCount:        verbCount(generation.verbs, bundle),
 		FactCount:        len(combinedFacts),
 		BundleFactCount:  len(bundle.FactTypes),
 		RuntimeFactCount: len(runtimeFacts),
@@ -1244,11 +1506,12 @@ func (s *serverState) handleVerbs(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if s.verbReg != nil && s.verbReg.Count() > 0 {
-		writeJSON(w, http.StatusOK, summarizeVerbRegistry(s.verbReg))
+	generation := s.generationSnapshot()
+	if generation.verbs != nil && generation.verbs.Count() > 0 {
+		writeJSON(w, http.StatusOK, summarizeVerbRegistry(generation.verbs))
 		return
 	}
-	bundle := s.Bundle()
+	bundle := generation.bundle
 	if bundle == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
 		return
@@ -1265,12 +1528,13 @@ func (s *serverState) handleSchema(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	bundle := s.Bundle()
+	generation := s.generationSnapshot()
+	bundle := generation.bundle
 	if bundle == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
 		return
 	}
-	runtimeFacts := summarizeRuntimeFacts(s.typeSystem)
+	runtimeFacts := summarizeRuntimeFacts(generation.schemaTypes)
 	resp := schemaResponse{
 		Bundle:   bundle.FactTypes,
 		Runtime:  runtimeFacts,
@@ -1293,10 +1557,34 @@ func (s *serverState) handleReady(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	bundle := s.Bundle()
+	generation, phase := s.lifecycleSnapshot()
+	bundle := generation.bundle
 	if bundle == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
 		return
+	}
+	if phase != phaseRunning {
+		writeJSONError(w, http.StatusServiceUnavailable, fmt.Sprintf("runtime is %s", phase))
+		return
+	}
+	if generation.schemaTypes == nil || generation.execTypes == nil || generation.verbs == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "runtime generation is incomplete")
+		return
+	}
+	s.mu.RLock()
+	kafkaReady, grpcReady := s.kafkaReady, s.grpcReady
+	s.mu.RUnlock()
+	if kafkaReady != nil {
+		if err := kafkaReady.Ready(); err != nil {
+			writeJSONError(w, http.StatusServiceUnavailable, fmt.Sprintf("Kafka consumer is not ready: %v", err))
+			return
+		}
+	}
+	if grpcReady != nil {
+		if err := grpcReady.Ready(); err != nil {
+			writeJSONError(w, http.StatusServiceUnavailable, fmt.Sprintf("gRPC execution service is not ready: %v", err))
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ready",
@@ -1322,11 +1610,51 @@ func (s *serverState) handleFacts(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "facts are required")
 			return
 		}
-		if err := s.IngestFacts(factEnvelope{Universe: req.Universe, Facts: req.Facts}); err != nil {
+		s.mu.RLock()
+		engine, generation := s.checkedEngine, s.generation
+		s.mu.RUnlock()
+		if engine == nil { // Compatibility-only embedded server states; effectusd always installs the checked engine.
+			if err := s.IngestFacts(factEnvelope{Universe: req.Universe, Facts: req.Facts}); err != nil {
+				if errors.Is(err, errFactQueueFull) {
+					w.Header().Set("Retry-After", "1")
+					writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+					return
+				}
+				writeJSONError(w, http.StatusConflict, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+			return
+		}
+		key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+		if key == "" {
+			writeJSONError(w, http.StatusBadRequest, "Idempotency-Key header is required")
+			return
+		}
+		if generation == nil || generation.bundle == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "checked execution generation is unavailable")
+			return
+		}
+		namespace := strings.TrimSpace(req.Universe)
+		if namespace == "" {
+			namespace = "default"
+		}
+		ruleset := generation.bundle.Name
+		version := generation.bundle.Version
+		executionID := schema.StableExecutionID(namespace, key, ruleset, version)
+		admissionID := schema.StableAdmissionID(namespace, key, ruleset, version)
+		result, err := engine.Execute(r.Context(), effectusruntime.ExecuteRequest{Admission: &effectusruntime.Admission{ExecutionID: executionID, AdmissionID: admissionID, TenantNamespace: namespace, Ruleset: ruleset, Version: version, Facts: req.Facts}, WaitMode: effectusruntime.WaitAccepted})
+		if err != nil {
 			writeJSONError(w, http.StatusConflict, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+		if s.factStore != nil {
+			if err := s.factStore.Update(namespace, req.Facts); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "facts were accepted but local projection failed")
+				return
+			}
+		}
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted", "execution_id": result.ExecutionID, "generation_digest": result.GenerationDigest})
 	case http.MethodGet:
 		universe := r.URL.Query().Get("universe")
 		if universe == "" {

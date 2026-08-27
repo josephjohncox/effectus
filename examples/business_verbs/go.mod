@@ -1,7 +1,14 @@
-module business-verbs-example
+module github.com/effectus/examples/business_verbs
 
-go 1.21
+go 1.25.0
 
-replace github.com/effectus/effectus-go => ../../effectus-go
+toolchain go1.25.13
 
-require github.com/effectus/effectus-go v0.0.0 
+require github.com/effectus/effectus-go v0.0.0
+
+require (
+	github.com/alecthomas/participle/v2 v2.1.4 // indirect
+	github.com/expr-lang/expr v1.17.7 // indirect
+)
+
+replace github.com/effectus/effectus-go => ../..

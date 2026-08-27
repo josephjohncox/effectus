@@ -29,9 +29,9 @@ func (la *LoaderAdapter) RegisterVerb(spec loader.VerbSpec, executor loader.Verb
 		Name:         spec.GetName(),
 		Description:  spec.GetDescription(),
 		Capability:   convertCapabilities(spec.GetCapabilities()),
-		ArgTypes:     spec.GetArgTypes(),
+		ArgTypes:     cloneLoaderStringMap(spec.GetArgTypes()),
 		ReturnType:   spec.GetReturnType(),
-		RequiredArgs: spec.GetRequiredArgs(),
+		RequiredArgs: append([]string(nil), spec.GetRequiredArgs()...),
 		Resources:    convertResources(spec.GetResources()),
 		Inverse:      spec.GetInverseVerb(),
 		Executor:     executor,
@@ -61,6 +61,14 @@ func (la *LoaderAdapter) RegisterType(name string, typeDef loader.TypeDefinition
 }
 
 // Helper functions to convert capabilities and types
+
+func cloneLoaderStringMap(values map[string]string) map[string]string {
+	clone := make(map[string]string, len(values))
+	for name, value := range values {
+		clone[name] = value
+	}
+	return clone
+}
 
 func convertCapabilities(caps []string) verb.Capability {
 	result := verb.CapNone

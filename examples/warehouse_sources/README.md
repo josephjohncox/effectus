@@ -1,33 +1,30 @@
-# Warehouse Sources (Snowflake + Trino/Iceberg)
+# Warehouse Source Examples
 
-Concrete, production-style configs for pulling facts from a warehouse (Snowflake) and a lakehouse (Iceberg via Trino).
-These files are ready to drop into your config loader or adapt to your runtime.
+This directory contains example configurations for Snowflake, Trino, Iceberg, and S3.
+
+Review credentials, limits, query cost, and polling behavior before you adapt these files.
 
 ## Files
-- `snowflake.yaml` - batch snapshot from Snowflake
-- `sql_scheduled_scrape.yaml` - scheduled SQL polling (batch + incremental stream)
-- `trino_iceberg.yaml` - streaming Iceberg table via Trino
-- `sources.yaml` - both sources in one file
-- `env.example` - required environment variables
-- `devstack/` - Trino + Iceberg + MinIO local stack
-- `s3_parquet_demo/` - Parquet reader example for the S3 adapter
 
-## Quick Start
-1. Copy `env.example` -> `.env` and set your DSNs.
-2. Load the YAML into `[]adapters.SourceConfig`.
-3. Call `adapters.CreateSource(...)` for each entry and subscribe to facts.
+- `snowflake.yaml` defines a Snowflake batch snapshot.
+- `sql_scheduled_scrape.yaml` defines scheduled SQL polling.
+- `trino_iceberg.yaml` defines an Iceberg query through Trino.
+- `sources.yaml` combines warehouse sources.
+- `env.example` lists environment variables.
+- `devstack/` contains a local Trino, Iceberg, and MinIO stack.
+- `s3_parquet_demo/` contains the Parquet reader example.
 
-## Tips
-- Use `schema_name` + `schema_version` when you only emit a single fact type.
-- Use `mappings` if you want per-table or per-topic schemas.
-- For Iceberg, `catalog.namespace.table` maps to Trino's catalog + schema + table.
+## Use a configuration
 
-## Related Docs
-- `docs/FACT_SOURCES.md`
-- `docs/TUTORIALS.md`
+1. Copy `env.example` to `.env`.
+2. Set development credentials.
+3. Decode the YAML into `[]adapters.SourceConfig`.
+4. Call `adapters.CreateSource` for each entry.
+5. Start each source and subscribe to its facts.
 
-## Local Devstack
-Use `devstack/` to run Trino + Iceberg + MinIO locally:
+Use `schema_name` and `schema_version` for one emitted fact type. Use mappings when tables or topics emit different types.
+
+## Start the local stack
 
 ```bash
 cd examples/warehouse_sources/devstack
@@ -35,24 +32,26 @@ docker compose up -d
 ./scripts/seed-iceberg.sh
 ```
 
-Or use just targets from repo root:
+From the repository root, you can run:
+
 ```bash
 just devstack-up
 just devstack-seed-iceberg
 ```
 
 Open the Trino CLI:
+
 ```bash
 ./scripts/trino-cli.sh
 ```
 
-Seed S3 Parquet data:
+Seed Parquet objects:
+
 ```bash
 ./scripts/seed-parquet.sh
 ```
 
-## Demo: S3 Parquet Reader
-Use the demo to read Parquet facts from the devstack bucket:
+## Run the S3 Parquet example
 
 ```bash
 S3_ENDPOINT="http://localhost:9000" \
@@ -63,3 +62,7 @@ S3_ACCESS_KEY="minioadmin" \
 S3_SECRET_KEY="minioadmin" \
 go run ./examples/warehouse_sources/s3_parquet_demo
 ```
+
+The MinIO credentials are for the local stack only.
+
+Read [Fact Sources](../../docs/FACT_SOURCES.md) for adapter behavior and limits.

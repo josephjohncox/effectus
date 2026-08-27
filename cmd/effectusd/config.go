@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +18,7 @@ import (
 type runtimeConfig struct {
 	Bundle        bundleConfig                  `yaml:"bundle" json:"bundle"`
 	HTTP          httpConfig                    `yaml:"http" json:"http"`
+	GRPC          grpcConfig                    `yaml:"grpc" json:"grpc"`
 	Metrics       httpConfig                    `yaml:"metrics" json:"metrics"`
 	API           apiConfig                     `yaml:"api" json:"api"`
 	Facts         factsConfig                   `yaml:"facts" json:"facts"`
@@ -23,16 +27,30 @@ type runtimeConfig struct {
 	Extensions    extensionConfig               `yaml:"extensions" json:"extensions"`
 	SchemaSources []adapters.SchemaSourceConfig `yaml:"schema_sources" json:"schema_sources"`
 	FixedTime     string                        `yaml:"fixed_time" json:"fixed_time"`
+	FactSource    string                        `yaml:"fact_source" json:"fact_source"`
+	Kafka         kafkaConfig                   `yaml:"kafka" json:"kafka"`
 }
 
 type bundleConfig struct {
 	File           string `yaml:"file" json:"file"`
 	OCI            string `yaml:"oci" json:"oci"`
+	CacheDir       string `yaml:"cache_dir" json:"cache_dir"`
 	ReloadInterval string `yaml:"reload_interval" json:"reload_interval"`
 }
 
 type httpConfig struct {
 	Addr string `yaml:"addr" json:"addr"`
+}
+
+type grpcConfig struct {
+	Addr                 string `yaml:"addr" json:"addr"`
+	TLSCert              string `yaml:"tls_cert" json:"tls_cert"`
+	TLSKey               string `yaml:"tls_key" json:"tls_key"`
+	AllowInsecure        *bool  `yaml:"allow_insecure" json:"allow_insecure"`
+	MaxReceiveBytes      *int   `yaml:"max_receive_bytes" json:"max_receive_bytes"`
+	MaxSendBytes         *int   `yaml:"max_send_bytes" json:"max_send_bytes"`
+	MaxExecutionDuration string `yaml:"max_execution_duration" json:"max_execution_duration"`
+	MaxConcurrent        *int   `yaml:"max_concurrent" json:"max_concurrent"`
 }
 
 type apiConfig struct {
@@ -59,6 +77,22 @@ type factsCacheConfig struct {
 	Policy        string `yaml:"policy" json:"policy"`
 	MaxUniverses  *int   `yaml:"max_universes" json:"max_universes"`
 	MaxNamespaces *int   `yaml:"max_namespaces" json:"max_namespaces"`
+}
+
+type kafkaConfig struct {
+	Brokers          []string `yaml:"brokers" json:"brokers"`
+	Topic            string   `yaml:"topic" json:"topic"`
+	ConsumerGroup    string   `yaml:"consumer_group" json:"consumer_group"`
+	ClusterNamespace string   `yaml:"cluster_namespace" json:"cluster_namespace"`
+	AckContract      string   `yaml:"ack_contract" json:"ack_contract"`
+	MaxAttempts      *int     `yaml:"max_attempts" json:"max_attempts"`
+	RetryInitial     string   `yaml:"retry_initial" json:"retry_initial"`
+	RetryMax         string   `yaml:"retry_max" json:"retry_max"`
+	PoisonPolicy     string   `yaml:"poison_policy" json:"poison_policy"`
+	DLQTopic         string   `yaml:"dlq_topic" json:"dlq_topic"`
+	DLQMode          string   `yaml:"dlq_mode" json:"dlq_mode"`
+	PoisonAudit      string   `yaml:"poison_audit" json:"poison_audit"`
+	DeliveryLedger   string   `yaml:"delivery_ledger" json:"delivery_ledger"`
 }
 
 type sagaConfig struct {
@@ -104,15 +138,37 @@ func loadRuntimeConfig(path string) (*runtimeConfig, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".json":
-		if err := json.Unmarshal(data, cfg); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(cfg); err != nil {
+			return nil, fmt.Errorf("parsing config json: %w", err)
+		}
+		var extra interface{}
+		if err := requireConfigEOF(decoder.Decode(&extra)); err != nil {
 			return nil, fmt.Errorf("parsing config json: %w", err)
 		}
 	default:
-		if err := yaml.Unmarshal(data, cfg); err != nil {
+		decoder := yaml.NewDecoder(bytes.NewReader(data))
+		decoder.KnownFields(true)
+		if err := decoder.Decode(cfg); err != nil {
+			return nil, fmt.Errorf("parsing config yaml: %w", err)
+		}
+		var extra interface{}
+		if err := requireConfigEOF(decoder.Decode(&extra)); err != nil {
 			return nil, fmt.Errorf("parsing config yaml: %w", err)
 		}
 	}
 	return cfg, nil
+}
+
+func requireConfigEOF(err error) error {
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err == nil {
+		return fmt.Errorf("multiple configuration documents are not allowed")
+	}
+	return err
 }
 
 func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
@@ -126,6 +182,9 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 	if cfg.Bundle.OCI != "" && !setFlags["oci-ref"] {
 		*ociRef = cfg.Bundle.OCI
 	}
+	if cfg.Bundle.CacheDir != "" && !setFlags["oci-cache-dir"] {
+		*ociCacheDir = cfg.Bundle.CacheDir
+	}
 	if cfg.Bundle.ReloadInterval != "" && !setFlags["reload-interval"] {
 		interval, err := time.ParseDuration(cfg.Bundle.ReloadInterval)
 		if err != nil {
@@ -136,6 +195,34 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 
 	if cfg.HTTP.Addr != "" && !setFlags["http-addr"] {
 		*httpAddr = cfg.HTTP.Addr
+	}
+	if cfg.GRPC.Addr != "" && !setFlags["grpc-addr"] {
+		*grpcAddr = cfg.GRPC.Addr
+	}
+	if cfg.GRPC.TLSCert != "" && !setFlags["grpc-tls-cert"] {
+		*grpcTLSCert = cfg.GRPC.TLSCert
+	}
+	if cfg.GRPC.TLSKey != "" && !setFlags["grpc-tls-key"] {
+		*grpcTLSKey = cfg.GRPC.TLSKey
+	}
+	if cfg.GRPC.AllowInsecure != nil && !setFlags["grpc-allow-insecure"] {
+		*grpcAllowInsecure = *cfg.GRPC.AllowInsecure
+	}
+	if cfg.GRPC.MaxReceiveBytes != nil && !setFlags["grpc-max-receive-bytes"] {
+		*grpcMaxReceive = *cfg.GRPC.MaxReceiveBytes
+	}
+	if cfg.GRPC.MaxSendBytes != nil && !setFlags["grpc-max-send-bytes"] {
+		*grpcMaxSend = *cfg.GRPC.MaxSendBytes
+	}
+	if cfg.GRPC.MaxExecutionDuration != "" && !setFlags["grpc-max-execution-duration"] {
+		duration, err := time.ParseDuration(cfg.GRPC.MaxExecutionDuration)
+		if err != nil {
+			return fmt.Errorf("grpc.max_execution_duration: %w", err)
+		}
+		*grpcMaxDuration = duration
+	}
+	if cfg.GRPC.MaxConcurrent != nil && !setFlags["grpc-max-concurrent"] {
+		*grpcMaxConcurrent = *cfg.GRPC.MaxConcurrent
 	}
 	if cfg.Metrics.Addr != "" && !setFlags["metrics-addr"] {
 		*metricsAddr = cfg.Metrics.Addr
@@ -260,6 +347,56 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 
 	if cfg.FixedTime != "" && !setFlags["fixed-time"] {
 		*fixedTime = cfg.FixedTime
+	}
+	if cfg.FactSource != "" && !setFlags["fact-source"] {
+		*factSource = cfg.FactSource
+	}
+	if len(cfg.Kafka.Brokers) > 0 && !setFlags["kafka-brokers"] {
+		*kafkaBrokers = strings.Join(cfg.Kafka.Brokers, ",")
+	}
+	if cfg.Kafka.Topic != "" && !setFlags["kafka-topic"] {
+		*kafkaTopic = cfg.Kafka.Topic
+	}
+	if cfg.Kafka.ConsumerGroup != "" && !setFlags["kafka-consumer-group"] {
+		*kafkaConsumerGroup = cfg.Kafka.ConsumerGroup
+	}
+	if cfg.Kafka.ClusterNamespace != "" && !setFlags["kafka-cluster-namespace"] {
+		*kafkaClusterNamespace = cfg.Kafka.ClusterNamespace
+	}
+	if cfg.Kafka.AckContract != "" && !setFlags["kafka-ack-contract"] {
+		*kafkaAckContract = cfg.Kafka.AckContract
+	}
+	if cfg.Kafka.MaxAttempts != nil && !setFlags["kafka-max-attempts"] {
+		*kafkaMaxAttempts = *cfg.Kafka.MaxAttempts
+	}
+	if cfg.Kafka.RetryInitial != "" && !setFlags["kafka-retry-initial"] {
+		duration, err := time.ParseDuration(cfg.Kafka.RetryInitial)
+		if err != nil {
+			return fmt.Errorf("kafka.retry_initial: %w", err)
+		}
+		*kafkaRetryInitial = duration
+	}
+	if cfg.Kafka.RetryMax != "" && !setFlags["kafka-retry-max"] {
+		duration, err := time.ParseDuration(cfg.Kafka.RetryMax)
+		if err != nil {
+			return fmt.Errorf("kafka.retry_max: %w", err)
+		}
+		*kafkaRetryMax = duration
+	}
+	if cfg.Kafka.PoisonPolicy != "" && !setFlags["kafka-poison-policy"] {
+		*kafkaPoisonPolicy = cfg.Kafka.PoisonPolicy
+	}
+	if cfg.Kafka.DLQTopic != "" && !setFlags["kafka-dlq-topic"] {
+		*kafkaDLQTopic = cfg.Kafka.DLQTopic
+	}
+	if cfg.Kafka.DLQMode != "" && !setFlags["kafka-dlq-mode"] {
+		*kafkaDLQMode = cfg.Kafka.DLQMode
+	}
+	if cfg.Kafka.PoisonAudit != "" && !setFlags["kafka-poison-audit"] {
+		*kafkaPoisonAudit = cfg.Kafka.PoisonAudit
+	}
+	if cfg.Kafka.DeliveryLedger != "" && !setFlags["kafka-delivery-ledger"] {
+		*kafkaDeliveryLedger = cfg.Kafka.DeliveryLedger
 	}
 
 	return nil

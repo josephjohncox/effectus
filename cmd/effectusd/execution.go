@@ -130,9 +130,6 @@ func compileBundleRules(bundle *unified.Bundle, baseTS *types.TypeSystem, verbRe
 	if bundle == nil {
 		return nil, fmt.Errorf("bundle not loaded")
 	}
-	if bundle.ListSpec != nil || bundle.FlowSpec != nil {
-		return bundle, nil
-	}
 	if len(bundle.RuleSources) == 0 {
 		if verbose {
 			fmt.Println("Bundle has no embedded rule sources; skipping runtime compilation")
@@ -155,19 +152,36 @@ func compileBundleRules(bundle *unified.Bundle, baseTS *types.TypeSystem, verbRe
 	}
 	defer cleanup()
 
-	spec, err := comp.ParseAndCompileFiles(collectTempPaths(prepared), facts)
+	spec, err := comp.ParseAndCompileProgram(collectTempPaths(prepared), facts)
 	if err != nil {
 		return nil, err
 	}
 
 	next := *bundle
-	next.ListSpec = extractListSpec(spec)
-	next.FlowSpec = extractFlowSpec(spec)
+	next.ListSpec = spec.ListSpec()
+	next.FlowSpec = spec.FlowSpec()
 	next.Rules = unified.SummarizeRules(next.ListSpec)
 	next.Flows = unified.SummarizeFlows(next.FlowSpec)
 	next.RequiredFacts = spec.RequiredFacts()
 
 	return &next, nil
+}
+
+func configuredBundleCopy(bundle *unified.Bundle, verbReg *verb.Registry, sagaEnabled bool, sagaStore schema.SagaStore, capSystem *capability.CapabilitySystem) *unified.Bundle {
+	if bundle == nil {
+		return nil
+	}
+	next := *bundle
+	if bundle.ListSpec != nil {
+		listSpec := *bundle.ListSpec
+		next.ListSpec = &listSpec
+	}
+	if bundle.FlowSpec != nil {
+		flowSpec := *bundle.FlowSpec
+		next.FlowSpec = &flowSpec
+	}
+	configureBundleExecution(&next, verbReg, sagaEnabled, sagaStore, capSystem)
+	return &next
 }
 
 func configureBundleExecution(bundle *unified.Bundle, verbReg *verb.Registry, sagaEnabled bool, sagaStore schema.SagaStore, capSystem *capability.CapabilitySystem) {
@@ -192,11 +206,20 @@ func (s *serverState) ExecuteFacts(ctx context.Context, env factEnvelope) error 
 	if s == nil {
 		return fmt.Errorf("runtime not initialized")
 	}
+	return s.executeFactsOnGeneration(ctx, env, s.generationSnapshot())
+}
+
+func (s *serverState) executeFactsOnGeneration(ctx context.Context, env factEnvelope, generation *runtimeGeneration) error {
+	if generation == nil {
+		return fmt.Errorf("runtime generation is required")
+	}
 	if env.Universe == "" {
 		env.Universe = "default"
 	}
 
-	bundle := s.Bundle()
+	bundle := generation.bundle
+	executionTypes := generation.execTypes
+	verbRegistry := generation.verbs
 	if bundle == nil {
 		return fmt.Errorf("bundle not loaded")
 	}
@@ -215,18 +238,21 @@ func (s *serverState) ExecuteFacts(ctx context.Context, env factEnvelope) error 
 		ctx = context.Background()
 	}
 	if ctx.Value(requestIDContextKey) == nil {
-		ctx = context.WithValue(ctx, requestIDContextKey, fmt.Sprintf("%s-%d", env.Universe, time.Now().UnixNano()))
+		requestID := env.ExecutionID
+		if requestID == "" {
+			requestID = fmt.Sprintf("%s-%d", env.Universe, time.Now().UnixNano())
+		}
+		ctx = context.WithValue(ctx, requestIDContextKey, requestID)
 	}
 
-	ts := s.execTypes
-	if ts == nil {
-		ts = s.typeSystem
+	if executionTypes == nil {
+		return fmt.Errorf("runtime type system not initialized")
 	}
 
-	facts := newRuntimeFacts(factsData, &typeSystemSchema{ts: ts})
+	facts := newRuntimeFacts(factsData, &typeSystemSchema{ts: executionTypes})
 	var executor effectus.Executor
-	if s.verbReg != nil {
-		executor = common.NewExecutorAdapter(s.verbReg, &commonFactsAdapter{facts: facts})
+	if verbRegistry != nil {
+		executor = common.NewExecutorAdapter(verbRegistry, &commonFactsAdapter{facts: facts})
 	}
 
 	if bundle.ListSpec != nil {

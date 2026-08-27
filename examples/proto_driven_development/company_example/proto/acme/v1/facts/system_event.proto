@@ -2,67 +2,67 @@ syntax = "proto3";
 
 package acme.v1.facts;
 
-import "google/protobuf/timestamp.proto";
 import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
 
-option go_package = "acme.com/gen/go/acme/v1/facts;factsv1";
+option go_package = "github.com/effectus/examples/proto_driven_development/company_example/gen/go/acme/v1/facts;factsv1";
 
 // SystemEvent represents a system event or audit log entry
 message SystemEvent {
   // Unique event identifier
   string event_id = 1;
-  
+
   // Event type/category
   EventType event_type = 2;
-  
+
   // Event severity level
   SeverityLevel severity = 3;
-  
+
   // Human-readable event message
   string message = 4;
-  
+
   // Source component or service that generated the event
   string source = 5;
-  
+
   // Optional user ID associated with the event
   optional string user_id = 6;
-  
+
   // Optional session ID
   optional string session_id = 7;
-  
+
   // Request ID for tracing
   optional string request_id = 8;
-  
+
   // Trace ID for distributed tracing
   optional string trace_id = 9;
-  
+
   // Timestamp when the event occurred
   google.protobuf.Timestamp timestamp = 10;
-  
+
   // Event payload/context data
   EventPayload payload = 11;
-  
+
   // Resource that was acted upon (optional)
   optional Resource resource = 12;
-  
+
   // Actor who performed the action (optional)
   optional Actor actor = 13;
-  
+
   // Tags for categorization and filtering
   repeated string tags = 14;
-  
+
   // Custom metadata
   map<string, string> metadata = 15;
-  
+
   // Event correlation ID (for related events)
   optional string correlation_id = 16;
-  
+
   // Duration of the operation (if applicable)
   optional int64 duration_ms = 17;
-  
+
   // Whether this event represents an error
   bool is_error = 18;
-  
+
   // Error details (if is_error is true)
   optional ErrorDetails error = 19;
 }
@@ -70,31 +70,31 @@ message SystemEvent {
 // Event type enumeration
 enum EventType {
   EVENT_TYPE_UNSPECIFIED = 0;
-  EVENT_TYPE_AUTHENTICATION = 1;   // Login, logout, auth failures
-  EVENT_TYPE_AUTHORIZATION = 2;    // Permission checks, access denied
-  EVENT_TYPE_CRUD = 3;            // Create, read, update, delete operations
-  EVENT_TYPE_SYSTEM = 4;          // System startup, shutdown, health checks
-  EVENT_TYPE_NETWORK = 5;         // Network requests, responses
-  EVENT_TYPE_DATABASE = 6;        // Database operations
-  EVENT_TYPE_SECURITY = 7;        // Security-related events
-  EVENT_TYPE_PERFORMANCE = 8;     // Performance metrics, alerts
-  EVENT_TYPE_BUSINESS = 9;        // Business logic events
-  EVENT_TYPE_INTEGRATION = 10;    // External service integrations
-  EVENT_TYPE_CONFIGURATION = 11;  // Configuration changes
-  EVENT_TYPE_DEPLOYMENT = 12;     // Deployment events
+  EVENT_TYPE_AUTHENTICATION = 1; // Login, logout, auth failures
+  EVENT_TYPE_AUTHORIZATION = 2; // Permission checks, access denied
+  EVENT_TYPE_CRUD = 3; // Create, read, update, delete operations
+  EVENT_TYPE_SYSTEM = 4; // System startup, shutdown, health checks
+  EVENT_TYPE_NETWORK = 5; // Network requests, responses
+  EVENT_TYPE_DATABASE = 6; // Database operations
+  EVENT_TYPE_SECURITY = 7; // Security-related events
+  EVENT_TYPE_PERFORMANCE = 8; // Performance metrics, alerts
+  EVENT_TYPE_BUSINESS = 9; // Business logic events
+  EVENT_TYPE_INTEGRATION = 10; // External service integrations
+  EVENT_TYPE_CONFIGURATION = 11; // Configuration changes
+  EVENT_TYPE_DEPLOYMENT = 12; // Deployment events
 }
 
 // Severity level enumeration
 enum SeverityLevel {
   SEVERITY_LEVEL_UNSPECIFIED = 0;
-  SEVERITY_LEVEL_DEBUG = 1;      // Debug information
-  SEVERITY_LEVEL_INFO = 2;       // Informational messages
-  SEVERITY_LEVEL_NOTICE = 3;     // Normal but significant condition
-  SEVERITY_LEVEL_WARNING = 4;    // Warning conditions
-  SEVERITY_LEVEL_ERROR = 5;      // Error conditions
-  SEVERITY_LEVEL_CRITICAL = 6;   // Critical conditions
-  SEVERITY_LEVEL_ALERT = 7;      // Action must be taken immediately
-  SEVERITY_LEVEL_EMERGENCY = 8;  // System is unusable
+  SEVERITY_LEVEL_DEBUG = 1; // Debug information
+  SEVERITY_LEVEL_INFO = 2; // Informational messages
+  SEVERITY_LEVEL_NOTICE = 3; // Normal but significant condition
+  SEVERITY_LEVEL_WARNING = 4; // Warning conditions
+  SEVERITY_LEVEL_ERROR = 5; // Error conditions
+  SEVERITY_LEVEL_CRITICAL = 6; // Critical conditions
+  SEVERITY_LEVEL_ALERT = 7; // Action must be taken immediately
+  SEVERITY_LEVEL_EMERGENCY = 8; // System is unusable
 }
 
 // Event payload containing structured event data
@@ -112,7 +112,7 @@ message EventPayload {
 
 // Authentication event details
 message AuthEvent {
-  string action = 1;           // login, logout, refresh, etc.
+  string action = 1; // login, logout, refresh, etc.
   string user_agent = 2;
   string ip_address = 3;
   optional string location = 4;
@@ -217,8 +217,8 @@ enum ThreatLevel {
 
 // Resource that was acted upon
 message Resource {
-  string resource_type = 1;    // user, order, product, etc.
-  string resource_id = 2;      // Unique identifier
+  string resource_type = 1; // user, order, product, etc.
+  string resource_id = 2; // Unique identifier
   optional string resource_name = 3; // Human-readable name
   map<string, string> attributes = 4; // Key attributes
 }
@@ -234,18 +234,18 @@ message Actor {
 // Actor type enumeration
 enum ActorType {
   ACTOR_TYPE_UNSPECIFIED = 0;
-  ACTOR_TYPE_USER = 1;         // Human user
-  ACTOR_TYPE_SERVICE = 2;      // Service account
-  ACTOR_TYPE_SYSTEM = 3;       // System process
-  ACTOR_TYPE_API_KEY = 4;      // API key
-  ACTOR_TYPE_ANONYMOUS = 5;    // Anonymous user
+  ACTOR_TYPE_USER = 1; // Human user
+  ACTOR_TYPE_SERVICE = 2; // Service account
+  ACTOR_TYPE_SYSTEM = 3; // System process
+  ACTOR_TYPE_API_KEY = 4; // API key
+  ACTOR_TYPE_ANONYMOUS = 5; // Anonymous user
 }
 
 // Error details for failed operations
 message ErrorDetails {
-  string error_code = 1;       // Application-specific error code
-  string error_message = 2;    // Human-readable error message
+  string error_code = 1; // Application-specific error code
+  string error_message = 2; // Human-readable error message
   optional string stack_trace = 3; // Stack trace (if available)
   map<string, string> context = 4; // Additional error context
   repeated ErrorDetails caused_by = 5; // Chain of errors
-} 
+}

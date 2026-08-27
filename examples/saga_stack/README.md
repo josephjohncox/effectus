@@ -1,12 +1,19 @@
-# Saga Stack
+# Saga Development Stack
 
-Docker compose stack for saga integration tests (Postgres + Redis).
+This Compose stack starts PostgreSQL and Redis for saga integration tests.
+
+## Start
 
 ```bash
 docker compose -f examples/saga_stack/docker-compose.yml up -d
 ```
 
-Default ports:
-- Postgres: `localhost:55433`
-- Redis: `localhost:56379`
+The stack exposes PostgreSQL at `localhost:55433` and Redis at `localhost:56379`.
+
+## Stop
+
+```bash
+docker compose -f examples/saga_stack/docker-compose.yml down -v
 ```
+
+The `-v` option deletes the development data volumes.

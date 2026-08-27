@@ -7,7 +7,7 @@ INSERT INTO audit_log (
     details, request_id, trace_id,
     result, error_message, duration_ms
 ) VALUES (
-    $1, $2, $3, $4, $5,
+    $1, $2, NULLIF($3::text, '')::uuid, $4, $5,
     $6, $7, $8, $9, $10,
     $11, $12, $13,
     $14, $15, $16
@@ -21,8 +21,8 @@ WHERE
     AND ($3::text[] IS NULL OR user_id = ANY($3::text[]))
     AND ($4::timestamptz IS NULL OR timestamp >= $4)
     AND ($5::timestamptz IS NULL OR timestamp <= $5)
-    AND ($6::text IS NULL OR result = $6)
-    AND ($7::text IS NULL OR environment = $7)
+    AND (NULLIF($6::text, '') IS NULL OR result = $6)
+    AND (NULLIF($7::text, '') IS NULL OR environment = $7)
 ORDER BY timestamp DESC
 LIMIT $8 OFFSET $9;
 

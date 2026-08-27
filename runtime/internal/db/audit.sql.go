@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"net"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -32,7 +31,7 @@ INSERT INTO audit_log (
     details, request_id, trace_id,
     result, error_message, duration_ms
 ) VALUES (
-    $1, $2, $3, $4, $5,
+    $1, $2, NULLIF($3::text, '')::uuid, $4, $5,
     $6, $7, $8, $9, $10,
     $11, $12, $13,
     $14, $15, $16
@@ -40,11 +39,11 @@ INSERT INTO audit_log (
 `
 
 // Audit log queries for sqlc code generation
-func (q *Queries) CreateAuditEntry(ctx context.Context, action string, resource string, resourceID uuid.UUID, version pgtype.Text, environment pgtype.Text, userID pgtype.Text, userEmail pgtype.Text, ipAddress net.IP, userAgent pgtype.Text, sessionID pgtype.Text, details json.RawMessage, requestID pgtype.Text, traceID pgtype.Text, result string, errorMessage pgtype.Text, durationMs pgtype.Int4) (*AuditLog, error) {
+func (q *Queries) CreateAuditEntry(ctx context.Context, action string, resource string, column3 string, version pgtype.Text, environment pgtype.Text, userID pgtype.Text, userEmail pgtype.Text, ipAddress net.IP, userAgent pgtype.Text, sessionID pgtype.Text, details json.RawMessage, requestID pgtype.Text, traceID pgtype.Text, result string, errorMessage pgtype.Text, durationMs pgtype.Int4) (*AuditLog, error) {
 	row := q.db.QueryRow(ctx, CreateAuditEntry,
 		action,
 		resource,
-		resourceID,
+		column3,
 		version,
 		environment,
 		userID,
@@ -92,8 +91,8 @@ WHERE
     AND ($3::text[] IS NULL OR user_id = ANY($3::text[]))
     AND ($4::timestamptz IS NULL OR timestamp >= $4)
     AND ($5::timestamptz IS NULL OR timestamp <= $5)
-    AND ($6::text IS NULL OR result = $6)
-    AND ($7::text IS NULL OR environment = $7)
+    AND (NULLIF($6::text, '') IS NULL OR result = $6)
+    AND (NULLIF($7::text, '') IS NULL OR environment = $7)
 ORDER BY timestamp DESC
 LIMIT $8 OFFSET $9
 `

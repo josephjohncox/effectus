@@ -3,9 +3,12 @@ package runtime
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -14,8 +17,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/lib/pq"
 	"github.com/pressly/goose/v3"
 )
+
+//go:embed migrations/*.sql
+var embeddedMigrations embed.FS
 
 // PostgresStorage implements RuleStorageBackend using sqlc and goose
 type PostgresStorage struct {
@@ -35,24 +42,25 @@ type PostgresStorageConfig struct {
 	// Migration settings
 	MigrationsPath string `yaml:"migrations_path"`
 	AutoMigrate    bool   `yaml:"auto_migrate"`
-
-	// Performance settings
-	PreparedStatements bool          `yaml:"prepared_statements"`
-	CacheEnabled       bool          `yaml:"cache_enabled"`
-	CacheTTL           time.Duration `yaml:"cache_ttl"`
-
-	// Maintenance settings
-	AuditRetentionDays int    `yaml:"audit_retention_days"`
-	VacuumEnabled      bool   `yaml:"vacuum_enabled"`
-	VacuumSchedule     string `yaml:"vacuum_schedule"`
-
-	// Monitoring
-	MetricsEnabled bool `yaml:"metrics_enabled"`
-	LogQueries     bool `yaml:"log_queries"`
 }
 
 // NewPostgresStorage creates a new PostgreSQL storage backend with modern tooling
 func NewPostgresStorage(config *PostgresStorageConfig) (*PostgresStorage, error) {
+	if config == nil {
+		return nil, fmt.Errorf("PostgreSQL storage config is required")
+	}
+	if strings.TrimSpace(config.DSN) == "" {
+		return nil, fmt.Errorf("PostgreSQL DSN is required")
+	}
+	if config.MaxConnections < 0 {
+		return nil, fmt.Errorf("PostgreSQL max connections cannot be negative")
+	}
+	if config.ConnMaxLifetime < 0 || config.ConnMaxIdleTime < 0 {
+		return nil, fmt.Errorf("PostgreSQL connection lifetimes cannot be negative")
+	}
+	resolvedConfig := *config
+	config = &resolvedConfig
+
 	// Set defaults
 	if config.MaxConnections == 0 {
 		config.MaxConnections = 25
@@ -63,10 +71,6 @@ func NewPostgresStorage(config *PostgresStorageConfig) (*PostgresStorage, error)
 	if config.ConnMaxIdleTime == 0 {
 		config.ConnMaxIdleTime = 30 * time.Minute
 	}
-	if config.MigrationsPath == "" {
-		config.MigrationsPath = "migrations"
-	}
-
 	// Configure connection pool
 	poolConfig, err := pgxpool.ParseConfig(config.DSN)
 	if err != nil {
@@ -83,8 +87,17 @@ func NewPostgresStorage(config *PostgresStorageConfig) (*PostgresStorage, error)
 		return nil, fmt.Errorf("failed to create connection pool: %w", err)
 	}
 
-	// Test connection
-	if err := pool.Ping(context.Background()); err != nil {
+	cleanupPool := true
+	defer func() {
+		if cleanupPool {
+			pool.Close()
+		}
+	}()
+
+	// Test connection with a finite startup deadline.
+	pingContext, cancelPing := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelPing()
+	if err := pool.Ping(pingContext); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
@@ -101,28 +114,38 @@ func NewPostgresStorage(config *PostgresStorageConfig) (*PostgresStorage, error)
 		}
 	}
 
+	cleanupPool = false
 	return storage, nil
 }
 
 // runMigrations runs database migrations using goose
 func (p *PostgresStorage) runMigrations() error {
-	// Get a regular sql.DB connection for goose
+	// Use a per-call provider. The legacy goose setters mutate package-global
+	// state and can race with the independently versioned saga migrations.
+	var migrations fs.FS
+	if p.config.MigrationsPath != "" {
+		migrations = os.DirFS(p.config.MigrationsPath)
+	} else {
+		var err error
+		migrations, err = fs.Sub(embeddedMigrations, "migrations")
+		if err != nil {
+			return fmt.Errorf("open embedded migrations: %w", err)
+		}
+	}
+
 	db, err := sql.Open("postgres", p.config.DSN)
 	if err != nil {
 		return fmt.Errorf("failed to open database for migrations: %w", err)
 	}
 	defer db.Close()
 
-	// Set goose dialect
-	if err := goose.SetDialect("postgres"); err != nil {
-		return fmt.Errorf("failed to set goose dialect: %w", err)
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations)
+	if err != nil {
+		return fmt.Errorf("create migration provider: %w", err)
 	}
-
-	// Run migrations
-	if err := goose.Up(db, p.config.MigrationsPath); err != nil {
+	if _, err := provider.Up(context.Background()); err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
-
 	return nil
 }
 
@@ -201,7 +224,7 @@ func (p *PostgresStorage) StoreRuleset(ctx context.Context, ruleset *StoredRules
 		Version:     ruleset.Version,
 		Environment: ruleset.Environment,
 		UserID:      ruleset.CreatedBy,
-		Details: map[string]interface{}{
+		Details: map[string]any{
 			"rule_count":      len(ruleset.Ruleset.Rules),
 			"schema_version":  ruleset.SchemaVersion,
 			"validation_hash": ruleset.ValidationHash,
@@ -219,23 +242,17 @@ func (p *PostgresStorage) StoreRuleset(ctx context.Context, ruleset *StoredRules
 
 // GetRuleset retrieves a ruleset using sqlc-generated queries
 func (p *PostgresStorage) GetRuleset(ctx context.Context, name, version string) (*StoredRuleset, error) {
-	// First try to get with explicit environment, then fall back to any environment
-	environments := []string{"production", "staging", "development"}
-
-	for _, env := range environments {
-		dbRuleset, err := p.queries.GetRuleset(ctx, name, version, env)
-
-		if err != nil {
-			if err == pgx.ErrNoRows {
-				continue // Try next environment
-			}
-			return nil, fmt.Errorf("failed to get ruleset: %w", err)
-		}
-
-		return p.convertDBRuleset(dbRuleset)
+	if strings.TrimSpace(name) == "" || strings.TrimSpace(version) == "" {
+		return nil, fmt.Errorf("ruleset name and version are required")
 	}
-
-	return nil, fmt.Errorf("ruleset not found: %s:%s", name, version)
+	dbRuleset, err := p.queries.GetRulesetAnyEnvironment(ctx, name, version)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("ruleset not found: %s:%s", name, version)
+		}
+		return nil, fmt.Errorf("failed to get ruleset: %w", err)
+	}
+	return p.convertDBRuleset(dbRuleset)
 }
 
 // ListRulesets lists rulesets with filtering using sqlc-generated queries
@@ -263,7 +280,10 @@ func (p *PostgresStorage) ListRulesets(ctx context.Context, filters *RulesetFilt
 		limit = 50
 	}
 
-	nameFilter := toTextArrayLiteral(filters.Names)
+	var names []string
+	if len(filters.Names) > 0 {
+		names = filters.Names
+	}
 	createdAfter := pgtype.Timestamptz{}
 	if filters.CreatedAfter != nil {
 		createdAfter = pgtype.Timestamptz{Time: *filters.CreatedAfter, Valid: true}
@@ -272,7 +292,7 @@ func (p *PostgresStorage) ListRulesets(ctx context.Context, filters *RulesetFilt
 	// Execute query
 	dbRulesets, err := p.queries.ListRulesets(
 		ctx,
-		nameFilter,
+		names,
 		environments,
 		status,
 		filters.Owner,
@@ -322,9 +342,9 @@ func (p *PostgresStorage) RecordActivity(ctx context.Context, entry *AuditEntry)
 	}
 
 	// Convert types
-	resourceID := uuid.Nil
+	resourceID := ""
 	if entry.ResourceID != nil {
-		resourceID = *entry.ResourceID
+		resourceID = entry.ResourceID.String()
 	}
 
 	version := toPgText(entry.Version)
@@ -427,7 +447,7 @@ func (p *PostgresStorage) GetAuditLog(ctx context.Context, filters *AuditFilters
 	// Convert to audit entries
 	entries := make([]*AuditEntry, len(dbEntries))
 	for i, dbEntry := range dbEntries {
-		var details map[string]interface{}
+		var details map[string]any
 		if len(dbEntry.Details) > 0 {
 			json.Unmarshal(dbEntry.Details, &details)
 		}
@@ -570,43 +590,242 @@ func toPgInt4(value int) pgtype.Int4 {
 	return pgtype.Int4{Int32: int32(value), Valid: true}
 }
 
-func toTextArrayLiteral(values []string) string {
-	if len(values) == 0 {
-		return ""
-	}
-
-	escaped := make([]string, len(values))
-	for i, value := range values {
-		escaped[i] = strings.ReplaceAll(value, "\"", "\\\"")
-	}
-	return "{" + strings.Join(escaped, ",") + "}"
-}
-
-// Placeholder implementations for remaining interface methods
 func (p *PostgresStorage) DeleteRuleset(ctx context.Context, name, version string) error {
-	return fmt.Errorf("not implemented")
+	if strings.TrimSpace(name) == "" || strings.TrimSpace(version) == "" {
+		return fmt.Errorf("ruleset name and version are required")
+	}
+	active, err := p.queries.HasActiveDeployments(ctx, name, version)
+	if err != nil {
+		return fmt.Errorf("check active deployments for %s:%s: %w", name, version, err)
+	}
+	if active {
+		return fmt.Errorf("%w: %s:%s", ErrRulesetActive, name, version)
+	}
+	deleted, err := p.queries.DeleteRulesetByNameVersion(ctx, name, version)
+	if err != nil {
+		return fmt.Errorf("delete ruleset %s:%s: %w", name, version, err)
+	}
+	if deleted == 0 {
+		return fmt.Errorf("ruleset not found: %s:%s", name, version)
+	}
+	p.recordLifecycleActivity(ctx, "delete_ruleset", name, version, "", map[string]interface{}{"deleted_environments": deleted})
+	return nil
 }
 
 func (p *PostgresStorage) GetRulesetVersions(ctx context.Context, name string) ([]*RulesetVersion, error) {
-	return nil, fmt.Errorf("not implemented")
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("ruleset name is required")
+	}
+	rows, err := p.queries.GetRulesetVersionsAll(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("list versions for %s: %w", name, err)
+	}
+	versions := make([]*RulesetVersion, len(rows))
+	for i, row := range rows {
+		versions[i] = &RulesetVersion{
+			Version:      row.Version,
+			CreatedAt:    getTimeValue(row.CreatedAt),
+			CreatedBy:    row.CreatedBy,
+			GitCommit:    row.GitCommit,
+			IsActive:     row.IsActive,
+			DeployedEnvs: append([]string(nil), row.DeployedEnvs...),
+		}
+	}
+	return versions, nil
 }
 
 func (p *PostgresStorage) GetActiveVersion(ctx context.Context, name, environment string) (*RulesetVersion, error) {
-	return nil, fmt.Errorf("not implemented")
+	if err := validateDeploymentIdentity(name, environment, ""); err != nil {
+		return nil, err
+	}
+	deployment, err := p.queries.GetActiveDeployment(ctx, name, environment)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("no active version found for %s in %s", name, environment)
+		}
+		return nil, fmt.Errorf("get active deployment for %s in %s: %w", name, environment, err)
+	}
+	ruleset, err := p.queries.GetRuleset(ctx, name, deployment.RulesetVersion, environment)
+	if err != nil {
+		return nil, fmt.Errorf("get active ruleset %s:%s in %s: %w", name, deployment.RulesetVersion, environment, err)
+	}
+	return &RulesetVersion{
+		Version:      ruleset.Version,
+		CreatedAt:    getTimeValue(ruleset.CreatedAt),
+		CreatedBy:    getStringValue(ruleset.CreatedBy),
+		GitCommit:    getStringValue(ruleset.GitCommit),
+		IsActive:     true,
+		DeployedEnvs: []string{environment},
+	}, nil
 }
 
 func (p *PostgresStorage) SetActiveVersion(ctx context.Context, name, environment, version string) error {
-	return fmt.Errorf("not implemented")
+	return p.DeployRuleset(ctx, name, version, environment, &DeploymentConfig{Strategy: "atomic"})
 }
 
 func (p *PostgresStorage) DeployRuleset(ctx context.Context, name, version, environment string, config *DeploymentConfig) error {
-	return fmt.Errorf("not implemented")
+	if err := validateDeploymentIdentity(name, environment, version); err != nil {
+		return err
+	}
+	config, err := normalizeDeploymentConfig(config)
+	if err != nil {
+		return err
+	}
+	strategy := config.Strategy
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("marshal deployment config: %w", err)
+	}
+
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin deployment transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	queries := p.queries.WithTx(tx)
+	ruleset, err := queries.GetRuleset(ctx, name, version, environment)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("version %s not found for %s in %s", version, name, environment)
+		}
+		return fmt.Errorf("get deployment ruleset: %w", err)
+	}
+	deployment, err := queries.CreateDeployment(
+		ctx,
+		ruleset.ID,
+		environment,
+		db.DeploymentStatusActive,
+		strategy,
+		configJSON,
+		json.RawMessage(`{}`),
+		json.RawMessage(`{}`),
+		json.RawMessage(`{}`),
+		pgtype.Text{},
+		pgtype.Int4{},
+	)
+	if err != nil {
+		return fmt.Errorf("create deployment: %w", err)
+	}
+	if err := queries.DeactivateOldDeployments(ctx, name, environment, deployment.ID); err != nil {
+		return fmt.Errorf("deactivate previous deployments: %w", err)
+	}
+	if err := queries.DeactivateRulesetVersions(ctx, name, environment, ruleset.ID); err != nil {
+		return fmt.Errorf("deactivate previous ruleset versions: %w", err)
+	}
+	if _, err := queries.UpdateRulesetStatus(ctx, ruleset.ID, db.RulesetStatusDeployed, pgtype.Text{}); err != nil {
+		return fmt.Errorf("activate ruleset version: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit deployment: %w", err)
+	}
+	p.recordLifecycleActivity(ctx, "deploy_ruleset", name, version, environment, map[string]interface{}{"strategy": strategy})
+	return nil
 }
 
 func (p *PostgresStorage) GetDeploymentStatus(ctx context.Context, name, environment string) (*DeploymentStatus, error) {
-	return nil, fmt.Errorf("not implemented")
+	if err := validateDeploymentIdentity(name, environment, ""); err != nil {
+		return nil, err
+	}
+	deployment, err := p.queries.GetLatestDeploymentForRuleset(ctx, name, environment)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("no deployment found for %s in %s", name, environment)
+		}
+		return nil, fmt.Errorf("get deployment status for %s in %s: %w", name, environment, err)
+	}
+	status := DeploymentStatus(deployment.Status)
+	return &status, nil
 }
 
 func (p *PostgresStorage) RollbackDeployment(ctx context.Context, name, environment, targetVersion string) error {
-	return fmt.Errorf("not implemented")
+	if err := validateDeploymentIdentity(name, environment, targetVersion); err != nil {
+		return err
+	}
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin rollback transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	queries := p.queries.WithTx(tx)
+	current, err := queries.GetActiveDeployment(ctx, name, environment)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("no active deployment found for %s in %s", name, environment)
+		}
+		return fmt.Errorf("get active deployment: %w", err)
+	}
+	target, err := queries.GetRuleset(ctx, name, targetVersion, environment)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("rollback target %s not found for %s in %s", targetVersion, name, environment)
+		}
+		return fmt.Errorf("get rollback target: %w", err)
+	}
+	rollbackJSON, err := json.Marshal(&RollbackInfo{
+		PreviousVersion: current.RulesetVersion,
+		RollbackReason:  "manual rollback",
+		RolledBackAt:    time.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal rollback info: %w", err)
+	}
+	if _, err := queries.SetDeploymentRollback(ctx, current.ID, rollbackJSON); err != nil {
+		return fmt.Errorf("mark current deployment rolling back: %w", err)
+	}
+	deployment, err := queries.CreateDeployment(
+		ctx,
+		target.ID,
+		environment,
+		db.DeploymentStatusActive,
+		"rollback",
+		json.RawMessage(`{}`),
+		json.RawMessage(`{}`),
+		rollbackJSON,
+		json.RawMessage(`{}`),
+		pgtype.Text{},
+		pgtype.Int4{},
+	)
+	if err != nil {
+		return fmt.Errorf("activate rollback target: %w", err)
+	}
+	if err := queries.DeactivateOldDeployments(ctx, name, environment, deployment.ID); err != nil {
+		return fmt.Errorf("deactivate previous deployments: %w", err)
+	}
+	if err := queries.DeactivateRulesetVersions(ctx, name, environment, target.ID); err != nil {
+		return fmt.Errorf("deactivate previous ruleset versions: %w", err)
+	}
+	if _, err := queries.UpdateRulesetStatus(ctx, target.ID, db.RulesetStatusDeployed, pgtype.Text{}); err != nil {
+		return fmt.Errorf("activate rollback ruleset: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit rollback: %w", err)
+	}
+	p.recordLifecycleActivity(ctx, "rollback_deployment", name, targetVersion, environment, map[string]interface{}{"previous_version": current.RulesetVersion})
+	return nil
+}
+
+func validateDeploymentIdentity(name, environment, version string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("ruleset name is required")
+	}
+	if strings.TrimSpace(environment) == "" {
+		return fmt.Errorf("deployment environment is required")
+	}
+	if version != "" && strings.TrimSpace(version) == "" {
+		return fmt.Errorf("ruleset version is required")
+	}
+	return nil
+}
+
+func (p *PostgresStorage) recordLifecycleActivity(ctx context.Context, action, name, version, environment string, details map[string]interface{}) {
+	if err := p.RecordActivity(ctx, &AuditEntry{
+		Action:      action,
+		Resource:    name,
+		Version:     version,
+		Environment: environment,
+		Details:     details,
+		Result:      "success",
+	}); err != nil {
+		fmt.Printf("Failed to record %s audit entry: %v\n", action, err)
+	}
 }

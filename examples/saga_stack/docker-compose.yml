@@ -1,6 +1,8 @@
 services:
   postgres:
-    image: postgres:16
+    build:
+      context: ../cdc_stack/postgres
+    image: effectus/postgres-wal2json:16-secure
     environment:
       POSTGRES_USER: effectus
       POSTGRES_PASSWORD: effectus
@@ -9,6 +11,6 @@ services:
       - "55433:5432"
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
     ports:
       - "56379:6379"

@@ -40,17 +40,12 @@ func exampleBasicSetup() error {
 
 	// Configuration with modern tooling
 	config := &runtime.PostgresStorageConfig{
-		DSN:                "postgres://effectus:effectus@localhost/effectus_dev?sslmode=disable",
-		MaxConnections:     25,
-		ConnMaxLifetime:    time.Hour,
-		ConnMaxIdleTime:    30 * time.Minute,
-		MigrationsPath:     "../runtime/migrations",
-		AutoMigrate:        true,
-		PreparedStatements: true,
-		CacheEnabled:       true,
-		CacheTTL:           10 * time.Minute,
-		MetricsEnabled:     true,
-		LogQueries:         false, // Set to true for debugging
+		DSN:             "postgres://effectus:effectus@localhost/effectus_dev?sslmode=disable",
+		MaxConnections:  25,
+		ConnMaxLifetime: time.Hour,
+		ConnMaxIdleTime: 30 * time.Minute,
+		MigrationsPath:  "../runtime/migrations",
+		AutoMigrate:     true,
 	}
 
 	// Create storage backend
@@ -331,16 +326,12 @@ func exampleTransactionHandling() error {
 // Helper function to create storage for examples
 func createStorageForExample() (*runtime.PostgresStorage, error) {
 	config := &runtime.PostgresStorageConfig{
-		DSN:                "postgres://effectus:effectus@localhost/effectus_dev?sslmode=disable",
-		MaxConnections:     10,
-		ConnMaxLifetime:    30 * time.Minute,
-		ConnMaxIdleTime:    5 * time.Minute,
-		MigrationsPath:     "../runtime/migrations",
-		AutoMigrate:        false, // Assume already migrated
-		PreparedStatements: true,
-		CacheEnabled:       false, // Disable for examples
-		MetricsEnabled:     false, // Disable for examples
-		LogQueries:         false, // Set to true for debugging
+		DSN:             "postgres://effectus:effectus@localhost/effectus_dev?sslmode=disable",
+		MaxConnections:  10,
+		ConnMaxLifetime: 30 * time.Minute,
+		ConnMaxIdleTime: 5 * time.Minute,
+		MigrationsPath:  "../runtime/migrations",
+		AutoMigrate:     false, // Assume already migrated
 	}
 
 	return runtime.NewPostgresStorage(config)

@@ -1,6 +1,8 @@
 services:
   postgres:
-    image: postgres:16
+    build:
+      context: ../../cdc_stack/postgres
+    image: effectus/postgres-wal2json:16-secure
     environment:
       POSTGRES_USER: effectus
       POSTGRES_PASSWORD: effectus

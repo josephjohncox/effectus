@@ -84,6 +84,9 @@ rule "FlagLargeOrder" priority 10 {
 	require.NoError(t, err)
 	require.NotNil(t, prepared.ListSpec)
 
+	_, err = compileBundleRules(prepared, types.NewTypeSystem(), verbReg, false)
+	require.Error(t, err, "an existing compiled spec must be checked again for a new dependency generation")
+
 	state := newServerState(prepared, nil, nil, factStoreConfig{}, apiAuth{mode: "disabled"}, nil, nil, typeSystem, nil, verbReg, false, nil, false, nil, nil)
 
 	facts := map[string]interface{}{

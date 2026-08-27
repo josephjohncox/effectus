@@ -1,22 +1,41 @@
 image:
-  repository: ghcr.io/effectus/effectusd
-  tag: "latest"
+  repository: ghcr.io/josephjohncox/effectusd
+  tag: ""
+  digest: ""
   pullPolicy: IfNotPresent
+
+postgres:
+  existingSecret: ""
+  dsnKey: "dsn"
+
+grpc:
+  enabled: false
+  port: 9091
+  existingTLSSecret: ""
+  certKey: "tls.crt"
+  keyKey: "tls.key"
+  maxReceiveBytes: 4194304
+  maxSendBytes: 4194304
+  maxConcurrent: 128
+
 
 bundle:
   ociRef: ""
-  reloadInterval: "60s"
+  cacheDir: "/data/bundles"
+  signatureVerifier: ""
+  reloadInterval: "0s"
 
 api:
   authMode: "token"
-  token: ""
-  readToken: ""
+  existingSecret: ""
+  tokenKey: "api-token"
+  readTokenKey: "api-read-token"
   aclFile: ""
   rateLimit: 120
   rateBurst: 60
 
 facts:
-  store: "file"
+  store: "memory"
   path: "/data/facts.json"
   mergeDefault: "last"
   mergeNamespace: []
@@ -24,12 +43,37 @@ facts:
   cacheMaxUniverses: 0
   cacheMaxNamespaces: 0
 
+persistence:
+  enabled: false
+  existingClaim: ""
+  size: 1Gi
+  storageClass: ""
+
 service:
   type: ClusterIP
   port: 8080
   metricsPort: 9090
+  grpcPort: 9091
 
 resources: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+terminationGracePeriodSeconds: 30
 
 initContainers: []
 extraVolumes: []

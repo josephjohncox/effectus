@@ -2,16 +2,21 @@ package http
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/effectus/effectus-go/adapters"
 )
+
+const maxWebhookBodyBytes int64 = 1 << 20
 
 // HTTPSource implements the FactSource interface for HTTP webhooks
 type HTTPSource struct {
@@ -79,6 +84,21 @@ func validateConfig(config *Config) error {
 	if config.ListenPort < 0 || config.ListenPort > 65535 {
 		return fmt.Errorf("invalid port: %d", config.ListenPort)
 	}
+
+	config.AuthMethod = strings.ToLower(strings.TrimSpace(config.AuthMethod))
+	switch config.AuthMethod {
+	case "", "none":
+	case "bearer_token":
+		if strings.TrimSpace(config.AuthConfig["token"]) == "" {
+			return fmt.Errorf("bearer token is required")
+		}
+	case "api_key":
+		if strings.TrimSpace(config.AuthConfig["expected_token"]) == "" {
+			return fmt.Errorf("expected API key is required")
+		}
+	default:
+		return fmt.Errorf("unsupported auth method %q", config.AuthMethod)
+	}
 	return nil
 }
 
@@ -92,17 +112,27 @@ func (h *HTTPSource) Start(ctx context.Context) error {
 	mux.HandleFunc(h.config.Path, h.handleWebhook)
 
 	h.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", h.config.ListenPort),
-		Handler: mux,
+		Addr:              fmt.Sprintf(":%d", h.config.ListenPort),
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
+	listener, err := net.Listen("tcp", h.server.Addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", h.server.Addr, err)
+	}
+
+	h.started = true
 	go func() {
-		if err := h.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := h.server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Printf("HTTP server error: %v", err)
 		}
 	}()
 
-	h.started = true
 	log.Printf("HTTP source %s started on port %d", h.config.SourceID, h.config.ListenPort)
 	return nil
 }
@@ -187,14 +217,19 @@ func (h *HTTPSource) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read body
-	body, err := io.ReadAll(r.Body)
+	// Read a bounded body so one request cannot exhaust process memory.
+	defer r.Body.Close()
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWebhookBodyBytes))
 	if err != nil {
 		h.metrics.RecordError(h.config.SourceID, "read_body", err)
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			http.Error(w, "Request Entity Too Large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
 
 	// Transform to typed fact
 	fact, err := h.transformer.TransformRequest(r, body)
@@ -210,8 +245,8 @@ func (h *HTTPSource) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			h.metrics.RecordFactProcessed(h.config.SourceID, fact.SchemaName)
 			h.metrics.RecordLatency(h.config.SourceID, time.Since(start))
 
-			w.WriteHeader(http.StatusOK)
 			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
 			response := map[string]interface{}{
 				"status":    "received",
 				"fact_type": fact.SchemaName,
@@ -250,7 +285,7 @@ func (h *HTTPSource) validateBearerToken(r *http.Request) bool {
 
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	expectedToken := h.config.AuthConfig["token"]
-	return token == expectedToken
+	return constantTimeEqual(token, expectedToken)
 }
 
 func (h *HTTPSource) validateAPIKey(r *http.Request) bool {
@@ -261,7 +296,14 @@ func (h *HTTPSource) validateAPIKey(r *http.Request) bool {
 
 	apiKey := r.Header.Get(header)
 	expectedKey := h.config.AuthConfig["expected_token"]
-	return apiKey == expectedKey
+	return constantTimeEqual(apiKey, expectedKey)
+}
+
+func constantTimeEqual(actual, expected string) bool {
+	if actual == "" || expected == "" || len(actual) != len(expected) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) == 1
 }
 
 // TransformRequest transforms an HTTP request to a TypedFact

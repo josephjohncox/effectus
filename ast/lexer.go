@@ -11,6 +11,7 @@ var Lexer = lexer.MustStateful(lexer.Rules{
 		{Name: "Int", Pattern: `\d+`, Action: nil},
 		{Name: "String", Pattern: `"(?:\\.|[^"])*"|'(?:\\.|[^'])*'`, Action: nil},
 		{Name: "LogicalOp", Pattern: `&&|\|\||!`, Action: nil},
+		{Name: "Arrow", Pattern: `->`, Action: nil},
 		{Name: "Operator", Pattern: `==|!=|>=|<=|>|<|\+|-|\*|/|%`, Action: nil},
 		{Name: "VarRef", Pattern: `\$[a-zA-Z_][a-zA-Z0-9_]*`, Action: nil},
 		{Name: "FactPath", Pattern: `[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*|\[\d+\])+`, Action: nil},

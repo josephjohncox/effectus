@@ -5,6 +5,7 @@ This document describes the command-line tools available in Effectus.
 ## Overview
 
 Effectus provides two main CLI tools:
+
 - **`effectusc`**: Compiler and development utilities
 - **`effectusd`**: Runtime daemon for executing rules
 
@@ -32,6 +33,7 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc parse rules/customer.eff rules/payment.eff --verbose
 ```
@@ -53,6 +55,7 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc typecheck \
   --schema schemas/customer.json,schemas/payment.json \
@@ -80,6 +83,7 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc check \
   --schema schemas/customer.json,schemas/payment.json \
@@ -110,21 +114,25 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc format --check rules/*.eff
 ```
 
 **Example (bound flow formatting):**
+
 ```bash
 effectusc format --stdout rules/case_hold.effx
 ```
 
 Input:
+
 ```effx
 flow "CaseHold" priority 5 { when { order.amount>1000 } steps { caseId=OpenCase(orderId:order.id,reason:"risk") UpdateCase(caseId:$caseId,status:"held") } }
 ```
 
 Output:
+
 ```effx
 flow "CaseHold" priority 5 {
   when {
@@ -153,6 +161,7 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc graph --schema schemas/ --format dot rules/*.eff
 ```
@@ -173,6 +182,7 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc facts --schema schemas/ rules/*.eff
 ```
@@ -193,6 +203,7 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc compile \
   --schema schemas/ \
@@ -225,6 +236,7 @@ Options:
 **Examples:**
 
 Create local bundle:
+
 ```bash
 effectusc bundle \
   --name customer-rules \
@@ -238,6 +250,7 @@ effectusc bundle \
 ```
 
 Create and push to OCI registry:
+
 ```bash
 effectusc bundle \
   --name customer-rules \
@@ -266,6 +279,7 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc resolve \
   --registry public=ghcr.io/myorg \
@@ -286,6 +300,7 @@ Options:
 ```
 
 **Example:**
+
 ```bash
 effectusc capabilities \
   --output capability-report.md \
@@ -294,7 +309,7 @@ effectusc capabilities \
 
 ## effectusd - Runtime Daemon
 
-The `effectusd` command is the runtime server that executes bundled rules against facts.
+The `effectusd` command compiles embedded `.eff` and `.effx` sources to checked IR and routes HTTP, Kafka, and generated gRPC requests through one durable execution engine. It requires PostgreSQL through `EFFECTUS_SAGA_POSTGRES_DSN`.
 
 ### Usage
 
@@ -305,53 +320,74 @@ effectusd [options]
 ### Options
 
 #### Bundle Configuration
+
 ```bash
 --bundle           Path to bundle file
---oci-ref          OCI reference for bundle (e.g., ghcr.io/user/bundle:v1)
---plugin-dir       Directory containing verb plugins
+--oci-ref          Digest-pinned OCI reference for a bundle
+--oci-cache-dir    Writable OCI cache directory
+--oci-signature-verifier Fixed verifier executable for OCI signatures
+--plugin-dir       Rejected by production effectusd; compatibility only
 --extensions-dir   Directory containing extension manifests (*.verbs.json, *.schema.json)
 --extensions-oci   OCI references for extension bundles (comma-separated)
 --extensions-reload-interval Interval for reloading extension manifests (0 to disable)
 --schema-sources   Path to schema sources config (YAML/JSON)
 --config           Path to YAML/JSON config file
---reload-interval  Interval for hot-reloading (default: 30s)
+--reload-interval  Interval for local schema/extension reloads (default: disabled)
 --verb-duplicate-policy Duplicate verb policy (error, replace, ignore)
 --verb-oci-warmup  Warm OCI verb executors at startup
---verb-strict      Enable strict verb arg/return checks at runtime
+--verb-strict      Validate verb arguments and return values (default: true)
 ```
 
 #### Runtime Configuration
+
 ```bash
---saga             Enable saga-style compensation
---saga-store       Saga store (memory, redis, postgres) (default: memory)
---saga-redis-addr  Redis address for saga store
---saga-redis-password Redis password for saga store
---saga-redis-db    Redis DB for saga store
---saga-redis-prefix Redis key prefix for saga store
---saga-redis-ttl   TTL for saga keys (0 to disable)
---saga-postgres-dsn Postgres DSN for saga store
+--saga             Deprecated legacy mode; effectusd rejects this option
 --fixed-time       Fixed time for deterministic evaluation (RFC3339/RFC3339Nano)
 ```
 
 #### Fact Sources
+
 ```bash
---fact-source      Fact source (http, kafka) (default: http)
---kafka-brokers    Kafka brokers (default: localhost:9092)
---kafka-topic      Kafka topic (default: facts)
+--fact-source             Fact source (http, kafka) (default: http)
+--kafka-brokers           Kafka brokers (default: localhost:9092)
+--kafka-topic             Kafka topic (default: facts)
+--kafka-consumer-group    Kafka consumer group (default: effectusd)
+--kafka-cluster-namespace Stable cluster name used in delivery IDs
+--kafka-ack-contract      Acknowledgement contract (default: completed_processing)
+--kafka-max-attempts      Attempts before poison handling (default: 3)
+--kafka-retry-initial     Initial same-record retry delay (default: 1s)
+--kafka-retry-max         Maximum same-record retry delay (default: 30s)
+--kafka-poison-policy     Poison policy: halt, skip, or dlq (default: halt)
+--kafka-dlq-topic         DLQ topic for the dlq policy
+--kafka-dlq-mode          Explicit DLQ delivery contract
+--kafka-delivery-ledger   Deprecated; state is stored in PostgreSQL
+--kafka-poison-audit      Deprecated; state is stored in PostgreSQL
 ```
 
 #### Server Configuration
+
 ```bash
 --http-addr        HTTP server address (default: :8080)
+--grpc-addr        Generated gRPC execution address (empty disables it)
+--grpc-tls-cert    PEM certificate for gRPC
+--grpc-tls-key     PEM private key for gRPC
+--grpc-allow-insecure Explicitly permit plaintext gRPC
+--grpc-max-receive-bytes Maximum request size
+--grpc-max-send-bytes Maximum response size
+--grpc-max-execution-duration Maximum execution duration
+--grpc-max-concurrent Maximum concurrent executions
 --metrics-addr     Address to expose metrics (default: :9090)
 --pprof-addr       Address to expose pprof (default: :6060)
 ```
 
+Supply the PostgreSQL ledger DSN through `EFFECTUS_SAGA_POSTGRES_DSN`. The daemon rejects a DSN supplied on the command line because process arguments can expose secrets.
+
 #### API Security + Rate Limits
+
 ```bash
 --api-auth             API auth mode (token, disabled)
---api-token            Write token for /api endpoints (comma-separated)
---api-read-token       Read-only token for /api endpoints (comma-separated)
+--api-token            Rejected; use EFFECTUS_API_TOKEN
+--api-read-token       Rejected; use EFFECTUS_API_READ_TOKEN
 --api-acl-file         Path to API ACL file (YAML/JSON)
 --api-rate-limit       Requests per minute per client (0 to disable)
 --api-rate-burst       Burst size (0 to use rate limit)
@@ -363,6 +399,7 @@ effectusd [options]
 Example ACL file: `docs/acl.example.yml`.
 
 #### Facts Store
+
 ```bash
 --facts-store           Facts store (file, memory)
 --facts-path            Facts store path (file store)
@@ -374,6 +411,7 @@ Example ACL file: `docs/acl.example.yml`.
 ```
 
 #### Debug Options
+
 ```bash
 --verbose          Enable verbose logging
 ```
@@ -383,37 +421,33 @@ Example ACL file: `docs/acl.example.yml`.
 #### Run with Local Bundle
 
 ```bash
-effectusd --bundle ./bundle.json --verbose
+EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+  effectusd --bundle ./bundle.json --verbose
 ```
 
 #### Run with OCI Registry Bundle
 
 ```bash
-effectusd --oci-ref ghcr.io/myorg/customer-rules:v1.2.0
+EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+  effectusd \
+  --oci-ref ghcr.io/myorg/customer-rules@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --oci-signature-verifier /usr/local/bin/effectus-verify-oci
 ```
 
-#### Enable Saga Compensation
+#### Durable checked workflows
 
-```bash
-effectusd \
-  --bundle ./bundle.json \
-  --saga \
-  --saga-store postgres
-```
+Effectusd uses checked workflows and the V2 outbox by default. The old `--saga` flag is rejected because it selects the obsolete callback implementation. Embedded callers use `runtime.Engine` or `ExecuteWorkflowWithIdentity` with a configured durable store.
 
-#### Hot Reload from OCI Registry
+#### Deploy a new OCI generation
 
-```bash
-effectusd \
-  --oci-ref ghcr.io/myorg/customer-rules:latest \
-  --reload-interval 60s \
-  --verbose
-```
+OCI references are immutable and digest-pinned. Publish, sign, and deploy a new digest instead of polling a mutable tag.
 
 #### Status UI and Playground
 
 ```bash
-effectusd --bundle ./bundle.json --http-addr :8080 --api-token devtoken
+EFFECTUS_API_TOKEN=devtoken \
+EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+  effectusd --bundle ./bundle.json --http-addr :8080
 # open http://localhost:8080/ui
 ```
 
@@ -455,7 +489,9 @@ between the current and staged bundle before swapping:
 Enable rule editing + hotload from the UI:
 
 ```bash
-effectusd --bundle ./bundle.json --api-token devtoken --rules-hotload
+EFFECTUS_API_TOKEN=devtoken \
+EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+  effectusd --bundle ./bundle.json --rules-hotload
 ```
 
 Post facts for a universe snapshot:
@@ -470,21 +506,25 @@ curl -X POST http://localhost:8080/api/facts \
 #### Use Kafka as Fact Source
 
 ```bash
+EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
 effectusd \
   --bundle ./bundle.json \
   --fact-source kafka \
+  --kafka-ack-contract durable_acceptance \
   --kafka-brokers kafka1:9092,kafka2:9092 \
   --kafka-topic customer-events
 ```
 
-#### Full Production Configuration
+#### Full compatibility configuration
 
 ```bash
+EFFECTUS_API_TOKEN="..." \
+EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
 effectusd \
-  --oci-ref ghcr.io/myorg/customer-rules:v1.0.0 \
-  --saga \
-  --saga-store postgres \
+  --oci-ref ghcr.io/myorg/customer-rules@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --oci-signature-verifier /usr/local/bin/effectus-verify-oci \
   --fact-source kafka \
+  --kafka-ack-contract durable_acceptance \
   --kafka-brokers kafka-cluster:9092 \
   --kafka-topic events \
   --http-addr :8080 \
@@ -538,12 +578,13 @@ effectusc bundle \
 ### 4. Runtime Deployment
 
 ```bash
-# Run in production
+# Run the checked durable daemon
+EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
 effectusd \
-  --oci-ref ghcr.io/myorg/my-rules:v1.0.0 \
-  --saga \
-  --saga-store postgres \
-  --fact-source kafka
+  --oci-ref ghcr.io/myorg/my-rules@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --oci-signature-verifier /usr/local/bin/effectus-verify-oci \
+  --fact-source kafka \
+  --kafka-ack-contract durable_acceptance
 ```
 
 ### HTTP Endpoints
@@ -560,12 +601,14 @@ GET /api/status
 ```
 
 Notes:
+
 - `/healthz` and `/readyz` are unauthenticated by default.
 - `/api/*` endpoints are protected and rate-limited when auth is enabled.
 
 ## Error Handling
 
 All commands return appropriate exit codes:
+
 - **0**: Success
 - **1**: Error (compilation failure, invalid arguments, etc.)
 
@@ -573,18 +616,18 @@ Error messages are written to stderr, while normal output goes to stdout.
 
 ## Configuration Files
 
-Currently, all configuration is done via command-line flags. Future versions may support configuration files for complex deployments.
+Effectusd accepts strict YAML or JSON through `--config`. Unknown fields and multiple documents are rejected. Explicit CLI flags override non-secret config values.
 
-## Environment Variables
+## Secret Environment Variables
 
-The following environment variables are respected:
+Effectusd reads these secrets from the environment:
 
-- `EFFECTUS_VERBOSE`: Set to "true" to enable verbose output globally
-- `EFFECTUS_BUNDLE_CACHE`: Directory for caching OCI bundles
-- `EFFECTUS_BUNDLE_REGISTRY`: Default bundle registry base (e.g., ghcr.io/myorg)
-- `EFFECTUS_BUNDLE_REGISTRIES`: Additional registries as name=base pairs (comma-separated)
-- `EFFECTUS_PLUGIN_PATH`: Additional directories to search for verb plugins
-- `EFFECTUS_UNSAFE_MODE`: Unsafe expression policy for linting (warn, error, ignore)
+- `EFFECTUS_API_TOKEN`
+- `EFFECTUS_API_READ_TOKEN`
+- `EFFECTUS_SAGA_POSTGRES_DSN`
+- `EFFECTUS_SAGA_REDIS_PASSWORD` for library compatibility stores
+
+The corresponding secret command-line flags are rejected because process arguments can expose their values.
 
 ## Integration Examples
 
@@ -609,16 +652,6 @@ effectusc bundle \
 echo "Bundle created and pushed successfully"
 ```
 
-### Docker Deployment
-
-```dockerfile
-FROM alpine:latest
-RUN apk add --no-cache ca-certificates
-COPY effectusd /usr/local/bin/
-EXPOSE 8080 9090
-CMD ["effectusd", "--oci-ref", "ghcr.io/myorg/rules:latest"]
-```
-
 ### OCI + Helm Publishing
 
 ```bash
@@ -633,7 +666,11 @@ helm push dist/effectusd-1.2.3.tgz oci://ghcr.io/myorg/helm
 # Install from GHCR (OCI)
 helm install effectusd oci://ghcr.io/myorg/helm/effectusd \
   --version 1.2.3 \
-  --set bundle.ociRef=ghcr.io/myorg/bundles/flow-ui-demo:1.2.3
+  --set image.digest=sha256:IMAGE_DIGEST \
+  --set bundle.ociRef=ghcr.io/myorg/bundles/flow-ui-demo@sha256:BUNDLE_DIGEST \
+  --set bundle.signatureVerifier=/usr/local/bin/effectus-verify-oci \
+  --set postgres.existingSecret=effectusd-postgres \
+  --set api.existingSecret=effectusd-api
 ```
 
 This documentation reflects the current implementation and capabilities of the Effectus CLI tools.

@@ -41,6 +41,9 @@ func (s *Spec) RequiredFacts() []string {
 
 // Execute runs all rules in the spec with saga and capability support
 func (s *Spec) Execute(ctx context.Context, facts effectus.Facts, ex effectus.Executor) error {
+	if s.SagaEnabled && s.SagaStore == nil {
+		return schema.ErrSagaStoreRequired
+	}
 	// Sort rules by priority using common utility (make a copy first)
 	rules := make([]*CompiledRule, len(s.Rules))
 	copy(rules, s.Rules)
@@ -69,8 +72,12 @@ func (s *Spec) Execute(ctx context.Context, facts effectus.Facts, ex effectus.Ex
 			return ctx.Err()
 		}
 
-		// Evaluate rule predicates using facts directly
-		if !schema.EvaluatePredicatesWithFacts(rule.Predicates, facts) {
+		// Evaluate rule predicates using facts directly.
+		matched, err := schema.EvaluatePredicatesWithFactsE(rule.Predicates, facts)
+		if err != nil {
+			return fmt.Errorf("evaluating predicates for rule %s: %w", rule.Name, err)
+		}
+		if !matched {
 			continue
 		}
 
@@ -114,7 +121,7 @@ func (s *Spec) executeRuleSimple(ctx context.Context, rule *CompiledRule, facts 
 		}
 
 		fmt.Printf("Executing effect: %s\n", effect.Verb)
-		result, err := ex.Do(execEffect)
+		result, err := effectus.Invoke(ctx, ex, execEffect)
 		if err != nil {
 			return fmt.Errorf("error executing effect %s: %w", effect.Verb, err)
 		}

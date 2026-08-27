@@ -2,36 +2,25 @@ syntax = "proto3";
 
 package effectus.v1;
 
-import "google/protobuf/any.proto";
-import "google/protobuf/timestamp.proto";
 import "effectus/v1/common.proto";
+import "google/protobuf/any.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1";
 
 // RulesetExecutionService provides the core gRPC interface for rule execution
 service RulesetExecutionService {
-  // ExecuteRuleset executes a ruleset with provided facts
+  // ExecuteRuleset executes a ruleset with provided facts.
   rpc ExecuteRuleset(ExecutionRequest) returns (ExecutionResponse);
-  
-  // GetRulesetInfo returns information about a registered ruleset
+
+  // Management RPCs are reserved and return Unimplemented in effectusd.
   rpc GetRulesetInfo(RulesetInfoRequest) returns (RulesetInfo);
-  
-  // ListRulesets returns all registered rulesets
   rpc ListRulesets(ListRulesetsRequest) returns (ListRulesetsResponse);
-  
-  // RegisterRuleset dynamically registers a new ruleset
   rpc RegisterRuleset(RegisterRulesetRequest) returns (RegisterRulesetResponse);
-  
-  // UnregisterRuleset removes a registered ruleset
   rpc UnregisterRuleset(UnregisterRulesetRequest) returns (UnregisterRulesetResponse);
-  
-  // StreamExecution provides streaming execution for long-running rules
   rpc StreamExecution(ExecutionRequest) returns (stream ExecutionUpdate);
-  
-  // ValidateSchema validates fact or effect schemas
   rpc ValidateSchema(ValidateSchemaRequest) returns (ValidateSchemaResponse);
-  
-  // GetSchemaVersion returns version information for schemas
   rpc GetSchemaVersion(SchemaVersionRequest) returns (SchemaVersionResponse);
 }
 
@@ -40,10 +29,23 @@ message ExecutionRequest {
   string ruleset_name = 1;
   string version = 2;
   google.protobuf.Any facts = 3;
+  // Typed facts for checked execution. New clients must use this field.
+  google.protobuf.Struct typed_facts = 11;
   ExecutionOptions options = 4;
   string trace_id = 5;
   // Schema validation options
   SchemaValidation schema_validation = 6;
+  string namespace = 7;
+  string idempotency_key = 8;
+  ExecutionWaitMode wait_mode = 9;
+  // Optional exact generation constraint. A mismatch is rejected before admission.
+  string generation_digest = 10;
+}
+
+enum ExecutionWaitMode {
+  EXECUTION_WAIT_MODE_UNSPECIFIED = 0;
+  EXECUTION_WAIT_MODE_ACCEPTED = 1;
+  EXECUTION_WAIT_MODE_TERMINAL = 2;
 }
 
 // ExecutionOptions provides options for rule execution
@@ -314,4 +316,4 @@ message SchemaVersionResponse {
   repeated string available_versions = 2;
   string latest_stable_version = 3;
   map<string, string> version_metadata = 4;
-} 
+}

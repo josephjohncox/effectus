@@ -1,20 +1,21 @@
-# Runtime Configuration (Non‑Library Mode)
+# Runtime Configuration (Non-Library Mode)
 
-Use a YAML (or JSON) config to run `effectusd` without embedding Effectus in a Go program. This is the recommended
-path for production deployments and for mixing multiple verb sources (HTTP, OCI, stream, plugins).
+Use a YAML or JSON config to run the checked `effectusd` runtime without embedding Effectus in a Go program. Effectusd compiles embedded `.eff` and `.effx` sources into checked IR and requires PostgreSQL for durable admission, recovery, the V2 outbox, and fencing.
 
 Run with:
 
 ```bash
-effectusd --config effectusd.yaml
+EFFECTUS_API_TOKEN="..." EFFECTUS_API_READ_TOKEN="..." \
+EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+  effectusd --config effectusd.yaml \
+  --oci-signature-verifier /usr/local/bin/effectus-verify-oci
 ```
 
 ## Example: Mixed HTTP + OCI verb sources
 
 ```yaml
 bundle:
-  oci: "ghcr.io/myorg/bundles/fraud-demo:1.0.0"
-  reload_interval: "60s"
+  oci: "ghcr.io/myorg/bundles/fraud-demo@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 http:
   addr: ":8080"
@@ -23,8 +24,6 @@ metrics:
 
 api:
   auth: "token"
-  token: "write-token"
-  read_token: "read-token"
   rate_limit: 120
   rate_burst: 60
   hotload_rules: false
@@ -67,40 +66,76 @@ extensions:
 
   # OCI bundles that contain *.verbs.json / *.schema.json
   oci:
-    - "ghcr.io/myorg/extension-bundles/payments:1.2.0"
+    - "ghcr.io/myorg/extension-bundles/payments@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-  # Optional: hot-reload extension schemas + verbs
+  # Optional: reload local extension manifests
   reload_interval: "60s"
 
 verbs:
-  # Optional: Go plugin executors (.so)
   duplicate_policy: "error" # error | replace | ignore
   oci_warmup: false
-  strict: false
-  plugin_dirs:
-    - "./plugins"
+  strict: true
 
 fixed_time: "" # Optional RFC3339 timestamp for deterministic runs
 ```
 
-## Production baseline example
+## Kafka fact ingestion
 
-Use this as a starting point for production deployments (bundle from OCI, persisted facts, ACLs, hotload, metrics):
+Use a stable consumer group and cluster namespace. The daemon supports both completed-processing and durable-acceptance contracts through the checked engine and PostgreSQL ledger.
+
+```yaml
+fact_source: "kafka"
+kafka:
+  brokers:
+    - "kafka-1:9092"
+    - "kafka-2:9092"
+  topic: "facts"
+  consumer_group: "effectusd-production"
+  cluster_namespace: "production-kafka"
+  ack_contract: "durable_acceptance"
+  max_attempts: 5
+  retry_initial: "1s"
+  retry_max: "30s"
+  poison_policy: "halt"
+  delivery_ledger: "/data/kafka-deliveries.jsonl"
+```
+
+The durable delivery ledger increments the stable delivery attempt before each handler call. Attempt limits therefore survive rebalances and process restarts.
+The default poison policy leaves the failed offset uncommitted and stops the daemon.
+For `skip`, the same ledger records and deduplicates the poison acknowledgement.
+For `dlq`, set `dlq_topic` to a Kafka topic.
+Effectus waits for DLQ publication before it commits the source offset.
+
+Each message value uses this JSON shape:
+
+```json
+{
+  "universe": "default",
+  "namespace": "tenant-a",
+  "facts": {
+    "order": {
+      "id": "order-42"
+    }
+  }
+}
+```
+
+## Production deployment example
+
+Use this as a starting point for a checked deployment with persisted projections, ACLs, hotload, and metrics:
 
 ```yaml
 bundle:
-  oci: "ghcr.io/myorg/bundles/fraud-demo:1.0.0"
-  reload_interval: "60s"
+  oci: "ghcr.io/myorg/bundles/fraud-demo@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 http:
   addr: ":8080"
 metrics:
   addr: ":9090"
 
+# Supply EFFECTUS_API_TOKEN and EFFECTUS_API_READ_TOKEN through the secret manager.
 api:
   auth: "token"
-  token: "${EFFECTUS_WRITE_TOKEN}"
-  read_token: "${EFFECTUS_READ_TOKEN}"
   acl_file: "/etc/effectus/acl.yaml"
   rate_limit: 300
   rate_burst: 120
@@ -131,7 +166,7 @@ extensions:
   dirs:
     - "/etc/effectus/extensions"
   oci:
-    - "ghcr.io/myorg/extension-bundles/payments:1.2.0"
+    - "ghcr.io/myorg/extension-bundles/payments@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   reload_interval: "60s"
 
 verbs:
@@ -139,17 +174,12 @@ verbs:
   oci_warmup: true
   strict: true
 
-saga:
-  enabled: true
-  store: "redis"
-  redis:
-    addr: "redis:6379"
-    db: 0
-    prefix: "effectus:"
-    ttl: "24h"
+# Supply EFFECTUS_SAGA_POSTGRES_DSN from the secret manager.
+# The old saga.enabled mode is rejected; checked execution always uses V2.
 ```
 
-### Local extension manifest (HTTP verbs)
+## Local extension manifest (HTTP verbs)
+
 Put this file in `./extensions/external.verbs.json`:
 
 ```json
@@ -180,7 +210,7 @@ Put this file in `./extensions/external.verbs.json`:
 }
 ```
 
-### OCI extension bundles
+## OCI extension bundles
 
 OCI extension bundles are directories containing `*.verbs.json` / `*.schema.json` files, pushed with an OCI tool
 such as `oras`:
@@ -189,20 +219,21 @@ such as `oras`:
 oras push ghcr.io/myorg/extension-bundles/payments:1.2.0 ./extensions
 ```
 
-Then list the OCI reference under `extensions.oci`.
+Resolve the published digest, sign it under the deployment trust policy, and list the digest reference under `extensions.oci`. Pass the fixed verifier executable with `--oci-signature-verifier` before startup.
 
 ## Notes
 
 - CLI flags override config values when both are provided.
 - `/api/*` endpoints require a token; `/healthz` and `/readyz` are open by default.
 - Set `api.hotload_rules` to enable `/api/rules/validate` and `/api/rules/hotload` (UI rule editor + VS Code hot reload).
-- If you need in‑process Go executors, use `verbs.plugin_dirs` or embed via library mode.
-- Extension reloading re-reads `*.verbs.json` / `*.schema.json` from disk or OCI; Go plugins are not hot-reloadable.
-- Schema sources are loaded in-memory at startup; set `extensions.reload_interval` (or `bundle.reload_interval`) to poll for updates.
+- Production effectusd rejects Go plugin executors. Use immutable invocation-aware targets, or use plugins only in an explicitly trusted embedded library process.
+- Extension reload can re-read local `*.verbs.json` and `*.schema.json` files. An immutable OCI digest cannot change.
+- Deploy a new OCI digest to publish another generation. Effectusd does not poll mutable OCI tags.
+- Schema sources load at startup. Set `extensions.reload_interval` only when a local or external source can return new declarations.
 - `verbs.duplicate_policy` controls how duplicate verb names are resolved; `verbs.oci_warmup` prefetches OCI verb bundles at startup.
-- `verbs.strict` enforces runtime arg/return type checks; enable it in production if you want strict safety.
+- `verbs.strict` controls runtime argument and return checks. The default is `true`. Use `false` only for unchecked development code.
 - `fixed_time` pins deterministic time for expression evaluation (useful for tests and canary runs).
-- Use `saga.redis` or `saga.postgres` to persist saga state when `saga.enabled` is true.
+- Effectusd requires `EFFECTUS_SAGA_POSTGRES_DSN`. Redis remains available for tested library recovery scenarios but does not replace atomic PostgreSQL admission.
 
 ## External Schema Sources (Buf, SQL, Catalogs)
 
@@ -229,8 +260,7 @@ metadata:
 data:
   effectusd.yaml: |
     bundle:
-      oci: "ghcr.io/myorg/bundles/fraud-demo:1.0.0"
-      reload_interval: "60s"
+      oci: "ghcr.io/myorg/bundles/fraud-demo@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     http:
       addr: ":8080"
     api:
@@ -246,6 +276,13 @@ containers:
     image: ghcr.io/myorg/effectusd:1.0.0
     args:
       - "--config=/etc/effectus/effectusd.yaml"
+      - "--oci-signature-verifier=/usr/local/bin/effectus-verify-oci"
+    env:
+      - name: EFFECTUS_SAGA_POSTGRES_DSN
+        valueFrom:
+          secretKeyRef:
+            name: effectus-postgres
+            key: dsn
     volumeMounts:
       - name: config
         mountPath: /etc/effectus

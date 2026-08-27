@@ -15,7 +15,7 @@ import (
 	_ "github.com/effectus/effectus-go/adapters/redis"
 )
 
-func main() {
+func runMultiSourceExample() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

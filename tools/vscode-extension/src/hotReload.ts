@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import axios from 'axios';
+import * as http from 'http';
+import * as https from 'https';
 import WebSocket from 'ws';
 
 type RuntimeConfig = {
@@ -357,17 +358,61 @@ export class HotReloadManager {
 
     private async postRule(runtime: RuntimeConfig, endpoint: string, payload?: any, method?: 'post' | 'get'): Promise<any> {
         const base = runtime.url.replace(/\/+$/, '');
-        const url = `${base}${endpoint}`;
-        const headers: Record<string, string> = {};
+        const url = new URL(`${base}${endpoint}`);
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+            throw new Error(`Unsupported runtime protocol: ${url.protocol}`);
+        }
+        const body = method === 'get' ? undefined : Buffer.from(JSON.stringify(payload ?? {}));
+        const headers: Record<string, string | number> = { 'Accept': 'application/json' };
         if (runtime.token) {
             headers['Authorization'] = `Bearer ${runtime.token}`;
         }
-        if (method === 'get') {
-            const response = await axios.get(url, { headers });
-            return response.data;
+        if (body) {
+            headers['Content-Type'] = 'application/json';
+            headers['Content-Length'] = body.length;
         }
-        const response = await axios.post(url, payload, { headers });
-        return response.data;
+        return new Promise((resolve, reject) => {
+            const transport = url.protocol === 'https:' ? https : http;
+            const request = transport.request(url, {
+                method: method === 'get' ? 'GET' : 'POST',
+                headers,
+                timeout: 10_000
+            }, response => {
+                const chunks: Buffer[] = [];
+                let size = 0;
+                response.on('data', (chunk: Buffer) => {
+                    size += chunk.length;
+                    if (size > 1 << 20) {
+                        response.destroy(new Error('Runtime response exceeds 1 MiB'));
+                        return;
+                    }
+                    chunks.push(chunk);
+                });
+                response.on('error', reject);
+                response.on('end', () => {
+                    const content = Buffer.concat(chunks).toString('utf8');
+                    if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
+                        reject(new Error(`Runtime request failed with HTTP ${response.statusCode ?? 0}`));
+                        return;
+                    }
+                    if (content === '') {
+                        resolve(undefined);
+                        return;
+                    }
+                    try {
+                        resolve(JSON.parse(content));
+                    } catch {
+                        reject(new Error('Runtime returned invalid JSON'));
+                    }
+                });
+            });
+            request.on('timeout', () => request.destroy(new Error('Runtime request timed out')));
+            request.on('error', reject);
+            if (body) {
+                request.write(body);
+            }
+            request.end();
+        });
     }
 
     private findEffectuscBinary(): string | undefined {

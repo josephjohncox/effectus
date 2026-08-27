@@ -1,189 +1,80 @@
-# Computational Model: Beyond Turing Completeness
+# Computational Bounds
 
-## 1. Introduction to Computational Bounds
+This document explains the bounds of the checked first-order IR.
 
-Effectus deliberately adopts a computational model that is *not* Turing complete. Instead, it uses free monads (for flows) and free monoids (for lists) to represent and execute business rules. This design decision provides significant benefits for reasoning, verification, and operational safety.
+It does not classify the complete Effectus repository as Turing complete or non-Turing complete.
 
-```math
-\begin{align}
-\text{SpecList}  &= \text{Facts} \rightarrow \text{List(Effect)} \\
-\text{SpecFlow}  &= \text{Facts} \rightarrow \text{Program Unit}
-\end{align}
-```
+## Finite artifact
 
-Both representations limit computational power in exchange for stronger guarantees about behavior, analyzability, and implementation safety.
+A checked artifact is a finite protobuf value. The parser and checker apply explicit limits to its size and structure.
 
-## 2. Theoretical Foundations
+A plan contains a finite number of steps. Result references form an acyclic order because each reference points to an earlier slot.
 
-### 2.1. Computational Hierarchy
+These properties bound the number of internal plan steps for one selected plan.
 
-In the Chomsky hierarchy of formal languages, Effectus rules deliberately occupy a constrained position:
+## Internal termination condition
 
-```math
-\begin{align}
-\text{Regular} \subset \text{Context-Free} \subset \text{Context-Sensitive} \subset \text{Recursively Enumerable}
-\end{align}
-```
+Internal checked evaluation terminates under these assumptions:
 
-The list dialect uses a form of regular expressions (sequential composition of effects), while the flow dialect uses a context-free grammar (with limited recursion through the free monad).
+1. Fact lookup terminates.
+2. Each supported pure predicate function terminates.
+3. Literal and operator evaluation terminates.
+4. The evaluator does not add new plan steps.
+5. Retry policy has a finite attempt bound.
 
-### 2.2. Free Structures as Bounded Computation
+Under these assumptions, selection and plan traversal have no unbounded recursion.
 
-Free algebraic structures provide precisely the computational power needed for rule execution without excess:
+## What this does not bound
 
-```math
-\begin{align}
-\text{Free Monoid} &= \text{Sequential Composition} \\
-\text{Free Monad} &= \text{Sequential Composition} + \text{Binding}
-\end{align}
-```
+The finite plan does not bound:
 
-These structures are "free" in the categorical sense — they impose exactly the laws required by their algebraic definition and no more, making them optimal for representing effect sequences.
+- External verb latency
+- Remote computation
+- Network retries below Effectus
+- Operator time to resolve a blocked outcome
+- Database size across many executions
+- Legacy Go continuation behavior
 
-## 3. Why Not Turing Complete?
+A caller deadline can bound waiting time. It cannot force a remote system to stop work.
 
-### 3.1. The Halting Problem and Decidability
+## Determinism condition
 
-A key limitation of Turing-complete languages is the undecidability of the halting problem:
+Checked selection is deterministic for a fixed artifact, environment, fact payload, and pure function implementation.
 
-**Theorem (Rice)**: For any non-trivial property of the partial functions, it is undecidable whether a program computes a partial function with that property.
+Stable priority and source order make equal-priority selection repeatable.
 
-This fundamental barrier means that in Turing-complete languages, we cannot generally determine:
-- Whether a program will terminate
-- Resource bounds (time/space complexity)
-- Freedom from unintended behaviors
+External execution is not generally deterministic. A verb can read a clock, database, queue, or remote service.
 
-### 3.2. Static Analysis Benefits
+## Resource analysis
 
-By constraining the computational model, Effectus gains critical static analysis capabilities:
+The checked artifact makes these values directly inspectable:
 
-```math
-\begin{align}
-\text{Termination} &: \text{Guaranteed} \\
-\text{Resource Bounds} &: \text{Statically Determinable} \\
-\text{Effect Sequence} &: \text{Analyzable}
-\end{align}
-```
+- Rule count
+- Plan count
+- Step count
+- Argument count
+- Result dependencies
+- Declared capabilities
+- Declared executor contracts
 
-These properties enable compile-time verification of critical business properties that would be undecidable in a Turing-complete system.
+The artifact does not reveal the full time or space cost of an external destination.
 
-## 4. Practical Implications
+## Why first-order IR helps
 
-### 4.1. Rule Safety Properties
+A first-order artifact supports deterministic serialization, content hashing, validation, storage, comparison, and replay of recorded intent.
 
-The constrained computational model allows Effectus to guarantee key safety properties:
+A Go continuation closes over process memory. It does not provide these properties without an additional serialization model.
 
-1. **Termination**: All rule executions are guaranteed to terminate
-2. **Resource Predictability**: Upper bounds on time and space can be statically determined
-3. **Determinism**: Given the same inputs, rules always produce the same outputs
-4. **Isolation**: Effects between rules can only interact through documented interfaces
+## Relation to general computation
 
-### 4.2. Operational Advantages
+The source grammar and checked IR are domain-specific representations. The Chomsky hierarchy classifies languages, not runtime effect systems.
 
-These theoretical properties translate directly to operational benefits:
+A computational-power theorem would need a precise encoding, operational semantics, and proof. These notes make no such theorem.
 
-| Property | Operational Benefit |
-|----------|---------------------|
-| Guaranteed termination | No runaway processes or infinite loops |
-| Bounded resource usage | Predictable scaling and reliable operations |
-| Static verification | Earlier detection of logical errors |
-| Compositional reasoning | Reliable behavior when combining rule sets |
+## Operational conclusion
 
-## 5. Free Structures as Implementation Strategy
+Use the finite-plan property to reason about internal traversal and dependency order.
 
-### 5.1. Free Monoids (Lists)
+Use deadlines, bounded retries, leases, and blocked states to control external execution.
 
-The list dialect uses the free monoid structure:
-
-```math
-\begin{align}
-\text{List}(\text{Effect}) &\cong F^{\star}(\text{Effect}) \\
-F^{\star}(X) &= 1 + X + X^2 + X^3 + \ldots
-\end{align}
-```
-
-This enables:
-- Simple sequential execution
-- Parallelizable evaluation (since effects are independent)
-- Straightforward serialization and auditing
-
-### 5.2. Free Monads (Flows)
-
-The flow dialect uses the free monad structure:
-
-```math
-\begin{align}
-\text{Program}(A) &\cong T^F(A) \\
-T^F(A) &= \mu X. \, A + F(X)
-\end{align}
-```
-
-This enables:
-- Binding results from prior steps
-- Conditional execution paths
-- Maintaining sequential dependencies
-
-## 6. Categorical Perspective
-
-From a categorical perspective, Effectus uses:
-
-```math
-\begin{align}
-\text{List} &: \text{Free Monoid} \\
-\text{Program} &: \text{Free Monad}
-\end{align}
-```
-
-This enables a precise characterization of the computational power:
-
-**Theorem**: The computational power of Effectus is bounded by:
-- List dialect: Regular languages (Type 3 in Chomsky hierarchy)
-- Flow dialect: Context-free languages (Type 2 in Chomsky hierarchy)
-
-Both are strictly less powerful than Turing-complete languages but sufficient for expressing business rules.
-
-## 7. Comparison to Alternatives
-
-### 7.1. General-Purpose Languages
-
-General-purpose languages (Java, Go, Python) offer:
-- Full Turing completeness
-- Arbitrary recursion and side effects
-- Undecidable static analysis
-
-Effectus trades these for:
-- Guaranteed termination
-- Complete static analyzability  
-- Compositional safety guarantees
-
-### 7.2. Domain-Specific Rule Engines
-
-Compared to other rule engines:
-- Prolog/logic programming: Can diverge with recursive predicates
-- RETE algorithms: Limited to pattern-matching, no sequential composition
-- BPEL/workflow: Often Turing complete, harder to reason about
-
-Effectus occupies a unique position with just enough power for business rules while maintaining strong guarantees.
-
-## 8. Relationship to Total Functional Programming
-
-Effectus shares principles with total functional programming:
-
-```math
-\begin{align}
-\text{Total Function} &: \forall x \in \text{Domain}. \, f(x) \text{ terminates and produces a value in Range}
-\end{align}
-```
-
-Total languages like Idris, Agda, and Coq require termination proofs. Effectus achieves similar guarantees by construction through its limited computational model rather than through proof obligations.
-
-## 9. Conclusion: Why This Matters
-
-The deliberate limitations in Effectus's computational model are not weaknesses but strengths:
-
-1. **Safety**: Rules cannot crash, hang, or consume unbounded resources
-2. **Verification**: Critical properties are statically verifiable
-3. **Performance**: Execution has predictable resource usage
-4. **Evolution**: Rule behavior remains tractable as systems grow
-
-In practice, these benefits dramatically outweigh the theoretical limitation of not being Turing complete. For business rules, having predictable, verifiable behavior is far more valuable than unlimited computational power. 
+Do not infer unconditional termination or fixed resource use from a finite checked plan.

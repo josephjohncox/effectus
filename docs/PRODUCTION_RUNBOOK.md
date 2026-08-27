@@ -13,9 +13,11 @@ This runbook assumes you run `effectusd` with a config file (`--config`) and bun
 ## Health and readiness
 
 - `GET /healthz` for liveness.
-- `GET /readyz` to ensure a bundle is loaded.
+- `GET /readyz` to check that the active generation has a bundle, schema, and verb registry.
 - `GET /api/status` for live counts and schema sources (token required).
 - `GET /metrics` for Prometheus scraping.
+
+Read `LIFECYCLE.md` before you use refresh or rollback operations.
 
 ## Hotload workflow
 
@@ -28,8 +30,8 @@ curl -X POST http://localhost:8080/api/rules/validate \
   -d '{"path":"rules/new.eff","content":"..."}'
 ```
 
-2. Canary (optional): include a `canary` payload in the hotload request to compare summaries.
-3. Hotload:
+1. Canary (optional): include a `canary` payload in the hotload request to compare summaries.
+2. Hotload:
 
 ```bash
 curl -X POST http://localhost:8080/api/rules/hotload \
@@ -38,9 +40,15 @@ curl -X POST http://localhost:8080/api/rules/hotload \
   -d '{"path":"rules/new.eff","content":"...","confirm":true}'
 ```
 
-4. Verify `/api/status` and metrics (`rule_compile_*`, `rule_hotload_*`).
+1. Verify the `generation_id` from `/api/status` and check the reload metrics.
+
+Validation returns HTTP 422 for an invalid candidate. Activation returns HTTP 409 when another refresh changes the generation first.
 
 ## Rollback
+
+The current rollback history is process-local. Do not use it as a durable rollback log.
+
+Rollback recompiles the saved source against the current schema and verbs. An incompatible snapshot returns HTTP 422.
 
 1. List snapshots:
 
@@ -48,7 +56,7 @@ curl -X POST http://localhost:8080/api/rules/hotload \
 curl -H 'Authorization: Bearer $TOKEN' http://localhost:8080/api/rules/history
 ```
 
-2. Roll back by snapshot ID:
+1. Roll back by snapshot ID:
 
 ```bash
 curl -X POST http://localhost:8080/api/rules/rollback \
