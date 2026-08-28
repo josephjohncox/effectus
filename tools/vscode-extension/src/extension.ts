@@ -15,7 +15,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     schemaProvider = new SchemaProvider(context);
     lineageProvider = new LineageProvider(context);
-    hotReloadManager = new HotReloadManager(context);
+    hotReloadManager = new HotReloadManager();
 
     registerCommands(context);
     registerProviders(context);
@@ -31,7 +31,6 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export async function deactivate(): Promise<void> {
-    hotReloadManager?.dispose();
     await languageClient?.stop();
 }
 
@@ -74,22 +73,6 @@ function registerCommands(context: vscode.ExtensionContext): void {
                 await lineageProvider.showLineageDiagram();
             } catch (error) {
                 void vscode.window.showErrorMessage(`Failed to show lineage: ${error}`);
-            }
-        }),
-        vscode.commands.registerCommand('effectus.dev.startServer', async () => {
-            try {
-                await hotReloadManager.startServer();
-                void vscode.window.showInformationMessage('Effectus runtime hotload enabled');
-            } catch (error) {
-                void vscode.window.showErrorMessage(`Failed to enable runtime hotload: ${error}`);
-            }
-        }),
-        vscode.commands.registerCommand('effectus.dev.stopServer', async () => {
-            try {
-                await hotReloadManager.stopServer();
-                void vscode.window.showInformationMessage('Effectus runtime hotload disabled');
-            } catch (error) {
-                void vscode.window.showErrorMessage(`Failed to disable runtime hotload: ${error}`);
             }
         }),
         vscode.commands.registerCommand('effectus.rule.format', async () => {
@@ -144,13 +127,7 @@ function setupFileWatchers(context: vscode.ExtensionContext): void {
     schemaWatcher.onDidCreate(() => schemaProvider.refreshSchemas());
     schemaWatcher.onDidDelete(() => schemaProvider.refreshSchemas());
 
-    const ruleWatcher = vscode.workspace.createFileSystemWatcher('**/*.{eff,effx}');
-    ruleWatcher.onDidChange(uri => {
-        if (hotReloadManager.isRunning()) {
-            void hotReloadManager.notifyRuleChange(uri);
-        }
-    });
-    context.subscriptions.push(schemaWatcher, ruleWatcher);
+    context.subscriptions.push(schemaWatcher);
 }
 
 function initializeWorkspace(): void {

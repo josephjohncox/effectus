@@ -55,6 +55,16 @@ suite('effectusc resolver', () => {
         assert.match(result.error || '', /effectus\.lsp\.serverPath/);
     });
 
+    test('finds effectusc through explicit GOBIN', () => {
+        const binary = executable('effectusc');
+        const result = resolveEffectusc({
+            env: { PATH: '', GOBIN: directory },
+            platform: process.platform
+        });
+        assert.strictEqual(result.path, binary);
+        assert.strictEqual(result.source, 'gobin');
+    });
+
     test('does not construct paths from missing HOME or GOPATH', () => {
         const result = resolveEffectusc({ env: { PATH: '' }, platform: process.platform });
         assert.strictEqual(result.path, undefined);

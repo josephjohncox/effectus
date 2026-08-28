@@ -10,7 +10,7 @@ This extension supports `.eff` and `.effx` rule files.
 - Rule validation with effectusd or `effectusc`
 - Rule formatting with `effectusc`
 - Schema lineage in a webview
-- Runtime hotload through the effectusd HTTP API
+- Candidate rule validation through the effectusd HTTP API
 
 ## Requirements
 
@@ -18,7 +18,7 @@ This extension supports `.eff` and `.effx` rule files.
 - `effectusc` on `PATH`, or an explicit `effectus.lsp.serverPath`
 - A workspace with `.eff`, `.effx`, or `.effectus/config.yaml`
 
-The runtime hotload commands also require an effectusd API URL.
+Runtime candidate validation also requires an effectusd API URL.
 
 ## Install a VSIX
 
@@ -77,8 +77,6 @@ Store runtime tokens in local workspace settings or another private store. Do no
 | `Effectus: Validate Current Rule` | Validate the open rule with effectusd, current diagnostics, or `effectusc` |
 | `Effectus: Show Schema Lineage` | Open the schema lineage webview |
 | `Effectus: Generate Schema Documentation` | Write schema documentation |
-| `Effectus: Enable Runtime Hotload` | Connect hotload to the configured effectusd API |
-| `Effectus: Disable Runtime Hotload` | Stop runtime hotload |
 | `Effectus: Format Rule` | Format the open rule with `effectusc` |
 | `Effectus: Refresh Effectus Schemas` | Reload schemas from the workspace |
 
@@ -86,23 +84,13 @@ The formatter sends a temporary copy to `effectusc format --stdout --write=false
 
 The validation command does not report success if no validator is available.
 
-## Runtime hotload
-
-Start effectusd with the rule hotload API:
-
-```bash
-EFFECTUS_API_TOKEN=devtoken \
-EFFECTUS_POSTGRES_DSN="postgres://effectus:password@localhost/effectus?sslmode=disable" \
-  effectusd --bundle bundle.json --rules-hotload
-```
+## Runtime candidate validation
 
 Set `effectus.runtime.apiUrl` and `effectus.runtime.apiToken` in local VS Code settings.
 
-The extension calls `/api/status`, `/api/rules/validate`, and `/api/rules/hotload`. It does not start a local server process.
+The extension calls `/api/rules/validate`. Effectusd validates the candidate but does not activate it.
 
-Hotload validates and activates a candidate generation. It does not change an active generation in place.
-
-Do not use runtime hotload for an OCI deployment. Production OCI deployments use signed, digest-pinned bundles.
+Use **Effectus: Validate Current Rule** to request validation. Production deployments use signed, digest-pinned bundles.
 
 ## Develop the extension
 
@@ -135,9 +123,9 @@ Make sure `effectusc` is executable and available on `PATH`. You can also set `e
 
 Check `effectus.schemaPath` and `effectus.verbSchemaPath`. Then reload the VS Code window.
 
-### Runtime hotload fails
+### Runtime validation fails
 
-Check the API URL, token, effectusd logs, and `/readyz`. Make sure effectusd uses `--rules-hotload`.
+Check the API URL, token, effectusd logs, and `/readyz`. The extension uses the local compiler when the runtime is unavailable.
 
 ## License
 

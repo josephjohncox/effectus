@@ -26,10 +26,17 @@ suite('extension manifest', () => {
             'effectusSchemas',
             'effectusLineage',
             'effectusMetrics',
-            'effectus.performance.showMetrics'
+            'effectus.performance.showMetrics',
+            'effectus.dev.startServer',
+            'effectus.dev.stopServer'
         ]) {
             assert.ok(!text.includes(unsupported), `${unsupported} remains in the manifest`);
         }
+    });
+
+    test('the package excludes TypeScript build configuration', () => {
+        const ignore = fs.readFileSync(path.join(extensionRoot, '.vscodeignore'), 'utf8');
+        assert.match(ignore, /^tsconfig\*\.json$/m);
     });
 
     test('the package has no nonexistent Node server fallback', () => {

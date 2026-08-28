@@ -9,4 +9,4 @@ go.mod
 node_modules/.cache/**
 package-lock.json
 src/**
-tsconfig.json
+tsconfig*.json

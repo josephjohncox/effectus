@@ -11,7 +11,7 @@ export interface EffectuscResolverOptions {
 
 export interface EffectuscResolution {
     path?: string;
-    source?: 'setting' | 'workspace' | 'path' | 'gopath' | 'home';
+    source?: 'setting' | 'workspace' | 'path' | 'gobin' | 'gopath' | 'home';
     error?: string;
 }
 
@@ -93,6 +93,13 @@ export function resolveEffectusc(options: EffectuscResolverOptions = {}): Effect
         }
     }
 
+    if (env.GOBIN) {
+        const resolved = findCandidate(path.join(env.GOBIN, 'effectusc'), platform, env);
+        if (resolved) {
+            return { path: resolved, source: 'gobin' };
+        }
+    }
+
     if (env.GOPATH) {
         for (const goPath of env.GOPATH.split(path.delimiter).filter(Boolean)) {
             const resolved = findCandidate(path.join(goPath, 'bin', 'effectusc'), platform, env);
@@ -109,7 +116,7 @@ export function resolveEffectusc(options: EffectuscResolverOptions = {}): Effect
         }
     }
 
-    return { error: 'effectusc was not found on PATH or in effectus.lsp.serverPath.' };
+    return { error: 'effectusc was not found on PATH, GOBIN, or in effectus.lsp.serverPath.' };
 }
 
 export function runEffectusc(

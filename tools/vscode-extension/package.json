@@ -106,12 +106,12 @@
         "effectus.runtime.apiUrl": {
           "type": "string",
           "default": "",
-          "description": "effectusd base URL for rule validation/hotload (e.g. http://localhost:8080)"
+          "description": "effectusd base URL for candidate rule validation (e.g. http://localhost:8080)"
         },
         "effectus.runtime.apiToken": {
           "type": "string",
           "default": "",
-          "description": "API token for effectusd when using runtime hot reload"
+          "description": "API token for effectusd candidate rule validation"
         }
       }
     },
@@ -130,18 +130,6 @@
         "command": "effectus.showLineage",
         "title": "Show Schema Lineage",
         "category": "Effectus"
-      },
-      {
-        "command": "effectus.dev.startServer",
-        "title": "Enable Runtime Hotload",
-        "category": "Effectus",
-        "icon": "$(server-process)"
-      },
-      {
-        "command": "effectus.dev.stopServer",
-        "title": "Disable Runtime Hotload",
-        "category": "Effectus",
-        "icon": "$(debug-stop)"
       },
       {
         "command": "effectus.rule.format",
@@ -244,6 +232,10 @@
   "dependencies": {
     "vscode-languageclient": "^8.1.0",
     "yaml": "^2.9.0"
+  },
+  "overrides": {
+    "diff": "8.0.2",
+    "serialize-javascript": "7.0.5"
   },
   "repository": {
     "type": "git",

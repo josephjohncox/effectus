@@ -79,6 +79,13 @@ function packageExtension(output: string): void {
     if (!fs.existsSync(output)) {
         throw new Error('VSIX packaging did not create the requested output');
     }
+    const listed = spawnSync('unzip', ['-Z1', output], { encoding: 'utf8' });
+    if (listed.status !== 0) {
+        throw new Error(`Could not inspect packaged VSIX:\n${listed.stdout}\n${listed.stderr}`);
+    }
+    if (listed.stdout.split(/\r?\n/).some(file => /^extension\/tsconfig.*\.json$/.test(file))) {
+        throw new Error('Packaged VSIX contains a TypeScript build configuration');
+    }
 }
 
 function installExtension(executable: string, vsix: string, userData: string, extensions: string): void {

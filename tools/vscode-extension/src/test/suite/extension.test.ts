@@ -1,5 +1,6 @@
 import * as assert from 'assert';
 import * as fs from 'fs';
+import * as http from 'http';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ValidationResult } from '../../compilerOperations';
@@ -44,8 +45,25 @@ suite(`Effectus extension (${mode})`, () => {
     });
 
     test('invokes every contributed command without command-not-found failures', async () => {
-        for (const entry of extension.packageJSON.contributes.commands) {
-            await vscode.commands.executeCommand(entry.command);
+        const oldPath = process.env.PATH;
+        if (mode === 'package' && process.platform !== 'win32') {
+            const pathDirectory = path.join(workspaceRoot, 'package-path-bin');
+            fs.mkdirSync(pathDirectory, { recursive: true });
+            const marker = path.join(workspaceRoot, 'package-path-lsp-args');
+            writeFakeLanguageServer(path.join(pathDirectory, 'effectusc'), marker);
+            process.env.PATH = `${pathDirectory}${path.delimiter}${oldPath || ''}`;
+            await setServerPath('');
+            const client = new EffectusLanguageClient();
+            assert.strictEqual(await client.start(), true);
+            assert.strictEqual(fs.readFileSync(marker, 'utf8'), 'lsp');
+            await client.stop();
+        }
+        try {
+            for (const entry of extension.packageJSON.contributes.commands) {
+                await vscode.commands.executeCommand(entry.command);
+            }
+        } finally {
+            process.env.PATH = oldPath;
         }
     });
 
@@ -61,7 +79,7 @@ suite(`Effectus extension (${mode})`, () => {
         }
     });
 
-    if (mode === 'source' && process.platform !== 'win32') {
+    if (process.platform !== 'win32') {
         test('starts effectusc lsp from PATH and lets the explicit path win', async () => {
             const oldPath = process.env.PATH;
             const pathDirectory = path.join(workspaceRoot, 'path-bin');
@@ -111,6 +129,43 @@ suite(`Effectus extension (${mode})`, () => {
             await replaceDocument(document, 'must stay unchanged\n');
             await vscode.commands.executeCommand('effectus.rule.format');
             assert.strictEqual(document.getText(), 'must stay unchanged\n');
+        });
+
+        test('returns effectusd success and 422 diagnostics', async () => {
+            const server = http.createServer((request, response) => {
+                const chunks: Buffer[] = [];
+                request.on('data', chunk => chunks.push(chunk));
+                request.on('end', () => {
+                    const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+                    response.setHeader('Content-Type', 'application/json');
+                    if (payload.content.includes('INVALID')) {
+                        response.statusCode = 422;
+                        response.end(JSON.stringify({ diagnostics: [{ line: 1, column: 1, severity: 'error', message: 'runtime invalid rule' }] }));
+                        return;
+                    }
+                    response.statusCode = 200;
+                    response.end(JSON.stringify({ diagnostics: [] }));
+                });
+            });
+            await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+            const address = server.address();
+            assert.ok(address && typeof address !== 'string');
+            await vscode.workspace.getConfiguration('effectus').update('runtime.apiUrl', `http://127.0.0.1:${address.port}`, vscode.ConfigurationTarget.Workspace);
+            try {
+                const document = await openRule('runtime-validation.eff', 'VALID\n');
+                const success = await vscode.commands.executeCommand<ValidationResult>('effectus.validateRule');
+                assert.strictEqual(success.source, 'runtime');
+                assert.strictEqual(success.diagnostics.length, 0);
+
+                await replaceDocument(document, 'INVALID\n');
+                const failure = await vscode.commands.executeCommand<ValidationResult>('effectus.validateRule');
+                assert.strictEqual(failure.source, 'runtime');
+                assert.strictEqual(failure.diagnostics.length, 1);
+                assert.match(failure.diagnostics[0].message, /runtime invalid rule/);
+            } finally {
+                await vscode.workspace.getConfiguration('effectus').update('runtime.apiUrl', '', vscode.ConfigurationTarget.Workspace);
+                await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+            }
         });
 
         test('reports compiler validation success and diagnostics separately', async () => {
