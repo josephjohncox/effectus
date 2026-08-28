@@ -153,7 +153,15 @@ func runDatabaseMaintenance(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	operation := "deleted"
+	if *maintenanceDryRun {
+		operation = "eligible"
+	}
 	fmt.Printf("maintenance dry_run=%t executions=%d sagas=%d kafka_deliveries=%d\n", *maintenanceDryRun, result.Executions, result.Sagas, result.KafkaDeliveries)
+	fmt.Printf("effectusd_maintenance_records_total{kind=\"execution\",operation=\"%s\"} %d\n", operation, result.Executions)
+	fmt.Printf("effectusd_maintenance_records_total{kind=\"saga\",operation=\"%s\"} %d\n", operation, result.Sagas)
+	fmt.Printf("effectusd_maintenance_records_total{kind=\"kafka_delivery\",operation=\"%s\"} %d\n", operation, result.KafkaDeliveries)
+	fmt.Println("effectusd_maintenance_error_total 0")
 	return nil
 }
 

@@ -220,6 +220,7 @@ func main() {
 	}
 	if *migrateOnly || *maintenancePrune {
 		if err := runDatabaseMaintenance(context.Background()); err != nil {
+			fmt.Fprintln(os.Stderr, "effectusd_maintenance_error_total 1")
 			fmt.Fprintf(os.Stderr, "Database maintenance failed: %v\n", err)
 			os.Exit(1)
 		}
