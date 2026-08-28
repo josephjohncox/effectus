@@ -122,7 +122,7 @@ func TestRedisOutboxConcurrentSagasDoNotRewriteOrContendWithEachOther(t *testing
 			defer wait.Done()
 			_, err := store.CreateSaga(context.Background(), CreateSagaRequest{
 				Namespace: "test", SagaID: uuid.NewSHA1(uuid.Nil, []byte{byte(index)}).String(),
-				ExecutionID: "execution", PlanID: "plan", PlanDigest: "digest", Serial: true, allowUnstableIdentityForTest: true,
+				ExecutionID: "execution", PlanID: "plan", PlanDigest: "digest", Serial: true, AllowUnstableIdentityForTest: true,
 			})
 			results <- err
 		}()

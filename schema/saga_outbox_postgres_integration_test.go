@@ -29,7 +29,7 @@ func TestPostgresOutboxLeaseCASAndReplay(t *testing.T) {
 
 	_, err = storeOne.CreateSaga(ctx, CreateSagaRequest{
 		Namespace: "integration", SagaID: sagaID, ExecutionID: "execution-1",
-		PlanID: "plan-1", PlanDigest: "digest-1", Serial: true, allowUnstableIdentityForTest: true,
+		PlanID: "plan-1", PlanDigest: "digest-1", Serial: true, AllowUnstableIdentityForTest: true,
 	})
 	require.NoError(t, err)
 	dispatch, err := storeOne.EnqueueStep(ctx, EnqueueStepRequest{

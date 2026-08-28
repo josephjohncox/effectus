@@ -49,7 +49,7 @@ func TestRegistryOwnsContractState(t *testing.T) {
 	require.True(t, *registry.StrictArgs())
 }
 
-func TestRegistryHashTracksContractState(t *testing.T) {
+func TestVerbHashCannotBecomeStale(t *testing.T) {
 	strict := true
 	original := &Spec{Name: "read", ArgTypes: map[string]string{"id": "string"}, Description: "v1", StrictReturn: &strict}
 	registry := NewRegistry(nil)

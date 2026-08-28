@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRegistryClonesContractsOnRegistrationAndRetrieval(t *testing.T) {
+func TestRegistryCopiesSpecs(t *testing.T) {
 	strict := true
 	input := &Spec{Name: "charge", ArgTypes: map[string]string{"amount": "int"}, RequiredArgs: []string{"amount"}, Resources: ResourceSet{{Resource: "account", Cap: CapWrite}}, StrictArgs: &strict}
 	registry := NewRegistry(nil)
