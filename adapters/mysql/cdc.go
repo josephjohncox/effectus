@@ -51,6 +51,7 @@ type CDCSource struct {
 	cancel   context.CancelFunc
 	schema   *adapters.Schema
 	running  bool
+	done     chan struct{}
 
 	mu            sync.Mutex
 	tableColumns  map[string][]string
@@ -99,13 +100,9 @@ func NewCDCSource(config *CDCConfig) (*CDCSource, error) {
 		config.Operations = []string{"INSERT", "UPDATE", "DELETE"}
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	return &CDCSource{
 		config:       config,
 		metrics:      adapters.GetGlobalMetrics(),
-		ctx:          ctx,
-		cancel:       cancel,
 		tableColumns: make(map[string][]string),
 		schema: &adapters.Schema{
 			Name:    "mysql_cdc",
@@ -126,16 +123,26 @@ func NewCDCSource(config *CDCConfig) (*CDCSource, error) {
 
 // Subscribe starts the CDC stream.
 func (c *CDCSource) Subscribe(ctx context.Context, factTypes []string) (<-chan *adapters.TypedFact, error) {
-	c.factChan = make(chan *adapters.TypedFact, c.config.BufferSize)
+	c.mu.Lock()
+	if c.running {
+		ch := c.factChan
+		c.mu.Unlock()
+		return ch, nil
+	}
+	c.mu.Unlock()
 	if err := c.Start(ctx); err != nil {
-		close(c.factChan)
 		return nil, err
 	}
-	return c.factChan, nil
+	c.mu.Lock()
+	ch := c.factChan
+	c.mu.Unlock()
+	return ch, nil
 }
 
 // Start opens connections and begins reading binlog events.
 func (c *CDCSource) Start(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.running {
 		return fmt.Errorf("source already running")
 	}
@@ -162,12 +169,18 @@ func (c *CDCSource) Start(ctx context.Context) error {
 
 	streamer, err := c.startStreamer(ctx)
 	if err != nil {
+		c.syncer.Close()
+		db.Close()
+		c.db = nil
 		return err
 	}
 	c.streamer = streamer
-
+	c.ctx, c.cancel = context.WithCancel(ctx)
+	c.factChan = make(chan *adapters.TypedFact, c.config.BufferSize)
+	c.done = make(chan struct{})
 	c.running = true
-	go c.consumeEvents()
+	workerCtx, factChan, done := c.ctx, c.factChan, c.done
+	go c.consumeEvents(workerCtx, streamer, factChan, done)
 
 	log.Printf("MySQL CDC source started for %s:%d", c.config.Host, c.config.Port)
 	return nil
@@ -175,19 +188,32 @@ func (c *CDCSource) Start(ctx context.Context) error {
 
 // Stop stops the CDC stream.
 func (c *CDCSource) Stop(ctx context.Context) error {
-	if !c.running {
+	c.mu.Lock()
+	cancel, syncer, db, done := c.cancel, c.syncer, c.db, c.done
+	wasRunning := c.running
+	c.running = false
+	c.mu.Unlock()
+	if !wasRunning {
+		if done != nil {
+			select {
+			case <-done:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
 		return nil
 	}
-	c.cancel()
-	c.running = false
-	if c.syncer != nil {
-		c.syncer.Close()
+	cancel()
+	if syncer != nil {
+		syncer.Close()
 	}
-	if c.db != nil {
-		c.db.Close()
+	if db != nil {
+		_ = db.Close()
 	}
-	if c.factChan != nil {
-		close(c.factChan)
+	select {
+	case <-done:
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 	log.Printf("MySQL CDC source stopped")
 	return nil
@@ -271,17 +297,19 @@ func (c *CDCSource) masterStatus(ctx context.Context) (mysql.Position, error) {
 	return mysql.Position{Name: file, Pos: position}, nil
 }
 
-func (c *CDCSource) consumeEvents() {
+func (c *CDCSource) consumeEvents(ctx context.Context, streamer *replication.BinlogStreamer, factChan chan *adapters.TypedFact, done chan struct{}) {
+	defer close(done)
+	defer close(factChan)
 	for {
 		select {
-		case <-c.ctx.Done():
+		case <-ctx.Done():
 			return
 		default:
 		}
 
-		ev, err := c.streamer.GetEvent(c.ctx)
+		ev, err := streamer.GetEvent(ctx)
 		if err != nil {
-			if c.ctx.Err() != nil {
+			if ctx.Err() != nil {
 				return
 			}
 			log.Printf("MySQL CDC stream error: %v", err)
@@ -300,13 +328,16 @@ func (c *CDCSource) consumeEvents() {
 			continue
 		}
 
-		if err := c.handleRowsEvent(rowsEvent, ev.Header); err != nil {
-			log.Printf("MySQL CDC handle error: %v", err)
+		if err := c.handleRowsEvent(ctx, factChan, rowsEvent, ev.Header); err != nil {
+			if ctx.Err() == nil {
+				log.Printf("MySQL CDC handle error: %v", err)
+			}
+			return
 		}
 	}
 }
 
-func (c *CDCSource) handleRowsEvent(event *replication.RowsEvent, header *replication.EventHeader) error {
+func (c *CDCSource) handleRowsEvent(ctx context.Context, factChan chan<- *adapters.TypedFact, event *replication.RowsEvent, header *replication.EventHeader) error {
 	if event.Table == nil {
 		return nil
 	}
@@ -330,25 +361,31 @@ func (c *CDCSource) handleRowsEvent(event *replication.RowsEvent, header *replic
 	case replication.WRITE_ROWS_EVENTv1, replication.WRITE_ROWS_EVENTv2:
 		for _, row := range event.Rows {
 			after := rowToMap(columns, row)
-			c.emitChange(operation, schemaName, tableName, nil, after, header)
+			if err := c.emitChange(ctx, factChan, operation, schemaName, tableName, nil, after, header); err != nil {
+				return err
+			}
 		}
 	case replication.DELETE_ROWS_EVENTv1, replication.DELETE_ROWS_EVENTv2:
 		for _, row := range event.Rows {
 			before := rowToMap(columns, row)
-			c.emitChange(operation, schemaName, tableName, before, nil, header)
+			if err := c.emitChange(ctx, factChan, operation, schemaName, tableName, before, nil, header); err != nil {
+				return err
+			}
 		}
 	case replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
 		for i := 0; i+1 < len(event.Rows); i += 2 {
 			before := rowToMap(columns, event.Rows[i])
 			after := rowToMap(columns, event.Rows[i+1])
-			c.emitChange(operation, schemaName, tableName, before, after, header)
+			if err := c.emitChange(ctx, factChan, operation, schemaName, tableName, before, after, header); err != nil {
+				return err
+			}
 		}
 	}
 
 	return nil
 }
 
-func (c *CDCSource) emitChange(operation, schemaName, tableName string, before, after map[string]interface{}, header *replication.EventHeader) {
+func (c *CDCSource) emitChange(ctx context.Context, factChan chan<- *adapters.TypedFact, operation, schemaName, tableName string, before, after map[string]interface{}, header *replication.EventHeader) error {
 	change := &ChangeEvent{
 		Operation: operation,
 		Schema:    schemaName,
@@ -382,13 +419,13 @@ func (c *CDCSource) emitChange(operation, schemaName, tableName string, before, 
 	structData, err := structpb.NewStruct(payload)
 	if err != nil {
 		c.metrics.RecordError(c.config.SourceID, "struct_payload", err)
-		return
+		return err
 	}
 
 	rawData, err := json.Marshal(change)
 	if err != nil {
 		c.metrics.RecordError(c.config.SourceID, "marshal", err)
-		return
+		return err
 	}
 
 	fact := &adapters.TypedFact{
@@ -408,11 +445,11 @@ func (c *CDCSource) emitChange(operation, schemaName, tableName string, before, 
 	}
 
 	select {
-	case c.factChan <- fact:
+	case factChan <- fact:
 		c.metrics.RecordFactProcessed(c.config.SourceID, mappedSchema)
-	case <-c.ctx.Done():
-	default:
-		c.metrics.RecordError(c.config.SourceID, "channel_full", fmt.Errorf("fact channel full"))
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

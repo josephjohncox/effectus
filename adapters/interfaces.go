@@ -47,6 +47,12 @@ type TypedFact struct {
 	TraceID       string            `json:"trace_id,omitempty"`
 	SpanID        string            `json:"span_id,omitempty"`
 	Metadata      map[string]string `json:"metadata,omitempty"`
+
+	// Acknowledge confirms that a source record reached the caller's durable
+	// processing boundary. Sources that support acknowledgements leave the
+	// record pending until this callback succeeds. The callback is safe to
+	// retry; callers that do not invoke it intentionally request redelivery.
+	Acknowledge func(context.Context) error `json:"-"`
 }
 
 // SourceMetadata provides information about fact sources

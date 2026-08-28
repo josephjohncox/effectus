@@ -43,6 +43,7 @@ type Source struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	running  bool
+	done     chan struct{}
 	mappings map[string]adapters.FactMapping
 	mu       sync.Mutex
 }
@@ -68,7 +69,6 @@ func NewSource(config *Config, mappings []adapters.FactMapping) (*Source, error)
 		config.BufferSize = 1000
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
 	mappingMap := make(map[string]adapters.FactMapping)
 	for _, m := range mappings {
 		mappingMap[m.SourceKey] = m
@@ -77,20 +77,26 @@ func NewSource(config *Config, mappings []adapters.FactMapping) (*Source, error)
 	return &Source{
 		config:   config,
 		metrics:  adapters.GetGlobalMetrics(),
-		ctx:      ctx,
-		cancel:   cancel,
 		mappings: mappingMap,
 	}, nil
 }
 
 // Subscribe starts the gRPC stream.
 func (s *Source) Subscribe(ctx context.Context, factTypes []string) (<-chan *adapters.TypedFact, error) {
-	s.factChan = make(chan *adapters.TypedFact, s.config.BufferSize)
+	s.mu.Lock()
+	if s.running {
+		ch := s.factChan
+		s.mu.Unlock()
+		return ch, nil
+	}
+	s.mu.Unlock()
 	if err := s.Start(ctx); err != nil {
-		close(s.factChan)
 		return nil, err
 	}
-	return s.factChan, nil
+	s.mu.Lock()
+	ch := s.factChan
+	s.mu.Unlock()
+	return ch, nil
 }
 
 // Start connects to the gRPC server.
@@ -118,10 +124,14 @@ func (s *Source) Start(ctx context.Context) error {
 		return err
 	}
 
+	s.ctx, s.cancel = context.WithCancel(ctx)
 	s.conn = conn
+	s.factChan = make(chan *adapters.TypedFact, s.config.BufferSize)
+	s.done = make(chan struct{})
 	s.running = true
+	workerCtx, factChan, done := s.ctx, s.factChan, s.done
 
-	go s.consumeStream()
+	go s.consumeStream(workerCtx, conn, factChan, done)
 
 	log.Printf("gRPC source %s started (%s)", s.config.SourceID, s.config.Method)
 	return nil
@@ -130,17 +140,28 @@ func (s *Source) Start(ctx context.Context) error {
 // Stop stops the stream and closes the connection.
 func (s *Source) Stop(ctx context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.running {
+	cancel, conn, done := s.cancel, s.conn, s.done
+	wasRunning := s.running
+	s.running = false
+	s.mu.Unlock()
+	if !wasRunning {
+		if done != nil {
+			select {
+			case <-done:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
 		return nil
 	}
-	s.cancel()
-	s.running = false
-	if s.conn != nil {
-		s.conn.Close()
+	cancel()
+	if conn != nil {
+		_ = conn.Close()
 	}
-	if s.factChan != nil {
-		close(s.factChan)
+	select {
+	case <-done:
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 	log.Printf("gRPC source %s stopped", s.config.SourceID)
 	return nil
@@ -182,7 +203,9 @@ func (s *Source) GetMetadata() adapters.SourceMetadata {
 	}
 }
 
-func (s *Source) consumeStream() {
+func (s *Source) consumeStream(ctx context.Context, conn *grpc.ClientConn, factChan chan *adapters.TypedFact, done chan struct{}) {
+	defer close(done)
+	defer close(factChan)
 	streamDesc := &grpc.StreamDesc{ServerStreams: true, ClientStreams: false}
 	requestStruct := &structpb.Struct{}
 	if len(s.config.Request) > 0 {
@@ -196,14 +219,14 @@ func (s *Source) consumeStream() {
 		headers.Append(key, value)
 	}
 
-	ctx := metadata.NewOutgoingContext(s.ctx, headers)
+	ctx = metadata.NewOutgoingContext(ctx, headers)
 	if s.config.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, s.config.Timeout)
 		defer cancel()
 	}
 
-	stream, err := s.conn.NewStream(ctx, streamDesc, s.config.Method)
+	stream, err := conn.NewStream(ctx, streamDesc, s.config.Method)
 	if err != nil {
 		s.metrics.RecordError(s.config.SourceID, "stream_open", err)
 		return
@@ -219,7 +242,7 @@ func (s *Source) consumeStream() {
 
 	for {
 		select {
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			return
 		default:
 		}
@@ -234,14 +257,19 @@ func (s *Source) consumeStream() {
 		}
 
 		fact := s.structToFact(response)
-		select {
-		case s.factChan <- fact:
-			s.metrics.RecordFactProcessed(s.config.SourceID, fact.SchemaName)
-		case <-s.ctx.Done():
+		if err := sendFact(ctx, factChan, fact); err != nil {
 			return
-		default:
-			s.metrics.RecordError(s.config.SourceID, "channel_full", fmt.Errorf("fact channel full"))
 		}
+		s.metrics.RecordFactProcessed(s.config.SourceID, fact.SchemaName)
+	}
+}
+
+func sendFact(ctx context.Context, factChan chan<- *adapters.TypedFact, fact *adapters.TypedFact) error {
+	select {
+	case factChan <- fact:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

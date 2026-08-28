@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -47,6 +48,8 @@ type CDCSource struct {
 	schema      *adapters.Schema
 	running     bool
 	currentLSN  string
+	done        chan struct{}
+	mu          sync.Mutex
 }
 
 // ChangeEvent represents a database change event
@@ -96,14 +99,10 @@ func NewCDCSource(config *CDCConfig) (*CDCSource, error) {
 		config.HeartbeatIntervalSec = 30
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	source := &CDCSource{
 		config:      config,
 		transformer: NewChangeTransformer(config),
 		metrics:     adapters.GetGlobalMetrics(),
-		ctx:         ctx,
-		cancel:      cancel,
 		schema: &adapters.Schema{
 			Name:    "postgres_cdc",
 			Version: "v1.0.0",
@@ -126,72 +125,118 @@ func NewCDCSource(config *CDCConfig) (*CDCSource, error) {
 // FactSource interface implementation
 
 func (c *CDCSource) Subscribe(ctx context.Context, factTypes []string) (<-chan *adapters.TypedFact, error) {
-	c.factChan = make(chan *adapters.TypedFact, c.config.BufferSize)
+	c.mu.Lock()
+	if c.running {
+		ch := c.factChan
+		c.mu.Unlock()
+		return ch, nil
+	}
+	c.mu.Unlock()
 
 	if err := c.Start(ctx); err != nil {
-		close(c.factChan)
 		return nil, err
 	}
-
-	return c.factChan, nil
+	c.mu.Lock()
+	ch := c.factChan
+	c.mu.Unlock()
+	return ch, nil
 }
 
 func (c *CDCSource) Start(ctx context.Context) error {
+	c.mu.Lock()
 	if c.running {
+		c.mu.Unlock()
 		return fmt.Errorf("source already running")
 	}
 
-	// Create connection pool
 	poolConfig, err := pgxpool.ParseConfig(c.config.ConnectionString)
 	if err != nil {
+		c.mu.Unlock()
 		return fmt.Errorf("failed to parse connection string: %w", err)
 	}
-
-	c.pool, err = pgxpool.NewWithConfig(ctx, poolConfig)
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
+		c.mu.Unlock()
 		return fmt.Errorf("failed to create connection pool: %w", err)
 	}
-
-	// Test connection
-	if err := c.pool.Ping(ctx); err != nil {
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		c.mu.Unlock()
 		return fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	log.Printf("PostgreSQL CDC source started for slot: %s", c.config.SlotName)
-
+	workerCtx, cancel := context.WithCancel(ctx)
+	c.pool = pool
+	c.ctx = workerCtx
+	c.cancel = cancel
+	c.factChan = make(chan *adapters.TypedFact, c.config.BufferSize)
+	c.done = make(chan struct{})
 	c.running = true
 
 	if c.config.CreateSlot {
 		if err := c.ensureSlot(ctx); err != nil {
+			c.running = false
+			cancel()
+			pool.Close()
+			close(c.factChan)
+			close(c.done)
+			c.mu.Unlock()
 			return err
 		}
 	}
-
 	if c.config.StartLSN != "" {
+		if _, err := pool.Exec(ctx, "SELECT pg_replication_slot_advance($1, $2::pg_lsn)", c.config.SlotName, c.config.StartLSN); err != nil {
+			c.running = false
+			cancel()
+			pool.Close()
+			close(c.factChan)
+			close(c.done)
+			c.mu.Unlock()
+			return fmt.Errorf("advance replication slot to start_lsn: %w", err)
+		}
 		c.currentLSN = c.config.StartLSN
+		// StartLSN is an initialization instruction, never a polling bound.
+		c.config.StartLSN = ""
 	}
 
-	go c.pollChanges()
+	factChan := c.factChan
+	done := c.done
+	c.mu.Unlock()
 
+	go c.pollChanges(factChan, done)
+	log.Printf("PostgreSQL CDC source started for slot: %s", c.config.SlotName)
 	return nil
 }
 
 func (c *CDCSource) Stop(ctx context.Context) error {
+	c.mu.Lock()
 	if !c.running {
+		done := c.done
+		c.mu.Unlock()
+		if done != nil {
+			select {
+			case <-done:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
 		return nil
 	}
-
-	c.cancel()
+	cancel := c.cancel
+	pool := c.pool
+	done := c.done
 	c.running = false
+	c.mu.Unlock()
 
-	if c.pool != nil {
-		c.pool.Close()
+	cancel()
+	if pool != nil {
+		pool.Close()
 	}
-
-	if c.factChan != nil {
-		close(c.factChan)
+	select {
+	case <-done:
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-
 	log.Printf("PostgreSQL CDC source stopped")
 	return nil
 }
@@ -225,11 +270,14 @@ func (c *CDCSource) GetMetadata() adapters.SourceMetadata {
 	}
 }
 
-func (c *CDCSource) pollChanges() {
+func (c *CDCSource) pollChanges(factChan chan *adapters.TypedFact, done chan struct{}) {
+	defer close(done)
+	defer close(factChan)
+
 	ticker := time.NewTicker(c.config.PollInterval)
 	defer ticker.Stop()
 
-	if err := c.fetchChanges(); err != nil {
+	if err := c.fetchChanges(factChan); err != nil && c.ctx.Err() == nil {
 		log.Printf("PostgreSQL CDC initial fetch failed: %v", err)
 	}
 
@@ -238,61 +286,86 @@ func (c *CDCSource) pollChanges() {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
-			if err := c.fetchChanges(); err != nil {
+			if err := c.fetchChanges(factChan); err != nil && c.ctx.Err() == nil {
 				log.Printf("PostgreSQL CDC fetch failed: %v", err)
 			}
 		}
 	}
 }
 
-func (c *CDCSource) fetchChanges() error {
+type preparedWALRecord struct {
+	lsn   string
+	facts []*adapters.TypedFact
+}
+
+func (c *CDCSource) fetchChanges(factChan chan<- *adapters.TypedFact) error {
 	if c.pool == nil {
 		return fmt.Errorf("connection pool not initialized")
 	}
 
-	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
-	defer cancel()
-
-	var startLSN interface{}
-	if c.currentLSN != "" {
-		startLSN = c.currentLSN
-	}
-
-	rows, err := c.pool.Query(ctx,
-		"SELECT lsn, xid, data FROM pg_logical_slot_get_changes($1, $2, $3)",
+	// Peeking is deliberately non-advancing. The slot is advanced below only
+	// after every fact from a WAL record has crossed the channel handoff.
+	rows, err := c.pool.Query(c.ctx,
+		"SELECT lsn, xid, data FROM pg_logical_slot_peek_changes($1, NULL, $2)",
 		c.config.SlotName,
-		startLSN,
 		c.config.MaxChanges,
 	)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 
+	var batch []preparedWALRecord
 	for rows.Next() {
 		var lsn string
 		var xid uint32
 		var data string
-
 		if err := rows.Scan(&lsn, &xid, &data); err != nil {
+			rows.Close()
 			return err
 		}
-		c.currentLSN = lsn
 
 		events, err := parseWal2JSON(data, xid, lsn)
 		if err != nil {
-			log.Printf("PostgreSQL CDC parse error: %v", err)
-			continue
+			rows.Close()
+			return fmt.Errorf("parse WAL record at %s: %w", lsn, err)
 		}
-
+		record := preparedWALRecord{lsn: lsn}
 		for _, event := range events {
-			if err := c.processChangeEvent(event); err != nil {
-				log.Printf("PostgreSQL CDC process error: %v", err)
+			fact, err := c.prepareChangeEvent(event)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			if fact != nil {
+				record.facts = append(record.facts, fact)
 			}
 		}
+		batch = append(batch, record)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
 
-	return rows.Err()
+	for _, record := range batch {
+		for _, fact := range record.facts {
+			select {
+			case factChan <- fact:
+				c.metrics.RecordFactProcessed(c.config.SourceID, fact.SchemaName)
+			case <-c.ctx.Done():
+				return c.ctx.Err()
+			}
+		}
+		if _, err := c.pool.Exec(c.ctx,
+			"SELECT pg_replication_slot_advance($1, $2::pg_lsn)",
+			c.config.SlotName, record.lsn,
+		); err != nil {
+			return fmt.Errorf("advance replication slot through %s: %w", record.lsn, err)
+		}
+		c.currentLSN = record.lsn
+	}
+	return nil
 }
 
 func (c *CDCSource) ensureSlot(ctx context.Context) error {
@@ -376,35 +449,32 @@ func columnsToMap(names []string, values []interface{}) map[string]interface{} {
 	return result
 }
 
-func (c *CDCSource) processChangeEvent(change *ChangeEvent) error {
-	// Filter by operations
+func (c *CDCSource) prepareChangeEvent(change *ChangeEvent) (*adapters.TypedFact, error) {
 	if !c.isOperationEnabled(change.Operation) {
-		return nil
+		return nil, nil
 	}
-
-	// Filter by tables if configured
 	if len(c.config.Tables) > 0 && !c.isTableEnabled(change.Table) {
-		return nil
+		return nil, nil
 	}
-
-	// Transform to TypedFact
 	fact, err := c.transformer.TransformChange(change)
 	if err != nil {
-		return fmt.Errorf("failed to transform change: %w", err)
+		return nil, fmt.Errorf("failed to transform change at %s: %w", change.LSN, err)
 	}
+	return fact, nil
+}
 
-	if fact != nil && c.factChan != nil {
-		select {
-		case c.factChan <- fact:
-			c.metrics.RecordFactProcessed(c.config.SourceID, fact.SchemaName)
-		case <-c.ctx.Done():
-			return nil
-		default:
-			c.metrics.RecordError(c.config.SourceID, "channel_full", fmt.Errorf("fact channel full"))
-		}
+func (c *CDCSource) processChangeEvent(change *ChangeEvent) error {
+	fact, err := c.prepareChangeEvent(change)
+	if err != nil || fact == nil {
+		return err
 	}
-
-	return nil
+	select {
+	case c.factChan <- fact:
+		c.metrics.RecordFactProcessed(c.config.SourceID, fact.SchemaName)
+		return nil
+	case <-c.ctx.Done():
+		return c.ctx.Err()
+	}
 }
 
 func (c *CDCSource) isOperationEnabled(operation string) bool {

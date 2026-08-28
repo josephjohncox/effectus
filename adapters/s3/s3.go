@@ -24,10 +24,16 @@ import (
 	"github.com/effectus/effectus-go/adapters"
 )
 
+type s3API interface {
+	s3.ListObjectsV2APIClient
+	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	HeadBucket(context.Context, *s3.HeadBucketInput, ...func(*s3.Options)) (*s3.HeadBucketOutput, error)
+}
+
 // Source implements an S3-backed fact source with batch and streaming modes.
 type Source struct {
 	config       *Config
-	client       *s3.Client
+	client       s3API
 	ctx          context.Context
 	cancel       context.CancelFunc
 	metrics      adapters.SourceMetrics
@@ -204,7 +210,7 @@ func (s *Source) Subscribe(ctx context.Context, factTypes []string) (<-chan *ada
 		ticker := time.NewTicker(s.config.PollInterval)
 		defer ticker.Stop()
 
-		if err := s.pollOnce(factChan); err != nil {
+		if err := s.pollOnce(ctx, factChan); err != nil && ctx.Err() == nil && s.ctx.Err() == nil {
 			log.Printf("S3 poll error: %v", err)
 		}
 
@@ -215,7 +221,7 @@ func (s *Source) Subscribe(ctx context.Context, factTypes []string) (<-chan *ada
 			case <-s.ctx.Done():
 				return
 			case <-ticker.C:
-				if err := s.pollOnce(factChan); err != nil {
+				if err := s.pollOnce(ctx, factChan); err != nil && ctx.Err() == nil && s.ctx.Err() == nil {
 					log.Printf("S3 poll error: %v", err)
 				}
 			}
@@ -274,12 +280,12 @@ func (s *Source) GetMetadata() adapters.SourceMetadata {
 	}
 }
 
-func (s *Source) pollOnce(factChan chan<- *adapters.TypedFact) error {
+func (s *Source) pollOnce(subscriptionCtx context.Context, factChan chan<- *adapters.TypedFact) error {
 	if s.client == nil {
 		return fmt.Errorf("s3 client not initialized")
 	}
 
-	ctx, cancel := context.WithTimeout(s.ctx, s.config.Timeout)
+	ctx, cancel := context.WithTimeout(subscriptionCtx, s.config.Timeout)
 	defer cancel()
 
 	objects, err := s.listObjects(ctx)
@@ -289,18 +295,22 @@ func (s *Source) pollOnce(factChan chan<- *adapters.TypedFact) error {
 
 	if s.config.Mode == "stream" {
 		objects = s.filterNewObjects(objects)
+		// MaxObjects is an emission bound, not a bound on the raw listing. All
+		// pages must be scanned before applying it or old keys on the first page
+		// can permanently starve later keys.
+		if s.config.MaxObjects > 0 && len(objects) > s.config.MaxObjects {
+			objects = objects[:s.config.MaxObjects]
+		}
 	}
 
 	for _, object := range objects {
 		if err := s.emitObject(ctx, object, factChan); err != nil {
-			log.Printf("S3 source %s failed to emit %s: %v", s.config.SourceID, aws.ToString(object.Key), err)
+			return fmt.Errorf("emit %s: %w", aws.ToString(object.Key), err)
+		}
+		if s.config.Mode == "stream" {
+			s.updateCursor([]types.Object{object})
 		}
 	}
-
-	if s.config.Mode == "stream" && len(objects) > 0 {
-		s.updateCursor(objects)
-	}
-
 	return nil
 }
 
@@ -321,7 +331,8 @@ func (s *Source) listObjects(ctx context.Context) ([]types.Object, error) {
 			return nil, err
 		}
 		objects = append(objects, page.Contents...)
-		if s.config.MaxObjects > 0 && len(objects) >= s.config.MaxObjects {
+		// Batch mode has no stream cursor, so its listing limit is independent.
+		if s.config.Mode == "batch" && s.config.MaxObjects > 0 && len(objects) >= s.config.MaxObjects {
 			objects = objects[:s.config.MaxObjects]
 			break
 		}
@@ -388,11 +399,10 @@ func (s *Source) updateCursor(objects []types.Object) {
 func (s *Source) emitObject(ctx context.Context, object types.Object, factChan chan<- *adapters.TypedFact) error {
 	key := aws.ToString(object.Key)
 	if key == "" {
-		return nil
+		return fmt.Errorf("object key is empty")
 	}
 	if object.Size != nil && s.config.MaxObjectBytes > 0 && *object.Size > s.config.MaxObjectBytes {
-		log.Printf("S3 source %s skipping %s (size %d > %d)", s.config.SourceID, key, *object.Size, s.config.MaxObjectBytes)
-		return nil
+		return fmt.Errorf("object size %d exceeds maximum %d", *object.Size, s.config.MaxObjectBytes)
 	}
 	if strings.HasSuffix(key, "/") {
 		return nil
@@ -447,8 +457,10 @@ func (s *Source) emitObject(ctx context.Context, object types.Object, factChan c
 		select {
 		case factChan <- fact:
 			s.metrics.RecordFactProcessed(s.config.SourceID, schemaName)
-		default:
-			log.Printf("S3 source %s channel full, dropping fact", s.config.SourceID)
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-s.ctx.Done():
+			return s.ctx.Err()
 		}
 	}
 
