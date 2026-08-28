@@ -7,6 +7,17 @@ image:
 postgres:
   existingSecret: ""
   dsnKey: "dsn"
+  pool:
+    maxOpen: 20
+    maxIdle: 10
+    connectionLifetime: "30m"
+    connectionIdleTime: "5m"
+
+migrations:
+  enabled: true
+  existingSecret: ""
+
+podAnnotations: {}
 
 grpc:
   enabled: false
@@ -33,6 +44,9 @@ api:
   aclFile: ""
   rateLimit: 120
   rateBurst: 60
+  limiterCapacity: 10000
+  limiterIdleTTL: "10m"
+  trustedProxyCIDRs: ""
 
 facts:
   store: "memory"

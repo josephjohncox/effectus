@@ -162,7 +162,7 @@ kafka:
 
 The default poison policy is `halt`.
 The daemon stops and leaves the poison offset uncommitted.
-Use `skip` only with a durable poison audit file.
+Use `skip` only after PostgreSQL records the poison acknowledgement.
 Use `dlq` only with a configured DLQ topic.
 The adapter waits for DLQ publication before it commits the original offset.
 A crash between these operations can publish the DLQ record again.
@@ -185,6 +185,9 @@ The durable-acceptance contract commits only after the checked engine reports du
 The legacy `Start` and `Subscribe` channel API commits after local channel handoff.
 It does not provide end-to-end acknowledgement.
 Use `Run` for durable processing contracts.
+
+Effectusd stores delivery attempts and poison records in `effectus_kafka_deliveries`.
+Back up and retain this table with the execution ledger.
 
 Run the consumer-group integration harness against Kafka or Redpanda:
 

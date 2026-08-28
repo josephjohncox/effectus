@@ -69,6 +69,26 @@ func TestRetiredExtensionSnapshotWaitsForAcceptedExecution(t *testing.T) {
 	require.Equal(t, int32(1), first.closed.Load())
 }
 
+func TestCloseReleasesAcceptedExecutionSnapshot(t *testing.T) {
+	extension := &reloadSnapshotLoader{source: []byte(validWorkflowSource("1"))}
+	runtime := NewExecutionRuntime()
+	runtime.EnableLegacyExecutionForCompatibility()
+	runtime.RegisterExtensionLoader(extension)
+	require.NoError(t, runtime.CompileAndValidate(t.Context()))
+	require.NoError(t, runtime.ConfigureDurableWorkflowExecution(schema.NewInMemoryOutboxStore(), nil, schema.DispatcherOptions{Owner: "close-test"}))
+	_, err := runtime.Engine().Execute(t.Context(), ExecuteRequest{Admission: &Admission{ExecutionID: "accepted", AdmissionID: "accepted-delivery", TenantNamespace: "tenant", Ruleset: "orders", Version: "1", Facts: map[string]any{"id": "42"}}, WaitMode: WaitAccepted})
+	require.NoError(t, err)
+	extension.mu.Lock()
+	executor := extension.executors[0]
+	extension.mu.Unlock()
+	require.Zero(t, executor.closed.Load())
+	require.NoError(t, runtime.Close())
+	require.NoError(t, runtime.Close())
+	require.Equal(t, int32(1), executor.closed.Load())
+	_, err = runtime.Engine().Execute(t.Context(), ExecuteRequest{ResumeExecutionID: "accepted", WaitMode: WaitTerminal})
+	require.ErrorContains(t, err, "closed")
+}
+
 func TestFailedExtensionReloadCleansCandidateAndKeepsActiveSnapshot(t *testing.T) {
 	extension := &reloadSnapshotLoader{source: []byte(validWorkflowSource("1"))}
 	runtime := NewExecutionRuntime()

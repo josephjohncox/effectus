@@ -74,7 +74,8 @@ func (r *Registry) RegisterVerb(spec *Spec) error {
 		return fmt.Errorf("verb '%s' mutates state but has no inverse defined", spec.Name)
 	}
 
-	// Own an immutable snapshot of contract state. Executor identity is retained.
+	// The registry owns an immutable copy of the contract. Executor identity is
+	// intentionally retained because executors are not part of the hash.
 	owned := cloneSpec(spec)
 	r.verbs[owned.Name] = owned
 	if r.sources == nil {
@@ -318,6 +319,30 @@ func normalizeDuplicatePolicy(policy string) string {
 	default:
 		return ""
 	}
+}
+
+func cloneSpec(spec *Spec) *Spec {
+	if spec == nil {
+		return nil
+	}
+	cloned := *spec
+	if spec.ArgTypes != nil {
+		cloned.ArgTypes = make(map[string]string, len(spec.ArgTypes))
+		for name, value := range spec.ArgTypes {
+			cloned.ArgTypes[name] = value
+		}
+	}
+	cloned.RequiredArgs = append([]string(nil), spec.RequiredArgs...)
+	cloned.Resources = append(ResourceSet(nil), spec.Resources...)
+	if spec.StrictArgs != nil {
+		value := *spec.StrictArgs
+		cloned.StrictArgs = &value
+	}
+	if spec.StrictReturn != nil {
+		value := *spec.StrictReturn
+		cloned.StrictReturn = &value
+	}
+	return &cloned
 }
 
 func inferVerbSource(spec *Spec) SourceInfo {

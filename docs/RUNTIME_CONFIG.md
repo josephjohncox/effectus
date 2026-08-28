@@ -68,8 +68,8 @@ extensions:
   oci:
     - "ghcr.io/myorg/extension-bundles/payments@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-  # Optional: reload local extension manifests
-  reload_interval: "60s"
+  # The checked daemon requires immutable extensions. Reload is disabled.
+  reload_interval: "0s"
 
 verbs:
   duplicate_policy: "error" # error | replace | ignore
@@ -97,10 +97,11 @@ kafka:
   retry_initial: "1s"
   retry_max: "30s"
   poison_policy: "halt"
-  delivery_ledger: "/data/kafka-deliveries.jsonl"
 ```
 
-The durable delivery ledger increments the stable delivery attempt before each handler call. Attempt limits therefore survive rebalances and process restarts.
+The daemon stores attempt and poison state in PostgreSQL table `effectus_kafka_deliveries`.
+Attempt limits survive rebalances and process restarts.
+Back up this table with the other `effectus_*` tables.
 The default poison policy leaves the failed offset uncommitted and stops the daemon.
 For `skip`, the same ledger records and deduplicates the poison acknowledgement.
 For `dlq`, set `dlq_topic` to a Kafka topic.
@@ -139,7 +140,10 @@ api:
   acl_file: "/etc/effectus/acl.yaml"
   rate_limit: 300
   rate_burst: 120
-  hotload_rules: true
+  limiter_capacity: 10000
+  limiter_idle_ttl: "10m"
+  trusted_proxy_cidrs: "10.0.0.0/8"
+  hotload_rules: false
 
 facts:
   store: "file"
@@ -167,14 +171,21 @@ extensions:
     - "/etc/effectus/extensions"
   oci:
     - "ghcr.io/myorg/extension-bundles/payments@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-  reload_interval: "60s"
+  reload_interval: "0s"
 
 verbs:
   duplicate_policy: "error"
   oci_warmup: true
   strict: true
 
+database:
+  max_open_connections: 20
+  max_idle_connections: 10
+  connection_lifetime: "30m"
+  connection_idle_time: "5m"
+
 # Supply EFFECTUS_SAGA_POSTGRES_DSN from the secret manager.
+# Run effectusd --migrate-only before normal startup.
 # The old saga.enabled mode is rejected; checked execution always uses V2.
 ```
 

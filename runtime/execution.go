@@ -45,6 +45,9 @@ type ExecutionRuntime struct {
 	allowLegacyExecution bool
 	mu                   sync.RWMutex
 	compileMu            sync.Mutex
+	executionMu          sync.RWMutex
+	closeOnce            sync.Once
+	closeErr             error
 	state                RuntimeState
 }
 
@@ -58,6 +61,8 @@ const (
 	StateReady        RuntimeState = "ready"
 	StateExecuting    RuntimeState = "executing"
 	StateFailed       RuntimeState = "failed"
+	StateClosing      RuntimeState = "closing"
+	StateClosed       RuntimeState = "closed"
 )
 
 // NewExecutionRuntime creates a new execution runtime
@@ -83,20 +88,44 @@ func (er *ExecutionRuntime) Close() error {
 	if er == nil {
 		return nil
 	}
-	er.mu.Lock()
-	factories := make([]ExecutorFactory, 0, len(er.executors))
-	for _, factory := range er.executors {
-		factories = append(factories, factory)
-	}
-	er.mu.Unlock()
-	var result error
-	result = errors.Join(result, er.snapshotManager.Close())
-	for _, factory := range factories {
-		if closer, ok := factory.(interface{ Close() error }); ok {
-			result = errors.Join(result, closer.Close())
+	er.closeOnce.Do(func() {
+		// Exclude all Engine.Execute calls. Calls that arrived before Close finish;
+		// later calls observe StateClosed and fail before touching a snapshot.
+		er.executionMu.Lock()
+		defer er.executionMu.Unlock()
+		er.mu.Lock()
+		er.state = StateClosing
+		factories := make([]ExecutorFactory, 0, len(er.executors))
+		for _, factory := range er.executors {
+			factories = append(factories, factory)
 		}
-	}
-	return result
+		engine := er.engine
+		er.mu.Unlock()
+
+		if engine != nil {
+			engine.mu.Lock()
+			executions := make([]*engineExecution, 0, len(engine.executions))
+			for _, execution := range engine.executions {
+				executions = append(executions, execution)
+			}
+			engine.mu.Unlock()
+			for _, execution := range executions {
+				execution.mu.Lock()
+				execution.releaseSnapshot()
+				execution.mu.Unlock()
+			}
+		}
+		er.closeErr = errors.Join(er.closeErr, er.snapshotManager.Close())
+		for _, factory := range factories {
+			if closer, ok := factory.(interface{ Close() error }); ok {
+				er.closeErr = errors.Join(er.closeErr, closer.Close())
+			}
+		}
+		er.mu.Lock()
+		er.state = StateClosed
+		er.mu.Unlock()
+	})
+	return er.closeErr
 }
 
 // RegisterExtensionLoader adds an extension loader to the runtime

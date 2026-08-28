@@ -38,7 +38,7 @@ func (handler kafkaFactHandler) Handle(ctx context.Context, delivery kafkaadapte
 
 func configureDaemonExecutionEngine(ctx context.Context, bundle *unified.Bundle, extensionDirs, extensionOCIs []string) (*effectusruntime.ExecutionRuntime, *sql.DB, error) {
 	if strings.TrimSpace(*sagaPgDSN) == "" {
-		return nil, nil, fmt.Errorf("checked transport execution requires --saga-postgres-dsn for the durable admission ledger")
+		return nil, nil, fmt.Errorf("checked transport execution requires EFFECTUS_SAGA_POSTGRES_DSN or protected saga.postgres.dsn configuration")
 	}
 	execution := effectusruntime.NewExecutionRuntime()
 	for _, directory := range extensionDirs {
@@ -81,7 +81,7 @@ func configureDaemonExecutionEngine(ctx context.Context, bundle *unified.Bundle,
 	if execution.GetRuntimeInfo().PlanCount == 0 {
 		return nil, nil, fmt.Errorf("checked transport execution requires at least one canonical .eff or .effx plan")
 	}
-	db, err := sql.Open("postgres", *sagaPgDSN)
+	db, err := openDaemonDatabase()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -92,8 +92,8 @@ func configureDaemonExecutionEngine(ctx context.Context, bundle *unified.Bundle,
 	if err := db.PingContext(ctx); err != nil {
 		return closeOnError(fmt.Errorf("connect Kafka execution ledger: %w", err))
 	}
-	if err := schema.MigrateSagaV2(ctx, db); err != nil {
-		return closeOnError(fmt.Errorf("migrate Kafka execution ledger: %w", err))
+	if err := schema.ValidateSagaV2(ctx, db); err != nil {
+		return closeOnError(fmt.Errorf("validate execution ledger schema: %w", err))
 	}
 	store, err := schema.NewPostgresOutboxStore(db)
 	if err != nil {
@@ -110,6 +110,51 @@ func configureDaemonExecutionEngine(ctx context.Context, bundle *unified.Bundle,
 		return closeOnError(err)
 	}
 	return execution, db, nil
+}
+
+func validateDatabasePoolConfig() error {
+	if *dbMaxOpen <= 0 || *dbMaxIdle < 0 || *dbMaxIdle > *dbMaxOpen || *dbConnLifetime < 0 || *dbConnIdleTime < 0 {
+		return fmt.Errorf("max-open must be positive, max-idle must be between zero and max-open, and durations must not be negative")
+	}
+	return nil
+}
+
+func openDaemonDatabase() (*sql.DB, error) {
+	db, err := sql.Open("postgres", *sagaPgDSN)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(*dbMaxOpen)
+	db.SetMaxIdleConns(*dbMaxIdle)
+	db.SetConnMaxLifetime(*dbConnLifetime)
+	db.SetConnMaxIdleTime(*dbConnIdleTime)
+	return db, nil
+}
+
+func runDatabaseMaintenance(ctx context.Context) error {
+	if strings.TrimSpace(*sagaPgDSN) == "" {
+		return fmt.Errorf("EFFECTUS_SAGA_POSTGRES_DSN or saga.postgres.dsn is required")
+	}
+	db, err := openDaemonDatabase()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := db.PingContext(ctx); err != nil {
+		return err
+	}
+	if *migrateOnly {
+		return schema.MigrateSagaV2(ctx, db)
+	}
+	if err := schema.ValidateSagaV2(ctx, db); err != nil {
+		return err
+	}
+	result, err := schema.PruneTerminalRecords(ctx, db, schema.PruneOptions{Retention: *maintenanceRetention, BatchSize: *maintenanceBatch, DryRun: *maintenanceDryRun})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("maintenance dry_run=%t executions=%d sagas=%d kafka_deliveries=%d\n", *maintenanceDryRun, result.Executions, result.Sagas, result.KafkaDeliveries)
+	return nil
 }
 
 func decodeKafkaFactEnvelope(data []byte) (factEnvelope, error) {

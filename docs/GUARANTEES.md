@@ -101,21 +101,17 @@ The Kafka consumer uses consumer groups and synchronous offset commits. It proce
 
 Kafka source offsets are not atomic with arbitrary external effects. DLQ publication is acknowledged before the source offset commit, but those two Kafka operations are non-transactional and can produce a duplicate DLQ record after a crash.
 
-## Reload generations
+## Runtime generations
 
-The daemon publishes a bundle, execution type system, and verb registry as one runtime generation.
+The production daemon installs one checked engine at startup.
+It reports the bundle digest and checked engine digest as separate status fields.
 
-A reload follows these steps:
+Rule validation remains read-only.
+The daemon rejects rule apply, rollback, schema reload, and extension reload after it installs the checked engine.
+Deploy a new immutable bundle and process to change the generation.
 
-1. Build a candidate outside the active generation.
-2. Validate the candidate.
-3. Clone mutable execution specifications.
-4. Publish the complete generation under one lock.
-5. Keep the previous generation if any step fails.
-
-An execution uses one generation snapshot. A registry reload does not mutate the bundle used by an execution in progress.
-
-This design prevents mixed bundle and type-system reads. It does not preserve in-flight external transactions across a process stop.
+This fail-closed rule prevents management state from advancing without the checked engine.
+Compatibility library APIs can still stage snapshots for controlled embedded use.
 
 ## PostgreSQL lifecycle storage
 

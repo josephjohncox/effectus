@@ -6,6 +6,8 @@ metadata:
     {{- include "effectusd.labels" . | nindent 4 }}
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "effectusd.selectorLabels" . | nindent 6 }}
@@ -13,9 +15,14 @@ spec:
     metadata:
       labels:
         {{- include "effectusd.selectorLabels" . | nindent 8 }}
-      {{- if .Values.config.enabled }}
+      {{- if or .Values.config.enabled .Values.podAnnotations }}
       annotations:
+        {{- if .Values.config.enabled }}
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- end }}
     spec:
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
@@ -71,6 +78,15 @@ spec:
             - "--api-auth={{ .Values.api.authMode }}"
             - "--api-rate-limit={{ .Values.api.rateLimit }}"
             - "--api-rate-burst={{ .Values.api.rateBurst }}"
+            - "--api-limiter-capacity={{ .Values.api.limiterCapacity }}"
+            - "--api-limiter-idle-ttl={{ .Values.api.limiterIdleTTL }}"
+            {{- if .Values.api.trustedProxyCIDRs }}
+            - "--trusted-proxy-cidrs={{ .Values.api.trustedProxyCIDRs }}"
+            {{- end }}
+            - "--db-max-open-connections={{ .Values.postgres.pool.maxOpen }}"
+            - "--db-max-idle-connections={{ .Values.postgres.pool.maxIdle }}"
+            - "--db-connection-lifetime={{ .Values.postgres.pool.connectionLifetime }}"
+            - "--db-connection-idle-time={{ .Values.postgres.pool.connectionIdleTime }}"
             {{- if .Values.api.aclFile }}
             - "--api-acl-file={{ .Values.api.aclFile }}"
             {{- end }}

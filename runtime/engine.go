@@ -24,7 +24,23 @@ var (
 	ErrIdentityConflict      = errors.New("engine admission identity conflict")
 	ErrGenerationMismatch    = errors.New("engine generation mismatch")
 	ErrBlockedDependency     = errors.New("execution blocked by missing dependency")
+	ErrDurableDisposition    = errors.New("durable execution disposition failed")
 )
+
+// Observer receives checked-runtime events without coupling the runtime to a
+// metrics implementation. Implementations must not block execution.
+type Observer interface {
+	ObserveExecution(ExecuteResult, error)
+	ObserveRecovery(RecoveryObservation)
+}
+
+// RecoveryObservation describes one bounded recovery poll or disposition.
+type RecoveryObservation struct {
+	Backlog     int
+	ExecutionID string
+	State       string
+	Err         error
+}
 
 // WaitMode controls how far Execute drives the shared state machine.
 type WaitMode string
@@ -75,6 +91,7 @@ type Engine struct {
 	executions map[string]*engineExecution
 	ledger     schema.ExecutionLedger
 	resolver   ArtifactResolver
+	observer   Observer
 }
 
 type engineExecution struct {
@@ -118,8 +135,52 @@ func (engine *Engine) ConfigureLedger(ledger schema.ExecutionLedger, resolver Ar
 	return nil
 }
 
+// SetObserver installs an optional runtime observer.
+func (engine *Engine) SetObserver(observer Observer) {
+	if engine == nil {
+		return
+	}
+	engine.mu.Lock()
+	engine.observer = observer
+	engine.mu.Unlock()
+}
+
+// ActiveGenerationDigest returns the checked engine generation currently used
+// for new admissions.
+func (engine *Engine) ActiveGenerationDigest() string {
+	if engine == nil || engine.runtime == nil {
+		return ""
+	}
+	engine.runtime.mu.RLock()
+	unit := engine.runtime.compiledUnit
+	engine.runtime.mu.RUnlock()
+	artifact, err := executionArtifactForUnit(unit)
+	if err != nil {
+		return ""
+	}
+	return artifact.GenerationDigest
+}
+
 // Execute enters the same state machine for new admissions and recovery.
-func (engine *Engine) Execute(ctx context.Context, request ExecuteRequest) (ExecuteResult, error) {
+func (engine *Engine) Execute(ctx context.Context, request ExecuteRequest) (result ExecuteResult, resultErr error) {
+	if engine != nil && engine.runtime != nil {
+		engine.runtime.executionMu.RLock()
+		defer engine.runtime.executionMu.RUnlock()
+		engine.runtime.mu.RLock()
+		closed := engine.runtime.state == StateClosing || engine.runtime.state == StateClosed
+		engine.runtime.mu.RUnlock()
+		if closed {
+			return ExecuteResult{}, fmt.Errorf("runtime is closed")
+		}
+		defer func() {
+			engine.mu.Lock()
+			observer := engine.observer
+			engine.mu.Unlock()
+			if observer != nil {
+				observer.ObserveExecution(result, resultErr)
+			}
+		}()
+	}
 	if engine == nil || engine.runtime == nil || engine.ledger == nil {
 		return ExecuteResult{}, fmt.Errorf("%w: engine is not configured", ErrInvalidExecuteRequest)
 	}
@@ -147,6 +208,11 @@ func (engine *Engine) Execute(ctx context.Context, request ExecuteRequest) (Exec
 	if err != nil {
 		if execution != nil && execution.record.State == schema.ExecutionBlockedDependency {
 			return engineResult(execution.record), err
+		}
+		if request.RecoveryLease != nil {
+			if releaseErr := engine.ledger.FinishExecutionLease(ctx, *request.RecoveryLease, "", err.Error()); releaseErr != nil {
+				return ExecuteResult{}, errors.Join(err, fmt.Errorf("%w: %v", ErrDurableDisposition, releaseErr))
+			}
 		}
 		return ExecuteResult{}, err
 	}
@@ -181,9 +247,12 @@ func (engine *Engine) Execute(ctx context.Context, request ExecuteRequest) (Exec
 	workflowErr := engine.runtime.executeCheckedWorkflowMode(ctx, execution.unit, execution.record.TenantNamespace,
 		execution.record.ExecutionID, execution.facts, execution.selected, request.WaitMode)
 	if workflowErr != nil {
-		state := engine.executionFailureState(ctx, execution)
+		state, dispositionErr := engine.executionFailureState(ctx, execution)
+		if dispositionErr != nil {
+			state = execution.record.State
+		}
 		if persistErr := engine.persistExecutionState(ctx, execution, state, workflowErr.Error(), request.RecoveryLease); persistErr != nil {
-			return engineResult(execution.record), errors.Join(workflowErr, persistErr)
+			return engineResult(execution.record), errors.Join(workflowErr, dispositionErr, fmt.Errorf("%w: %v", ErrDurableDisposition, persistErr))
 		}
 		if schema.IsTerminalExecutionState(execution.record.State) {
 			execution.releaseSnapshot()
@@ -489,12 +558,16 @@ func (engine *Engine) blockDependency(ctx context.Context, record schema.Executi
 
 func (engine *Engine) persistExecutionState(ctx context.Context, execution *engineExecution, state schema.ExecutionState, message string, lease *schema.ExecutionLease) error {
 	if lease != nil {
-		if err := engine.ledger.FinishExecutionLease(ctx, *lease, state, message); err != nil {
-			return err
+		leaseState := state
+		if !schema.IsTerminalExecutionState(state) {
+			leaseState = "" // release the CAS lease without terminalizing recoverable work
+		}
+		if err := engine.ledger.FinishExecutionLease(ctx, *lease, leaseState, message); err != nil {
+			return fmt.Errorf("%w: %v", ErrDurableDisposition, err)
 		}
 		updated, err := engine.ledger.GetExecution(ctx, execution.record.ExecutionID)
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: reload execution after lease completion: %v", ErrDurableDisposition, err)
 		}
 		execution.record = updated
 		return nil
@@ -507,25 +580,29 @@ func (engine *Engine) persistExecutionState(ctx context.Context, execution *engi
 	return nil
 }
 
-func (engine *Engine) executionFailureState(ctx context.Context, execution *engineExecution) schema.ExecutionState {
-	state := schema.ExecutionFailed
+func (engine *Engine) executionFailureState(ctx context.Context, execution *engineExecution) (schema.ExecutionState, error) {
+	state := execution.record.State
 	for _, plan := range execution.record.Plans {
 		saga, err := engine.runtime.workflowStore.GetSaga(ctx, plan.SagaID)
 		if err != nil {
-			continue
+			return state, fmt.Errorf("read durable saga disposition %s: %w", plan.SagaID, err)
 		}
 		switch saga.State {
 		case schema.SagaBlockedUnknown:
-			return schema.ExecutionBlockedUnknown
+			return schema.ExecutionBlockedUnknown, nil
 		case schema.SagaBlockedFence:
-			return schema.ExecutionBlockedFence
+			return schema.ExecutionBlockedFence, nil
 		case schema.SagaBlockedDependency:
-			return schema.ExecutionBlockedDependency
+			return schema.ExecutionBlockedDependency, nil
 		case schema.SagaBlockedCompensation:
-			return schema.ExecutionBlockedCompensation
+			return schema.ExecutionBlockedCompensation, nil
+		case schema.SagaFailed, schema.SagaCompensated:
+			return schema.ExecutionFailed, nil
 		}
 	}
-	return state
+	// Running, compensating, queued, and unreadable work is recoverable. Never
+	// infer a terminal disposition from the transient error returned by a store.
+	return state, nil
 }
 
 func selectedExecutionHasSteps(execution *engineExecution) bool {

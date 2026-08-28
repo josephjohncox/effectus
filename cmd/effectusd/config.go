@@ -29,6 +29,7 @@ type runtimeConfig struct {
 	FixedTime     string                        `yaml:"fixed_time" json:"fixed_time"`
 	FactSource    string                        `yaml:"fact_source" json:"fact_source"`
 	Kafka         kafkaConfig                   `yaml:"kafka" json:"kafka"`
+	Database      databaseConfig                `yaml:"database" json:"database"`
 }
 
 type bundleConfig struct {
@@ -54,15 +55,18 @@ type grpcConfig struct {
 }
 
 type apiConfig struct {
-	Auth       string `yaml:"auth" json:"auth"`
-	Token      string `yaml:"token" json:"token"`
-	ReadToken  string `yaml:"read_token" json:"read_token"`
-	ACLFile    string `yaml:"acl_file" json:"acl_file"`
-	RateLimit  *int   `yaml:"rate_limit" json:"rate_limit"`
-	RateBurst  *int   `yaml:"rate_burst" json:"rate_burst"`
-	Hotload    *bool  `yaml:"hotload_rules" json:"hotload_rules"`
-	History    *int   `yaml:"rules_history" json:"rules_history"`
-	HistoryDir string `yaml:"rules_history_dir" json:"rules_history_dir"`
+	Auth              string `yaml:"auth" json:"auth"`
+	Token             string `yaml:"token" json:"token"`
+	ReadToken         string `yaml:"read_token" json:"read_token"`
+	ACLFile           string `yaml:"acl_file" json:"acl_file"`
+	RateLimit         *int   `yaml:"rate_limit" json:"rate_limit"`
+	RateBurst         *int   `yaml:"rate_burst" json:"rate_burst"`
+	Hotload           *bool  `yaml:"hotload_rules" json:"hotload_rules"`
+	History           *int   `yaml:"rules_history" json:"rules_history"`
+	HistoryDir        string `yaml:"rules_history_dir" json:"rules_history_dir"`
+	TrustedProxyCIDRs string `yaml:"trusted_proxy_cidrs" json:"trusted_proxy_cidrs"`
+	LimiterCapacity   *int   `yaml:"limiter_capacity" json:"limiter_capacity"`
+	LimiterIdleTTL    string `yaml:"limiter_idle_ttl" json:"limiter_idle_ttl"`
 }
 
 type factsConfig struct {
@@ -93,6 +97,13 @@ type kafkaConfig struct {
 	DLQMode          string   `yaml:"dlq_mode" json:"dlq_mode"`
 	PoisonAudit      string   `yaml:"poison_audit" json:"poison_audit"`
 	DeliveryLedger   string   `yaml:"delivery_ledger" json:"delivery_ledger"`
+}
+
+type databaseConfig struct {
+	MaxOpenConnections *int   `yaml:"max_open_connections" json:"max_open_connections"`
+	MaxIdleConnections *int   `yaml:"max_idle_connections" json:"max_idle_connections"`
+	ConnectionLifetime string `yaml:"connection_lifetime" json:"connection_lifetime"`
+	ConnectionIdleTime string `yaml:"connection_idle_time" json:"connection_idle_time"`
 }
 
 type sagaConfig struct {
@@ -255,6 +266,19 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 	if cfg.API.HistoryDir != "" && !setFlags["rules-history-dir"] {
 		*rulesHistDir = cfg.API.HistoryDir
 	}
+	if cfg.API.TrustedProxyCIDRs != "" && !setFlags["trusted-proxy-cidrs"] {
+		*trustedProxyCIDRs = cfg.API.TrustedProxyCIDRs
+	}
+	if cfg.API.LimiterCapacity != nil && !setFlags["api-limiter-capacity"] {
+		*apiLimiterCapacity = *cfg.API.LimiterCapacity
+	}
+	if cfg.API.LimiterIdleTTL != "" && !setFlags["api-limiter-idle-ttl"] {
+		duration, err := time.ParseDuration(cfg.API.LimiterIdleTTL)
+		if err != nil {
+			return fmt.Errorf("api.limiter_idle_ttl: %w", err)
+		}
+		*apiLimiterIdleTTL = duration
+	}
 
 	if cfg.Facts.Store != "" && !setFlags["facts-store"] {
 		*factsStore = cfg.Facts.Store
@@ -395,8 +419,28 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 	if cfg.Kafka.PoisonAudit != "" && !setFlags["kafka-poison-audit"] {
 		*kafkaPoisonAudit = cfg.Kafka.PoisonAudit
 	}
-	if cfg.Kafka.DeliveryLedger != "" && !setFlags["kafka-delivery-ledger"] {
-		*kafkaDeliveryLedger = cfg.Kafka.DeliveryLedger
+	if cfg.Kafka.DeliveryLedger != "" {
+		return fmt.Errorf("kafka.delivery_ledger is no longer supported; effectusd stores delivery state in PostgreSQL table effectus_kafka_deliveries")
+	}
+	if cfg.Database.MaxOpenConnections != nil && !setFlags["db-max-open-connections"] {
+		*dbMaxOpen = *cfg.Database.MaxOpenConnections
+	}
+	if cfg.Database.MaxIdleConnections != nil && !setFlags["db-max-idle-connections"] {
+		*dbMaxIdle = *cfg.Database.MaxIdleConnections
+	}
+	if cfg.Database.ConnectionLifetime != "" && !setFlags["db-connection-lifetime"] {
+		duration, err := time.ParseDuration(cfg.Database.ConnectionLifetime)
+		if err != nil {
+			return fmt.Errorf("database.connection_lifetime: %w", err)
+		}
+		*dbConnLifetime = duration
+	}
+	if cfg.Database.ConnectionIdleTime != "" && !setFlags["db-connection-idle-time"] {
+		duration, err := time.ParseDuration(cfg.Database.ConnectionIdleTime)
+		if err != nil {
+			return fmt.Errorf("database.connection_idle_time: %w", err)
+		}
+		*dbConnIdleTime = duration
 	}
 
 	return nil

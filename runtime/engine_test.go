@@ -3,12 +3,29 @@ package runtime
 import (
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/effectus/effectus-go/loader"
 	"github.com/effectus/effectus-go/schema"
 	"github.com/stretchr/testify/require"
 )
+
+type recordingRuntimeObserver struct{ executions atomic.Int32 }
+
+func (observer *recordingRuntimeObserver) ObserveExecution(ExecuteResult, error) {
+	observer.executions.Add(1)
+}
+func (*recordingRuntimeObserver) ObserveRecovery(RecoveryObservation) {}
+
+func TestEngineObserverReceivesCheckedExecution(t *testing.T) {
+	runtime := newEngineTestRuntime(t, loader.NewStaticSourceLoader("workflow", "workflow.effx", []byte(validWorkflowSource("1"))))
+	observer := new(recordingRuntimeObserver)
+	runtime.Engine().SetObserver(observer)
+	_, err := runtime.Engine().Execute(t.Context(), ExecuteRequest{Admission: &Admission{ExecutionID: "observed", AdmissionID: "observed-delivery", TenantNamespace: "tenant", Ruleset: "orders", Version: "1", Facts: map[string]any{"id": "one"}}, WaitMode: WaitAccepted})
+	require.NoError(t, err)
+	require.Equal(t, int32(1), observer.executions.Load())
+}
 
 func TestEngineExecuteAcceptedResumeAndIdentityConflict(t *testing.T) {
 	runtime := newEngineTestRuntime(t, loader.NewStaticSourceLoader("workflow", "workflow.effx", []byte(validWorkflowSource("1"))))

@@ -2,25 +2,35 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
+
+	effectusruntime "github.com/effectus/effectus-go/runtime"
 )
 
 type hotloadMetrics struct {
-	hotloadAttempts uint64
-	hotloadFailures uint64
-	ruleCompiles    uint64
-	listExecutions  uint64
-	flowExecutions  uint64
-	execFailures    uint64
-	verbExecutions  uint64
-	verbFailures    uint64
-	typecheckCount  uint64
-	typecheckSumNs  int64
-	typecheckBins   []uint64
+	hotloadAttempts  uint64
+	hotloadFailures  uint64
+	ruleCompiles     uint64
+	listExecutions   uint64
+	flowExecutions   uint64
+	execFailures     uint64
+	verbExecutions   uint64
+	verbFailures     uint64
+	typecheckCount   uint64
+	typecheckSumNs   int64
+	typecheckBins    []uint64
+	engineExecutions uint64
+	engineErrors     uint64
+	recoveryErrors   uint64
+	recoveryBlocked  uint64
+	recoveryBacklog  int64
 }
 
 var typecheckBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5}
@@ -77,6 +87,27 @@ func observeTypecheckDuration(d time.Duration) {
 	atomic.AddUint64(&metrics.typecheckBins[len(typecheckBuckets)], 1)
 }
 
+func (m *hotloadMetrics) ObserveExecution(result effectusruntime.ExecuteResult, err error) {
+	atomic.AddUint64(&m.engineExecutions, 1)
+	if err != nil {
+		atomic.AddUint64(&m.engineErrors, 1)
+	}
+}
+
+func (m *hotloadMetrics) ObserveRecovery(observation effectusruntime.RecoveryObservation) {
+	if observation.Backlog >= 0 {
+		atomic.StoreInt64(&m.recoveryBacklog, int64(observation.Backlog))
+	}
+	if observation.Err != nil {
+		atomic.AddUint64(&m.recoveryErrors, 1)
+	}
+	if strings.HasPrefix(observation.State, "blocked_") {
+		atomic.AddUint64(&m.recoveryBlocked, 1)
+	}
+}
+
+var metricsDB atomic.Pointer[sql.DB]
+
 func writeMetrics(w io.Writer) {
 	writeCounter(w, "effectusd_hotload_attempt_total", "Total hotload attempts", atomic.LoadUint64(&metrics.hotloadAttempts))
 	writeCounter(w, "effectusd_hotload_failure_total", "Total hotload failures", atomic.LoadUint64(&metrics.hotloadFailures))
@@ -86,6 +117,18 @@ func writeMetrics(w io.Writer) {
 	writeCounter(w, "effectusd_execution_failure_total", "Total rule/flow execution failures", atomic.LoadUint64(&metrics.execFailures))
 	writeCounter(w, "effectusd_verb_execution_total", "Total verb executions", atomic.LoadUint64(&metrics.verbExecutions))
 	writeCounter(w, "effectusd_verb_failure_total", "Total verb execution failures", atomic.LoadUint64(&metrics.verbFailures))
+	writeCounter(w, "effectusd_checked_execution_total", "Total checked engine executions", atomic.LoadUint64(&metrics.engineExecutions))
+	writeCounter(w, "effectusd_checked_execution_error_total", "Total checked engine errors", atomic.LoadUint64(&metrics.engineErrors))
+	writeCounter(w, "effectusd_recovery_error_total", "Total per-execution recovery errors", atomic.LoadUint64(&metrics.recoveryErrors))
+	writeCounter(w, "effectusd_recovery_blocked_total", "Total blocked recovery dispositions", atomic.LoadUint64(&metrics.recoveryBlocked))
+	fmt.Fprintf(w, "# TYPE effectusd_recovery_backlog gauge\neffectusd_recovery_backlog %d\n", atomic.LoadInt64(&metrics.recoveryBacklog))
+	if db := metricsDB.Load(); db != nil {
+		stats := db.Stats()
+		fmt.Fprintf(w, "# TYPE effectusd_db_open_connections gauge\neffectusd_db_open_connections %d\n", stats.OpenConnections)
+		fmt.Fprintf(w, "# TYPE effectusd_db_in_use_connections gauge\neffectusd_db_in_use_connections %d\n", stats.InUse)
+		fmt.Fprintf(w, "# TYPE effectusd_db_wait_total counter\neffectusd_db_wait_total %d\n", stats.WaitCount)
+		fmt.Fprintf(w, "# TYPE effectusd_db_max_open_connections gauge\neffectusd_db_max_open_connections %d\n", stats.MaxOpenConnections)
+	}
 
 	count := atomic.LoadUint64(&metrics.typecheckCount)
 	sumNs := atomic.LoadInt64(&metrics.typecheckSumNs)
@@ -102,22 +145,19 @@ func writeHistogram(w io.Writer, name, help string, count uint64, sumNs int64, b
 	fmt.Fprintf(w, "# HELP %s %s\n", name, help)
 	fmt.Fprintf(w, "# TYPE %s histogram\n", name)
 
-	var cumulative uint64
 	for i, bound := range typecheckBuckets {
+		value := uint64(0)
 		if i < len(bins) {
-			cumulative += atomic.LoadUint64(&bins[i])
+			value = atomic.LoadUint64(&bins[i])
 		}
-		fmt.Fprintf(w, "%s_bucket{le=\"%g\"} %d\n", name, bound, cumulative)
+		fmt.Fprintf(w, "%s_bucket{le=\"%g\"} %d\n", name, bound, value)
 	}
-	if len(bins) > len(typecheckBuckets) {
-		cumulative += atomic.LoadUint64(&bins[len(typecheckBuckets)])
-	}
-	fmt.Fprintf(w, "%s_bucket{le=\"+Inf\"} %d\n", name, cumulative)
+	fmt.Fprintf(w, "%s_bucket{le=\"+Inf\"} %d\n", name, count)
 	fmt.Fprintf(w, "%s_sum %.9f\n", name, float64(sumNs)/1e9)
 	fmt.Fprintf(w, "%s_count %d\n", name, count)
 }
 
-func startMetricsServer(ctx context.Context, addr string) {
+func newMetricsServer(addr string) (*http.Server, net.Listener, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		reqID, _ := withRequestID(r)
@@ -128,11 +168,15 @@ func startMetricsServer(ctx context.Context, addr string) {
 		writeMetrics(w)
 	})
 
-	server := &http.Server{
-		Addr:    addr,
-		Handler: mux,
+	server := &http.Server{Addr: addr, Handler: mux}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("listen on metrics address %s: %w", addr, err)
 	}
+	return server, listener, nil
+}
 
+func serveMetricsServer(ctx context.Context, server *http.Server, listener net.Listener) error {
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -140,9 +184,9 @@ func startMetricsServer(ctx context.Context, addr string) {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 
-	fmt.Printf("Starting metrics server on %s\n", addr)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		fmt.Printf("Metrics server error: %v\n", err)
+	fmt.Printf("Starting metrics server on %s\n", listener.Addr())
+	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+		return fmt.Errorf("serve metrics: %w", err)
 	}
-	fmt.Println("Shutting down metrics server")
+	return nil
 }

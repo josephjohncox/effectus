@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -76,6 +78,11 @@ var (
 	schemaSourcesFile        = flag.String("schema-sources", "", "Path to schema sources config (YAML/JSON)")
 	reloadInterval           = flag.Duration("reload-interval", 0, "Interval for reloading local schema and extension sources (immutable OCI bundles cannot be polled)")
 	shutdownTimeout          = flag.Duration("shutdown-timeout", 30*time.Second, "Deadline for graceful shutdown and queue drain")
+	migrateOnly              = flag.Bool("migrate-only", false, "Apply PostgreSQL schema migrations and exit")
+	maintenancePrune         = flag.Bool("maintenance-prune", false, "Prune retained terminal durable records and exit")
+	maintenanceDryRun        = flag.Bool("maintenance-dry-run", true, "Report maintenance deletions without changing data")
+	maintenanceRetention     = flag.Duration("maintenance-retention", 30*24*time.Hour, "Minimum age of terminal records eligible for pruning")
+	maintenanceBatch         = flag.Int("maintenance-batch", 1000, "Maximum executions or Kafka records pruned per transaction")
 
 	// Runtime flags
 	sagaEnabled     = flag.Bool("saga", false, "Deprecated legacy saga mode (rejected by effectusd; use checked durable workflow runtime)")
@@ -121,21 +128,28 @@ var (
 	grpcMaxConcurrent = flag.Int("grpc-max-concurrent", 128, "Maximum concurrent gRPC executions")
 
 	// API auth + rate limit flags
-	apiAuthMode   = flag.String("api-auth", "token", "API auth mode (token, disabled)")
-	apiToken      = flag.String("api-token", "", "Write token for /api endpoints (comma-separated)")
-	apiReadToken  = flag.String("api-read-token", "", "Read-only token for /api endpoints (comma-separated)")
-	apiACLFile    = flag.String("api-acl-file", "", "Path to API ACL file (YAML/JSON)")
-	apiRateLimit  = flag.Int("api-rate-limit", 120, "API requests per minute per client (0 to disable)")
-	apiRateBurst  = flag.Int("api-rate-burst", 60, "API burst size (0 to use rate limit)")
-	rulesHotload  = flag.Bool("rules-hotload", false, "Enable /api/rules/validate and /api/rules/hotload")
-	rulesHistory  = flag.Int("rules-history", 5, "Number of hotload bundles to keep in memory/on disk")
-	rulesHistDir  = flag.String("rules-history-dir", "./out/rules_history", "Directory for bundle history snapshots")
-	factsStore    = flag.String("facts-store", "file", "Facts store (file, memory)")
-	factsPath     = flag.String("facts-path", "./data/facts.json", "Facts store path (file store)")
-	factsMergeDef = flag.String("facts-merge-default", "last", "Default merge strategy (first, last, error)")
-	factsCache    = flag.String("facts-cache-policy", "none", "Facts cache policy (none, lru)")
-	factsCacheMax = flag.Int("facts-cache-max-universes", 0, "Max universes to keep in cache (0 for unlimited)")
-	factsCacheNs  = flag.Int("facts-cache-max-namespaces", 0, "Max namespaces per universe to keep (0 for unlimited)")
+	apiAuthMode        = flag.String("api-auth", "token", "API auth mode (token, disabled)")
+	apiToken           = flag.String("api-token", "", "Write token for /api endpoints (comma-separated)")
+	apiReadToken       = flag.String("api-read-token", "", "Read-only token for /api endpoints (comma-separated)")
+	apiACLFile         = flag.String("api-acl-file", "", "Path to API ACL file (YAML/JSON)")
+	apiRateLimit       = flag.Int("api-rate-limit", 120, "API requests per minute per client (0 to disable)")
+	apiRateBurst       = flag.Int("api-rate-burst", 60, "API burst size (0 to use rate limit)")
+	apiLimiterCapacity = flag.Int("api-limiter-capacity", 10000, "Maximum active API client limiter buckets")
+	apiLimiterIdleTTL  = flag.Duration("api-limiter-idle-ttl", 10*time.Minute, "Idle TTL for API client limiter buckets")
+	trustedProxyCIDRs  = flag.String("trusted-proxy-cidrs", "", "Comma-separated proxy CIDRs trusted to supply X-Forwarded-For")
+	dbMaxOpen          = flag.Int("db-max-open-connections", 20, "Maximum PostgreSQL open connections")
+	dbMaxIdle          = flag.Int("db-max-idle-connections", 10, "Maximum PostgreSQL idle connections")
+	dbConnLifetime     = flag.Duration("db-connection-lifetime", 30*time.Minute, "Maximum PostgreSQL connection lifetime")
+	dbConnIdleTime     = flag.Duration("db-connection-idle-time", 5*time.Minute, "Maximum PostgreSQL connection idle time")
+	rulesHotload       = flag.Bool("rules-hotload", false, "Enable read-only /api/rules/validate (checked engine mutation remains disabled)")
+	rulesHistory       = flag.Int("rules-history", 5, "Number of hotload bundles to keep in memory/on disk")
+	rulesHistDir       = flag.String("rules-history-dir", "./out/rules_history", "Directory for bundle history snapshots")
+	factsStore         = flag.String("facts-store", "file", "Facts store (file, memory)")
+	factsPath          = flag.String("facts-path", "./data/facts.json", "Facts store path (file store)")
+	factsMergeDef      = flag.String("facts-merge-default", "last", "Default merge strategy (first, last, error)")
+	factsCache         = flag.String("facts-cache-policy", "none", "Facts cache policy (none, lru)")
+	factsCacheMax      = flag.Int("facts-cache-max-universes", 0, "Max universes to keep in cache (0 for unlimited)")
+	factsCacheNs       = flag.Int("facts-cache-max-namespaces", 0, "Max namespaces per universe to keep (0 for unlimited)")
 
 	// Debug flags
 	verbose = flag.Bool("verbose", false, "Enable verbose logging")
@@ -194,6 +208,22 @@ func main() {
 	}
 	if *sagaPgDSN == "" {
 		*sagaPgDSN = os.Getenv("EFFECTUS_SAGA_POSTGRES_DSN")
+	}
+
+	if strings.TrimSpace(*kafkaDeliveryLedger) != "" {
+		fmt.Fprintln(os.Stderr, "--kafka-delivery-ledger is no longer supported; delivery state is in PostgreSQL table effectus_kafka_deliveries")
+		os.Exit(1)
+	}
+	if err := validateDatabasePoolConfig(); err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid database pool configuration: %v\n", err)
+		os.Exit(1)
+	}
+	if *migrateOnly || *maintenancePrune {
+		if err := runDatabaseMaintenance(context.Background()); err != nil {
+			fmt.Fprintf(os.Stderr, "Database maintenance failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	if strings.TrimSpace(*schemaSourcesFile) != "" {
@@ -370,7 +400,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	limiter := newRateLimiter(*apiRateLimit, *apiRateBurst)
+	limiter := newRateLimiterWithBounds(*apiRateLimit, *apiRateBurst, *apiLimiterCapacity, *apiLimiterIdleTTL)
+	trustedProxies, err := parseTrustedProxyCIDRs(*trustedProxyCIDRs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error configuring trusted proxies: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Create a WaitGroup to synchronize goroutines
 	var wg sync.WaitGroup
@@ -378,6 +413,7 @@ func main() {
 	factCh := make(chan factEnvelope, 32)
 	history := newBundleHistory(*rulesHistory, *rulesHistDir)
 	state := newServerState(bundle, factCh, store, storeConfig, auth, limiter, acl, typeSystem, schemaSources, verbReg, *rulesHotload, history, *sagaEnabled, sagaStore, capSystem)
+	state.SetTrustedProxies(trustedProxies)
 	state.recordBundleHistory(bundle, "startup")
 
 	if err := validateFactSource(); err != nil {
@@ -399,6 +435,12 @@ func main() {
 			os.Exit(1)
 		}
 		state.SetCheckedEngine(execution.Engine())
+		if *reloadInterval > 0 || *extensionsReloadInterval > 0 {
+			_ = executionDB.Close()
+			_ = execution.Close()
+			fmt.Fprintln(os.Stderr, "checked execution engine requires immutable deployment; schema, extension, and bundle reload intervals must be disabled")
+			os.Exit(1)
+		}
 		recoveryWorker, err = newDaemonRecoveryWorker(execution, executionDB)
 		if err != nil {
 			_ = executionDB.Close()
@@ -434,8 +476,24 @@ func main() {
 	}
 	if execution != nil {
 		defer execution.Close()
+		execution.Engine().SetObserver(metrics)
+	}
+	if recoveryWorker != nil {
+		recoveryWorker.Observer = metrics
+	}
+	if executionDB != nil {
+		metricsDB.Store(executionDB)
 	}
 
+	var metricsServer *http.Server
+	var metricsListener net.Listener
+	if *metricsAddr != "" {
+		metricsServer, metricsListener, err = newMetricsServer(*metricsAddr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error starting metrics listener: %v\n", err)
+			os.Exit(1)
+		}
+	}
 	httpServer, httpListener, err := newHTTPServer(*httpAddr, state)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting HTTP server: %v\n", err)
@@ -450,83 +508,14 @@ func main() {
 		}
 	}()
 
-	// Start metrics server
-	if *metricsAddr != "" {
+	// The listener was pre-bound so a metrics bind failure cannot leave a ready pod.
+	if metricsServer != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			startMetricsServer(ctx, *metricsAddr)
-		}()
-	}
-
-	// Add hot-reloading if OCI reference is provided
-	if *ociRef != "" && *reloadInterval > 0 {
-		fmt.Fprintln(os.Stderr, "--reload-interval cannot poll an immutable OCI digest; publish and deploy a new digest instead")
-		cancel()
-	}
-
-	extReloadInterval := *extensionsReloadInterval
-	if extReloadInterval == 0 && *reloadInterval > 0 && (len(extensionDirs) > 0 || len(extensionOCIs) > 0) {
-		extReloadInterval = *reloadInterval
-	}
-	if extReloadInterval > 0 && (len(extensionDirs) > 0 || len(extensionOCIs) > 0) {
-		if *verbose {
-			fmt.Printf("Enabling extension reload every %s\n", extReloadInterval)
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ticker := time.NewTicker(extReloadInterval)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					if *verbose {
-						fmt.Println("Reloading extension manifests...")
-					}
-					var reloadErr error
-					if execution != nil {
-						reloadErr = execution.HotReload(ctx)
-					} else {
-						reloadErr = reloadVerbsAndExtensions(state, extensionDirs, extensionOCIs)
-					}
-					if reloadErr != nil {
-						fmt.Fprintf(os.Stderr, "Error reloading extensions: %v\n", reloadErr)
-					}
-				}
-			}
-		}()
-	}
-
-	schemaReloadInterval := *extensionsReloadInterval
-	if schemaReloadInterval == 0 && *reloadInterval > 0 && len(schemaSources) > 0 {
-		schemaReloadInterval = *reloadInterval
-	}
-	if schemaReloadInterval > 0 && len(schemaSources) > 0 {
-		if *verbose {
-			fmt.Printf("Enabling schema source reload every %s\n", schemaReloadInterval)
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ticker := time.NewTicker(schemaReloadInterval)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					if *verbose {
-						fmt.Println("Reloading schema sources...")
-					}
-					if err := reloadSchemaSources(ctx, state, schemaSources, *verbose); err != nil {
-						fmt.Fprintf(os.Stderr, "Error reloading schema sources: %v\n", err)
-					}
-				}
+			if err := serveMetricsServer(ctx, metricsServer, metricsListener); err != nil && ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "Metrics server error: %v\n", err)
+				cancel()
 			}
 		}()
 	}
@@ -581,6 +570,9 @@ func main() {
 			fmt.Println("Shutting down, stopping admission...")
 			shutdownCtx, stopShutdown := context.WithTimeout(context.WithoutCancel(ctx), *shutdownTimeout)
 			defer stopShutdown()
+			if err := shutdownHTTPServer(shutdownCtx, httpServer); err != nil {
+				fmt.Fprintf(os.Stderr, "HTTP shutdown error: %v\n", err)
+			}
 			workersDone := make(chan struct{})
 			go func() {
 				wg.Wait()

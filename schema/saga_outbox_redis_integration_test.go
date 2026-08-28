@@ -52,6 +52,20 @@ func TestRedisOutboxCrashRecoveryAndLeaseExpiry(t *testing.T) {
 	}))
 }
 
+func TestRedisTargetedDispatchSelectsOwningSaga(t *testing.T) {
+	store := newLiveRedisOutbox(t, redisLiveOptions(t, 0))
+	t.Cleanup(func() { _ = store.Close() })
+	createOutboxSaga(t, store, "earlier-saga")
+	_ = enqueueOutboxStep(t, store, "earlier-saga", "effect-1", "charge", 1)
+	time.Sleep(time.Millisecond)
+	createOutboxSaga(t, store, "target-saga")
+	target := enqueueOutboxStep(t, store, "target-saga", "effect-1", "charge", 1)
+	claimed, err := store.ClaimDispatch(t.Context(), ClaimOptions{Owner: "target-worker", LeaseDuration: time.Second, TargetDispatchID: target.ID})
+	require.NoError(t, err)
+	require.Equal(t, target.ID, claimed.ID)
+	require.Equal(t, "target-saga", claimed.SagaID)
+}
+
 func TestRedisOutboxDuplicateDeliveryIsIdempotent(t *testing.T) {
 	store := newLiveRedisOutbox(t, redisLiveOptions(t, 0))
 	t.Cleanup(func() { _ = store.Close() })

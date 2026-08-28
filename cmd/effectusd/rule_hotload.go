@@ -174,6 +174,13 @@ func (s *serverState) handleRuleRollback(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusForbidden, "rule hotload disabled")
 		return
 	}
+	s.mu.RLock()
+	checkedEngine := s.checkedEngine
+	s.mu.RUnlock()
+	if checkedEngine != nil {
+		writeJSONError(w, http.StatusConflict, errCheckedEngineMutation.Error())
+		return
+	}
 	if s.history == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "bundle history not configured")
 		return
@@ -230,6 +237,14 @@ func decodeRuleHotloadRequest(r *http.Request) (ruleHotloadRequest, error) {
 }
 
 func (s *serverState) evaluateRuleHotload(req ruleHotloadRequest, apply bool) ruleCheckResponse {
+	if apply {
+		s.mu.RLock()
+		checkedEngine := s.checkedEngine
+		s.mu.RUnlock()
+		if checkedEngine != nil {
+			return ruleCheckResponse{OK: false, Applied: false, Conflict: true, Diagnostics: []ruleDiagnostic{{Severity: lint.SeverityError, Message: errCheckedEngineMutation.Error(), Line: 1, Column: 1}}}
+		}
+	}
 	files, replace, err := normalizeRuleHotloadRequest(req)
 	if err != nil {
 		return ruleCheckResponse{

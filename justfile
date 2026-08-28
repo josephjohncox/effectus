@@ -186,10 +186,23 @@ migrate-fresh:
 	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
 	@echo "OK Fresh migration complete"
 
-# Run integration tests with database
-test-integration: setup-test-db
-	@echo "Running integration tests..."
-	DB_DSN="postgres://effectus:effectus@localhost/effectus_test?sslmode=disable" go test -v -tags=integration ./runtime/...
+# Run all service-specific integration tests. Required variables must be set.
+test-integration: test-integration-postgres test-integration-redis test-integration-kafka
+
+# Run PostgreSQL integration tests.
+test-integration-postgres:
+	@test -n "${DB_DSN:-}" || { echo "ERROR DB_DSN is required"; exit 1; }
+	DB_DSN="$DB_DSN" POSTGRES_DSN="${POSTGRES_DSN:-$DB_DSN}" go test -v -tags=integration ./runtime/... ./schema ./cmd/effectusd
+
+# Run Redis integration tests.
+test-integration-redis:
+	@test -n "${REDIS_ADDR:-}" || { echo "ERROR REDIS_ADDR is required"; exit 1; }
+	REDIS_ADDR="$REDIS_ADDR" go test -v -tags=integration ./schema
+
+# Run Kafka integration tests.
+test-integration-kafka:
+	@test -n "${KAFKA_BROKERS:-}" || { echo "ERROR KAFKA_BROKERS is required"; exit 1; }
+	KAFKA_BROKERS="$KAFKA_BROKERS" go test -v -tags=integration ./adapters/kafka -run '^TestKafkaConsumerGroupCommitAndRestart$' -count=1
 
 # === UI Demo ===
 

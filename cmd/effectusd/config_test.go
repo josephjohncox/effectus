@@ -51,6 +51,11 @@ kafka:
 	require.Equal(t, "facts.dlq", config.Kafka.DLQTopic)
 }
 
+func TestRuntimeConfigRejectsDeprecatedKafkaDeliveryLedger(t *testing.T) {
+	config := &runtimeConfig{Kafka: kafkaConfig{DeliveryLedger: "/data/ignored.jsonl"}}
+	require.ErrorContains(t, applyRuntimeConfig(config, nil), "effectus_kafka_deliveries")
+}
+
 func TestLoadRuntimeConfigReadsGeneratedGRPCServiceSettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(`
