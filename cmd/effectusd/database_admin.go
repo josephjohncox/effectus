@@ -59,7 +59,10 @@ func openDaemonDatabase() (*sql.DB, error) {
 	return db, nil
 }
 
-func rejectCheckedRuntimeMutation(_ bool, bundleReload, extensionReload time.Duration) error {
+func rejectCheckedRuntimeMutation(rulesHotload bool, bundleReload, extensionReload time.Duration) error {
+	if rulesHotload {
+		return fmt.Errorf("--rules-hotload is disabled because checked runtime mutation is not supported; use /api/rules/validate for candidate validation")
+	}
 	if bundleReload > 0 {
 		return fmt.Errorf("--reload-interval is disabled because checked engine references cannot be swapped atomically; redeploy")
 	}
@@ -71,15 +74,15 @@ func rejectCheckedRuntimeMutation(_ bool, bundleReload, extensionReload time.Dur
 
 func runDatabaseAdminCommand(ctx context.Context) (bool, error) {
 	mode := strings.ToLower(strings.TrimSpace(*databaseMigrations))
-	if mode != "validate" && mode != "apply" && mode != "legacy-apply" {
-		return true, fmt.Errorf("database-migrations must be validate, apply, or legacy-apply")
+	if mode != "validate" && mode != "validate-only" && mode != "apply" && mode != "legacy-apply" {
+		return true, fmt.Errorf("database-migrations must be validate, validate-only, apply, or legacy-apply")
 	}
 	pruneRequested := strings.TrimSpace(*adminPruneBefore) != ""
-	if mode != "apply" && !pruneRequested {
+	if mode != "apply" && mode != "validate-only" && !pruneRequested {
 		return false, nil
 	}
-	if mode == "apply" && pruneRequested {
-		return true, fmt.Errorf("migration apply and pruning must be separate operations")
+	if (mode == "apply" || mode == "validate-only") && pruneRequested {
+		return true, fmt.Errorf("migration administration and pruning must be separate operations")
 	}
 	db, err := openDaemonDatabase()
 	if err != nil {
@@ -98,6 +101,10 @@ func runDatabaseAdminCommand(ctx context.Context) (bool, error) {
 	}
 	if err := schema.ValidateSagaV2(ctx, db); err != nil {
 		return true, err
+	}
+	if mode == "validate-only" {
+		fmt.Println("Durable database migrations validated")
+		return true, nil
 	}
 	cutoff, err := time.Parse(time.RFC3339, strings.TrimSpace(*adminPruneBefore))
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/effectus/effectus-go/invocation"
 	"github.com/effectus/effectus-go/loader"
 	"github.com/effectus/effectus-go/schema"
 	"github.com/stretchr/testify/require"
@@ -74,6 +75,74 @@ func (ledger *failingFinishLedger) FinishExecutionLease(ctx context.Context, lea
 		return errors.New("finish lease store failure")
 	}
 	return ledger.ExecutionLedger.FinishExecutionLease(ctx, lease, state, message)
+}
+
+type failFirstRecoveryLoader struct{ calls atomic.Int32 }
+type failFirstRecoveryExecutor struct{ calls *atomic.Int32 }
+type failFirstRecoveryVerbSpec struct{}
+
+func (*failFirstRecoveryLoader) Name() string { return "fail-first-recovery" }
+func (loaderImpl *failFirstRecoveryLoader) Load(_ context.Context, target loader.LoadTarget) error {
+	if err := target.RegisterVerb(failFirstRecoveryVerbSpec{}, &failFirstRecoveryExecutor{calls: &loaderImpl.calls}); err != nil {
+		return err
+	}
+	return target.(loader.SourceLoadTarget).RegisterSource(loader.SourceFile{Path: "workflow.effx", Data: []byte(validWorkflowSource("1"))})
+}
+func (executor *failFirstRecoveryExecutor) Execute(context.Context, map[string]any) (any, error) {
+	return nil, nil
+}
+func (executor *failFirstRecoveryExecutor) Invoke(_ context.Context, _ invocation.Request) invocation.Outcome {
+	if executor.calls.Add(1) == 1 {
+		return invocation.Outcome{Class: invocation.OutcomePermanentFailure, Err: errors.New("terminal business failure")}
+	}
+	return invocation.Outcome{Class: invocation.OutcomeSuccess}
+}
+func (*failFirstRecoveryExecutor) Close() error                       { return nil }
+func (failFirstRecoveryVerbSpec) GetName() string                     { return "charge" }
+func (failFirstRecoveryVerbSpec) GetDescription() string              { return "" }
+func (failFirstRecoveryVerbSpec) GetCapabilities() []string           { return []string{"write"} }
+func (failFirstRecoveryVerbSpec) GetResources() []loader.ResourceSpec { return nil }
+func (failFirstRecoveryVerbSpec) GetArgTypes() map[string]string {
+	return map[string]string{"amount": "int"}
+}
+func (failFirstRecoveryVerbSpec) GetRequiredArgs() []string { return []string{"amount"} }
+func (failFirstRecoveryVerbSpec) GetReturnType() string     { return "void" }
+func (failFirstRecoveryVerbSpec) GetInverseVerb() string    { return "" }
+
+func TestRecoveryBusinessFailureDoesNotStopBatchOrRun(t *testing.T) {
+	extension := new(failFirstRecoveryLoader)
+	runtime := NewExecutionRuntime()
+	runtime.EnableLegacyExecutionForCompatibility()
+	runtime.RegisterExtensionLoader(extension)
+	require.NoError(t, runtime.CompileAndValidate(t.Context()))
+	require.NoError(t, runtime.ConfigureDurableWorkflowExecution(schema.NewInMemoryOutboxStore(), nil, schema.DispatcherOptions{Owner: "recovery-business"}))
+	for _, id := range []string{"business-failure", "business-success"} {
+		_, err := runtime.Engine().Execute(t.Context(), ExecuteRequest{Admission: &Admission{
+			ExecutionID: id, AdmissionID: id + "-delivery", TenantNamespace: "tenant", Ruleset: "orders", Version: "1", Facts: map[string]any{"id": id},
+		}, WaitMode: WaitAccepted})
+		require.NoError(t, err)
+	}
+	worker := &RecoveryWorker{Engine: runtime.Engine(), Store: runtime.Engine().ledger, Owner: "worker", BatchSize: 2, PollInterval: time.Millisecond}
+	count, err := worker.RunOnce(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, 2, count)
+	failed, err := runtime.Engine().ledger.GetExecution(t.Context(), "business-failure")
+	require.NoError(t, err)
+	require.Equal(t, schema.ExecutionFailed, failed.State)
+	succeeded, err := runtime.Engine().ledger.GetExecution(t.Context(), "business-success")
+	require.NoError(t, err)
+	require.Equal(t, schema.ExecutionCompleted, succeeded.State)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx) }()
+	select {
+	case err := <-done:
+		t.Fatalf("Run exited after a terminal business failure: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	cancel()
+	require.NoError(t, <-done)
 }
 
 func TestRecoveryWorkerStoreFailureStopsRunOnce(t *testing.T) {

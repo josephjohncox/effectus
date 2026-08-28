@@ -62,13 +62,9 @@ kafka:
 	require.Equal(t, "facts.dlq", config.Kafka.DLQTopic)
 }
 
-func TestRuntimeConfigIgnoresDeprecatedKafkaFileLedgers(t *testing.T) {
-	original := *postgresDSN
-	t.Cleanup(func() { *postgresDSN = original })
-	*postgresDSN = "postgres://authoritative"
+func TestRuntimeConfigRejectsDeprecatedKafkaFileLedgers(t *testing.T) {
 	config := &runtimeConfig{Kafka: kafkaConfig{DeliveryLedger: "/data/ignored.jsonl", PoisonAudit: "/data/poison.jsonl"}}
-	require.NoError(t, applyRuntimeConfig(config, nil))
-	require.Equal(t, "postgres://authoritative", *postgresDSN)
+	require.ErrorContains(t, applyRuntimeConfig(config, nil), "no longer supported")
 }
 
 func TestRuntimeConfigUsesCanonicalDatabaseDSN(t *testing.T) {

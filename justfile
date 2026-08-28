@@ -199,7 +199,7 @@ migrate-fresh:
 	@echo "OK Fresh migration complete"
 
 # Run all service-specific integration tests. Required variables must be set.
-test-integration: test-integration-postgres test-integration-redis test-integration-cdc test-integration-kafka
+test-integration: test-integration-postgres test-integration-redis test-integration-cdc test-integration-kafka test-integration-s3
 
 # Run PostgreSQL integration tests.
 test-integration-postgres:
@@ -209,12 +209,20 @@ test-integration-postgres:
 # Run Redis integration tests.
 test-integration-redis:
 	@test -n "${REDIS_ADDR:-}" || { echo "ERROR REDIS_ADDR is required"; exit 1; }
-	REDIS_ADDR="$REDIS_ADDR" go test -v -tags=integration ./schema
+	REDIS_ADDR="$REDIS_ADDR" go test -v -tags=integration ./schema ./adapters/redis
 
 # Run Kafka integration tests.
 test-integration-kafka:
 	@test -n "${KAFKA_BROKERS:-}" || { echo "ERROR KAFKA_BROKERS is required"; exit 1; }
 	KAFKA_BROKERS="$KAFKA_BROKERS" go test -v -tags=integration ./adapters/kafka -run '^TestKafkaConsumerGroupCommitAndRestart$' -count=1
+
+# Run S3 adapter integration tests.
+test-integration-s3:
+	@test -n "${S3_ENDPOINT:-}" || { echo "ERROR S3_ENDPOINT is required"; exit 1; }
+	@test -n "${S3_BUCKET:-}" || { echo "ERROR S3_BUCKET is required"; exit 1; }
+	S3_ENDPOINT="$S3_ENDPOINT" S3_BUCKET="$S3_BUCKET" S3_REGION="${S3_REGION:-us-east-1}" \
+		S3_ACCESS_KEY="${S3_ACCESS_KEY:-}" S3_SECRET_KEY="${S3_SECRET_KEY:-}" \
+		go test -v -tags=integration ./adapters/s3
 
 # Execute published snippets and command/reference contracts.
 test-docs:
@@ -225,7 +233,7 @@ test-docs:
 	go test ./cmd/effectusc -run 'TestDocumentedCompilerCommands|TestFormatCheckDoesNotWrite'; \
 	go test ./cmd/effectusd -run TestDocumentedDaemonFlags; \
 	(cd examples && go test ./grpc_execution); \
-	buf generate --template buf.gen.python.yaml --output "$tmp/python"; \
+	buf generate --path effectus --path runtime --template buf.gen.python.yaml --output "$tmp/python"; \
 	python3 -m venv "$tmp/venv"; "$tmp/venv/bin/pip" --quiet install protobuf==5.29.3; \
 	PYTHONPATH="$tmp/python" "$tmp/venv/bin/python" docs/tests/python_typed_facts.py; \
 	! grep -R -n -F 'token: "write-token"' docs/RUNTIME_CONFIG.md charts/effectusd/README.md; \
@@ -281,6 +289,7 @@ ui-demo: setup-db
 		--verbschema {{UI_DEMO_VERBS}} \
 		--rules-dir {{UI_DEMO_RULES}} \
 		--output {{UI_DEMO_BUNDLE}}
+	EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' go run ./cmd/effectusd --database-migrations=apply
 	@echo "Starting effectusd UI..."
 	@echo "Token: {{UI_DEMO_TOKEN}}"
 	@echo "Open http://localhost:8080/ui"
@@ -300,7 +309,6 @@ ui-demo: setup-db
 	EFFECTUS_API_TOKEN={{UI_DEMO_TOKEN}} EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' go run ./cmd/effectusd \
 		--bundle {{UI_DEMO_BUNDLE}} \
 		--http-addr :8080 \
-		--rules-hotload \
 		--extensions-dir {{UI_DEMO_EXTENSIONS}} \
 		--facts-store file \
 		--facts-path out/ui_demo/facts.json
@@ -323,6 +331,7 @@ ui-demo-smoke:
 		--schema-dir {{UI_DEMO_SCHEMA}} --verb-dir {{UI_DEMO_VERB_DIR}} \
 		--verbschema {{UI_DEMO_VERBS}} --rules-dir {{UI_DEMO_RULES}} --output {{UI_DEMO_BUNDLE}}; \
 	go build -o out/ui_demo/effectusd ./cmd/effectusd; \
+	EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' out/ui_demo/effectusd --database-migrations=apply; \
 	EFFECTUS_API_TOKEN={{UI_DEMO_TOKEN}} EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' \
 		out/ui_demo/effectusd --bundle {{UI_DEMO_BUNDLE}} --http-addr 127.0.0.1:18080 \
 		--metrics-addr '' --extensions-dir {{UI_DEMO_EXTENSIONS}} --facts-store memory \

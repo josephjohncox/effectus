@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	effectusruntime "github.com/effectus/effectus-go/runtime"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,6 +21,13 @@ func TestMetricsListenerBindFailureIsFatal(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, server)
 	require.Nil(t, listener)
+}
+
+func TestRecoveryExecutionObservationsPreserveMeasuredBacklog(t *testing.T) {
+	observed := newHotloadMetrics()
+	observed.ObserveRecovery(effectusruntime.RecoveryObservation{BacklogMeasured: true, Backlog: 7})
+	observed.ObserveRecovery(effectusruntime.RecoveryObservation{ExecutionID: "execution-1", State: "completed"})
+	require.Equal(t, int64(7), observed.recoveryBacklog)
 }
 
 func TestMetricsHistogramIsCumulativeExactlyOnce(t *testing.T) {

@@ -102,9 +102,9 @@ kafka:
 ```
 
 PostgreSQL table `effectus_kafka_deliveries` is the sole daemon attempt and poison ledger.
-It increments the stable delivery attempt before each handler call, so attempt limits survive rebalances and process restarts.
+It records each failed handler call. Attempt limits survive rebalances and process restarts.
 Back up this table with the other `effectus_*` tables.
-Deprecated `delivery_ledger` and `poison_audit` settings produce a warning and are ignored during the compatibility window. PostgreSQL remains authoritative; remove these settings.
+The daemon rejects `delivery_ledger` and `poison_audit`. Remove these obsolete settings. PostgreSQL remains authoritative.
 The default poison policy leaves the failed offset uncommitted and stops the daemon.
 For `skip`, the PostgreSQL ledger records and deduplicates the poison acknowledgement.
 For `dlq`, set `dlq_topic` to a Kafka topic.
@@ -240,7 +240,7 @@ Resolve the published digest, sign it under the deployment trust policy, and lis
 - CLI flags override config values when both are provided.
 - `/api/*` endpoints require a token; `/healthz` and `/readyz` are open by default.
 - The checked daemon rejects `extensions.reload_interval` and `bundle.reload_interval` before it opens a database or listener.
-- `api.hotload_rules` enables candidate validation, but apply and rollback fail closed. Deploy a new immutable digest for activation.
+- Candidate validation is always available at `/api/rules/validate`. The daemon rejects `api.hotload_rules`. Deploy a new immutable digest for activation.
 - Production effectusd rejects Go plugin executors and explicitly supplied legacy saga or Redis settings. PostgreSQL is required for HTTP, gRPC, Kafka, and stream daemon transports.
 - Use `extensions.dirs` and `--extensions-dir` for local declarations. `verbs.spec_dirs` and `--verb-dir` are deprecated compatibility aliases.
 - Deploy a new OCI digest to publish another generation. Effectusd does not poll mutable OCI tags.

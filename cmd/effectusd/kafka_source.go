@@ -143,40 +143,6 @@ func validateDatabasePoolConfig() error {
 	return nil
 }
 
-func runDatabaseMaintenance(ctx context.Context) error {
-	if strings.TrimSpace(*postgresDSN) == "" {
-		return fmt.Errorf("EFFECTUS_POSTGRES_DSN or database.dsn is required")
-	}
-	db, err := openDaemonDatabase()
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	if err := db.PingContext(ctx); err != nil {
-		return err
-	}
-	if *migrateOnly {
-		return schema.MigrateSagaV2(ctx, db)
-	}
-	if err := schema.ValidateSagaV2(ctx, db); err != nil {
-		return err
-	}
-	result, err := schema.PruneTerminalRecords(ctx, db, schema.PruneOptions{Retention: *maintenanceRetention, BatchSize: *maintenanceBatch, DryRun: *maintenanceDryRun})
-	if err != nil {
-		return err
-	}
-	operation := "deleted"
-	if *maintenanceDryRun {
-		operation = "eligible"
-	}
-	fmt.Printf("maintenance dry_run=%t executions=%d sagas=%d kafka_deliveries=%d\n", *maintenanceDryRun, result.Executions, result.Sagas, result.KafkaDeliveries)
-	fmt.Printf("effectusd_maintenance_records_total{kind=\"execution\",operation=\"%s\"} %d\n", operation, result.Executions)
-	fmt.Printf("effectusd_maintenance_records_total{kind=\"saga\",operation=\"%s\"} %d\n", operation, result.Sagas)
-	fmt.Printf("effectusd_maintenance_records_total{kind=\"kafka_delivery\",operation=\"%s\"} %d\n", operation, result.KafkaDeliveries)
-	fmt.Println("effectusd_maintenance_error_total 0")
-	return nil
-}
-
 func decodeKafkaFactEnvelope(data []byte) (factEnvelope, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()

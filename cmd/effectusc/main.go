@@ -816,7 +816,7 @@ func newMigrateWorkflowsCommand() *Command {
 	command.Run = func() error {
 		arguments := command.FlagSet.Args()
 		if len(arguments) != 1 {
-			return fmt.Errorf("migrate-workflows requires exactly one legacy verb manifest")
+			return fmt.Errorf("migrate-workflows requires exactly one legacy workflow manifest")
 		}
 		data, err := os.ReadFile(arguments[0])
 		if err != nil {

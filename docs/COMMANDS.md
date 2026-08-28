@@ -297,14 +297,6 @@ effectusc resolve \
   ./extensions.json
 ```
 
-#### migrate-workflows
-
-Converts one legacy verb manifest into the production workflow manifest format.
-
-```bash
-effectusc migrate-workflows [--output workflow.verbs.json] legacy-verbs.json
-```
-
 #### capabilities
 
 Analyzes verb capabilities in rule files.
@@ -347,10 +339,10 @@ effectusd [options]
 --extensions-dir   Directory containing extension manifests (*.verbs.json, *.schema.json)
 --verb-dir         Deprecated alias for --extensions-dir (emits a startup notice)
 --extensions-oci   OCI references for extension bundles (comma-separated)
---extensions-reload-interval Interval for reloading extension manifests (0 to disable)
+--extensions-reload-interval Rejected compatibility flag. Redeploy to change extensions.
 --schema-sources   Path to schema sources config (YAML/JSON)
 --config           Path to YAML/JSON config file
---reload-interval  Interval for local schema/extension reloads (default: disabled)
+--reload-interval  Rejected compatibility flag. Redeploy to change the bundle.
 --verb-duplicate-policy Duplicate verb policy (error, replace, ignore)
 --verb-oci-warmup  Warm OCI verb executors at startup
 --verb-strict      Validate verb arguments and return values (default: true)
@@ -399,6 +391,18 @@ PostgreSQL is required for every daemon transport. Explicit legacy saga-store, R
 
 Supply the PostgreSQL ledger DSN through `EFFECTUS_POSTGRES_DSN`. The daemon rejects a DSN supplied on the command line because process arguments can expose secrets.
 
+```bash
+--database-migrations      Migration mode: validate, validate-only, apply, or legacy-apply
+--database-max-open        Maximum open PostgreSQL connections
+--database-max-idle        Maximum idle PostgreSQL connections
+--database-max-lifetime    Maximum PostgreSQL connection lifetime
+--database-max-idle-time   Maximum PostgreSQL connection idle time
+--admin-prune-before       RFC3339 cutoff for terminal record pruning
+--admin-prune-batch-size   Maximum rows in a prune batch
+--admin-prune-dry-run      Report candidates without deletion
+--admin-prune-backup-verified Confirm a restore-verified backup before deletion
+```
+
 #### API Security + Rate Limits
 
 ```bash
@@ -408,7 +412,10 @@ Supply the PostgreSQL ledger DSN through `EFFECTUS_POSTGRES_DSN`. The daemon rej
 --api-acl-file         Path to API ACL file (YAML/JSON)
 --api-rate-limit       Requests per minute per client (0 to disable)
 --api-rate-burst       Burst size (0 to use rate limit)
---rules-hotload        Enable /api/rules/validate and /api/rules/hotload
+--api-limiter-capacity Maximum active client limiter buckets
+--api-limiter-idle-ttl Idle time before a limiter bucket expires
+--trusted-proxy-cidrs  Proxy CIDRs trusted to supply X-Forwarded-For
+--rules-hotload        Rejected compatibility flag. Use /api/rules/validate without it.
 --rules-history        Number of hotload bundles to keep (0 to disable)
 --rules-history-dir    Directory for bundle history snapshots
 ```
@@ -480,10 +487,9 @@ curl -H 'Authorization: Bearer devtoken' http://localhost:8080/api/bundle > bund
 curl http://localhost:9090/metrics
 ```
 
-#### Hotload canary payload
+#### Candidate validation payload
 
-The hotload endpoints accept an optional `canary` block to run a dry-run diff
-between the current and staged bundle before swapping:
+The validation endpoint accepts an optional `canary` block to run a dry-run diff against the active bundle:
 
 ```json
 {
@@ -503,13 +509,7 @@ between the current and staged bundle before swapping:
 }
 ```
 
-Enable rule candidate validation from the UI. Checked daemon activation and rollback remain fail-closed; deploy a new immutable generation to apply changes:
-
-```bash
-EFFECTUS_API_TOKEN=devtoken \
-EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
-  effectusd --bundle ./bundle.json --rules-hotload
-```
+Candidate validation is available without a mutation flag. Checked daemon activation and rollback remain fail-closed. Deploy a new immutable generation to apply changes.
 
 Post facts for a universe projection. Reuse the same `Idempotency-Key` and identical payload when retrying one logical request. Use a new key for a new submission.
 

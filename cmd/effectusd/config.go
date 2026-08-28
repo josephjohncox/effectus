@@ -199,7 +199,7 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 		return fmt.Errorf("verbs.plugin_dirs is not supported; use invocation-aware extension targets")
 	}
 	if cfg.Kafka.PoisonAudit != "" || cfg.Kafka.DeliveryLedger != "" {
-		fmt.Fprintln(os.Stderr, "Warning: kafka.poison_audit and kafka.delivery_ledger are deprecated and ignored; PostgreSQL is authoritative")
+		return fmt.Errorf("kafka.poison_audit and kafka.delivery_ledger are no longer supported; remove them because PostgreSQL table effectus_kafka_deliveries is authoritative")
 	}
 
 	if cfg.Bundle.File != "" && !setFlags["bundle"] {
@@ -428,9 +428,6 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 	}
 	if cfg.Kafka.DLQMode != "" && !setFlags["kafka-dlq-mode"] {
 		*kafkaDLQMode = cfg.Kafka.DLQMode
-	}
-	if cfg.Kafka.PoisonAudit != "" && !setFlags["kafka-poison-audit"] {
-		*kafkaPoisonAudit = cfg.Kafka.PoisonAudit
 	}
 	if cfg.Database.MaxOpenConnections != nil && !setFlags["db-max-open-connections"] {
 		*dbMaxOpen = *cfg.Database.MaxOpenConnections

@@ -37,10 +37,11 @@ type Observer interface {
 
 // RecoveryObservation describes one bounded recovery poll or disposition.
 type RecoveryObservation struct {
-	Backlog     int
-	ExecutionID string
-	State       string
-	Err         error
+	BacklogMeasured bool
+	Backlog         int
+	ExecutionID     string
+	State           string
+	Err             error
 }
 
 // WaitMode controls how far Execute drives the shared state machine.
@@ -146,18 +147,23 @@ func (engine *Engine) SetObserver(observer Observer) {
 	engine.mu.Unlock()
 }
 
+// ActiveGeneration returns a copy of the checked runtime publication currently
+// used for new admissions, including its immutable bundle metadata.
+func (engine *Engine) ActiveGeneration() *ExecutionGeneration {
+	if engine == nil || engine.runtime == nil {
+		return nil
+	}
+	return engine.runtime.ActiveGeneration()
+}
+
 // ActiveGenerationDigest returns the checked engine generation currently used
 // for new admissions.
 func (engine *Engine) ActiveGenerationDigest() string {
-	if engine == nil || engine.runtime == nil {
+	generation := engine.ActiveGeneration()
+	if generation == nil {
 		return ""
 	}
-	engine.runtime.mu.RLock()
-	defer engine.runtime.mu.RUnlock()
-	if engine.runtime.activeGeneration == nil {
-		return ""
-	}
-	return engine.runtime.activeGeneration.GenerationDigest
+	return generation.GenerationDigest
 }
 
 // Execute enters the same state machine for new admissions and recovery.

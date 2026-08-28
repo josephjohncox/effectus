@@ -17,6 +17,37 @@ helm install effectusd oci://ghcr.io/OWNER/helm/effectusd \
 
 The image or a read-only volume must provide `bundle.signatureVerifier`. Startup fails when verification fails.
 
+The release image does not include a verifier. Use an approved verifier image and pin its digest. This example installs the verifier into a read-only runtime mount.
+
+```yaml
+bundle:
+  signatureVerifier: /opt/effectus-verifier/effectus-verify-oci
+initContainers:
+  - name: install-oci-verifier
+    image: ghcr.io/OWNER/effectus-verify-oci@sha256:VERIFIER_IMAGE_DIGEST
+    command: ["/bin/cp", "/usr/local/bin/effectus-verify-oci", "/verifier/effectus-verify-oci"]
+    volumeMounts:
+      - name: oci-verifier
+        mountPath: /verifier
+extraVolumes:
+  - name: oci-verifier
+    emptyDir: {}
+  - name: oci-verifier-policy
+    secret:
+      secretName: effectusd-oci-verifier-policy
+extraVolumeMounts:
+  - name: oci-verifier
+    mountPath: /opt/effectus-verifier
+    readOnly: true
+  - name: oci-verifier-policy
+    mountPath: /etc/effectus/verifier
+    readOnly: true
+```
+
+The verifier receives the OCI reference and digest as two arguments. The approved verifier must read its identity, issuer, and key policy from `/etc/effectus/verifier`.
+
+To upgrade the verifier, review its identity and trust-policy changes. Pin the new image digest and update the policy Secret separately. Change `rolloutNonce`, then verify a known signed bundle before production use.
+
 ## Singleton rollout contract
 
 - `image.repository` plus an immutable `image.digest`
@@ -35,7 +66,7 @@ The chart sets one replica and the Recreate Deployment strategy. Do not use mult
 
 An upgrade stops the old pod before it starts the new pod. Plan for HTTP and gRPC downtime.
 
-The old Kafka consumer drains its current record before the new consumer joins. Verify the committed offset after each rollout.
+Shutdown can interrupt the active Kafka record. The consumer does not commit an interrupted record. The new pod replays it.
 
 Recreate also prevents two pods from writing the same ReadWriteOnce PVC. A volume can take time to detach and attach.
 
@@ -85,10 +116,9 @@ config:
 
 Create `effectusd-api` as a Kubernetes Secret with the keys `api-token` and, optionally, `api-read-token`. Create `effectusd-postgres` with the `dsn` key. The Deployment exposes both with `secretKeyRef`; do not put either secret in the ConfigMap.
 
-In ConfigMap mode the chart passes `--oci-cache-dir=/data/bundles` unless `bundle.cache_dir` is explicit. The `/data` volume stays writable while the root filesystem stays read-only.
 The chart always passes its HTTP address, metrics address, database limits, shutdown timeout, and OCI cache directory.
 
-`bundle.cacheDir` overrides `bundle.cache_dir` in the ConfigMap. The path must be writable and mounted.
+`bundle.cacheDir` is the chart authority. It overrides `bundle.cache_dir` in the ConfigMap. The path must be writable and mounted.
 
 The default cache path is `/data/bundles`. The chart mounts `/data` from a PVC or `emptyDir`.
 

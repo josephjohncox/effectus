@@ -108,6 +108,28 @@ func TestHandleFactsEnqueuesAcceptedWork(t *testing.T) {
 	require.Equal(t, true, envelope.Facts["ready"])
 }
 
+func TestStatusReportsDistinctBundleAndEngineDigests(t *testing.T) {
+	execution := effectusruntime.NewExecutionRuntime()
+	execution.EnableLegacyExecutionForCompatibility()
+	require.NoError(t, execution.ConfigureGenerationMetadata(effectusruntime.GenerationMetadata{BundleDigest: "bundle-digest"}))
+	execution.RegisterExtensionLoader(loader.NewStaticSourceLoader("handler", "handler.effx", []byte(`flow "empty" priority 1 { when {} steps {} }`)))
+	require.NoError(t, execution.CompileAndValidate(t.Context()))
+	t.Cleanup(func() { require.NoError(t, execution.Close()) })
+	state := newServerState(&unified.Bundle{Name: "orders", Version: "1"}, nil, nil, factStoreConfig{}, apiAuth{mode: "disabled"}, nil, nil, nil, nil, nil, false, nil, false, nil, nil)
+	artifactDigest := state.generation.bundleDigest
+	state.SetCheckedEngine(execution.Engine())
+	response := httptest.NewRecorder()
+	state.handleStatus(response, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	require.Equal(t, http.StatusOK, response.Code)
+	var status statusResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &status))
+	require.Equal(t, artifactDigest, status.ArtifactDigest)
+	require.Equal(t, "bundle-digest", status.BundleDigest)
+	require.Equal(t, "bundle-digest", status.BundleGenerationDigest)
+	require.NotEmpty(t, status.EngineGenerationDigest)
+	require.NotEqual(t, status.BundleDigest, status.EngineGenerationDigest)
+}
+
 func TestHandleFactsCheckedIdempotencyAndNamespace(t *testing.T) {
 	execution := newCheckedHandlerRuntime(t)
 	store := newMemoryFactStore(factStoreConfig{})

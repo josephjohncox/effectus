@@ -25,9 +25,24 @@ func TestDocumentedDaemonFlagsExist(t *testing.T) {
 	}
 	matches := regexp.MustCompile(`--([a-z][a-z0-9-]+)`).FindAllStringSubmatch(section, -1)
 	require.NotEmpty(t, matches)
+	documented := make(map[string]struct{}, len(matches))
 	for _, match := range matches {
+		documented[match[1]] = struct{}{}
 		require.NotNilf(t, flag.CommandLine.Lookup(match[1]), "documented daemon flag --%s has no executable definition", match[1])
 	}
+	compatibility := map[string]struct{}{
+		"db-connection-idle-time": {}, "db-connection-lifetime": {},
+		"db-max-idle-connections": {}, "db-max-open-connections": {},
+		"kafka-delivery-ledger": {}, "kafka-poison-audit": {}, "migrate-only": {},
+	}
+	flag.CommandLine.VisitAll(func(item *flag.Flag) {
+		if strings.Contains(item.Name, ".") {
+			return
+		}
+		_, isDocumented := documented[item.Name]
+		_, isCompatibility := compatibility[item.Name]
+		require.Truef(t, isDocumented || isCompatibility, "executable daemon flag --%s is undocumented", item.Name)
+	})
 	for _, stale := range []string{"--pprof-addr", "--saga-postgres-dsn", "delivery_ledger:", "poison_audit:"} {
 		require.NotContains(t, section, stale)
 	}

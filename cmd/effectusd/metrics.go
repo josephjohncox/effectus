@@ -100,7 +100,7 @@ func (m *hotloadMetrics) ObserveExecution(result effectusruntime.ExecuteResult, 
 }
 
 func (m *hotloadMetrics) ObserveRecovery(observation effectusruntime.RecoveryObservation) {
-	if observation.Backlog >= 0 {
+	if observation.BacklogMeasured {
 		atomic.StoreInt64(&m.recoveryBacklog, int64(observation.Backlog))
 	}
 	if observation.Err != nil {
@@ -110,8 +110,6 @@ func (m *hotloadMetrics) ObserveRecovery(observation effectusruntime.RecoveryObs
 		atomic.AddUint64(&m.recoveryBlocked, 1)
 	}
 }
-
-var metricsDB atomic.Pointer[sql.DB]
 
 func writeMetrics(w io.Writer) {
 	writeCounter(w, "effectusd_hotload_attempt_total", "Total hotload attempts", atomic.LoadUint64(&metrics.hotloadAttempts))
@@ -127,14 +125,6 @@ func writeMetrics(w io.Writer) {
 	writeCounter(w, "effectusd_recovery_error_total", "Total per-execution recovery errors", atomic.LoadUint64(&metrics.recoveryErrors))
 	writeCounter(w, "effectusd_recovery_blocked_total", "Total blocked recovery dispositions", atomic.LoadUint64(&metrics.recoveryBlocked))
 	fmt.Fprintf(w, "# TYPE effectusd_recovery_backlog gauge\neffectusd_recovery_backlog %d\n", atomic.LoadInt64(&metrics.recoveryBacklog))
-	if db := metricsDB.Load(); db != nil {
-		stats := db.Stats()
-		fmt.Fprintf(w, "# TYPE effectusd_db_open_connections gauge\neffectusd_db_open_connections %d\n", stats.OpenConnections)
-		fmt.Fprintf(w, "# TYPE effectusd_db_in_use_connections gauge\neffectusd_db_in_use_connections %d\n", stats.InUse)
-		fmt.Fprintf(w, "# TYPE effectusd_db_wait_total counter\neffectusd_db_wait_total %d\n", stats.WaitCount)
-		fmt.Fprintf(w, "# TYPE effectusd_db_max_open_connections gauge\neffectusd_db_max_open_connections %d\n", stats.MaxOpenConnections)
-	}
-
 	count := atomic.LoadUint64(&metrics.typecheckCount)
 	sumNs := atomic.LoadInt64(&metrics.typecheckSumNs)
 	writeHistogram(w, "effectusd_rule_typecheck_duration_seconds", "Rule typecheck duration", count, sumNs, metrics.typecheckBins)

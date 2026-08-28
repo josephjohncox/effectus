@@ -183,7 +183,7 @@ jobs:
             --node-id 0 --check=false --kafka-addr 0.0.0.0:9092 \
             --advertise-kafka-addr 127.0.0.1:9092
           for attempt in $(seq 1 60); do
-            docker exec redpanda rpk cluster health --brokers localhost:9092 \
+            docker exec redpanda rpk cluster health \
               >/dev/null 2>&1 && exit 0
             sleep 2
           done
@@ -193,27 +193,6 @@ jobs:
         env:
           KAFKA_BROKERS: localhost:9092
         run: just test-kafka-integration
-
-  helm:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Set up Helm
-        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
-        with:
-          version: v3.16.4
-      - name: Install pinned validators
-        run: |
-          cargo install just --locked --version 1.38.0
-          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
-      - name: Lint, render, and schema-check chart fixtures
-        run: just test-helm
 
   vscode:
     runs-on: ubuntu-latest
@@ -241,7 +220,7 @@ jobs:
         run: npm run compile && npm run lint
 
       - name: Activate packaged VSIX and invoke contributed commands
-        run: xvfb-run -a npm run test:integration
+        run: xvfb-run -a npm run test:package
 
   container-audit:
     runs-on: ubuntu-latest
@@ -351,13 +330,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
         with:
           version: v3.17.3
-      - name: Lint and validate chart fixtures
+      - name: Install pinned chart tools
+        run: |
+          cargo install just --locked --version 1.38.0
+          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
+      - name: Run the chart recipe and validate contract fixtures
         run: |
           set -euo pipefail
+          just test-helm
           image="ghcr.io/yannh/kubeconform:v0.6.7@sha256:0925177fb05b44ce18574076141b5c3d83235e1904d3f952182ac99ddc45762c"
           docker pull "$image"
           for file in charts/effectusd/test-values/*.yaml; do
@@ -394,8 +383,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Race-sensitive runtime tests
-        run: go test -race ./runtime ./schema ./cmd/effectusd
+      - name: Race-sensitive runtime and adapter tests
+        run: >-
+          go test -race ./runtime ./schema ./cmd/effectusd
+          ./adapters/postgres ./adapters/amqp ./adapters/mysql ./adapters/grpc
 
   formal:
     runs-on: ubuntu-latest
@@ -408,45 +399,12 @@ jobs:
           cargo install just --version 1.38.0 --locked
           curl --fail --location --output /tmp/tla2tools.jar \
             https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
+          echo "eabd140a70f49eb9305a3bd3f3df944eddf87e5a90d329789085f8953a80533a  /tmp/tla2tools.jar" | sha256sum --check
           printf '#!/bin/sh\nexec java -cp /tmp/tla2tools.jar tlc2.TLC "$@"\n' |
             sudo tee /usr/local/bin/tlc >/dev/null
           sudo chmod 0755 /usr/local/bin/tlc
       - name: Model checks
         run: just formal-check
-
-  kafka:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Start pinned Redpanda
-        run: |
-          docker run --detach --name redpanda -p 9092:9092 \
-            docker.redpanda.com/redpandadata/redpanda:v24.3.5@sha256:8b2802411074676c96a81eb65483b29e63a212673023869e91fd41d728aaa278 \
-            redpanda start --overprovisioned --smp 1 --memory 512M \
-            --reserve-memory 0M --node-id 0 --check=false \
-            --kafka-addr 0.0.0.0:9092 \
-            --advertise-kafka-addr localhost:9092
-          for attempt in $(seq 1 60); do
-            docker exec redpanda rpk cluster info && exit 0
-            sleep 2
-          done
-          docker logs redpanda
-          exit 1
-      - name: Kafka commit and restart proof
-        env:
-          KAFKA_BROKERS: localhost:9092
-        run: >-
-          go test -tags=integration ./adapters/kafka
-          -run TestKafkaConsumerGroupCommitAndRestart -count=1
-      - name: Stop Redpanda
-        if: always()
-        run: docker rm --force redpanda
 
   integration:
     runs-on: ubuntu-latest
@@ -569,89 +527,6 @@ jobs:
           cache: true
       - name: Race-enabled runtime checks
         run: go test -race ./runtime ./schema ./schema/verb ./cmd/effectusd
-
-  kafka:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Start pinned Redpanda broker
-        run: |
-          docker run -d --name redpanda -p 9092:9092 \
-            redpandadata/redpanda:v24.2.18@sha256:0270951e8793c77f0dd9178d137198018fa7ffd920e5a2a3b02a050ec76195b8 \
-            redpanda start --overprovisioned --smp 1 --memory 512M \
-            --reserve-memory 0M --node-id 0 --check=false \
-            --kafka-addr PLAINTEXT://0.0.0.0:9092 \
-            --advertise-kafka-addr PLAINTEXT://127.0.0.1:9092
-          for i in $(seq 1 60); do
-            docker exec redpanda rpk cluster health >/dev/null 2>&1 && exit 0
-            sleep 2
-          done
-          docker logs redpanda
-          exit 1
-      - name: Kafka commit and restart integration test
-        env:
-          KAFKA_BROKERS: localhost:9092
-        run: |
-          test -n "$KAFKA_BROKERS"
-          go test -tags=integration ./adapters/kafka \
-            -run '^TestKafkaConsumerGroupCommitAndRestart$' -count=1
-      - name: Stop Redpanda
-        if: always()
-        run: docker rm -f redpanda
-
-  helm:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Lint and render chart fixtures
-        run: |
-          image=alpine/helm:3.17.0@sha256:93aaa4b514d91720861dd6c9af51359013b178963a47ab421b7fa648ccc7de80
-          common='--set image.tag=test --set postgres.existingSecret=pg --set api.existingSecret=api'
-          docker run --rm -v "$PWD:/work" -w /work "$image" lint charts/effectusd \
-            --set image.tag=test --set postgres.existingSecret=pg --set api.existingSecret=api \
-            --set bundle.ociRef=repo/bundle@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-            --set bundle.signatureVerifier=/bin/verify
-          docker run --rm -v "$PWD:/work" -w /work "$image" template effectusd charts/effectusd $common \
-            --set bundle.ociRef=repo/bundle@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-            --set bundle.signatureVerifier=/bin/verify > /tmp/default.yaml
-          docker run --rm -v "$PWD:/work" -w /work "$image" template effectusd charts/effectusd $common \
-            --set config.enabled=true --set config.contents='bundle: {}' > /tmp/config.yaml
-          docker run --rm -v "$PWD:/work" -w /work "$image" template effectusd charts/effectusd $common \
-            --set grpc.enabled=true --set grpc.existingTLSSecret=tls \
-            --set bundle.ociRef=repo/bundle@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-            --set bundle.signatureVerifier=/bin/verify > /tmp/grpc.yaml
-          docker run --rm -v "$PWD:/work" -w /work "$image" template effectusd charts/effectusd $common \
-            --set persistence.enabled=true \
-            --set bundle.ociRef=repo/bundle@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-            --set bundle.signatureVerifier=/bin/verify > /tmp/persistence.yaml
-          cat /tmp/default.yaml /tmp/config.yaml /tmp/grpc.yaml /tmp/persistence.yaml > rendered.yaml
-      - name: Validate rendered Kubernetes resources
-        run: >-
-          docker run --rm -v "$PWD:/work" -w /work
-          ghcr.io/yannh/kubeconform:v0.6.7@sha256:0925177fb05b44ce18574076141b5c3d83235e1904d3f952182ac99ddc45762c
-          -strict -summary rendered.yaml
-
-  formal:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install pinned TLC and just
-        run: |
-          cargo install just --version 1.40.0 --locked
-          curl --fail --location --output /tmp/tla2tools.jar \
-            https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
-          printf '#!/bin/sh\nexec java -cp /tmp/tla2tools.jar tlc2.TLC "$@"\n' | sudo tee /usr/local/bin/tlc
-          sudo chmod +x /usr/local/bin/tlc
-      - name: Check formal models
-        run: just formal-check
 
   s3-adapter:
     runs-on: ubuntu-latest

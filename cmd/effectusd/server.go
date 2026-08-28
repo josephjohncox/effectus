@@ -107,14 +107,6 @@ func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store fa
 func (s *serverState) SetCheckedEngine(engine *effectusruntime.Engine) {
 	s.mu.Lock()
 	s.checkedEngine = engine
-	// Production status reports the checked runtime publication identity. The
-	// daemon-local generation remains only for the engine-nil embedded path.
-	if engine != nil && s.generation != nil {
-		if digest := engine.ActiveGenerationDigest(); digest != "" {
-			s.generation.bundleDigest = digest
-			s.generation.publishedAt = time.Now().UTC()
-		}
-	}
 	s.mu.Unlock()
 }
 
@@ -1278,6 +1270,7 @@ func factConfigSummary(config factStoreConfig) *factStoreConfigSummary {
 type statusResponse struct {
 	GenerationID           uint64                  `json:"generation_id"`
 	ArtifactDigest         string                  `json:"artifact_digest"`
+	BundleDigest           string                  `json:"bundle_digest"`
 	BundleGenerationDigest string                  `json:"bundle_generation_digest"`
 	EngineGenerationDigest string                  `json:"engine_generation_digest,omitempty"`
 	Phase                  processPhase            `json:"phase"`
@@ -1373,15 +1366,22 @@ func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 	engine := s.checkedEngine
 	s.mu.RUnlock()
 	engineDigest := ""
+	bundleDigest := generation.bundleDigest
 	if engine != nil {
-		engineDigest = engine.ActiveGenerationDigest()
+		if publication := engine.ActiveGeneration(); publication != nil {
+			engineDigest = publication.GenerationDigest
+			if publication.BundleDigest != "" {
+				bundleDigest = publication.BundleDigest
+			}
+		}
 	}
 	runtimeFacts := summarizeRuntimeFacts(generation.schemaTypes)
 	combinedFacts := mergeFactTypeSummaries(runtimeFacts, bundle.FactTypes)
 	resp := statusResponse{
 		GenerationID:           generation.id,
 		ArtifactDigest:         generation.bundleDigest,
-		BundleGenerationDigest: generation.bundleDigest,
+		BundleDigest:           bundleDigest,
+		BundleGenerationDigest: bundleDigest,
 		EngineGenerationDigest: engineDigest,
 		Phase:                  phase,
 		Bundle: &bundleSummary{
@@ -2768,26 +2768,21 @@ const uiHTML = `<!doctype html>
       URL.revokeObjectURL(url);
     }
 
-    const setRuleHotloadState = (enabled) => {
-      hotloadEnabled = !!enabled;
+    const setRuleHotloadState = () => {
+      hotloadEnabled = false;
       const status = document.getElementById("rule-hotload-status");
       const note = document.getElementById("rule-hotload-note");
       const typecheckBtn = document.getElementById("rule-validate-btn");
       const hotloadBtn = document.getElementById("rule-hotload-btn");
       const historyStatus = document.getElementById("rule-history-status");
-      const statusText = enabled ? "hotload enabled" : "hotload disabled";
       if (status) {
-        status.textContent = statusText;
-        status.className = "pill " + (enabled ? "good" : "bad");
+        status.textContent = "candidate validation available";
+        status.className = "pill good";
       }
-      if (note) {
-        note.textContent = enabled
-          ? "Typecheck and hot-load rules against the active schema + verbs."
-          : "Enable with --rules-hotload (or api.hotload_rules in config) to use the editor.";
-      }
-      if (typecheckBtn) typecheckBtn.disabled = !enabled;
-      if (hotloadBtn) hotloadBtn.disabled = !enabled;
-      if (historyStatus) historyStatus.textContent = enabled ? "idle" : "disabled";
+      if (note) note.textContent = "Validate candidates against the active schema and verbs. Redeploy to activate a candidate.";
+      if (typecheckBtn) typecheckBtn.disabled = false;
+      if (hotloadBtn) hotloadBtn.disabled = true;
+      if (historyStatus) historyStatus.textContent = "immutable";
     };
 
     const highlightRuleLine = (line) => {

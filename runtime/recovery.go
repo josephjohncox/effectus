@@ -65,7 +65,7 @@ func (worker *RecoveryWorker) RunOnce(ctx context.Context) (int, error) {
 		worker.observe(RecoveryObservation{Err: err})
 		return 0, fmt.Errorf("lease recovery executions: %w", err)
 	}
-	worker.observe(RecoveryObservation{Backlog: len(leases)})
+	worker.observe(RecoveryObservation{BacklogMeasured: true, Backlog: len(leases)})
 	if len(leases) > batchSize {
 		return 0, fmt.Errorf("recovery lease store returned %d executions, limit is %d", len(leases), batchSize)
 	}

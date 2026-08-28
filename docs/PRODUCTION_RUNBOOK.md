@@ -48,7 +48,8 @@ Use expand and contract migrations across separate releases. Deploy the compatib
 A schema rollback can lose data or fail after a contract migration. Restore a backup when a down migration is not proven safe.
 
 Normal startup performs read-only schema validation.
-Startup fails if migration version 10003 is not present.
+Startup requires every embedded migration through version 10004.
+Use `--database-migrations=validate-only` to validate a database and exit.
 
 - `GET /healthz` checks liveness.
 - `GET /readyz` checks the active bundle, schema, and verb registry.
@@ -61,19 +62,21 @@ Alert on PostgreSQL waits and sustained pool saturation. Use `effectusd_database
 
 1. Stop new external HTTP admission at the ingress.
 2. Wait for the Service endpoints to remove the old pod.
-3. Let the Kafka consumer finish its current record.
-4. Confirm that the consumer commits the completed offset.
-5. Start the Helm upgrade.
-6. Wait for the old pod to finish its shutdown deadline.
-7. Wait for the new pod to pass readiness.
-8. Verify the generation digest and Kafka consumer-group position.
+3. Record the Kafka consumer-group position.
+4. Start the Helm upgrade.
+5. Wait for the old pod to finish its shutdown deadline.
+6. Wait for the new pod to pass readiness.
+7. Verify the generation digest and Kafka consumer-group position.
+8. Reconcile an interrupted record with its stable delivery ID.
 9. Restore external HTTP admission.
 
 The default shutdown timeout is 30 seconds. The chart sets `terminationGracePeriodSeconds` to 45 seconds.
 
 Keep the grace period greater than the shutdown timeout. The margin lets Kubernetes deliver SIGTERM and finish container cleanup.
 
-The daemon stops HTTP admission and drains active HTTP handlers with the configured shutdown context. It also stops recovery and Kafka workers.
+The daemon stops HTTP admission and drains active HTTP handlers with the configured shutdown context. It also cancels recovery and Kafka workers.
+
+Cancellation can interrupt an active Kafka handler or commit. The record stays uncommitted and the new consumer replays it.
 
 If the deadline expires, the daemon reports the error and closes the HTTP server. Investigate the incomplete request before replay.
 
@@ -202,6 +205,74 @@ Back up all tables with the `effectus_` prefix. Include these control tables:
 
 Also back up PostgreSQL roles, grants, extensions, and database parameters. Keep the immutable bundle and release artifacts for every retained generation.
 
+Run these read-only checks on the source before backup and on the restored database. Compare every row count.
+
+```sql
+BEGIN TRANSACTION READ ONLY;
+SELECT 'execution_artifacts' AS table_name, count(*) AS row_count FROM effectus_execution_artifacts
+UNION ALL SELECT 'rule_generations', count(*) FROM effectus_rule_generations
+UNION ALL SELECT 'executions', count(*) FROM effectus_executions
+UNION ALL SELECT 'execution_plans', count(*) FROM effectus_execution_plans
+UNION ALL SELECT 'fact_applications', count(*) FROM effectus_fact_applications
+UNION ALL SELECT 'fact_snapshots', count(*) FROM effectus_fact_snapshots
+UNION ALL SELECT 'saga_instances', count(*) FROM effectus_saga_instances
+UNION ALL SELECT 'saga_steps', count(*) FROM effectus_saga_steps
+UNION ALL SELECT 'saga_outbox', count(*) FROM effectus_saga_outbox
+UNION ALL SELECT 'saga_attempts', count(*) FROM effectus_saga_attempts
+UNION ALL SELECT 'fencing_counters', count(*) FROM effectus_fencing_counters
+UNION ALL SELECT 'fencing_leases', count(*) FROM effectus_fencing_leases
+UNION ALL SELECT 'kafka_deliveries', count(*) FROM effectus_kafka_deliveries
+ORDER BY table_name;
+COMMIT;
+```
+
+Run these referential-integrity checks after restore. Each query must return zero.
+
+```sql
+SELECT count(*) AS orphan_executions
+FROM effectus_executions AS e
+LEFT JOIN effectus_execution_artifacts AS a USING (generation_digest)
+WHERE a.generation_digest IS NULL;
+
+SELECT count(*) AS orphan_plans
+FROM effectus_execution_plans AS p
+LEFT JOIN effectus_executions AS e USING (execution_id)
+LEFT JOIN effectus_saga_instances AS s USING (saga_id)
+WHERE e.execution_id IS NULL OR s.saga_id IS NULL;
+
+SELECT count(*) AS orphan_facts
+FROM (
+  SELECT execution_id FROM effectus_fact_applications
+  UNION ALL
+  SELECT execution_id FROM effectus_fact_snapshots
+) AS f
+LEFT JOIN effectus_executions AS e USING (execution_id)
+WHERE e.execution_id IS NULL;
+
+SELECT count(*) AS orphan_saga_records
+FROM (
+  SELECT step.saga_id
+  FROM effectus_saga_steps AS step
+  LEFT JOIN effectus_saga_instances AS saga USING (saga_id)
+  WHERE saga.saga_id IS NULL
+  UNION ALL
+  SELECT outbox.saga_id
+  FROM effectus_saga_outbox AS outbox
+  LEFT JOIN effectus_saga_instances AS saga USING (saga_id)
+  WHERE saga.saga_id IS NULL
+) AS orphan;
+
+SELECT count(*) AS orphan_attempts
+FROM effectus_saga_attempts AS attempt
+LEFT JOIN effectus_saga_outbox AS outbox USING (dispatch_id)
+WHERE outbox.dispatch_id IS NULL;
+
+SELECT count(*) AS orphan_fencing_leases
+FROM effectus_fencing_leases AS lease
+LEFT JOIN effectus_fencing_counters AS counter USING (authority, resource)
+WHERE counter.authority IS NULL;
+```
+
 PITR requires continuous WAL archiving, a tested base backup, retention beyond the recovery window, and synchronized time.
 
 The service owner defines the RPO and RTO. The database owner confirms that backup frequency and restore capacity meet them.
@@ -214,7 +285,7 @@ Record the approved RPO, RTO, backup owner, restore owner, and escalation contac
 2. Select a restore point before the incident.
 3. Restore PostgreSQL and all required roles into an isolated environment.
 4. Restore the exact image, bundle, verifier policy, and extension artifacts.
-5. Run `effectusd --database-migrations=validate` with the restored database.
+5. Run `effectusd --database-migrations=validate-only` with the restored database.
 6. Compare the migration version with the release requirement.
 7. Run the blocked-state and Kafka ledger queries.
 8. Verify artifact digests for every active or referenced generation.
@@ -229,7 +300,8 @@ A completed execution must not run again under a new identity. Resume accepted o
 
 Preserve blocked executions and their artifacts. Do not change their state with ad hoc SQL.
 
-Run a restore drill at least each quarter. Measure the achieved RPO and RTO, and record migration validation and Kafka reconciliation evidence.
+Run a restore drill at least each quarter. Measure the achieved RPO and RTO.
+Record the drill date, restore point, backup ID, release digest, bundle digest, migration output, SQL output, Kafka reconciliation, RPO, RTO, owner, and approval.
 
 ## Blocked execution inspection
 

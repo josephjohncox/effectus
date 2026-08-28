@@ -20,10 +20,16 @@ func TestDocumentedCompilerCommandsExistAndHelpIsSorted(t *testing.T) {
 	compilerSection := strings.SplitN(string(data), "## effectusd - Runtime Daemon", 2)[0]
 	headings := regexp.MustCompile(`(?m)^#### ([a-z][a-z0-9-]+)$`).FindAllStringSubmatch(compilerSection, -1)
 	require.NotEmpty(t, headings)
+	seen := make(map[string]struct{}, len(headings))
 	for _, heading := range headings {
-		_, ok := commands[heading[1]]
-		require.Truef(t, ok, "documented compiler command %s has no executable definition", heading[1])
+		name := heading[1]
+		_, duplicate := seen[name]
+		require.Falsef(t, duplicate, "compiler command %s is documented more than once", name)
+		seen[name] = struct{}{}
+		_, ok := commands[name]
+		require.Truef(t, ok, "documented compiler command %s has no executable definition", name)
 	}
+	require.Contains(t, compilerSection, "effectusc migrate-workflows [--output workflow.effx] legacy-workflows.json")
 
 	names := sortedCommandNames()
 	expected := append([]string(nil), names...)

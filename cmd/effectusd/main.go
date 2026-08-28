@@ -78,11 +78,7 @@ var (
 	reloadInterval           = flag.Duration("reload-interval", 0, "Deprecated; checked execution requires immutable redeployment")
 	shutdownTimeout          = flag.Duration("shutdown-timeout", 30*time.Second, "Deadline for graceful shutdown and queue drain")
 	migrateOnly              = flag.Bool("migrate-only", false, "Apply PostgreSQL schema migrations and exit")
-	maintenancePrune         = flag.Bool("maintenance-prune", false, "Prune retained terminal durable records and exit")
-	maintenanceDryRun        = flag.Bool("maintenance-dry-run", true, "Report maintenance deletions without changing data")
-	maintenanceRetention     = flag.Duration("maintenance-retention", 30*24*time.Hour, "Minimum age of terminal records eligible for pruning")
-	maintenanceBatch         = flag.Int("maintenance-batch", 1000, "Maximum executions or Kafka records pruned per transaction")
-	databaseMigrations       = flag.String("database-migrations", "validate", "Database migration mode (validate, apply, legacy-apply)")
+	databaseMigrations       = flag.String("database-migrations", "validate", "Database migration mode (validate, validate-only, apply, legacy-apply)")
 	databaseMaxOpen          = flag.Int("database-max-open", 20, "Maximum open PostgreSQL connections")
 	databaseMaxIdle          = flag.Int("database-max-idle", 5, "Maximum idle PostgreSQL connections")
 	databaseMaxLifetime      = flag.Duration("database-max-lifetime", 30*time.Minute, "Maximum PostgreSQL connection lifetime")
@@ -234,19 +230,15 @@ func main() {
 	}
 
 	if strings.TrimSpace(*kafkaDeliveryLedger) != "" || strings.TrimSpace(*kafkaPoisonAudit) != "" {
-		fmt.Fprintln(os.Stderr, "Warning: Kafka file-ledger settings are ignored; PostgreSQL table effectus_kafka_deliveries is authoritative")
+		fmt.Fprintln(os.Stderr, "Error: --kafka-delivery-ledger and --kafka-poison-audit are no longer supported; remove them because PostgreSQL table effectus_kafka_deliveries is authoritative")
+		os.Exit(1)
 	}
 	if err := validateDatabasePoolConfig(); err != nil {
 		fmt.Fprintf(os.Stderr, "Invalid database pool configuration: %v\n", err)
 		os.Exit(1)
 	}
-	if *migrateOnly || *maintenancePrune {
-		if err := runDatabaseMaintenance(context.Background()); err != nil {
-			fmt.Fprintln(os.Stderr, "effectusd_maintenance_error_total 1")
-			fmt.Fprintf(os.Stderr, "Database maintenance failed: %v\n", err)
-			os.Exit(1)
-		}
-		return
+	if *migrateOnly {
+		*databaseMigrations = "apply"
 	}
 
 	if err := validateDatabaseSettings(databaseSettingsFromFlags()); err != nil {
@@ -517,7 +509,7 @@ func main() {
 		recoveryWorker.Observer = metrics
 	}
 	if executionDB != nil {
-		metricsDB.Store(executionDB)
+		setMetricsDatabase(executionDB)
 	}
 
 	var metricsServer *http.Server
