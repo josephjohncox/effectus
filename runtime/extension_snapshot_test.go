@@ -95,12 +95,12 @@ func TestFailedExtensionReloadCleansCandidateAndKeepsActiveSnapshot(t *testing.T
 	runtime.EnableLegacyExecutionForCompatibility()
 	runtime.RegisterExtensionLoader(extension)
 	require.NoError(t, runtime.CompileAndValidate(t.Context()))
-	active := runtime.compiledUnit
+	active := runtime.activeGeneration
 	extension.mu.Lock()
 	extension.source = []byte(`flow "broken" priority 1 { when {`)
 	extension.mu.Unlock()
 	require.Error(t, runtime.HotReload(t.Context()))
-	require.Same(t, active, runtime.compiledUnit)
+	require.Same(t, active, runtime.activeGeneration)
 	extension.mu.Lock()
 	require.Len(t, extension.executors, 2)
 	first, second := extension.executors[0], extension.executors[1]

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/effectus/effectus-go/compiler"
 	effectusv1 "github.com/effectus/effectus-go/gen/effectus/v1"
 	"github.com/effectus/effectus-go/schema"
 	"google.golang.org/grpc"
@@ -118,7 +119,10 @@ func (service *EngineExecutionService) ExecuteRuleset(ctx context.Context, reque
 
 func (service *EngineExecutionService) activeGenerationDigest() (string, error) {
 	service.Engine.runtime.mu.RLock()
-	unit := service.Engine.runtime.compiledUnit
+	var unit *compiler.CompiledUnit
+	if service.Engine.runtime.activeGeneration != nil {
+		unit = service.Engine.runtime.activeGeneration.unit
+	}
 	service.Engine.runtime.mu.RUnlock()
 	if unit == nil || unit.CheckedIR == nil {
 		return "", fmt.Errorf("no checked generation")

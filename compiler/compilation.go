@@ -53,12 +53,13 @@ type CompiledUnit struct {
 
 // CompiledVerbSpec represents a validated verb specification
 type CompiledVerbSpec struct {
-	Spec            *verb.Spec
-	ExecutorType    ExecutorType
-	ExecutorConfig  ExecutorConfig
-	Dependencies    []string // Other verbs this depends on
-	TypeSignature   *TypeSignature
-	ValidationRules []ValidationRule
+	Spec               *verb.Spec
+	ExecutorType       ExecutorType
+	ExecutorConfig     ExecutorConfig
+	ExecutorDescriptor *loader.ExecutorDescriptor
+	Dependencies       []string // Other verbs this depends on
+	TypeSignature      *TypeSignature
+	ValidationRules    []ValidationRule
 }
 
 // ExecutorType defines how a verb should be executed. Checked extension
@@ -79,6 +80,25 @@ const (
 type ExecutorConfig interface {
 	GetType() ExecutorType
 	Validate() error
+}
+
+// DescriptorExecutorConfig carries immutable loader output until runtime
+// constructs and owns the transport resource.
+type DescriptorExecutorConfig struct {
+	Descriptor loader.ExecutorDescriptor
+}
+
+func (config *DescriptorExecutorConfig) GetType() ExecutorType {
+	if config == nil {
+		return ""
+	}
+	return ExecutorType(strings.ToLower(strings.TrimSpace(config.Descriptor.Type)))
+}
+func (config *DescriptorExecutorConfig) Validate() error {
+	if config == nil || strings.TrimSpace(config.Descriptor.Type) == "" {
+		return fmt.Errorf("executor descriptor type is required")
+	}
+	return nil
 }
 
 // LocalExecutorConfig for in-process execution
@@ -411,7 +431,7 @@ func (c *ExtensionCompiler) CompileSnapshot(ctx context.Context, snapshot *loade
 	}
 	sort.Strings(verbNames)
 	for _, name := range verbNames {
-		compiled, errs, warnings := c.compileVerbSpec(name, allVerbs[name])
+		compiled, errs, warnings := c.compileVerbSpec(name, allVerbs[name], candidateTarget.descriptors[name])
 		if len(errs) > 0 {
 			result.Success = false
 			result.Errors = append(result.Errors, errs...)
@@ -510,12 +530,12 @@ func (c *ExtensionCompiler) getAllVerbs(verbRegistry *verb.Registry) map[string]
 	return result
 }
 
-func (c *ExtensionCompiler) compileVerbSpec(name string, spec *verb.Spec) (*CompiledVerbSpec, []CompilationError, []CompilationWarning) {
+func (c *ExtensionCompiler) compileVerbSpec(name string, spec *verb.Spec, descriptor loader.ExecutorDescriptor) (*CompiledVerbSpec, []CompilationError, []CompilationWarning) {
 	var errors []CompilationError
 	var warnings []CompilationWarning
 
 	// Determine executor type and config
-	executorType, config, err := c.determineExecutorConfig(spec)
+	executorType, config, err := c.determineExecutorConfig(spec, descriptor)
 	if err == nil && config != nil {
 		err = config.Validate()
 	}
@@ -549,17 +569,25 @@ func (c *ExtensionCompiler) compileVerbSpec(name string, spec *verb.Spec) (*Comp
 		return nil, errors, warnings
 	}
 
-	return &CompiledVerbSpec{
+	compiled := &CompiledVerbSpec{
 		Spec:           spec,
 		ExecutorType:   executorType,
 		ExecutorConfig: config,
 		TypeSignature:  typeSignature,
 		Dependencies:   c.extractVerbDependencies(spec),
-	}, errors, warnings
+	}
+	if strings.TrimSpace(descriptor.Type) != "" {
+		captured := descriptor
+		compiled.ExecutorDescriptor = &captured
+	}
+	return compiled, errors, warnings
 }
 
-func (c *ExtensionCompiler) determineExecutorConfig(spec *verb.Spec) (ExecutorType, ExecutorConfig, error) {
-	// Analyze the spec to determine appropriate executor
+func (c *ExtensionCompiler) determineExecutorConfig(spec *verb.Spec, descriptor loader.ExecutorDescriptor) (ExecutorType, ExecutorConfig, error) {
+	if strings.TrimSpace(descriptor.Type) != "" {
+		config := &DescriptorExecutorConfig{Descriptor: descriptor}
+		return config.GetType(), config, nil
+	}
 	if spec.Executor != nil {
 		// Has implementation - use local executor
 		return ExecutorLocal, &LocalExecutorConfig{

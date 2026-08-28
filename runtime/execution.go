@@ -19,7 +19,9 @@ import (
 	"github.com/effectus/effectus-go/loader"
 	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/schema/fencing"
+	"github.com/effectus/effectus-go/schema/ledger"
 	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/effectus/effectus-go/schema/workflow"
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -35,13 +37,13 @@ import (
 type ExecutionRuntime struct {
 	extensionManager     *loader.ExtensionManager
 	compiler             *compiler.ExtensionCompiler
-	compiledUnit         *compiler.CompiledUnit
+	activeGeneration     *ExecutionGeneration
+	generationMetadata   GenerationMetadata
 	executors            map[compiler.ExecutorType]ExecutorFactory
-	workflowStore        schema.OutboxStore
+	workflowStore        workflow.OutboxStore
 	workflowFencing      fencing.Provider
 	workflowOptions      schema.DispatcherOptions
 	engine               *Engine
-	snapshotManager      loader.ExtensionSnapshotManager
 	allowLegacyExecution bool
 	mu                   sync.RWMutex
 	compileMu            sync.Mutex
@@ -49,6 +51,23 @@ type ExecutionRuntime struct {
 	closeOnce            sync.Once
 	closeErr             error
 	state                RuntimeState
+}
+
+// GenerationMetadata is presentation metadata published with executable state.
+type GenerationMetadata struct {
+	Ruleset      string `json:"ruleset"`
+	Version      string `json:"version"`
+	BundleDigest string `json:"bundle_digest,omitempty"`
+}
+
+// ExecutionGeneration is the sole published production generation. Its unit
+// and extension snapshot are immutable and are retired together.
+type ExecutionGeneration struct {
+	unit             *compiler.CompiledUnit
+	GenerationDigest string `json:"generation_digest"`
+	IRDigest         string `json:"ir_digest"`
+	GenerationMetadata
+	PublishedAt time.Time `json:"published_at"`
 }
 
 // RuntimeState represents the current state of the runtime
@@ -100,6 +119,8 @@ func (er *ExecutionRuntime) Close() error {
 			factories = append(factories, factory)
 		}
 		engine := er.engine
+		generation := er.activeGeneration
+		er.activeGeneration = nil
 		er.mu.Unlock()
 
 		if engine != nil {
@@ -115,7 +136,9 @@ func (er *ExecutionRuntime) Close() error {
 				execution.mu.Unlock()
 			}
 		}
-		er.closeErr = errors.Join(er.closeErr, er.snapshotManager.Close())
+		if generation != nil && generation.unit != nil && generation.unit.ExtensionSnapshot != nil {
+			er.closeErr = errors.Join(er.closeErr, generation.unit.ExtensionSnapshot.Retire())
+		}
 		for _, factory := range factories {
 			if closer, ok := factory.(interface{ Close() error }); ok {
 				er.closeErr = errors.Join(er.closeErr, closer.Close())
@@ -128,12 +151,135 @@ func (er *ExecutionRuntime) Close() error {
 	return er.closeErr
 }
 
-// RegisterExtensionLoader adds an extension loader to the runtime
-func (er *ExecutionRuntime) RegisterExtensionLoader(loader loader.Loader) {
-	er.extensionManager.AddLoader(loader)
+// RegisterExtensionLoader adds an extension loader to the runtime.
+func (er *ExecutionRuntime) RegisterExtensionLoader(extensionLoader loader.Loader) {
+	er.extensionManager.AddLoader(extensionLoader)
 }
 
-// RegisterExecutorFactory registers a factory for creating executors
+// ConfigureGenerationMetadata freezes bundle metadata into the next executable
+// publication. Metadata cannot change independently after publication.
+func (er *ExecutionRuntime) ConfigureGenerationMetadata(metadata GenerationMetadata) error {
+	if er == nil {
+		return fmt.Errorf("execution runtime is required")
+	}
+	er.mu.Lock()
+	defer er.mu.Unlock()
+	if er.activeGeneration != nil {
+		return fmt.Errorf("generation metadata cannot change after publication")
+	}
+	metadata.Ruleset = strings.TrimSpace(metadata.Ruleset)
+	metadata.Version = strings.TrimSpace(metadata.Version)
+	if metadata.Ruleset == "" {
+		metadata.Ruleset = "default"
+	}
+	if metadata.Version == "" {
+		metadata.Version = "active"
+	}
+	er.generationMetadata = metadata
+	return nil
+}
+
+// ActiveGeneration returns a copy of the one production publication view.
+func (er *ExecutionRuntime) ActiveGeneration() *ExecutionGeneration {
+	if er == nil {
+		return nil
+	}
+	er.mu.RLock()
+	defer er.mu.RUnlock()
+	if er.activeGeneration == nil {
+		return nil
+	}
+	copy := *er.activeGeneration
+	copy.unit = nil
+	return &copy
+}
+
+func (er *ExecutionRuntime) publishGeneration(unit *compiler.CompiledUnit, snapshot *loader.ExtensionSnapshot, expectedDigest string) error {
+	if unit == nil || unit.CheckedIR == nil || snapshot == nil || unit.ExtensionSnapshot != snapshot {
+		return fmt.Errorf("complete checked unit and executor snapshot are required")
+	}
+	if err := materializeExecutorDescriptors(unit, snapshot); err != nil {
+		return err
+	}
+	artifact, err := executionArtifactForUnit(unit)
+	if err != nil {
+		return fmt.Errorf("build generation identity: %w", err)
+	}
+	er.mu.Lock()
+	if er.state == StateClosing || er.state == StateClosed {
+		er.mu.Unlock()
+		return fmt.Errorf("runtime is closed")
+	}
+	currentDigest := ""
+	if er.activeGeneration != nil {
+		currentDigest = er.activeGeneration.GenerationDigest
+	}
+	if currentDigest != expectedDigest {
+		er.mu.Unlock()
+		return fmt.Errorf("generation publication conflict: expected %q, active %q", expectedDigest, currentDigest)
+	}
+	metadata := er.generationMetadata
+	if metadata.Ruleset == "" {
+		metadata.Ruleset = "default"
+	}
+	if metadata.Version == "" {
+		metadata.Version = "active"
+	}
+	previous := er.activeGeneration
+	er.activeGeneration = &ExecutionGeneration{
+		unit: unit, GenerationDigest: artifact.GenerationDigest, IRDigest: artifact.IRDigest,
+		GenerationMetadata: metadata, PublishedAt: time.Now().UTC(),
+	}
+	er.state = StateReady
+	er.mu.Unlock()
+	if previous != nil && previous.unit != nil && previous.unit.ExtensionSnapshot != nil && previous.unit.ExtensionSnapshot != snapshot {
+		return previous.unit.ExtensionSnapshot.Retire()
+	}
+	return nil
+}
+
+func materializeExecutorDescriptors(unit *compiler.CompiledUnit, snapshot *loader.ExtensionSnapshot) error {
+	for name, compiled := range unit.VerbSpecs {
+		if compiled == nil || compiled.ExecutorDescriptor == nil {
+			continue
+		}
+		descriptor := *compiled.ExecutorDescriptor
+		var implementation loader.VerbExecutor
+		var err error
+		switch strings.ToLower(strings.TrimSpace(descriptor.Type)) {
+		case "http":
+			implementation, err = loader.NewHTTPExecutor(descriptor.Config)
+		case "grpc":
+			implementation, err = loader.NewGRPCExecutor(descriptor.Config)
+		case "stream", "message":
+			implementation, err = loader.NewStreamExecutor(descriptor.Config)
+		case "oci":
+			implementation, err = loader.NewOCIExecutor(name, descriptor.Config)
+		case "mock":
+			implementation = &loader.MockExecutor{Name: "runtime:" + name}
+		case "noop":
+			implementation = &loader.NoOpExecutor{}
+		default:
+			err = fmt.Errorf("unsupported executor descriptor type %q", descriptor.Type)
+		}
+		if err != nil {
+			return fmt.Errorf("construct runtime executor %q: %w", name, err)
+		}
+		compiled.Spec.Executor = implementation
+		compiled.ExecutorType = compiler.ExecutorLocal
+		compiled.ExecutorConfig = &compiler.LocalExecutorConfig{Implementation: implementation}
+		if closer, ok := implementation.(io.Closer); ok {
+			if err := snapshot.AttachCloser(closer); err != nil {
+				_ = closer.Close()
+				return fmt.Errorf("attach runtime executor %q: %w", name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// RegisterExecutorFactory registers a factory for creating executors.
+// Deprecated: descriptor-backed checked execution is constructed by runtime publication.
 func (er *ExecutionRuntime) RegisterExecutorFactory(executorType compiler.ExecutorType, factory ExecutorFactory) {
 	er.executors[executorType] = factory
 }
@@ -144,7 +290,11 @@ func (er *ExecutionRuntime) CompileAndValidate(ctx context.Context) error {
 	defer er.compileMu.Unlock()
 
 	er.mu.Lock()
-	hasActiveGeneration := er.state == StateReady && er.compiledUnit != nil
+	hasActiveGeneration := er.state == StateReady && er.activeGeneration != nil
+	expected := ""
+	if er.activeGeneration != nil {
+		expected = er.activeGeneration.GenerationDigest
+	}
 	if !hasActiveGeneration {
 		er.state = StateCompiling
 	}
@@ -166,16 +316,11 @@ func (er *ExecutionRuntime) CompileAndValidate(ctx context.Context) error {
 		er.markInitialCompilationFailed(hasActiveGeneration)
 		return fmt.Errorf("compilation errors: %v", result.Errors)
 	}
-	er.mu.Lock()
-	if err := er.snapshotManager.Publish(snapshot); err != nil {
-		er.mu.Unlock()
+	if err := er.publishGeneration(result.CompiledUnit, snapshot, expected); err != nil {
 		_ = snapshot.Retire()
 		er.markInitialCompilationFailed(hasActiveGeneration)
-		return fmt.Errorf("publish extension snapshot: %w", err)
+		return fmt.Errorf("publish compiled generation: %w", err)
 	}
-	er.compiledUnit = result.CompiledUnit
-	er.state = StateReady
-	er.mu.Unlock()
 
 	for _, warning := range result.Warnings {
 		log.Printf("Warning: %s in %s: %s", warning.Type, warning.Location, warning.Message)
@@ -197,8 +342,12 @@ func (er *ExecutionRuntime) markInitialCompilationFailed(hasActiveGeneration boo
 // ExecuteVerb executes a specific verb with the given arguments
 func (er *ExecutionRuntime) ExecuteVerb(ctx context.Context, verbName string, args map[string]interface{}) (interface{}, error) {
 	er.mu.RLock()
-	state, unit, allowed := er.state, er.compiledUnit, er.allowLegacyExecution
+	state, generation, allowed := er.state, er.activeGeneration, er.allowLegacyExecution
 	er.mu.RUnlock()
+	var unit *compiler.CompiledUnit
+	if generation != nil {
+		unit = generation.unit
+	}
 	if state != StateReady || unit == nil {
 		return nil, fmt.Errorf("runtime not ready (state: %s)", state)
 	}
@@ -222,7 +371,7 @@ func (er *ExecutionRuntime) EnableLegacyExecutionForCompatibility() {
 
 // ConfigureDurableWorkflowExecution installs the mandatory outbox boundary for
 // checked DURABLE_* workflows. Configure this before execution or hot reload.
-func (er *ExecutionRuntime) ConfigureDurableWorkflowExecution(store schema.OutboxStore, provider fencing.Provider, options schema.DispatcherOptions) error {
+func (er *ExecutionRuntime) ConfigureDurableWorkflowExecution(store workflow.OutboxStore, provider fencing.Provider, options schema.DispatcherOptions) error {
 	if store == nil {
 		return fmt.Errorf("durable workflow outbox store is required")
 	}
@@ -234,19 +383,19 @@ func (er *ExecutionRuntime) ConfigureDurableWorkflowExecution(store schema.Outbo
 	er.workflowFencing = provider
 	er.workflowOptions = options
 	er.mu.Unlock()
-	if ledger, ok := store.(schema.ExecutionLedger); ok {
-		return er.engine.ConfigureLedger(ledger, nil)
+	if durableLedger, ok := store.(ledger.ExecutionLedger); ok {
+		return er.engine.ConfigureLedger(durableLedger, nil)
 	}
 	return nil
 }
 
 // ConfigureExecutionLedger installs durable admission/recovery persistence and
 // an immutable resolver for generations loaded after restart.
-func (er *ExecutionRuntime) ConfigureExecutionLedger(ledger schema.ExecutionLedger, resolver ArtifactResolver) error {
+func (er *ExecutionRuntime) ConfigureExecutionLedger(durableLedger ledger.ExecutionLedger, resolver ArtifactResolver) error {
 	if er == nil {
 		return fmt.Errorf("execution runtime is required")
 	}
-	return er.Engine().ConfigureLedger(ledger, resolver)
+	return er.Engine().ConfigureLedger(durableLedger, resolver)
 }
 
 // ExecuteWorkflow is retained as a fail-closed compatibility method. Durable
@@ -277,21 +426,23 @@ func (er *ExecutionRuntime) GetRuntimeInfo() *RuntimeInfo {
 	er.mu.RLock()
 	defer er.mu.RUnlock()
 
-	info := &RuntimeInfo{
-		State:       er.state,
-		LoaderCount: len(er.extensionManager.GetLoaders()),
-	}
-
-	if er.compiledUnit != nil {
-		info.VerbCount = len(er.compiledUnit.VerbSpecs)
-		info.FunctionCount = len(er.compiledUnit.Functions)
-		if er.compiledUnit.CheckedIR != nil {
-			info.PlanCount = len(er.compiledUnit.CheckedIR.CloneArtifact().Plans)
+	info := &RuntimeInfo{State: er.state, LoaderCount: len(er.extensionManager.GetLoaders())}
+	generation := er.activeGeneration
+	if generation != nil && generation.unit != nil {
+		info.GenerationDigest = generation.GenerationDigest
+		info.IRDigest = generation.IRDigest
+		info.Ruleset = generation.Ruleset
+		info.Version = generation.Version
+		info.BundleDigest = generation.BundleDigest
+		info.PublishedAt = generation.PublishedAt
+		info.VerbCount = len(generation.unit.VerbSpecs)
+		info.FunctionCount = len(generation.unit.Functions)
+		if generation.unit.CheckedIR != nil {
+			info.PlanCount = len(generation.unit.CheckedIR.CloneArtifact().Plans)
 		}
-		info.Dependencies = er.compiledUnit.Dependencies
-		info.Capabilities = er.compiledUnit.Capabilities
+		info.Dependencies = generation.unit.Dependencies
+		info.Capabilities = generation.unit.Capabilities
 	}
-
 	return info
 }
 
@@ -300,6 +451,12 @@ func (er *ExecutionRuntime) HotReload(ctx context.Context) error {
 	er.compileMu.Lock()
 	defer er.compileMu.Unlock()
 	log.Println("Starting hot reload...")
+	er.mu.RLock()
+	expected := ""
+	if er.activeGeneration != nil {
+		expected = er.activeGeneration.GenerationDigest
+	}
+	er.mu.RUnlock()
 
 	snapshot, err := er.extensionManager.Stage(ctx, loader.StageOptions{})
 	if err != nil {
@@ -314,15 +471,10 @@ func (er *ExecutionRuntime) HotReload(ctx context.Context) error {
 		_ = snapshot.Retire()
 		return fmt.Errorf("hot reload failed: %v", result.Errors)
 	}
-	er.mu.Lock()
-	if err := er.snapshotManager.Publish(snapshot); err != nil {
-		er.mu.Unlock()
+	if err := er.publishGeneration(result.CompiledUnit, snapshot, expected); err != nil {
 		_ = snapshot.Retire()
 		return fmt.Errorf("hot reload publish failed: %w", err)
 	}
-	er.compiledUnit = result.CompiledUnit
-	er.state = StateReady
-	er.mu.Unlock()
 
 	if len(result.Warnings) > 0 {
 		for _, warning := range result.Warnings {
@@ -430,13 +582,19 @@ func (er *ExecutionRuntime) executeVerbWithFacts(ctx context.Context, verbName s
 
 // RuntimeInfo provides information about the runtime state
 type RuntimeInfo struct {
-	State         RuntimeState `json:"state"`
-	LoaderCount   int          `json:"loaderCount"`
-	VerbCount     int          `json:"verbCount"`
-	FunctionCount int          `json:"functionCount"`
-	PlanCount     int          `json:"planCount"`
-	Dependencies  []string     `json:"dependencies"`
-	Capabilities  []string     `json:"capabilities"`
+	State            RuntimeState `json:"state"`
+	GenerationDigest string       `json:"generationDigest,omitempty"`
+	IRDigest         string       `json:"irDigest,omitempty"`
+	Ruleset          string       `json:"ruleset,omitempty"`
+	Version          string       `json:"version,omitempty"`
+	BundleDigest     string       `json:"bundleDigest,omitempty"`
+	PublishedAt      time.Time    `json:"publishedAt,omitempty"`
+	LoaderCount      int          `json:"loaderCount"`
+	VerbCount        int          `json:"verbCount"`
+	FunctionCount    int          `json:"functionCount"`
+	PlanCount        int          `json:"planCount"`
+	Dependencies     []string     `json:"dependencies"`
+	Capabilities     []string     `json:"capabilities"`
 }
 
 // ExecutorFactory creates executors for different types

@@ -25,12 +25,12 @@ func TestRestartRecoveryLoadsExactArtifactAndResolver(t *testing.T) {
 	second := NewExecutionRuntime()
 	second.EnableLegacyExecutionForCompatibility()
 	second.mu.Lock()
-	second.compiledUnit, second.state = first.compiledUnit, StateReady
+	second.activeGeneration, second.state = first.activeGeneration, StateReady
 	second.mu.Unlock()
 	require.NoError(t, second.ConfigureDurableWorkflowExecution(outbox, nil, schema.DispatcherOptions{Owner: "second"}))
 	resolver := ArtifactResolverFunc(func(_ context.Context, artifact schema.ExecutionArtifact, checked *ir.Checked) (*compiler.CompiledUnit, error) {
 		require.Equal(t, accepted.GenerationDigest, artifact.GenerationDigest)
-		unit := *first.compiledUnit
+		unit := *first.activeGeneration.unit
 		unit.CheckedIR = checked
 		return &unit, nil
 	})

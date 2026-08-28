@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/ledger"
 )
 
 type RecoveryWorker struct {
 	Engine        *Engine
-	Store         schema.ExecutionLedger
+	Store         ledger.ExecutionLedger
 	Owner         string
 	BatchSize     int
 	LeaseDuration time.Duration

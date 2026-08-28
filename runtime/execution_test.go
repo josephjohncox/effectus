@@ -7,17 +7,40 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/effectus/effectus-go/compiler"
+	"github.com/effectus/effectus-go/invocation"
 	"github.com/effectus/effectus-go/loader"
 	"github.com/effectus/effectus-go/schema"
 	"github.com/stretchr/testify/require"
 )
 
+func TestExecutorDescriptorIsConstructedByRuntimePublication(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "extension.verbs.json")
+	require.NoError(t, os.WriteFile(path, []byte(validWorkflowManifest()), 0o600))
+	runtime := NewExecutionRuntime()
+	runtime.RegisterExtensionLoader(loader.NewJSONVerbLoader("test", path))
+	runtime.RegisterExtensionLoader(loader.NewStaticSourceLoader("workflow", "workflow.effx", []byte(validWorkflowSource("1"))))
+	snapshot, err := runtime.extensionManager.Stage(t.Context(), loader.StageOptions{})
+	require.NoError(t, err)
+	result, err := runtime.compiler.CompileSnapshot(t.Context(), snapshot)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	staged := result.CompiledUnit.VerbSpecs["charge"]
+	require.NotNil(t, staged.ExecutorDescriptor)
+	require.Nil(t, staged.Spec.Executor, "compiler must not construct transport resources")
+	require.NoError(t, runtime.publishGeneration(result.CompiledUnit, snapshot, ""))
+	compiled := runtime.activeGeneration.unit.VerbSpecs["charge"]
+	require.Equal(t, compiler.ExecutorLocal, compiled.ExecutorType)
+	_, described := compiled.Spec.Executor.(invocation.ResolverDescriptorProvider)
+	require.False(t, described, "noop compatibility executors intentionally have no durable resolver")
+}
+
 func TestInitialHotReloadPublishesCheckedEmptyGeneration(t *testing.T) {
 	runtime := NewExecutionRuntime()
 	require.NoError(t, runtime.HotReload(t.Context()))
 	require.Equal(t, StateReady, runtime.GetRuntimeInfo().State)
-	require.NotNil(t, runtime.compiledUnit)
-	require.NotNil(t, runtime.compiledUnit.CheckedIR)
+	require.NotNil(t, runtime.activeGeneration)
+	require.NotNil(t, runtime.activeGeneration.unit.CheckedIR)
 }
 
 func TestExecuteWorkflowRequiresCheckedPlan(t *testing.T) {
@@ -42,24 +65,24 @@ func TestExtensionHotReloadRollsBackRejectedCandidate(t *testing.T) {
 	runtime.RegisterExtensionLoader(fileSourceLoader{path: sourcePath})
 	require.NoError(t, runtime.CompileAndValidate(t.Context()))
 	require.NoError(t, runtime.ConfigureDurableWorkflowExecution(schema.NewInMemoryOutboxStore(), nil, schema.DispatcherOptions{Owner: "test"}))
-	first := runtime.compiledUnit
-	firstDigest := first.CheckedIR.Digest()
+	first := runtime.activeGeneration
+	firstDigest := first.unit.CheckedIR.Digest()
 	require.NoError(t, runtime.ExecuteWorkflowWithIdentity(t.Context(), "test", "execution-1", nil))
 
 	require.NoError(t, os.WriteFile(path, []byte(invalidCapabilityManifest()), 0o600))
 	require.Error(t, runtime.HotReload(t.Context()))
 	require.Equal(t, StateReady, runtime.GetRuntimeInfo().State)
-	require.Same(t, first, runtime.compiledUnit)
-	require.Equal(t, firstDigest, runtime.compiledUnit.CheckedIR.Digest())
+	require.Same(t, first, runtime.activeGeneration)
+	require.Equal(t, firstDigest, runtime.activeGeneration.unit.CheckedIR.Digest())
 	require.Error(t, runtime.CompileAndValidate(t.Context()))
 	require.Equal(t, StateReady, runtime.GetRuntimeInfo().State)
-	require.Same(t, first, runtime.compiledUnit)
+	require.Same(t, first, runtime.activeGeneration)
 
 	require.NoError(t, os.WriteFile(path, []byte(validWorkflowManifest()), 0o600))
 	require.NoError(t, os.WriteFile(sourcePath, []byte(validWorkflowSource("2")), 0o600))
 	require.NoError(t, runtime.HotReload(t.Context()))
-	require.NotSame(t, first, runtime.compiledUnit)
-	require.NotEqual(t, firstDigest, runtime.compiledUnit.CheckedIR.Digest())
+	require.NotSame(t, first, runtime.activeGeneration)
+	require.NotEqual(t, firstDigest, runtime.activeGeneration.unit.CheckedIR.Digest())
 }
 
 func TestCheckedWorkflowResolvesPublishedInitialData(t *testing.T) {
@@ -92,7 +115,7 @@ func TestCheckedWorkflowResolvesPublishedInitialData(t *testing.T) {
 	runtime.RegisterExtensionLoader(loader.NewJSONVerbLoader("test", path))
 	runtime.RegisterExtensionLoader(loader.NewStaticSourceLoader("workflow", "workflow.effx", []byte(`flow "charge-from-config" priority 1 { when {} steps { charge(amount: config.value) } }`)))
 	require.NoError(t, runtime.CompileAndValidate(t.Context()))
-	require.Equal(t, json.Number("7"), runtime.compiledUnit.InitialData["config.value"])
+	require.Equal(t, json.Number("7"), runtime.activeGeneration.unit.InitialData["config.value"])
 	require.NoError(t, runtime.ConfigureDurableWorkflowExecution(schema.NewInMemoryOutboxStore(), nil, schema.DispatcherOptions{Owner: "test"}))
 	require.NoError(t, runtime.ExecuteWorkflowWithIdentity(t.Context(), "test", "initial-data-execution", nil))
 }

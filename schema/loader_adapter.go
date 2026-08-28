@@ -40,6 +40,25 @@ func (la *LoaderAdapter) RegisterVerb(spec loader.VerbSpec, executor loader.Verb
 	return la.verbRegistry.RegisterVerb(verbSpec)
 }
 
+// RegisterVerbDescriptor records a transport contract without constructing a
+// client. The checked runtime materializes the descriptor after compilation.
+func (la *LoaderAdapter) RegisterVerbDescriptor(spec loader.VerbSpec, descriptor loader.ExecutorDescriptor) error {
+	if err := la.RegisterVerb(spec, nil); err != nil {
+		return err
+	}
+	source := verb.SourceInfo{Type: descriptor.Type}
+	switch descriptor.Type {
+	case "http":
+		source.Ref, _ = descriptor.Config["url"].(string)
+	case "grpc":
+		source.Ref, _ = descriptor.Config["address"].(string)
+	case "oci":
+		source.Ref, _ = descriptor.Config["ref"].(string)
+	}
+	la.verbRegistry.SetVerbSource(spec.GetName(), source)
+	return nil
+}
+
 // RegisterFunction implements loader.LoadTarget for function registration
 func (la *LoaderAdapter) RegisterFunction(name string, fn interface{}) error {
 	la.registry.RegisterFunction(name, fn)

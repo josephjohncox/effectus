@@ -9,7 +9,7 @@ import (
 	"github.com/effectus/effectus-go/invocation"
 	"github.com/effectus/effectus-go/ir"
 	"github.com/effectus/effectus-go/loader"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/ledger"
 	"github.com/effectus/effectus-go/schema/verb"
 )
 
@@ -24,7 +24,7 @@ type artifactExecutorEntry struct {
 	ResolverDescriptor map[string]any `json:"resolver_descriptor"`
 }
 
-func (*ManifestArtifactResolver) ResolveArtifact(_ context.Context, artifact schema.ExecutionArtifact, checked *ir.Checked) (*compiler.CompiledUnit, error) {
+func (*ManifestArtifactResolver) ResolveArtifact(_ context.Context, artifact ledger.ExecutionArtifact, checked *ir.Checked) (*compiler.CompiledUnit, error) {
 	var environment ir.Environment
 	if err := json.Unmarshal(artifact.Environment, &environment); err != nil {
 		return nil, fmt.Errorf("decode checked environment: %w", err)

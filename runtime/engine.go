@@ -16,6 +16,7 @@ import (
 	"github.com/effectus/effectus-go/ir"
 	"github.com/effectus/effectus-go/loader"
 	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/ledger"
 )
 
 var (
@@ -89,7 +90,7 @@ type Engine struct {
 
 	mu         sync.Mutex
 	executions map[string]*engineExecution
-	ledger     schema.ExecutionLedger
+	ledger     ledger.ExecutionLedger
 	resolver   ArtifactResolver
 	observer   Observer
 }
@@ -122,8 +123,8 @@ func NewEngine(runtime *ExecutionRuntime) (*Engine, error) {
 
 // ConfigureLedger replaces the development ledger. Configure the same
 // PostgresOutboxStore as both workflow outbox and ledger to enable atomic admission.
-func (engine *Engine) ConfigureLedger(ledger schema.ExecutionLedger, resolver ArtifactResolver) error {
-	if engine == nil || ledger == nil {
+func (engine *Engine) ConfigureLedger(durableLedger ledger.ExecutionLedger, resolver ArtifactResolver) error {
+	if engine == nil || durableLedger == nil {
 		return fmt.Errorf("execution ledger is required")
 	}
 	engine.mu.Lock()
@@ -131,7 +132,7 @@ func (engine *Engine) ConfigureLedger(ledger schema.ExecutionLedger, resolver Ar
 	if len(engine.executions) != 0 {
 		return fmt.Errorf("execution ledger cannot change after admission")
 	}
-	engine.ledger, engine.resolver = ledger, resolver
+	engine.ledger, engine.resolver = durableLedger, resolver
 	return nil
 }
 
@@ -152,13 +153,11 @@ func (engine *Engine) ActiveGenerationDigest() string {
 		return ""
 	}
 	engine.runtime.mu.RLock()
-	unit := engine.runtime.compiledUnit
-	engine.runtime.mu.RUnlock()
-	artifact, err := executionArtifactForUnit(unit)
-	if err != nil {
+	defer engine.runtime.mu.RUnlock()
+	if engine.runtime.activeGeneration == nil {
 		return ""
 	}
-	return artifact.GenerationDigest
+	return engine.runtime.activeGeneration.GenerationDigest
 }
 
 // Execute enters the same state machine for new admissions and recovery.
@@ -315,11 +314,11 @@ func (engine *Engine) admit(ctx context.Context, admission *Admission) (*engineE
 		engine.runtime.mu.RUnlock()
 		return nil, false, false, fmt.Errorf("runtime not ready (state: %s)", state)
 	}
-	if engine.runtime.compiledUnit == nil || engine.runtime.compiledUnit.CheckedIR == nil {
+	if engine.runtime.activeGeneration == nil || engine.runtime.activeGeneration.unit == nil || engine.runtime.activeGeneration.unit.CheckedIR == nil {
 		engine.runtime.mu.RUnlock()
 		return nil, false, false, fmt.Errorf("no checked extension workflow is available")
 	}
-	unit := engine.runtime.compiledUnit
+	unit := engine.runtime.activeGeneration.unit
 	if engine.runtime.workflowStore == nil {
 		engine.runtime.mu.RUnlock()
 		return nil, false, false, fmt.Errorf("checked durable workflow outbox is not configured")
@@ -490,7 +489,10 @@ func (engine *Engine) loadExecutionRecord(ctx context.Context, record schema.Exe
 	resolver := engine.resolver
 	if resolver == nil {
 		engine.runtime.mu.RLock()
-		current := engine.runtime.compiledUnit
+		var current *compiler.CompiledUnit
+		if engine.runtime.activeGeneration != nil {
+			current = engine.runtime.activeGeneration.unit
+		}
 		engine.runtime.mu.RUnlock()
 		if current != nil {
 			if currentArtifact, currentErr := executionArtifactForUnit(current); currentErr == nil && currentArtifact.GenerationDigest == record.GenerationDigest {

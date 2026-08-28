@@ -16,18 +16,19 @@ import (
 	"github.com/effectus/effectus-go/invocation"
 	"github.com/effectus/effectus-go/ir"
 	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/ledger"
 )
 
 // ArtifactResolver reconstructs invocation-aware executor instances from an
 // immutable artifact manifest. Callback-only implementations are not valid
 // durable resolvers.
 type ArtifactResolver interface {
-	ResolveArtifact(context.Context, schema.ExecutionArtifact, *ir.Checked) (*compiler.CompiledUnit, error)
+	ResolveArtifact(context.Context, ledger.ExecutionArtifact, *ir.Checked) (*compiler.CompiledUnit, error)
 }
 
-type ArtifactResolverFunc func(context.Context, schema.ExecutionArtifact, *ir.Checked) (*compiler.CompiledUnit, error)
+type ArtifactResolverFunc func(context.Context, ledger.ExecutionArtifact, *ir.Checked) (*compiler.CompiledUnit, error)
 
-func (function ArtifactResolverFunc) ResolveArtifact(ctx context.Context, artifact schema.ExecutionArtifact, checked *ir.Checked) (*compiler.CompiledUnit, error) {
+func (function ArtifactResolverFunc) ResolveArtifact(ctx context.Context, artifact ledger.ExecutionArtifact, checked *ir.Checked) (*compiler.CompiledUnit, error) {
 	return function(ctx, artifact, checked)
 }
 

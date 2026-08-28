@@ -99,6 +99,20 @@ type LoadTarget interface {
 	RegisterType(name string, typeDef TypeDefinition) error
 }
 
+// ExecutorDescriptor is immutable loader output. It contains no sockets,
+// clients, goroutines, or callbacks.
+type ExecutorDescriptor struct {
+	Type     string
+	VerbName string
+	Config   map[string]interface{}
+}
+
+// DescriptorLoadTarget accepts transport declarations without constructing
+// transport resources. Production staging and compilation use this boundary.
+type DescriptorLoadTarget interface {
+	RegisterVerbDescriptor(VerbSpec, ExecutorDescriptor) error
+}
+
 // SourceLoadTarget receives checked-compiler source files from extensions.
 type SourceLoadTarget interface {
 	RegisterSource(SourceFile) error
@@ -463,11 +477,18 @@ func (jvl *JSONVerbLoader) Load(ctx context.Context, target LoadTarget) error {
 
 	for _, verbSpec := range manifest.Verbs {
 		targetType, targetConfig := resolveVerbTarget(&verbSpec)
+		if descriptorTarget, ok := target.(DescriptorLoadTarget); ok {
+			descriptor := ExecutorDescriptor{Type: targetType, VerbName: verbSpec.Name, Config: cloneDescriptorConfig(targetConfig)}
+			if err := descriptorTarget.RegisterVerbDescriptor(&verbSpec, descriptor); err != nil {
+				return fmt.Errorf("registering verb descriptor %s: %w", verbSpec.Name, err)
+			}
+			continue
+		}
+		// Embedded compatibility targets still receive a concrete executor.
 		executor, err := jvl.createExecutor(targetType, targetConfig, verbSpec.Name)
 		if err != nil {
 			return fmt.Errorf("creating executor for %s: %w", verbSpec.Name, err)
 		}
-
 		if err := target.RegisterVerb(&verbSpec, executor); err != nil {
 			return fmt.Errorf("registering verb %s: %w", verbSpec.Name, err)
 		}
@@ -495,6 +516,23 @@ func (jvl *JSONVerbLoader) createExecutor(targetType string, config map[string]i
 	default:
 		return nil, fmt.Errorf("unsupported executor target: %s", targetType)
 	}
+}
+
+func cloneDescriptorConfig(config map[string]interface{}) map[string]interface{} {
+	if config == nil {
+		return nil
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		return nil
+	}
+	var cloned map[string]interface{}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&cloned); err != nil {
+		return nil
+	}
+	return cloned
 }
 
 func resolveVerbTarget(spec *JSONVerbSpec) (string, map[string]interface{}) {
