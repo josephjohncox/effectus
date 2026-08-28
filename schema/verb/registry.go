@@ -321,30 +321,6 @@ func normalizeDuplicatePolicy(policy string) string {
 	}
 }
 
-func cloneSpec(spec *Spec) *Spec {
-	if spec == nil {
-		return nil
-	}
-	cloned := *spec
-	if spec.ArgTypes != nil {
-		cloned.ArgTypes = make(map[string]string, len(spec.ArgTypes))
-		for name, value := range spec.ArgTypes {
-			cloned.ArgTypes[name] = value
-		}
-	}
-	cloned.RequiredArgs = append([]string(nil), spec.RequiredArgs...)
-	cloned.Resources = append(ResourceSet(nil), spec.Resources...)
-	if spec.StrictArgs != nil {
-		value := *spec.StrictArgs
-		cloned.StrictArgs = &value
-	}
-	if spec.StrictReturn != nil {
-		value := *spec.StrictReturn
-		cloned.StrictReturn = &value
-	}
-	return &cloned
-}
-
 func inferVerbSource(spec *Spec) SourceInfo {
 	if spec == nil || spec.Executor == nil {
 		return SourceInfo{Type: SourceUnknown}

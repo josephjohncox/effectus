@@ -68,6 +68,25 @@ func TestRuntimeConfigRejectsDeprecatedKafkaDeliveryLedger(t *testing.T) {
 	require.ErrorContains(t, applyRuntimeConfig(config, nil), "effectus_kafka_deliveries")
 }
 
+func TestLoadRuntimeConfigReadsDatabasePoolAndMigrationSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+database:
+  migrations: validate
+  max_open: 24
+  max_idle: 6
+  max_lifetime: 20m
+  max_idle_time: 4m
+`), 0o600))
+	config, err := loadRuntimeConfig(path)
+	require.NoError(t, err)
+	require.Equal(t, "validate", config.Database.Migrations)
+	require.Equal(t, 24, *config.Database.MaxOpen)
+	require.Equal(t, 6, *config.Database.MaxIdle)
+	require.Equal(t, "20m", config.Database.MaxLifetime)
+	require.Equal(t, "4m", config.Database.MaxIdleTime)
+}
+
 func TestLoadRuntimeConfigReadsGeneratedGRPCServiceSettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(`

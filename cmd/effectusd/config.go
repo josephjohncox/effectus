@@ -23,13 +23,13 @@ type runtimeConfig struct {
 	API           apiConfig                     `yaml:"api" json:"api"`
 	Facts         factsConfig                   `yaml:"facts" json:"facts"`
 	Saga          sagaConfig                    `yaml:"saga" json:"saga"`
+	Database      databaseConfig                `yaml:"database" json:"database"`
 	Verbs         verbConfig                    `yaml:"verbs" json:"verbs"`
 	Extensions    extensionConfig               `yaml:"extensions" json:"extensions"`
 	SchemaSources []adapters.SchemaSourceConfig `yaml:"schema_sources" json:"schema_sources"`
 	FixedTime     string                        `yaml:"fixed_time" json:"fixed_time"`
 	FactSource    string                        `yaml:"fact_source" json:"fact_source"`
 	Kafka         kafkaConfig                   `yaml:"kafka" json:"kafka"`
-	Database      databaseConfig                `yaml:"database" json:"database"`
 }
 
 type bundleConfig struct {
@@ -100,6 +100,11 @@ type kafkaConfig struct {
 }
 
 type databaseConfig struct {
+	Migrations         string `yaml:"migrations" json:"migrations"`
+	MaxOpen            *int   `yaml:"max_open" json:"max_open"`
+	MaxIdle            *int   `yaml:"max_idle" json:"max_idle"`
+	MaxLifetime        string `yaml:"max_lifetime" json:"max_lifetime"`
+	MaxIdleTime        string `yaml:"max_idle_time" json:"max_idle_time"`
 	MaxOpenConnections *int   `yaml:"max_open_connections" json:"max_open_connections"`
 	MaxIdleConnections *int   `yaml:"max_idle_connections" json:"max_idle_connections"`
 	ConnectionLifetime string `yaml:"connection_lifetime" json:"connection_lifetime"`
@@ -193,7 +198,7 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 		return fmt.Errorf("verbs.plugin_dirs is not supported; use invocation-aware extension targets")
 	}
 	if cfg.Kafka.PoisonAudit != "" || cfg.Kafka.DeliveryLedger != "" {
-		return fmt.Errorf("kafka.poison_audit and kafka.delivery_ledger are deprecated; remove them because PostgreSQL is the sole daemon attempt and poison ledger")
+		return fmt.Errorf("kafka.poison_audit and kafka.delivery_ledger are deprecated; remove them because PostgreSQL table effectus_kafka_deliveries is the sole daemon attempt and poison ledger")
 	}
 
 	if cfg.Bundle.File != "" && !setFlags["bundle"] {
@@ -317,6 +322,29 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 
 	if cfg.Saga.Postgres.DSN != "" && !setFlags["saga-postgres-dsn"] {
 		*sagaPgDSN = cfg.Saga.Postgres.DSN
+	}
+	if cfg.Database.Migrations != "" && !setFlags["database-migrations"] {
+		*databaseMigrations = cfg.Database.Migrations
+	}
+	if cfg.Database.MaxOpen != nil && !setFlags["database-max-open"] {
+		*databaseMaxOpen = *cfg.Database.MaxOpen
+	}
+	if cfg.Database.MaxIdle != nil && !setFlags["database-max-idle"] {
+		*databaseMaxIdle = *cfg.Database.MaxIdle
+	}
+	if cfg.Database.MaxLifetime != "" && !setFlags["database-max-lifetime"] {
+		duration, err := time.ParseDuration(cfg.Database.MaxLifetime)
+		if err != nil {
+			return fmt.Errorf("database.max_lifetime: %w", err)
+		}
+		*databaseMaxLifetime = duration
+	}
+	if cfg.Database.MaxIdleTime != "" && !setFlags["database-max-idle-time"] {
+		duration, err := time.ParseDuration(cfg.Database.MaxIdleTime)
+		if err != nil {
+			return fmt.Errorf("database.max_idle_time: %w", err)
+		}
+		*databaseMaxIdleTime = duration
 	}
 
 	if len(cfg.Verbs.SpecDirs) > 0 && !setFlags["verb-dir"] {

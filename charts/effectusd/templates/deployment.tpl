@@ -7,6 +7,7 @@ metadata:
   labels:
     {{- include "effectusd.labels" . | nindent 4 }}
 spec:
+  # Checked execution identity is version-sensitive. Never overlap daemon pods.
   replicas: 1
   strategy:
     type: Recreate
@@ -17,15 +18,14 @@ spec:
     metadata:
       labels:
         {{- include "effectusd.selectorLabels" . | nindent 8 }}
-      {{- if or .Values.config.enabled .Values.podAnnotations }}
       annotations:
+        effectus.dev/rollout-nonce: {{ .Values.rolloutNonce | quote }}
         {{- if .Values.config.enabled }}
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- end }}
     spec:
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       securityContext:
@@ -47,21 +47,9 @@ spec:
           args:
             {{- if .Values.config.enabled }}
             - "--config={{ .Values.config.mountPath }}/{{ .Values.config.key }}"
-            {{- if not (get $runtimeBundle "cache_dir") }}
-            - "--oci-cache-dir={{ .Values.bundle.cacheDir }}"
-            {{- end }}
-            {{- if .Values.bundle.signatureVerifier }}
-            - "--oci-signature-verifier={{ .Values.bundle.signatureVerifier }}"
-            {{- end }}
             {{- else }}
-            - "--http-addr=:{{ .Values.service.port }}"
-            - "--metrics-addr=:{{ .Values.service.metricsPort }}"
             - "--oci-ref={{ required "bundle.ociRef is required when config.enabled is false" .Values.bundle.ociRef }}"
-            - "--oci-cache-dir={{ .Values.bundle.cacheDir }}"
             - "--oci-signature-verifier={{ required "bundle.signatureVerifier is required for OCI loading" .Values.bundle.signatureVerifier }}"
-            {{- if .Values.bundle.reloadInterval }}
-            - "--reload-interval={{ .Values.bundle.reloadInterval }}"
-            {{- end }}
             - "--facts-store={{ .Values.facts.store }}"
             - "--facts-path={{ .Values.facts.path }}"
             - "--facts-merge-default={{ .Values.facts.mergeDefault }}"
@@ -71,6 +59,19 @@ spec:
             - "--facts-cache-policy={{ .Values.facts.cachePolicy }}"
             - "--facts-cache-max-universes={{ .Values.facts.cacheMaxUniverses }}"
             - "--facts-cache-max-namespaces={{ .Values.facts.cacheMaxNamespaces }}"
+            {{- end }}
+            # Chart-owned operational settings override ConfigMap values.
+            - "--http-addr=:{{ .Values.service.port }}"
+            - "--metrics-addr=:{{ .Values.service.metricsPort }}"
+            - "--oci-cache-dir={{ required "bundle.cacheDir must be a writable mounted path" .Values.bundle.cacheDir }}"
+            - "--database-migrations=validate"
+            - "--database-max-open={{ .Values.postgres.pool.maxOpen }}"
+            - "--database-max-idle={{ .Values.postgres.pool.maxIdle }}"
+            - "--database-max-lifetime={{ .Values.postgres.pool.maxLifetime }}"
+            - "--database-max-idle-time={{ .Values.postgres.pool.maxIdleTime }}"
+            - "--shutdown-timeout={{ .Values.shutdownTimeout }}"
+            {{- if and .Values.config.enabled .Values.bundle.signatureVerifier }}
+            - "--oci-signature-verifier={{ .Values.bundle.signatureVerifier }}"
             {{- end }}
             {{- if .Values.grpc.enabled }}
             - "--grpc-addr=:{{ .Values.grpc.port }}"
@@ -88,10 +89,6 @@ spec:
             {{- if .Values.api.trustedProxyCIDRs }}
             - "--trusted-proxy-cidrs={{ .Values.api.trustedProxyCIDRs }}"
             {{- end }}
-            - "--db-max-open-connections={{ .Values.postgres.pool.maxOpen }}"
-            - "--db-max-idle-connections={{ .Values.postgres.pool.maxIdle }}"
-            - "--db-connection-lifetime={{ .Values.postgres.pool.connectionLifetime }}"
-            - "--db-connection-idle-time={{ .Values.postgres.pool.connectionIdleTime }}"
             {{- if .Values.api.aclFile }}
             - "--api-acl-file={{ .Values.api.aclFile }}"
             {{- end }}

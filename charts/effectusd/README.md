@@ -1,6 +1,6 @@
 # effectusd Helm Chart
 
-This chart deploys the `effectusd` runtime with an OCI bundle reference.
+This chart deploys one checked `effectusd` daemon with an immutable OCI bundle.
 
 ## Install
 
@@ -9,15 +9,15 @@ helm install effectusd oci://ghcr.io/OWNER/helm/effectusd \
   --version 1.0.0 \
   --set image.repository=ghcr.io/OWNER/effectusd \
   --set image.digest=sha256:IMAGE_DIGEST \
-  --set bundle.ociRef=ghcr.io/OWNER/bundles/fraud-demo@sha256:BUNDLE_DIGEST \
+  --set bundle.ociRef=ghcr.io/OWNER/bundles/demo@sha256:BUNDLE_DIGEST \
   --set bundle.signatureVerifier=/usr/local/bin/effectus-verify-oci \
-  --set postgres.existingSecret=effectusd-postgres \
+  --set postgres.existingSecret=effectusd-postgres-dml \
   --set api.existingSecret=effectusd-api
 ```
 
-## Configuration
+The image or a read-only volume must provide `bundle.signatureVerifier`. Startup fails when verification fails.
 
-Key values in `values.yaml`:
+## Singleton rollout contract
 
 - `image.repository` plus an immutable `image.digest`
 - `postgres.existingSecret` and `postgres.dsnKey` for the durable ledger
@@ -31,19 +31,46 @@ Key values in `values.yaml`:
 - `facts.*` (store path, merge strategy, cache limits)
 - `initContainers`, `extraVolumes`, `extraVolumeMounts` for the verifier or sidecar data
 - `config.*` (mount a config map and pass `--config`)
+The chart sets one replica and the Recreate Deployment strategy. Do not use multiple replicas or a rolling strategy.
 
-### ConfigMap usage
+An upgrade stops the old pod before it starts the new pod. Plan for HTTP and gRPC downtime.
+
+The old Kafka consumer drains its current record before the new consumer joins. Verify the committed offset after each rollout.
+
+Recreate also prevents two pods from writing the same ReadWriteOnce PVC. A volume can take time to detach and attach.
+
+The default shutdown timeout is 30 seconds. The termination grace period is 45 seconds.
+
+## Database migrations
+
+The Deployment validates migration state with the DML Secret. It does not apply DDL.
+
+Enable the Helm migration Job when this chart manages migrations:
+
+```yaml
+postgres:
+  existingSecret: effectusd-postgres-dml
+migrations:
+  enabled: true
+  existingSecret: effectusd-postgres-ddl
+```
+
+The DDL Secret must use a different PostgreSQL role. The DML role needs runtime read and write grants plus migration-version reads.
+
+The migration Job runs as a Helm pre-install and pre-upgrade hook. Back up the database before a contract migration.
+
+## ConfigMap mode
 
 ```yaml
 image:
   digest: "sha256:IMAGE_DIGEST"
 postgres:
-  existingSecret: "effectusd-postgres"
+  existingSecret: effectusd-postgres-dml
 bundle:
+  cacheDir: "/data/bundles"
   signatureVerifier: "/usr/local/bin/effectus-verify-oci"
 api:
-  authMode: "token"
-  existingSecret: "effectusd-api"
+  existingSecret: effectusd-api
 config:
   enabled: true
   contents: |
@@ -59,29 +86,58 @@ config:
 Create `effectusd-api` as a Kubernetes Secret with the keys `api-token` and, optionally, `api-read-token`. Create `effectusd-postgres` with the `dsn` key. The Deployment exposes both with `secretKeyRef`; do not put either secret in the ConfigMap.
 
 In ConfigMap mode the chart passes `--oci-cache-dir=/data/bundles` unless `bundle.cache_dir` is explicit. The `/data` volume stays writable while the root filesystem stays read-only.
+The chart always passes its HTTP address, metrics address, database limits, shutdown timeout, and OCI cache directory.
 
-The selected image or an extra read-only volume must provide the executable named by `bundle.signatureVerifier`. Startup fails if OCI content cannot be verified.
+`bundle.cacheDir` overrides `bundle.cache_dir` in the ConfigMap. The path must be writable and mounted.
 
-## Upgrades and migrations
+The default cache path is `/data/bundles`. The chart mounts `/data` from a PVC or `emptyDir`.
 
-The chart uses the `Recreate` deployment strategy.
-The old pod stops before Kubernetes starts the new pod.
-This prevents overlap between incompatible checked generations.
-The replacement causes a short outage.
+Do not put API tokens or PostgreSQL DSNs in a ConfigMap. Store them in Kubernetes Secrets.
 
-The pre-install and pre-upgrade migration job runs `effectusd --migrate-only`.
-Set `migrations.existingSecret` to a Secret with DDL rights.
-The application Secret can use a runtime role without DDL rights.
-Normal startup validates the migration version with read-only queries.
+## Resource and database budgets
 
-Before an upgrade, remove readiness and let HTTP handlers finish.
-Let the Kafka consumer finish its current record or leave its offset uncommitted.
-Set `terminationGracePeriodSeconds` above the daemon shutdown timeout.
+The default container requests 100 millicores and 128 MiB. It limits the container to one CPU and 512 MiB.
 
-## Secret rotation
+The default PostgreSQL pool allows 20 open and 5 idle connections. One migration Job can use two more connections.
 
-A Secret update does not change a running process.
-Set `podAnnotations` for the cluster secret-reloader, or run a controlled Helm upgrade.
-Keep old and new API tokens valid during the first replacement.
-Remove the old token only after all clients use the new token.
-Use the same replacement process for the database DSN and gRPC TLS Secret.
+Reserve operator and monitoring connections before you set the PostgreSQL role limit. Monitor pool waits and saturation.
+
+Keep `grpc.maxConcurrent` within the CPU, memory, and database budgets.
+
+## Secret and certificate rotation
+
+The process loads environment credentials and the gRPC key pair once. A Secret file update does not reload them.
+
+Change `rolloutNonce` after a Secret update:
+
+```bash
+helm upgrade effectusd ./charts/effectusd --reuse-values \
+  --set-string rolloutNonce="$(date +%s)"
+```
+
+You can add an external reloader annotation through `podAnnotations`.
+
+Use overlapping API tokens during client rotation. Keep the old PostgreSQL credential valid through the rollback window.
+
+Use overlapping certificate validity during gRPC rotation. Verify readiness and the served certificate before you remove the old certificate.
+
+Monitor certificate expiry. Read `docs/PRODUCTION_RUNBOOK.md` for the full rotation procedure.
+
+## External HTTP TLS
+
+The Service is ClusterIP by default. The daemon HTTP port does not terminate TLS.
+
+Expose bearer-token HTTP only through a trusted TLS ingress or service mesh. Restrict direct Service access with network policy.
+
+Terminate and rotate HTTP certificates at that trusted boundary. Accept forwarded client headers only from the approved proxy.
+
+## Render tests
+
+The committed fixtures cover tag, digest, ConfigMap, gRPC TLS, persistence, migration Job, and rollout settings.
+
+```bash
+for file in charts/effectusd/test-values/*.yaml; do
+  helm lint charts/effectusd -f "$file"
+  helm template effectusd charts/effectusd -f "$file" | kubeconform -strict -summary
+done
+```

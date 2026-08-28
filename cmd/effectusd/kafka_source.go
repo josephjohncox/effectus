@@ -92,9 +92,20 @@ func configureDaemonExecutionEngine(ctx context.Context, bundle *unified.Bundle,
 	if err := db.PingContext(ctx); err != nil {
 		return closeOnError(fmt.Errorf("connect Kafka execution ledger: %w", err))
 	}
-	if err := schema.ValidateSagaV2(ctx, db); err != nil {
-		return closeOnError(fmt.Errorf("validate execution ledger schema: %w", err))
+	switch strings.ToLower(strings.TrimSpace(*databaseMigrations)) {
+	case "validate":
+		if err := schema.ValidateSagaV2(ctx, db); err != nil {
+			return closeOnError(fmt.Errorf("validate durable database migrations: %w", err))
+		}
+	case "legacy-apply":
+		fmt.Fprintln(os.Stderr, "Warning: --database-migrations=legacy-apply grants DDL to the application; use the migration Job and validate mode")
+		if err := schema.MigrateSagaV2(ctx, db); err != nil {
+			return closeOnError(fmt.Errorf("apply durable database migrations: %w", err))
+		}
+	default:
+		return closeOnError(fmt.Errorf("database migration mode %q cannot start the daemon", *databaseMigrations))
 	}
+	setMetricsDatabase(db)
 	store, err := schema.NewPostgresOutboxStore(db)
 	if err != nil {
 		return closeOnError(err)
@@ -117,18 +128,6 @@ func validateDatabasePoolConfig() error {
 		return fmt.Errorf("max-open must be positive, max-idle must be between zero and max-open, and durations must not be negative")
 	}
 	return nil
-}
-
-func openDaemonDatabase() (*sql.DB, error) {
-	db, err := sql.Open("postgres", *sagaPgDSN)
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(*dbMaxOpen)
-	db.SetMaxIdleConns(*dbMaxIdle)
-	db.SetConnMaxLifetime(*dbConnLifetime)
-	db.SetConnMaxIdleTime(*dbConnIdleTime)
-	return db, nil
 }
 
 func runDatabaseMaintenance(ctx context.Context) error {

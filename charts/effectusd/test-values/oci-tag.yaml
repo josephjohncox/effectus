@@ -1,0 +1,10 @@
+image:
+  tag: "0.2.1"
+postgres:
+  existingSecret: effectusd-postgres
+bundle:
+  ociRef: ghcr.io/example/bundles/demo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  signatureVerifier: /usr/local/bin/effectus-verify-oci
+api:
+  existingSecret: effectusd-api
+rolloutNonce: "test-rotation-1"

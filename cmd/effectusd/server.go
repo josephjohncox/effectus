@@ -200,8 +200,9 @@ func (s *serverState) SetVerbRegistry(verbRegistry *verb.Registry) {
 }
 
 var (
-	errGenerationConflict    = errors.New("runtime generation changed while preparing candidate")
-	errCheckedEngineMutation = errors.New("checked execution engine is installed; generation mutation requires an immutable redeployment")
+	errGenerationConflict     = errors.New("runtime generation changed while preparing candidate")
+	errCheckedEngineMutation  = errors.New("checked execution engine is installed; generation mutation requires an immutable redeployment")
+	errCheckedEngineImmutable = errCheckedEngineMutation
 )
 
 func (s *serverState) ActivateGeneration(bundle *unified.Bundle, typeSystem *types.TypeSystem, verbRegistry *verb.Registry, expected uint64) error {
@@ -720,7 +721,8 @@ func shutdownHTTPServer(ctx context.Context, server *http.Server) error {
 		return nil
 	}
 	if err := server.Shutdown(ctx); err != nil {
-		return fmt.Errorf("shutdown HTTP API: %w", err)
+		_ = server.Close()
+		return fmt.Errorf("drain HTTP handlers: %w", err)
 	}
 	return nil
 }

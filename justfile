@@ -199,7 +199,7 @@ migrate-fresh:
 	@echo "OK Fresh migration complete"
 
 # Run all service-specific integration tests. Required variables must be set.
-test-integration: test-integration-postgres test-integration-redis test-integration-kafka
+test-integration: test-integration-postgres test-integration-redis test-integration-cdc test-integration-kafka
 
 # Run PostgreSQL integration tests.
 test-integration-postgres:
@@ -259,6 +259,14 @@ test-helm:
 test-kafka-integration:
 	@set -eu; test -n "${KAFKA_BROKERS:-}" || { echo "ERROR KAFKA_BROKERS is required"; exit 1; }; \
 	KAFKA_BROKERS="$KAFKA_BROKERS" go test -v -count=1 -tags=integration ./adapters/kafka -run '^TestKafkaConsumerGroupCommitAndRestart$'
+
+# Run CDC adapter integration suites against explicit service endpoints.
+test-integration-cdc:
+	@test -n "$${POSTGRES_DSN:-}" || { echo "ERROR POSTGRES_DSN is required"; exit 1; }
+	@test -n "$${MYSQL_DSN:-}" || { echo "ERROR MYSQL_DSN is required"; exit 1; }
+	POSTGRES_DSN="$${POSTGRES_DSN}" MYSQL_DSN="$${MYSQL_DSN}" \
+		go test -v -tags=integration ./adapters/postgres ./adapters/mysql
+
 
 # === UI Demo ===
 
@@ -459,7 +467,8 @@ sql-lint:
 	@command -v sqlfluff >/dev/null 2>&1 || { echo "ERROR sqlfluff is required. Install sqlfluff 3.5.0"; exit 1; }
 	sqlfluff lint --dialect postgres \
 		schema/migrations/10002_execution_ledger.sql \
-		schema/migrations/10003_kafka_delivery_ledger.sql
+		schema/migrations/10003_kafka_delivery_ledger.sql \
+		schema/migrations/10004_retention_indexes.sql
 
 # Format SQL files (requires sqlfluff)
 sql-format:

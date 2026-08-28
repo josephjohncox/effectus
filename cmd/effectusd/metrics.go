@@ -36,6 +36,11 @@ type hotloadMetrics struct {
 var typecheckBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5}
 
 var metrics = newHotloadMetrics()
+var metricsDatabase atomic.Pointer[sql.DB]
+
+func setMetricsDatabase(db *sql.DB) {
+	metricsDatabase.Store(db)
+}
 
 func newHotloadMetrics() *hotloadMetrics {
 	return &hotloadMetrics{
@@ -133,6 +138,27 @@ func writeMetrics(w io.Writer) {
 	count := atomic.LoadUint64(&metrics.typecheckCount)
 	sumNs := atomic.LoadInt64(&metrics.typecheckSumNs)
 	writeHistogram(w, "effectusd_rule_typecheck_duration_seconds", "Rule typecheck duration", count, sumNs, metrics.typecheckBins)
+	if db := metricsDatabase.Load(); db != nil {
+		stats := db.Stats()
+		writeGauge(w, "effectusd_database_open_connections", "Open PostgreSQL connections", int64(stats.OpenConnections))
+		writeGauge(w, "effectusd_database_in_use_connections", "In-use PostgreSQL connections", int64(stats.InUse))
+		writeGauge(w, "effectusd_database_idle_connections", "Idle PostgreSQL connections", int64(stats.Idle))
+		writeCounter(w, "effectusd_database_wait_total", "PostgreSQL pool waits", uint64(stats.WaitCount))
+		writeFloatCounter(w, "effectusd_database_wait_duration_seconds", "Cumulative PostgreSQL pool wait duration", stats.WaitDuration.Seconds())
+		writeGauge(w, "effectusd_database_max_open_connections", "Configured PostgreSQL connection limit", int64(stats.MaxOpenConnections))
+	}
+}
+
+func writeGauge(w io.Writer, name, help string, value int64) {
+	fmt.Fprintf(w, "# HELP %s %s\n", name, help)
+	fmt.Fprintf(w, "# TYPE %s gauge\n", name)
+	fmt.Fprintf(w, "%s %d\n", name, value)
+}
+
+func writeFloatCounter(w io.Writer, name, help string, value float64) {
+	fmt.Fprintf(w, "# HELP %s %s\n", name, help)
+	fmt.Fprintf(w, "# TYPE %s counter\n", name)
+	fmt.Fprintf(w, "%s %.9f\n", name, value)
 }
 
 func writeCounter(w io.Writer, name, help string, value uint64) {

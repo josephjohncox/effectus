@@ -74,15 +74,24 @@ var (
 	verbStrict               = flag.Bool("verb-strict", true, "Validate verb arguments and return values")
 	extensionsDir            = flag.String("extensions-dir", "", "Directory containing extension manifests (*.verbs.json, *.schema.json)")
 	extensionsOCI            = flag.String("extensions-oci", "", "OCI references for extension bundles (comma-separated)")
-	extensionsReloadInterval = flag.Duration("extensions-reload-interval", 0, "Interval for reloading extension manifests (0 to disable)")
+	extensionsReloadInterval = flag.Duration("extensions-reload-interval", 0, "Deprecated; checked execution requires immutable redeployment")
 	schemaSourcesFile        = flag.String("schema-sources", "", "Path to schema sources config (YAML/JSON)")
-	reloadInterval           = flag.Duration("reload-interval", 0, "Interval for reloading local schema and extension sources (immutable OCI bundles cannot be polled)")
+	reloadInterval           = flag.Duration("reload-interval", 0, "Deprecated; checked execution requires immutable redeployment")
 	shutdownTimeout          = flag.Duration("shutdown-timeout", 30*time.Second, "Deadline for graceful shutdown and queue drain")
 	migrateOnly              = flag.Bool("migrate-only", false, "Apply PostgreSQL schema migrations and exit")
 	maintenancePrune         = flag.Bool("maintenance-prune", false, "Prune retained terminal durable records and exit")
 	maintenanceDryRun        = flag.Bool("maintenance-dry-run", true, "Report maintenance deletions without changing data")
 	maintenanceRetention     = flag.Duration("maintenance-retention", 30*24*time.Hour, "Minimum age of terminal records eligible for pruning")
 	maintenanceBatch         = flag.Int("maintenance-batch", 1000, "Maximum executions or Kafka records pruned per transaction")
+	databaseMigrations       = flag.String("database-migrations", "validate", "Database migration mode (validate, apply, legacy-apply)")
+	databaseMaxOpen          = flag.Int("database-max-open", 20, "Maximum open PostgreSQL connections")
+	databaseMaxIdle          = flag.Int("database-max-idle", 5, "Maximum idle PostgreSQL connections")
+	databaseMaxLifetime      = flag.Duration("database-max-lifetime", 30*time.Minute, "Maximum PostgreSQL connection lifetime")
+	databaseMaxIdleTime      = flag.Duration("database-max-idle-time", 5*time.Minute, "Maximum PostgreSQL connection idle time")
+	adminPruneBefore         = flag.String("admin-prune-before", "", "Prune terminal durable records updated before this RFC3339 cutoff, then exit")
+	adminPruneBatchSize      = flag.Int("admin-prune-batch-size", 100, "Maximum terminal executions and poison records to prune")
+	adminPruneDryRun         = flag.Bool("admin-prune-dry-run", true, "Report prune candidates without deleting them")
+	adminPruneBackupVerified = flag.Bool("admin-prune-backup-verified", false, "Confirm a restorable backup before destructive pruning")
 
 	// Runtime flags
 	sagaEnabled     = flag.Bool("saga", false, "Deprecated legacy saga mode (rejected by effectusd; use checked durable workflow runtime)")
@@ -137,10 +146,10 @@ var (
 	apiLimiterCapacity = flag.Int("api-limiter-capacity", 10000, "Maximum active API client limiter buckets")
 	apiLimiterIdleTTL  = flag.Duration("api-limiter-idle-ttl", 10*time.Minute, "Idle TTL for API client limiter buckets")
 	trustedProxyCIDRs  = flag.String("trusted-proxy-cidrs", "", "Comma-separated proxy CIDRs trusted to supply X-Forwarded-For")
-	dbMaxOpen          = flag.Int("db-max-open-connections", 20, "Maximum PostgreSQL open connections")
-	dbMaxIdle          = flag.Int("db-max-idle-connections", 10, "Maximum PostgreSQL idle connections")
-	dbConnLifetime     = flag.Duration("db-connection-lifetime", 30*time.Minute, "Maximum PostgreSQL connection lifetime")
-	dbConnIdleTime     = flag.Duration("db-connection-idle-time", 5*time.Minute, "Maximum PostgreSQL connection idle time")
+	dbMaxOpen          = databaseMaxOpen
+	dbMaxIdle          = databaseMaxIdle
+	dbConnLifetime     = databaseMaxLifetime
+	dbConnIdleTime     = databaseMaxIdleTime
 	rulesHotload       = flag.Bool("rules-hotload", false, "Enable read-only /api/rules/validate (checked engine mutation remains disabled)")
 	rulesHistory       = flag.Int("rules-history", 5, "Number of hotload bundles to keep in memory/on disk")
 	rulesHistDir       = flag.String("rules-history-dir", "./out/rules_history", "Directory for bundle history snapshots")
@@ -161,6 +170,12 @@ var schemaSources []adapters.SchemaSourceConfig
 func registerCustomFlags() {
 	if flag.CommandLine.Lookup("facts-merge-namespace") == nil {
 		flag.Var(&factsMergeNs, "facts-merge-namespace", "Namespace-specific merge strategy (namespace=first|last|error)")
+	}
+	if flag.CommandLine.Lookup("db-max-open-connections") == nil {
+		flag.IntVar(databaseMaxOpen, "db-max-open-connections", *databaseMaxOpen, "Deprecated alias for --database-max-open")
+		flag.IntVar(databaseMaxIdle, "db-max-idle-connections", *databaseMaxIdle, "Deprecated alias for --database-max-idle")
+		flag.DurationVar(databaseMaxLifetime, "db-connection-lifetime", *databaseMaxLifetime, "Deprecated alias for --database-max-lifetime")
+		flag.DurationVar(databaseMaxIdleTime, "db-connection-idle-time", *databaseMaxIdleTime, "Deprecated alias for --database-max-idle-time")
 	}
 }
 
@@ -234,6 +249,22 @@ func main() {
 		if err := runDatabaseMaintenance(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, "effectusd_maintenance_error_total 1")
 			fmt.Fprintf(os.Stderr, "Database maintenance failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if err := validateDatabaseSettings(databaseSettingsFromFlags()); err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid database configuration: %v\n", err)
+		os.Exit(1)
+	}
+	if err := rejectCheckedRuntimeMutation(*rulesHotload, *reloadInterval, *extensionsReloadInterval); err != nil {
+		fmt.Fprintf(os.Stderr, "Unsafe checked-runtime configuration: %v\n", err)
+		os.Exit(1)
+	}
+	if handled, err := runDatabaseAdminCommand(context.Background()); handled {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Database administration failed: %v\n", err)
 			os.Exit(1)
 		}
 		return

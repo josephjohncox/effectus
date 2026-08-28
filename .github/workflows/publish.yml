@@ -4,393 +4,279 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Semantic version to publish (for example, 1.2.3)"
-        required: true
-        type: string
-      publish_image:
-        description: "Publish ghcr.io container image"
-        required: true
-        default: true
-        type: boolean
-      publish_bundle:
-        description: "Publish OCI rule bundle"
-        required: true
-        default: true
-        type: boolean
-      publish_chart:
-        description: "Publish Helm chart to ghcr.io (OCI)"
-        required: true
-        default: true
-        type: boolean
-      bundle_name:
-        description: "Bundle name (default: flow-ui-demo)"
-        required: false
-        type: string
-      bundle_version:
-        description: "Bundle version (default: release version)"
-        required: false
-        type: string
-      bundle_schema_dir:
-        description: "Schema directory (default: examples/flow_ui_demo/schema)"
-        required: false
-        type: string
-      bundle_rules_dir:
-        description: "Rules directory (default: examples/flow_ui_demo/rules)"
-        required: false
-        type: string
-      bundle_verb_dir:
-        description: >-
-          Verb spec directory (default: examples/flow_ui_demo/verbs)
-        required: false
-        type: string
-      bundle_oci_ref:
-        description: >-
-          OCI reference override (e.g., ghcr.io/org/bundles/demo:v1)
-        required: false
-        type: string
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
 
 jobs:
-  validate:
+  quality:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  release:
+    needs: quality
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: >-
-          bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99
-        # v1.50.0
-        with:
-          github_token: ${{ github.token }}
-      - name: Validate release source
-        run: |
-          go test ./...
-          go vet ./...
-          buf format -d --exit-code
-          buf lint
-          git update-ref refs/heads/buf-breaking-main refs/remotes/origin/main
-          buf breaking --against '.git#branch=buf-breaking-main'
-
-  publish-image:
-    needs: validate
-    if: github.event_name == 'push' || inputs.publish_image == true
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Resolve version
-        id: version
-        run: |
-          VERSION="${{ inputs.version }}"
-          if [ -z "$VERSION" ]; then
-            if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
-              echo "version is required for manual branch publication" >&2
-              exit 1
-            fi
-            VERSION="${GITHUB_REF_NAME}"
-          fi
-          VERSION="${VERSION#v}"
-          SEMVER_RE='^[0-9]+\.[0-9]+\.[0-9]+'
-          SEMVER_RE="${SEMVER_RE}(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?"
-          SEMVER_RE="${SEMVER_RE}(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$"
-          if ! printf '%s' "$VERSION" | grep -Eq "$SEMVER_RE"; then
-            echo "invalid semantic version: $VERSION" >&2
-            exit 1
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Buildx
-        uses: >-
-          docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-        # v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push image
-        uses: >-
-          docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
-        # v5
-        env:
-          IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/effectusd
-        with:
-          context: .
-          file: Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ env.IMAGE_REPOSITORY }}:${{ steps.version.outputs.version }}
-
-  publish-bundle:
-    needs: validate
-    if: github.event_name == 'push' || inputs.publish_bundle == true
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Resolve version
-        id: version
-        run: |
-          VERSION="${{ inputs.version }}"
-          if [ -z "$VERSION" ]; then
-            if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
-              echo "version is required for manual branch publication" >&2
-              exit 1
-            fi
-            VERSION="${GITHUB_REF_NAME}"
-          fi
-          VERSION="${VERSION#v}"
-          SEMVER_RE='^[0-9]+\.[0-9]+\.[0-9]+'
-          SEMVER_RE="${SEMVER_RE}(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?"
-          SEMVER_RE="${SEMVER_RE}(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$"
-          if ! printf '%s' "$VERSION" | grep -Eq "$SEMVER_RE"; then
-            echo "invalid semantic version: $VERSION" >&2
-            exit 1
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Log in to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish OCI bundle
-        run: |
-          BUNDLE_NAME="${{ inputs.bundle_name }}"
-          if [ -z "$BUNDLE_NAME" ]; then
-            BUNDLE_NAME="flow-ui-demo"
-          fi
-
-          BUNDLE_VERSION="${{ inputs.bundle_version }}"
-          if [ -z "$BUNDLE_VERSION" ]; then
-            BUNDLE_VERSION="${{ steps.version.outputs.version }}"
-          fi
-
-          SCHEMA_DIR="${{ inputs.bundle_schema_dir }}"
-          if [ -z "$SCHEMA_DIR" ]; then
-            SCHEMA_DIR="examples/flow_ui_demo/schema"
-          fi
-
-          RULES_DIR="${{ inputs.bundle_rules_dir }}"
-          if [ -z "$RULES_DIR" ]; then
-            RULES_DIR="examples/flow_ui_demo/rules"
-          fi
-
-          VERB_DIR="${{ inputs.bundle_verb_dir }}"
-          if [ -z "$VERB_DIR" ]; then
-            VERB_DIR="examples/flow_ui_demo/verbs"
-          fi
-
-          VERB_SCHEMA="examples/flow_ui_demo/schema/flow_verbs.json"
-
-          OCI_REF="${{ inputs.bundle_oci_ref }}"
-          if [ -z "$OCI_REF" ]; then
-            OCI_REPO="ghcr.io/${{ github.repository_owner }}/bundles"
-            OCI_REF="${OCI_REPO}/${BUNDLE_NAME}:${BUNDLE_VERSION}"
-          fi
-
-          echo "Publishing ${BUNDLE_NAME} v${BUNDLE_VERSION} -> ${OCI_REF}"
-          go run ./cmd/effectusc bundle \
-            --name "${BUNDLE_NAME}" \
-            --version "${BUNDLE_VERSION}" \
-            --schema-dir "${SCHEMA_DIR}" \
-            --verb-dir "${VERB_DIR}" \
-            --verbschema "${VERB_SCHEMA}" \
-            --rules-dir "${RULES_DIR}" \
-            --oci-ref "${OCI_REF}"
-          go install github.com/sigstore/cosign/v2/cmd/cosign@v2.4.3
-          cosign sign --yes "${OCI_REF}"
-
-  publish-chart:
-    needs: validate
-    if: github.event_name == 'push' || inputs.publish_chart == true
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Resolve version
-        id: version
-        run: |
-          VERSION="${{ inputs.version }}"
-          if [ -z "$VERSION" ]; then
-            if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
-              echo "version is required for manual branch publication" >&2
-              exit 1
-            fi
-            VERSION="${GITHUB_REF_NAME}"
-          fi
-          VERSION="${VERSION#v}"
-          SEMVER_RE='^[0-9]+\.[0-9]+\.[0-9]+'
-          SEMVER_RE="${SEMVER_RE}(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?"
-          SEMVER_RE="${SEMVER_RE}(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$"
-          if ! printf '%s' "$VERSION" | grep -Eq "$SEMVER_RE"; then
-            echo "invalid semantic version: $VERSION" >&2
-            exit 1
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Helm
-        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4  # v4
-        with:
-          version: v3.16.4
-
-      - name: Set up Go for chart schema validation
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: go.mod
-          cache: false
-
-      - name: Validate chart before publication
-        run: |
-          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
-          helm lint charts/effectusd -f charts/effectusd/ci/oci-values.yaml
-          for fixture in oci config grpc-tls persistence; do
-            helm template effectusd charts/effectusd \
-              -f "charts/effectusd/ci/${fixture}-values.yaml" \
-              > "/tmp/effectusd-${fixture}.yaml"
-            kubeconform -strict -summary "/tmp/effectusd-${fixture}.yaml"
-          done
-          grep -F -- '--oci-cache-dir=/data/bundles' /tmp/effectusd-config.yaml
-
-      - name: Log in to GHCR (Helm)
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" |
-            helm registry login ghcr.io \
-              -u "${{ github.actor }}" --password-stdin
-
-      - name: Package chart
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          CHART_FILE="charts/effectusd/Chart.yaml"
-          VALUES_FILE="charts/effectusd/values.yaml"
-          IMAGE_REPO="ghcr.io/${{ github.repository_owner }}/effectusd"
-          sed -i "s/^version:.*/version: ${VERSION}/" "$CHART_FILE"
-          sed -i \
-            "s/^appVersion:.*/appVersion: \"${VERSION}\"/" \
-            "$CHART_FILE"
-          sed -i \
-            "s#^  repository:.*#  repository: ${IMAGE_REPO}#" \
-            "$VALUES_FILE"
-          sed -i \
-            "s/^  tag:.*/  tag: \"${VERSION}\"/" \
-            "$VALUES_FILE"
-          helm package charts/effectusd --destination dist
-
-      - name: Push chart to GHCR
-        env:
-          HELM_EXPERIMENTAL_OCI: 1
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          CHART_REPO="oci://ghcr.io/${{ github.repository_owner }}/helm"
-          helm push "dist/effectusd-${VERSION}.tgz" "$CHART_REPO"
-
-  publish-release-assets:
-    needs: [validate, publish-image, publish-bundle, publish-chart]
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
+      packages: write
+      id-token: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - name: Checkout exact release SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: tools/vscode-extension/package-lock.json
 
-      - name: Build release binaries
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+        with:
+          version: v3.17.3
+
+      - name: Install pinned release tools before registry writes
         run: |
-          set -e
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
+          go install github.com/sigstore/cosign/v2/cmd/cosign@v2.4.3
+          go install github.com/anchore/syft/cmd/syft@v1.22.0
+          go install oras.land/oras/cmd/oras@v1.2.2
+
+      - name: Resolve immutable release coordinates
+        id: release
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          owner=$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/$owner/effectusd:$version" >> "$GITHUB_OUTPUT"
+          echo "bundle=ghcr.io/$owner/bundles/flow-ui-demo:$version" >> "$GITHUB_OUTPUT"
+          echo "chart=ghcr.io/$owner/helm/effectusd:$version" >> "$GITHUB_OUTPUT"
+          echo "image_repo=ghcr.io/$owner/effectusd" >> "$GITHUB_OUTPUT"
+          echo "bundle_repo=ghcr.io/$owner/bundles/flow-ui-demo" >> "$GITHUB_OUTPUT"
+          echo "chart_repo=ghcr.io/$owner/helm/effectusd" >> "$GITHUB_OUTPUT"
+          echo "chart_stage_repo=ghcr.io/$owner/helm-staging-${GITHUB_SHA}/effectusd" >> "$GITHUB_OUTPUT"
+
+      - name: Fail closed when release outputs exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/release-preflight.sh \
+            "${{ steps.release.outputs.version }}" \
+            "${{ steps.release.outputs.image }}" \
+            "${{ steps.release.outputs.bundle }}" \
+            "${{ steps.release.outputs.chart }}"
+
+      - name: Build all local release inputs
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
           mkdir -p dist
           for target in \
-            linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 \
-            windows/amd64; do
-            GOOS="${target%/*}"
-            GOARCH="${target#*/}"
+            linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            os=${target%/*}
+            arch=${target#*/}
             suffix=""
-            archive="effectus-${GITHUB_REF_NAME#v}-${GOOS}-${GOARCH}.tar.gz"
-            if [ "$GOOS" = windows ]; then
+            archive="effectus-${VERSION}-${os}-${arch}.tar.gz"
+            if [ "$os" = windows ]; then
               suffix=".exe"
-              archive="effectus-${GITHUB_REF_NAME#v}-${GOOS}-${GOARCH}.zip"
+              archive="effectus-${VERSION}-${os}-${arch}.zip"
             fi
-            work="dist/effectus-${GOOS}-${GOARCH}"
+            work="dist/effectus-${os}-${arch}"
             mkdir -p "$work"
-            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-              go build -trimpath -ldflags="-s -w" \
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -ldflags="-s -w -buildid=" \
               -o "$work/effectusc$suffix" ./cmd/effectusc
-            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-              go build -trimpath -ldflags="-s -w" \
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -ldflags="-s -w -buildid=" \
               -o "$work/effectusd$suffix" ./cmd/effectusd
-            if [ "$GOOS" = windows ]; then
+            if [ "$os" = windows ]; then
               (cd "$work" && zip -q "../$archive" ./*)
             else
-              tar -C "$work" -czf "dist/$archive" .
+              tar --sort=name --mtime="@${SOURCE_DATE_EPOCH:-0}" \
+                --owner=0 --group=0 --numeric-owner -C "$work" \
+                -czf "dist/$archive" .
             fi
             rm -rf "$work"
           done
+          go run ./cmd/effectusc bundle \
+            --name flow-ui-demo --version "$VERSION" \
+            --schema-dir examples/flow_ui_demo/schema \
+            --verb-dir examples/flow_ui_demo/verbs \
+            --verbschema examples/flow_ui_demo/schema/flow_verbs.json \
+            --rules-dir examples/flow_ui_demo/rules \
+            --output "dist/flow-ui-demo-${VERSION}.json"
+          helm package charts/effectusd --destination dist \
+            --version "$VERSION" --app-version "$VERSION"
+          docker build --build-arg SOURCE_DATE_EPOCH="$(git show -s --format=%ct)" \
+            --tag effectus:release .
 
       - name: Build VS Code extension
         working-directory: tools/vscode-extension
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
-          release_version="${GITHUB_REF_NAME#v}"
-          package_version="$(node -p "require('./package.json').version")"
-          if [ "$package_version" != "$release_version" ]; then
-            echo "extension version does not match release tag" >&2
-            exit 1
-          fi
+          set -euo pipefail
+          test "$(node -p "require('./package.json').version")" = "$VERSION"
           find . -maxdepth 1 -type f -name '*.vsix' -delete
           npm ci
           npm run package
-          vsix="effectus-language-support-${release_version}.vsix"
-          test -f "$vsix"
-          mv "$vsix" ../../dist/
-          (
-            cd ../../dist
-            sha256sum \
-              effectus-"$release_version"-* \
-              "$vsix" > SHA256SUMS
-          )
+          mv "effectus-language-support-${VERSION}.vsix" ../../dist/
 
-      - name: Create release and upload assets
+      - name: Scan and describe local release inputs
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          trivy="aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c"
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            "$trivy" image --scanners vuln --severity HIGH,CRITICAL \
+            --ignore-unfixed --exit-code 1 effectus:release
+          syft effectus:release -o cyclonedx-json=dist/image-sbom.cdx.json
+          syft "dir:charts/effectusd" -o cyclonedx-json=dist/chart-sbom.cdx.json
+          syft "file:dist/flow-ui-demo-${VERSION}.json" \
+            -o cyclonedx-json=dist/bundle-sbom.cdx.json
+          printf '{"buildType":"https://github.com/%s/.github/workflows/publish.yml","builder":{"id":"https://github.com/actions/runner"},"invocation":{"configSource":{"uri":"git+https://github.com/%s@%s","digest":{"sha1":"%s"}}}}\n' \
+            "$GITHUB_REPOSITORY" "$GITHUB_REPOSITORY" "$GITHUB_REF" "$GITHUB_SHA" \
+            > dist/release-provenance.json
+
+      - name: Sign and verify local checksum manifest
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          (cd dist && find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' \
+            -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS)
+          (cd dist && sha256sum --check SHA256SUMS)
+          cosign sign-blob --yes \
+            --output-signature dist/SHA256SUMS.sig \
+            --output-certificate dist/SHA256SUMS.pem dist/SHA256SUMS
+          cosign verify-blob \
+            --certificate dist/SHA256SUMS.pem \
+            --signature dist/SHA256SUMS.sig \
+            --certificate-identity-regexp \
+              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/v${VERSION}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            dist/SHA256SUMS
+
+      - name: Log in after preflight and local validation
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish, sign, and verify staging references
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          IMAGE_REPO: ${{ steps.release.outputs.image_repo }}
+          BUNDLE_REPO: ${{ steps.release.outputs.bundle_repo }}
+          CHART_STAGE_REPO: ${{ steps.release.outputs.chart_stage_repo }}
+        run: |
+          set -euo pipefail
+          image_stage="${IMAGE_REPO}:staging-${GITHUB_SHA}"
+          bundle_stage="${BUNDLE_REPO}:staging-${GITHUB_SHA}"
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --build-arg SOURCE_DATE_EPOCH="$(git show -s --format=%ct)" \
+            --provenance=mode=max --sbom=true --push --tag "$image_stage" .
+          go run ./cmd/effectusc bundle \
+            --name flow-ui-demo --version "$VERSION" \
+            --schema-dir examples/flow_ui_demo/schema \
+            --verb-dir examples/flow_ui_demo/verbs \
+            --verbschema examples/flow_ui_demo/schema/flow_verbs.json \
+            --rules-dir examples/flow_ui_demo/rules --oci-ref "$bundle_stage"
+          helm push "dist/effectusd-${VERSION}.tgz" \
+            "oci://${CHART_STAGE_REPO%/effectusd}"
+          image_digest=$(crane digest "$image_stage")
+          bundle_digest=$(crane digest "$bundle_stage")
+          chart_digest=$(crane digest "${CHART_STAGE_REPO}:${VERSION}")
+          for ref in \
+            "${IMAGE_REPO}@${image_digest}" \
+            "${BUNDLE_REPO}@${bundle_digest}" \
+            "${CHART_STAGE_REPO}@${chart_digest}"; do
+            cosign sign --yes "$ref"
+            cosign attest --yes --type slsaprovenance \
+              --predicate dist/release-provenance.json "$ref"
+            cosign verify "$ref" \
+              --certificate-identity-regexp \
+                "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com
+            cosign verify-attestation --type slsaprovenance "$ref" \
+              --certificate-identity-regexp \
+                "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          done
+          cosign attest --yes --type cyclonedx \
+            --predicate dist/image-sbom.cdx.json "${IMAGE_REPO}@${image_digest}"
+          cosign attest --yes --type cyclonedx \
+            --predicate dist/bundle-sbom.cdx.json "${BUNDLE_REPO}@${bundle_digest}"
+          cosign attest --yes --type cyclonedx \
+            --predicate dist/chart-sbom.cdx.json "${CHART_STAGE_REPO}@${chart_digest}"
+          cosign verify-attestation --type cyclonedx "${IMAGE_REPO}@${image_digest}" \
+            --certificate-identity-regexp \
+              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          cosign verify-attestation --type cyclonedx "${BUNDLE_REPO}@${bundle_digest}" \
+            --certificate-identity-regexp \
+              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          cosign verify-attestation --type cyclonedx "${CHART_STAGE_REPO}@${chart_digest}" \
+            --certificate-identity-regexp \
+              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          printf '%s\n' "$image_digest" > "$RUNNER_TEMP/image.digest"
+          printf '%s\n' "$bundle_digest" > "$RUNNER_TEMP/bundle.digest"
+          printf '%s\n' "$chart_digest" > "$RUNNER_TEMP/chart.digest"
+
+      - name: Promote immutable version references in order
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          IMAGE_REPO: ${{ steps.release.outputs.image_repo }}
+          BUNDLE_REPO: ${{ steps.release.outputs.bundle_repo }}
+          CHART_REPO: ${{ steps.release.outputs.chart_repo }}
+          CHART_STAGE_REPO: ${{ steps.release.outputs.chart_stage_repo }}
+        run: |
+          set -euo pipefail
+          image_digest=$(cat "$RUNNER_TEMP/image.digest")
+          bundle_digest=$(cat "$RUNNER_TEMP/bundle.digest")
+          chart_digest=$(cat "$RUNNER_TEMP/chart.digest")
+          crane tag "${IMAGE_REPO}@${image_digest}" "$VERSION"
+          test "$(crane digest "${IMAGE_REPO}:${VERSION}")" = "$image_digest"
+          crane tag "${BUNDLE_REPO}@${bundle_digest}" "$VERSION"
+          test "$(crane digest "${BUNDLE_REPO}:${VERSION}")" = "$bundle_digest"
+          oras copy --recursive "${CHART_STAGE_REPO}@${chart_digest}" \
+            "${CHART_REPO}:${VERSION}"
+          test "$(crane digest "${CHART_REPO}:${VERSION}")" = "$chart_digest"
+          cosign verify "${CHART_REPO}@${chart_digest}" \
+            --certificate-identity-regexp \
+              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+      - name: Create GitHub release last
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" \
-              --verify-tag --generate-notes
-          fi
-          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag --generate-notes --title "$GITHUB_REF_NAME"

@@ -3,9 +3,10 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_call:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -97,7 +98,8 @@ jobs:
           python -m pip install sqlfluff==3.5.0
           sqlfluff lint --dialect postgres \
             schema/migrations/10002_execution_ledger.sql \
-            schema/migrations/10003_kafka_delivery_ledger.sql
+            schema/migrations/10003_kafka_delivery_ledger.sql \
+            schema/migrations/10004_retention_indexes.sql
 
   dependency-audit:
     runs-on: ubuntu-latest
@@ -250,6 +252,27 @@ jobs:
       - name: Build production image
         run: docker build -t effectus:audit .
 
+      - name: Verify normalized rootfs reproducibility
+        run: |
+          set -euo pipefail
+          epoch=$(git show -s --format=%ct)
+          docker build --no-cache --build-arg SOURCE_DATE_EPOCH="$epoch" \
+            -t effectus:audit-rebuild .
+          for image in audit audit-rebuild; do
+            root="$RUNNER_TEMP/rootfs-$image"
+            mkdir -p "$root"
+            container=$(docker create "effectus:$image")
+            docker export "$container" | tar -xf - -C "$root"
+            docker rm "$container"
+            (
+              cd "$root"
+              find . -printf '%y %m %U %G %p\n' | LC_ALL=C sort
+              find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+            ) > "$RUNNER_TEMP/$image.rootfs"
+          done
+          diff -u "$RUNNER_TEMP/audit.rootfs" \
+            "$RUNNER_TEMP/audit-rebuild.rootfs"
+
       - name: Scan fixed high and critical findings
         run: |
           trivy="aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe0"
@@ -304,6 +327,126 @@ jobs:
             "$trivy" image --scanners vuln --severity HIGH,CRITICAL \
             --ignore-unfixed --exit-code 1 \
             "effectus/${{ matrix.name }}:audit"
+
+  release-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Validate workflows and release preflight failures
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          actionlint .github/workflows/ci.yml .github/workflows/publish.yml
+          .github/scripts/release-preflight_test.sh
+          ! grep -Eq 'workflow_dispatch|--clobber' .github/workflows/publish.yml
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+        with:
+          version: v3.17.3
+      - name: Lint and validate chart fixtures
+        run: |
+          set -euo pipefail
+          image="ghcr.io/yannh/kubeconform:v0.6.7@sha256:0925177fb05b44ce18574076141b5c3d83235e1904d3f952182ac99ddc45762c"
+          docker pull "$image"
+          for file in charts/effectusd/test-values/*.yaml; do
+            helm lint charts/effectusd -f "$file"
+            helm template effectusd charts/effectusd -f "$file" |
+              docker run --rm -i "$image" -strict -summary
+          done
+          render=$(mktemp)
+          helm template effectusd charts/effectusd \
+            -f charts/effectusd/test-values/configmap.yaml > "$render"
+          grep -q 'type: Recreate' "$render"
+          grep -q 'replicas: 1' "$render"
+          grep -q -- '--http-addr=:8080' "$render"
+          grep -q -- '--metrics-addr=:9090' "$render"
+          grep -q -- '--oci-cache-dir=/data/bundles' "$render"
+          grep -q 'effectus.dev/rollout-nonce: "configmap-contract"' "$render"
+          grep -q 'requests:' "$render"
+          grep -q 'limits:' "$render"
+          if helm template effectusd charts/effectusd \
+            -f charts/effectusd/test-values/oci-tag.yaml \
+            --set migrations.enabled=true \
+            --set migrations.existingSecret=effectusd-postgres >/dev/null 2>&1; then
+            echo "migration and runtime Secrets must differ" >&2
+            exit 1
+          fi
+
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Race-sensitive runtime tests
+        run: go test -race ./runtime ./schema ./cmd/effectusd
+
+  formal:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install pinned TLC and Just
+        run: |
+          set -euo pipefail
+          cargo install just --version 1.38.0 --locked
+          curl --fail --location --output /tmp/tla2tools.jar \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
+          printf '#!/bin/sh\nexec java -cp /tmp/tla2tools.jar tlc2.TLC "$@"\n' |
+            sudo tee /usr/local/bin/tlc >/dev/null
+          sudo chmod 0755 /usr/local/bin/tlc
+      - name: Model checks
+        run: just formal-check
+
+  kafka:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Start pinned Redpanda
+        run: |
+          docker run --detach --name redpanda -p 9092:9092 \
+            docker.redpanda.com/redpandadata/redpanda:v24.3.5@sha256:8b2802411074676c96a81eb65483b29e63a212673023869e91fd41d728aaa278 \
+            redpanda start --overprovisioned --smp 1 --memory 512M \
+            --reserve-memory 0M --node-id 0 --check=false \
+            --kafka-addr 0.0.0.0:9092 \
+            --advertise-kafka-addr localhost:9092
+          for attempt in $(seq 1 60); do
+            docker exec redpanda rpk cluster info && exit 0
+            sleep 2
+          done
+          docker logs redpanda
+          exit 1
+      - name: Kafka commit and restart proof
+        env:
+          KAFKA_BROKERS: localhost:9092
+        run: >-
+          go test -tags=integration ./adapters/kafka
+          -run TestKafkaConsumerGroupCommitAndRestart -count=1
+      - name: Stop Redpanda
+        if: always()
+        run: docker rm --force redpanda
 
   integration:
     runs-on: ubuntu-latest
@@ -403,7 +546,7 @@ jobs:
           POSTGRES_DSN: "postgres://effectus:effectus@localhost:55433/\
             effectus_saga?sslmode=disable"
           REDIS_ADDR: localhost:56379
-        run: go test -tags=integration ./cmd/effectusd ./schema
+        run: go test -tags=integration ./runtime ./schema ./cmd/effectusd
 
       - name: Redis Streams adapter integration tests
         env:

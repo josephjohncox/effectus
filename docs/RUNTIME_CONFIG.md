@@ -104,7 +104,7 @@ It increments the stable delivery attempt before each handler call, so attempt l
 Back up this table with the other `effectus_*` tables.
 Deprecated `delivery_ledger` and `poison_audit` settings are rejected; remove them.
 The default poison policy leaves the failed offset uncommitted and stops the daemon.
-For `skip`, PostgreSQL records and deduplicates the poison acknowledgement.
+For `skip`, the PostgreSQL ledger records and deduplicates the poison acknowledgement.
 For `dlq`, set `dlq_topic` to a Kafka topic.
 Effectus waits for DLQ publication before it commits the source offset.
 
@@ -124,7 +124,7 @@ Each message value uses this JSON shape. `namespace` is the durable tenant ident
 
 ## Production deployment example
 
-Use this as a starting point for a checked deployment with persisted projections, ACLs, hotload, and metrics:
+Use this as a starting point for a checked deployment with persisted projections, ACLs, and metrics:
 
 ```yaml
 bundle:
@@ -172,21 +172,21 @@ extensions:
     - "/etc/effectus/extensions"
   oci:
     - "ghcr.io/myorg/extension-bundles/payments@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-  reload_interval: "0s"
+
+database:
+  migrations: "validate"
+  max_open: 20
+  max_idle: 5
+  max_lifetime: "30m"
+  max_idle_time: "5m"
 
 verbs:
   duplicate_policy: "error"
   oci_warmup: true
   strict: true
 
-database:
-  max_open_connections: 20
-  max_idle_connections: 10
-  connection_lifetime: "30m"
-  connection_idle_time: "5m"
-
 # Supply EFFECTUS_SAGA_POSTGRES_DSN from the secret manager.
-# Run effectusd --migrate-only before normal startup.
+# Run effectusd --database-migrations=apply with a DDL credential before normal startup.
 # The old saga.enabled mode is rejected; checked execution always uses V2.
 ```
 
@@ -237,12 +237,13 @@ Resolve the published digest, sign it under the deployment trust policy, and lis
 
 - CLI flags override config values when both are provided.
 - `/api/*` endpoints require a token; `/healthz` and `/readyz` are open by default.
-- Set `api.hotload_rules` to enable `/api/rules/validate` and `/api/rules/hotload` (UI rule editor + VS Code hot reload).
+- The checked daemon rejects `api.hotload_rules`, `extensions.reload_interval`, and `bundle.reload_interval` before it opens a database or listener.
+- `/api/rules/validate` remains available for candidate validation. Deploy a new immutable digest for activation.
+- Production effectusd rejects Go plugin executors. Use immutable invocation-aware targets, or use plugins only in an explicitly trusted embedded library process.
 - Production effectusd rejects Go plugin executors and explicitly supplied legacy saga or Redis settings. PostgreSQL is required for HTTP, gRPC, Kafka, and stream daemon transports.
-- Use `extensions.dirs` and `--extensions-dir` for local declarations. `verbs.spec_dirs` and `--verb-dir` remain deprecated aliases for the compatibility window and emit one startup notice.
-- Extension reload can re-read local `*.verbs.json` and `*.schema.json` files. An immutable OCI digest cannot change.
+- Use `extensions.dirs` and `--extensions-dir` for local declarations. `verbs.spec_dirs` and `--verb-dir` are deprecated compatibility aliases.
 - Deploy a new OCI digest to publish another generation. Effectusd does not poll mutable OCI tags.
-- Schema sources load at startup. Set `extensions.reload_interval` only when a local or external source can return new declarations.
+- Schema sources and extension manifests load at startup. A change requires a pod replacement.
 - `verbs.duplicate_policy` controls how duplicate verb names are resolved; `verbs.oci_warmup` prefetches OCI verb bundles at startup.
 - `verbs.strict` controls runtime argument and return checks. The default is `true`. Use `false` only for unchecked development code.
 - `fixed_time` pins deterministic time for expression evaluation (useful for tests and canary runs).

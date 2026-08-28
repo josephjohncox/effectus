@@ -98,11 +98,8 @@ func (s *serverState) handleRuleValidate(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !s.rulesOn {
-		writeJSONError(w, http.StatusForbidden, "rule hotload disabled")
-		return
-	}
-
+	// Candidate validation does not publish a runtime generation and remains
+	// available when checked execution activation is disabled.
 	req, err := decodeRuleHotloadRequest(r)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
