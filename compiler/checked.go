@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/alecthomas/participle/v2"
 	"github.com/effectus/effectus-go/ast"
 	effectusv1 "github.com/effectus/effectus-go/gen/effectus/v1"
 	"github.com/effectus/effectus-go/ir"
@@ -35,6 +34,9 @@ type Source struct {
 type CompileOptions struct {
 	ExecutionPolicy effectusv1.ExecutionPolicy
 	Limits          ir.Limits
+	// InspectSource receives each normalized AST exactly once before lowering.
+	// The callback must treat the file as immutable and must not retain it.
+	InspectSource func(path string, file *ast.File)
 }
 
 const (
@@ -198,61 +200,15 @@ func CompileChecked(ctx context.Context, sources []Source, environment ir.Enviro
 		return nil, fmt.Errorf("compile checked: unsupported execution policy %s", policy)
 	}
 
-	parser, err := participle.Build[ast.File](
-		participle.Lexer(ast.Lexer),
-		participle.UseLookahead(2),
-		participle.Elide("Whitespace", "Comment"),
-	)
+	ordered, err := parseSources(ctx, sources)
 	if err != nil {
-		return nil, fmt.Errorf("compile checked: build parser: %w", err)
+		return nil, fmt.Errorf("compile checked: %w", err)
 	}
-
-	type parsed struct {
-		path string
-		file *ast.File
+	if options.InspectSource != nil {
+		for _, source := range ordered {
+			options.InspectSource(source.path, source.file)
+		}
 	}
-	ordered := make([]parsed, 0, len(sources))
-	seenPaths := make(map[string]struct{}, len(sources))
-	for _, source := range sources {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		path, err := normalizeSourcePath(source.Path)
-		if err != nil {
-			return nil, err
-		}
-		if _, duplicate := seenPaths[path]; duplicate {
-			return nil, fmt.Errorf("compile checked: duplicate normalized source path %q", path)
-		}
-		seenPaths[path] = struct{}{}
-		extension := filepath.Ext(path)
-		if extension != ".eff" && extension != ".effx" {
-			return nil, fmt.Errorf("compile checked: source %q must use .eff or .effx", path)
-		}
-		data, err := checkedSourceBytes(source)
-		if err != nil {
-			return nil, err
-		}
-		file, err := parser.ParseBytes(path, data)
-		if err != nil {
-			return nil, fmt.Errorf("compile checked: parse %s: %w", path, err)
-		}
-		if err := restoreCheckedPredicateText(file, data); err != nil {
-			return nil, fmt.Errorf("compile checked: %s: %w", path, err)
-		}
-		normalizeCheckedSourceAST(file)
-		if err := normalizeFlowBindings(file); err != nil {
-			return nil, fmt.Errorf("compile checked: %s: %w", path, err)
-		}
-		if extension == ".eff" && len(file.Flows) != 0 {
-			return nil, fmt.Errorf("compile checked: %s contains flow declarations", path)
-		}
-		if extension == ".effx" && len(file.Rules) != 0 {
-			return nil, fmt.Errorf("compile checked: %s contains list rule declarations", path)
-		}
-		ordered = append(ordered, parsed{path: path, file: file})
-	}
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].path < ordered[j].path })
 
 	plans := make([]*effectusv1.Plan, 0)
 	var listOrder, flowOrder uint32

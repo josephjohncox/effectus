@@ -21,7 +21,7 @@ func TestFactsTypeReturnsRegisteredType(t *testing.T) {
 	require.Nil(t, facts.Type("customer.missing"))
 }
 
-func TestCompileWritesCheckedArtifact(t *testing.T) {
+func TestCompileCommandEmitsCheckedIR(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "flow.effx")
 	verbs := filepath.Join(dir, "verbs.json")
@@ -91,11 +91,11 @@ func TestFormatCheckIsReadOnly(t *testing.T) {
 	require.Equal(t, original, after)
 }
 
-func TestExplicitSchemaFailure(t *testing.T) {
+func TestCheckFailsRequestedDeclarationLoad(t *testing.T) {
 	testExplicitDeclarationFailure(t, "schema")
 }
 
-func TestExplicitVerbFailure(t *testing.T) {
+func TestCompileFailsRequestedDeclarationLoad(t *testing.T) {
 	testExplicitDeclarationFailure(t, "verbschema")
 }
 

@@ -5,11 +5,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/effectus/effectus-go/ast"
 	"github.com/effectus/effectus-go/ir"
 	"github.com/stretchr/testify/require"
 )
 
-func TestCompilerFrontEndParity(t *testing.T) {
+func TestSharedFrontEnd(t *testing.T) {
 	dir := t.TempDir()
 	listPath := filepath.Join(dir, "list.eff")
 	flowPath := filepath.Join(dir, "flow.effx")
@@ -28,7 +29,11 @@ func TestCompilerFrontEndParity(t *testing.T) {
 	require.NoError(t, err)
 	fromFiles, err := CompileChecked(t.Context(), loaded, environment, CompileOptions{})
 	require.NoError(t, err)
-	direct, err := CompileChecked(t.Context(), []Source{{Path: listPath, Content: listData}, {Path: flowPath, Content: flowData}}, environment, CompileOptions{})
+	inspected := make(map[string]int)
+	direct, err := CompileChecked(t.Context(), []Source{{Path: listPath, Content: listData}, {Path: flowPath, Content: flowData}}, environment, CompileOptions{InspectSource: func(path string, _ *ast.File) {
+		inspected[path]++
+	}})
 	require.NoError(t, err)
 	require.Equal(t, direct.Marshal(), fromFiles.Marshal())
+	require.Equal(t, map[string]int{filepath.ToSlash(filepath.Clean(listPath)): 1, filepath.ToSlash(filepath.Clean(flowPath)): 1}, inspected)
 }

@@ -3,12 +3,9 @@ package compiler
 import (
 	"context"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 	"sort"
 
-	"github.com/alecthomas/participle/v2"
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
 	"github.com/effectus/effectus-go/flow"
@@ -18,27 +15,14 @@ import (
 
 // Compiler handles parsing and type checking of Effectus files
 type Compiler struct {
-	parser       *participle.Parser[ast.File]
 	typeSystem   *types.TypeSystem
 	flowCompiler *flow.Compiler
 	listCompiler *list.Compiler
 }
 
-// NewCompiler creates a new compiler
+// NewCompiler creates a new compiler.
 func NewCompiler() *Compiler {
-	// Create the parser for AST files
-	parser, err := participle.Build[ast.File](
-		participle.Lexer(ast.Lexer),
-		participle.UseLookahead(2),
-		participle.Elide("Whitespace", "Comment"),
-	)
-	if err != nil {
-		// If we can't create the parser, panic since this is a fundamental error
-		panic(fmt.Errorf("failed to create parser: %w", err))
-	}
-
 	return &Compiler{
-		parser:       parser,
 		typeSystem:   types.NewTypeSystem(),
 		flowCompiler: &flow.Compiler{},
 		listCompiler: &list.Compiler{},
@@ -50,28 +34,17 @@ func (c *Compiler) GetTypeSystem() *types.TypeSystem {
 	return c.typeSystem
 }
 
-// ParseFile parses a file into an AST
+// ParseFile parses one file through the shared compiler front end.
 func (c *Compiler) ParseFile(filename string) (*ast.File, error) {
-	f, err := os.Open(filename)
+	sources, err := LoadSources([]string{filename})
 	if err != nil {
-		return nil, fmt.Errorf("failed to open file: %w", err)
-	}
-	defer f.Close()
-
-	data, err := io.ReadAll(f)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
-	}
-
-	file, err := c.parser.ParseBytes(filename, data)
-	if err != nil {
-		return nil, fmt.Errorf("parse error: %w", err)
-	}
-	if err := normalizeFlowBindings(file); err != nil {
 		return nil, err
 	}
-
-	return file, nil
+	parsed, err := parseSources(context.Background(), sources)
+	if err != nil {
+		return nil, err
+	}
+	return parsed[0].file, nil
 }
 
 func normalizeFlowBindings(file *ast.File) error {
@@ -135,81 +108,15 @@ func (c *Compiler) CompileUncheckedFiles(filenames []string, facts effectus.Fact
 
 // CompileUncheckedProgram compiles without type checking.
 func (c *Compiler) CompileUncheckedProgram(filenames []string, facts effectus.Facts) (*CompiledSpec, error) {
-	// Group files by extension
-	effFiles := []string{}
-	effxFiles := []string{}
-
-	for _, path := range filenames {
-		ext := filepath.Ext(path)
-		switch ext {
-		case ".eff":
-			effFiles = append(effFiles, path)
-		case ".effx":
-			effxFiles = append(effxFiles, path)
-		default:
-			return nil, fmt.Errorf("unsupported file extension for %s: %s (must be .eff or .effx)", path, ext)
-		}
+	sources, err := LoadSources(filenames)
+	if err != nil {
+		return nil, err
 	}
-
-	// Create a schema
-	schema := facts.Schema()
-
-	// Compile all files and merge them
-	return c.compileAllFiles(effFiles, effxFiles, schema)
-}
-
-// compileAllFiles compiles both list and flow style rule files and merges them into a single spec
-func (c *Compiler) compileAllFiles(effFiles, effxFiles []string, schema effectus.SchemaInfo) (*CompiledSpec, error) {
-	var listSpec *list.Spec
-	var flowSpec *flow.Spec
-
-	// Compile list-style (.eff) files if any
-	if len(effFiles) > 0 {
-		var specs []effectus.Spec
-
-		for _, path := range effFiles {
-			file, err := c.ParseFile(path)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse %s: %w", path, err)
-			}
-
-			spec, err := c.listCompiler.CompileParsedFile(file, path, schema)
-			if err != nil {
-				return nil, fmt.Errorf("failed to compile %s: %w", path, err)
-			}
-			specs = append(specs, spec)
-		}
-
-		// Merge list specs
-		listSpec = c.mergeListSpecs(specs)
+	parsed, err := parseSources(context.Background(), sources)
+	if err != nil {
+		return nil, err
 	}
-
-	// Compile flow-style (.effx) files if any
-	if len(effxFiles) > 0 {
-		var specs []effectus.Spec
-		for _, path := range effxFiles {
-			file, err := c.ParseFile(path)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse %s: %w", path, err)
-			}
-
-			spec, err := c.flowCompiler.CompileParsedFile(file, path, schema)
-			if err != nil {
-				return nil, fmt.Errorf("failed to compile %s: %w", path, err)
-			}
-			specs = append(specs, spec)
-		}
-
-		// Merge flow specs
-		flowSpec = c.mergeFlowSpecs(specs)
-	}
-
-	return &CompiledSpec{List: listSpec, Flow: flowSpec, Name: "unified"}, nil
-}
-
-type parsedSource struct {
-	path string
-	file *ast.File
+	return c.compileParsedSources(parsed, facts.Schema())
 }
 
 func (c *Compiler) compileParsedSources(sources []parsedSource, schema effectus.SchemaInfo) (*CompiledSpec, error) {
@@ -398,13 +305,21 @@ func (c *Compiler) ParseAndCompileFiles(filenames []string, facts effectus.Facts
 
 // ParseAndCompileProgram parses, type checks, and compiles one concrete program.
 func (c *Compiler) ParseAndCompileProgram(filenames []string, facts effectus.Facts) (*CompiledSpec, error) {
-	sources := make([]parsedSource, 0, len(filenames))
-	for _, filename := range filenames {
-		file, err := c.ParseAndTypeCheck(filename, facts)
-		if err != nil {
-			return nil, err
+	loaded, err := LoadSources(filenames)
+	if err != nil {
+		return nil, err
+	}
+	sources, err := parseSources(context.Background(), loaded)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.registerDefaultVerbTypes(); err != nil {
+		return nil, fmt.Errorf("failed to register verb types: %w", err)
+	}
+	for _, source := range sources {
+		if err := c.typeSystem.TypeCheckFile(source.file, facts); err != nil {
+			return nil, fmt.Errorf("type check %s: %w", source.path, err)
 		}
-		sources = append(sources, parsedSource{path: filename, file: file})
 	}
 	return c.compileParsedSources(sources, facts.Schema())
 }

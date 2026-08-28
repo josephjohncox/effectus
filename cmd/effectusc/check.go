@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/effectus/effectus-go/ast"
 	"github.com/effectus/effectus-go/compiler"
 	"github.com/effectus/effectus-go/internal/schemasources"
 	"github.com/effectus/effectus-go/lint"
@@ -102,8 +103,6 @@ func runCheck(opts runCheckOptions) ([]lint.Issue, bool, bool, error) {
 		return nil, false, false, nil
 	}
 
-	comp := compiler.NewCompiler()
-
 	_, typeSystem, schemaErr := createEmptyFacts(opts.schemaFiles, opts.verbose)
 	var sourceErr error
 	if strings.TrimSpace(opts.schemaSources) != "" {
@@ -125,27 +124,14 @@ func runCheck(opts runCheckOptions) ([]lint.Issue, bool, bool, error) {
 	if err != nil {
 		return nil, false, false, err
 	}
-	if _, err := compiler.CompileChecked(context.Background(), sources, environment, compiler.CompileOptions{}); err != nil {
-		return []lint.Issue{issueFromError("", err)}, false, true, nil
-	}
-
 	issues := make([]lint.Issue, 0)
 	hadWarn := false
 	hadError := false
-
-	for _, filename := range opts.files {
+	compileOptions := compiler.CompileOptions{InspectSource: func(path string, parsed *ast.File) {
 		if opts.verbose {
-			fmt.Printf("Checking %s...\n", filename)
+			fmt.Printf("Checking %s...\n", path)
 		}
-
-		parsed, err := comp.ParseFile(filename)
-		if err != nil {
-			hadError = true
-			issues = append(issues, issueFromError(filename, err))
-			continue
-		}
-
-		fileIssues := lint.LintFileWithOptions(parsed, filename, opts.registry, opts.lintOptions)
+		fileIssues := lint.LintFileWithOptions(parsed, path, opts.registry, opts.lintOptions)
 		for _, issue := range fileIssues {
 			if issue.Severity == "warning" {
 				hadWarn = true
@@ -155,6 +141,10 @@ func runCheck(opts runCheckOptions) ([]lint.Issue, bool, bool, error) {
 			}
 		}
 		issues = append(issues, fileIssues...)
+	}}
+	if _, err := compiler.CompileChecked(context.Background(), sources, environment, compileOptions); err != nil {
+		issues = append(issues, issueFromError("", err))
+		hadError = true
 	}
 
 	return issues, hadWarn, hadError, nil
