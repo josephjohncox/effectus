@@ -47,6 +47,7 @@ type CDCSource struct {
 	cancel      context.CancelFunc
 	schema      *adapters.Schema
 	running     bool
+	stopping    bool
 	currentLSN  string
 	done        chan struct{}
 	mu          sync.Mutex
@@ -172,6 +173,7 @@ func (c *CDCSource) Start(ctx context.Context) error {
 	c.factChan = make(chan *adapters.TypedFact, c.config.BufferSize)
 	c.done = make(chan struct{})
 	c.running = true
+	c.stopping = false
 
 	if c.config.CreateSlot {
 		if err := c.ensureSlot(ctx); err != nil {
@@ -203,42 +205,69 @@ func (c *CDCSource) Start(ctx context.Context) error {
 	done := c.done
 	c.mu.Unlock()
 
-	go c.pollChanges(factChan, done)
+	go c.pollChanges(workerCtx, pool, factChan, done)
 	log.Printf("PostgreSQL CDC source started for slot: %s", c.config.SlotName)
 	return nil
 }
 
 func (c *CDCSource) Stop(ctx context.Context) error {
 	c.mu.Lock()
+	done := c.done
 	if !c.running {
-		done := c.done
 		c.mu.Unlock()
-		if done != nil {
-			select {
-			case <-done:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+		return waitForCDCStop(ctx, done)
+	}
+	if c.stopping {
+		c.mu.Unlock()
+		if err := waitForCDCStop(ctx, done); err != nil {
+			return err
 		}
+		c.finishStop(done)
 		return nil
 	}
-	cancel := c.cancel
-	pool := c.pool
-	done := c.done
-	c.running = false
+	c.stopping = true
+	cancel, pool := c.cancel, c.pool
 	c.mu.Unlock()
 
 	cancel()
 	if pool != nil {
 		pool.Close()
 	}
+	if err := waitForCDCStop(ctx, done); err != nil {
+		go func() {
+			<-done
+			c.finishStop(done)
+		}()
+		return err
+	}
+	c.finishStop(done)
+	log.Printf("PostgreSQL CDC source stopped")
+	return nil
+}
+
+func waitForCDCStop(ctx context.Context, done <-chan struct{}) error {
+	if done == nil {
+		return nil
+	}
 	select {
 	case <-done:
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	log.Printf("PostgreSQL CDC source stopped")
-	return nil
+}
+
+func (c *CDCSource) finishStop(done <-chan struct{}) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.done != done {
+		return
+	}
+	c.running = false
+	c.stopping = false
+	c.pool = nil
+	c.ctx = nil
+	c.cancel = nil
 }
 
 func (c *CDCSource) GetSourceSchema() *adapters.Schema {
@@ -246,11 +275,13 @@ func (c *CDCSource) GetSourceSchema() *adapters.Schema {
 }
 
 func (c *CDCSource) HealthCheck() error {
-	if c.pool == nil {
+	c.mu.Lock()
+	pool, workerCtx := c.pool, c.ctx
+	c.mu.Unlock()
+	if pool == nil || workerCtx == nil {
 		return fmt.Errorf("connection pool not initialized")
 	}
-
-	return c.pool.Ping(c.ctx)
+	return pool.Ping(workerCtx)
 }
 
 func (c *CDCSource) GetMetadata() adapters.SourceMetadata {
@@ -270,23 +301,23 @@ func (c *CDCSource) GetMetadata() adapters.SourceMetadata {
 	}
 }
 
-func (c *CDCSource) pollChanges(factChan chan *adapters.TypedFact, done chan struct{}) {
+func (c *CDCSource) pollChanges(ctx context.Context, pool *pgxpool.Pool, factChan chan *adapters.TypedFact, done chan struct{}) {
 	defer close(done)
 	defer close(factChan)
 
 	ticker := time.NewTicker(c.config.PollInterval)
 	defer ticker.Stop()
 
-	if err := c.fetchChanges(factChan); err != nil && c.ctx.Err() == nil {
+	if err := c.fetchChanges(ctx, pool, factChan); err != nil && ctx.Err() == nil {
 		log.Printf("PostgreSQL CDC initial fetch failed: %v", err)
 	}
 
 	for {
 		select {
-		case <-c.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := c.fetchChanges(factChan); err != nil && c.ctx.Err() == nil {
+			if err := c.fetchChanges(ctx, pool, factChan); err != nil && ctx.Err() == nil {
 				log.Printf("PostgreSQL CDC fetch failed: %v", err)
 			}
 		}
@@ -298,14 +329,14 @@ type preparedWALRecord struct {
 	facts []*adapters.TypedFact
 }
 
-func (c *CDCSource) fetchChanges(factChan chan<- *adapters.TypedFact) error {
-	if c.pool == nil {
+func (c *CDCSource) fetchChanges(ctx context.Context, pool *pgxpool.Pool, factChan chan<- *adapters.TypedFact) error {
+	if pool == nil {
 		return fmt.Errorf("connection pool not initialized")
 	}
 
 	// Peeking is deliberately non-advancing. The slot is advanced below only
 	// after every fact from a WAL record has crossed the channel handoff.
-	rows, err := c.pool.Query(c.ctx,
+	rows, err := pool.Query(ctx,
 		"SELECT lsn, xid, data FROM pg_logical_slot_peek_changes($1, NULL, $2)",
 		c.config.SlotName,
 		c.config.MaxChanges,
@@ -353,17 +384,19 @@ func (c *CDCSource) fetchChanges(factChan chan<- *adapters.TypedFact) error {
 			select {
 			case factChan <- fact:
 				c.metrics.RecordFactProcessed(c.config.SourceID, fact.SchemaName)
-			case <-c.ctx.Done():
-				return c.ctx.Err()
+			case <-ctx.Done():
+				return ctx.Err()
 			}
 		}
-		if _, err := c.pool.Exec(c.ctx,
+		if _, err := pool.Exec(ctx,
 			"SELECT pg_replication_slot_advance($1, $2::pg_lsn)",
 			c.config.SlotName, record.lsn,
 		); err != nil {
 			return fmt.Errorf("advance replication slot through %s: %w", record.lsn, err)
 		}
+		c.mu.Lock()
 		c.currentLSN = record.lsn
+		c.mu.Unlock()
 	}
 	return nil
 }

@@ -27,6 +27,7 @@ type PostgresPollerSource struct {
 	intervalSeconds  int
 	timestampColumn  string
 	tieBreakColumn   string
+	processedLedger  string
 	schemaName       string
 	maxRows          int
 
@@ -55,6 +56,7 @@ type PollerConfig struct {
 	IntervalSeconds  int         `json:"interval_seconds" yaml:"interval_seconds"`
 	TimestampColumn  string      `json:"timestamp_column" yaml:"timestamp_column"`
 	TieBreakColumn   string      `json:"tie_break_column" yaml:"tie_break_column"`
+	ProcessedLedger  string      `json:"processed_ledger_table" yaml:"processed_ledger_table"`
 	StartTimestamp   string      `json:"start_timestamp" yaml:"start_timestamp"`
 	StartTieBreak    interface{} `json:"start_tie_break" yaml:"start_tie_break"`
 	SchemaName       string      `json:"schema_name" yaml:"schema_name"`
@@ -75,6 +77,9 @@ func NewPostgresPollerSource(sourceID string, config PollerConfig) (*PostgresPol
 		}
 		if !pollerIdentifier.MatchString(config.TimestampColumn) || !pollerIdentifier.MatchString(config.TieBreakColumn) {
 			return nil, fmt.Errorf("timestamp_column and tie_break_column must be simple SQL identifiers")
+		}
+		if !pollerIdentifier.MatchString(config.ProcessedLedger) {
+			return nil, fmt.Errorf("processed_ledger_table is required for lossless incremental polling and must be a simple SQL identifier")
 		}
 	}
 	if config.TieBreakColumn != "" && config.TimestampColumn == "" {
@@ -110,6 +115,7 @@ func NewPostgresPollerSource(sourceID string, config PollerConfig) (*PostgresPol
 		intervalSeconds:  config.IntervalSeconds,
 		timestampColumn:  config.TimestampColumn,
 		tieBreakColumn:   config.TieBreakColumn,
+		processedLedger:  config.ProcessedLedger,
 		schemaName:       config.SchemaName,
 		maxRows:          config.MaxRows,
 		cursor:           cursor,
@@ -331,9 +337,10 @@ func (p *PostgresPollerSource) executePoll(ctx context.Context, factChan chan<- 
 			select {
 			case factChan <- fact:
 				if next.set {
-					p.mu.Lock()
-					p.cursor = next
-					p.mu.Unlock()
+					if err := p.markProcessed(ctx, db, next.tieBreak); err != nil {
+						rows.Close()
+						return err
+					}
 				}
 				rowCount++
 			case <-ctx.Done():
@@ -355,20 +362,31 @@ func (p *PostgresPollerSource) executePoll(ctx context.Context, factChan chan<- 
 }
 
 func (p *PostgresPollerSource) buildQuery() (string, []interface{}) {
-	base := fmt.Sprintf("SELECT * FROM (%s) AS effectus_source", p.query)
+	base := fmt.Sprintf("SELECT effectus_source.* FROM (%s) AS effectus_source", p.query)
 	if p.timestampColumn == "" {
 		return fmt.Sprintf("%s LIMIT $1", base), []interface{}{p.maxRows}
 	}
 	ts := pq.QuoteIdentifier(p.timestampColumn)
 	tie := pq.QuoteIdentifier(p.tieBreakColumn)
+	ledger := pq.QuoteIdentifier(p.processedLedger)
+	notProcessed := fmt.Sprintf("NOT EXISTS (SELECT 1 FROM %s AS effectus_processed WHERE effectus_processed.source_id = $1 AND effectus_processed.record_key = effectus_source.%s::text)", ledger, tie)
 	p.mu.Lock()
-	cursor := p.cursor
+	start := p.cursor
 	p.mu.Unlock()
-	if !cursor.set {
-		return fmt.Sprintf("%s ORDER BY %s, %s LIMIT $1", base, ts, tie), []interface{}{p.maxRows}
+	if !start.set {
+		return fmt.Sprintf("%s WHERE %s ORDER BY %s, %s LIMIT $2", base, notProcessed, ts, tie), []interface{}{p.sourceID, p.maxRows}
 	}
-	return fmt.Sprintf("%s WHERE (%s > $1 OR (%s = $1 AND %s > $2)) ORDER BY %s, %s LIMIT $3", base, ts, ts, tie, ts, tie),
-		[]interface{}{cursor.timestamp, cursor.tieBreak, p.maxRows}
+	return fmt.Sprintf("%s WHERE %s AND (%s > $2 OR (%s = $2 AND %s > $3)) ORDER BY %s, %s LIMIT $4", base, notProcessed, ts, ts, tie, ts, tie),
+		[]interface{}{p.sourceID, start.timestamp, start.tieBreak, p.maxRows}
+}
+
+func (p *PostgresPollerSource) markProcessed(ctx context.Context, db *sql.DB, tieBreak interface{}) error {
+	ledger := pq.QuoteIdentifier(p.processedLedger)
+	query := fmt.Sprintf("INSERT INTO %s (source_id, record_key, processed_at) VALUES ($1, $2, NOW()) ON CONFLICT (source_id, record_key) DO NOTHING", ledger)
+	if _, err := db.ExecContext(ctx, query, p.sourceID, fmt.Sprint(tieBreak)); err != nil {
+		return fmt.Errorf("record processed key in %s: %w", p.processedLedger, err)
+	}
+	return nil
 }
 
 func timestampValue(value interface{}) (time.Time, error) {
@@ -435,6 +453,9 @@ func (f *PostgresPollerFactory) Create(config adapters.SourceConfig) (adapters.F
 	if v, ok := config.Config["tie_break_column"].(string); ok {
 		pollerConfig.TieBreakColumn = v
 	}
+	if v, ok := config.Config["processed_ledger_table"].(string); ok {
+		pollerConfig.ProcessedLedger = v
+	}
 	if v, ok := config.Config["start_timestamp"].(string); ok {
 		pollerConfig.StartTimestamp = v
 	}
@@ -464,6 +485,9 @@ func (f *PostgresPollerFactory) ValidateConfig(config adapters.SourceConfig) err
 		if _, ok := config.Config["tie_break_column"]; !ok {
 			return fmt.Errorf("tie_break_column is required for incremental postgres_poller source")
 		}
+		if _, ok := config.Config["processed_ledger_table"]; !ok {
+			return fmt.Errorf("processed_ledger_table is required for lossless incremental postgres_poller source")
+		}
 	}
 	return nil
 }
@@ -471,15 +495,16 @@ func (f *PostgresPollerFactory) ValidateConfig(config adapters.SourceConfig) err
 func (f *PostgresPollerFactory) GetConfigSchema() adapters.ConfigSchema {
 	return adapters.ConfigSchema{
 		Properties: map[string]adapters.ConfigProperty{
-			"connection_string": {Type: "string", Description: "PostgreSQL connection string", Examples: []string{"postgres://user:pass@localhost:5432/db"}},
-			"query":             {Type: "string", Description: "Base SELECT query; incremental filtering and ordering are applied outside it", Examples: []string{"SELECT id, payload, created_at FROM events"}},
-			"interval_seconds":  {Type: "int", Description: "Polling interval in seconds", Default: 60},
-			"timestamp_column":  {Type: "string", Description: "Timestamp component of the incremental cursor"},
-			"tie_break_column":  {Type: "string", Description: "Required unique tie-break column for incremental polling"},
-			"start_timestamp":   {Type: "string", Description: "Optional RFC3339 initial cursor timestamp"},
-			"start_tie_break":   {Type: "string", Description: "Initial tie-break value; required with start_timestamp"},
-			"schema_name":       {Type: "string", Description: "Schema name for generated facts", Default: "database_row"},
-			"max_rows":          {Type: "int", Description: "Rows per deterministic page", Default: 1000},
+			"connection_string":      {Type: "string", Description: "PostgreSQL connection string", Examples: []string{"postgres://user:pass@localhost:5432/db"}},
+			"query":                  {Type: "string", Description: "Base SELECT query; incremental filtering and ordering are applied outside it", Examples: []string{"SELECT id, payload, created_at FROM events"}},
+			"interval_seconds":       {Type: "int", Description: "Polling interval in seconds", Default: 60},
+			"timestamp_column":       {Type: "string", Description: "Timestamp component of the incremental cursor"},
+			"tie_break_column":       {Type: "string", Description: "Required globally unique record key for incremental polling"},
+			"processed_ledger_table": {Type: "string", Description: "Existing durable ledger with source_id, record_key, and processed_at columns"},
+			"start_timestamp":        {Type: "string", Description: "Optional RFC3339 lower bound"},
+			"start_tie_break":        {Type: "string", Description: "Initial tie-break value; required with start_timestamp"},
+			"schema_name":            {Type: "string", Description: "Schema name for generated facts", Default: "database_row"},
+			"max_rows":               {Type: "int", Description: "Rows per deterministic page", Default: 1000},
 		},
 		Required: []string{"connection_string", "query"},
 	}

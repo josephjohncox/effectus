@@ -43,6 +43,7 @@ type Source struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	running  bool
+	stopping bool
 	done     chan struct{}
 	mappings map[string]adapters.FactMapping
 	mu       sync.Mutex
@@ -129,6 +130,7 @@ func (s *Source) Start(ctx context.Context) error {
 	s.factChan = make(chan *adapters.TypedFact, s.config.BufferSize)
 	s.done = make(chan struct{})
 	s.running = true
+	s.stopping = false
 	workerCtx, factChan, done := s.ctx, s.factChan, s.done
 
 	go s.consumeStream(workerCtx, conn, factChan, done)
@@ -140,31 +142,58 @@ func (s *Source) Start(ctx context.Context) error {
 // Stop stops the stream and closes the connection.
 func (s *Source) Stop(ctx context.Context) error {
 	s.mu.Lock()
-	cancel, conn, done := s.cancel, s.conn, s.done
-	wasRunning := s.running
-	s.running = false
-	s.mu.Unlock()
-	if !wasRunning {
-		if done != nil {
-			select {
-			case <-done:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+	done := s.done
+	if !s.running {
+		s.mu.Unlock()
+		return waitForStop(ctx, done)
+	}
+	if s.stopping {
+		s.mu.Unlock()
+		if err := waitForStop(ctx, done); err != nil {
+			return err
 		}
+		s.finishStop(done)
 		return nil
 	}
+	s.stopping = true
+	cancel, conn := s.cancel, s.conn
+	s.mu.Unlock()
 	cancel()
 	if conn != nil {
 		_ = conn.Close()
 	}
+	if err := waitForStop(ctx, done); err != nil {
+		go func() { <-done; s.finishStop(done) }()
+		return err
+	}
+	s.finishStop(done)
+	log.Printf("gRPC source %s stopped", s.config.SourceID)
+	return nil
+}
+
+func waitForStop(ctx context.Context, done <-chan struct{}) error {
+	if done == nil {
+		return nil
+	}
 	select {
 	case <-done:
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	log.Printf("gRPC source %s stopped", s.config.SourceID)
-	return nil
+}
+
+func (s *Source) finishStop(done <-chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.done != done {
+		return
+	}
+	s.running = false
+	s.stopping = false
+	s.conn = nil
+	s.ctx = nil
+	s.cancel = nil
 }
 
 // GetSourceSchema returns schema metadata.

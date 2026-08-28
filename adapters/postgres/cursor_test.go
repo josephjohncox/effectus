@@ -18,29 +18,39 @@ func TestPollerRejectsTimestampWithoutTieBreak(t *testing.T) {
 	}
 }
 
-func TestPollerBuildsDeterministicTuplePagesFromZero(t *testing.T) {
+func TestPollerBuildsDurableRescanPages(t *testing.T) {
 	p, err := NewPostgresPollerSource("test", PollerConfig{
 		ConnectionString: "postgres://unused", Query: "SELECT id, created_at FROM events;",
-		TimestampColumn: "created_at", TieBreakColumn: "id", MaxRows: 25,
+		TimestampColumn: "created_at", TieBreakColumn: "id", ProcessedLedger: "processed_events", MaxRows: 25,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	query, args := p.buildQuery()
-	if strings.Contains(query, "WHERE") || !strings.Contains(query, `ORDER BY "created_at", "id" LIMIT $1`) {
-		t.Fatalf("initial query is not an ordered zero-cursor page: %s", query)
+	if !strings.Contains(query, `NOT EXISTS`) || !strings.Contains(query, `"processed_events"`) || !strings.Contains(query, `ORDER BY "created_at", "id" LIMIT $2`) {
+		t.Fatalf("initial query does not rescan against the durable ledger: %s", query)
 	}
-	if len(args) != 1 || args[0] != 25 {
+	if len(args) != 2 || args[0] != "test" || args[1] != 25 {
 		t.Fatalf("initial args = %#v", args)
 	}
 
 	p.cursor = pollCursor{timestamp: time.Unix(10, 0), tieBreak: int64(7), set: true}
 	query, args = p.buildQuery()
-	if !strings.Contains(query, `"created_at" > $1`) || !strings.Contains(query, `"id" > $2`) || !strings.Contains(query, "LIMIT $3") {
-		t.Fatalf("tuple cursor query = %s", query)
+	if !strings.Contains(query, `"created_at" > $2`) || !strings.Contains(query, `"id" > $3`) || !strings.Contains(query, "LIMIT $4") {
+		t.Fatalf("lower-bound query = %s", query)
 	}
-	if len(args) != 3 || args[1] != int64(7) {
-		t.Fatalf("cursor args = %#v", args)
+	if len(args) != 4 || args[2] != int64(7) {
+		t.Fatalf("lower-bound args = %#v", args)
+	}
+}
+
+func TestPollerRejectsIncrementalModeWithoutDurableLedger(t *testing.T) {
+	_, err := NewPostgresPollerSource("test", PollerConfig{
+		ConnectionString: "postgres://unused", Query: "SELECT id, created_at FROM events",
+		TimestampColumn: "created_at", TieBreakColumn: "id",
+	})
+	if err == nil || !strings.Contains(err.Error(), "processed_ledger_table") {
+		t.Fatalf("error = %v, want durable ledger validation", err)
 	}
 }
 

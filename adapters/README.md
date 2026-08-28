@@ -88,6 +88,19 @@ It rejects protobuf input because no descriptor-backed decoder is configured. Th
 
 PostgreSQL logical decoding requires an installed output plugin, such as `wal2json`.
 
+Incremental PostgreSQL polling requires a globally unique tie-break column and a durable processed-key ledger. Create the configured ledger before the poller starts:
+
+```sql
+CREATE TABLE effectus_poller_processed (
+    source_id text NOT NULL,
+    record_key text NOT NULL,
+    processed_at timestamptz NOT NULL,
+    PRIMARY KEY (source_id, record_key)
+);
+```
+
+Set `processed_ledger_table` to this table. The poller rescans source rows and excludes durable processed keys. This prevents delayed lower commits from being skipped.
+
 MySQL CDC requires binlog access and a replication-capable account.
 
 Both adapters depend on database retention and privilege policy. Review those settings before production use.

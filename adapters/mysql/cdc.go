@@ -51,6 +51,7 @@ type CDCSource struct {
 	cancel   context.CancelFunc
 	schema   *adapters.Schema
 	running  bool
+	stopping bool
 	done     chan struct{}
 
 	mu            sync.Mutex
@@ -179,6 +180,7 @@ func (c *CDCSource) Start(ctx context.Context) error {
 	c.factChan = make(chan *adapters.TypedFact, c.config.BufferSize)
 	c.done = make(chan struct{})
 	c.running = true
+	c.stopping = false
 	workerCtx, factChan, done := c.ctx, c.factChan, c.done
 	go c.consumeEvents(workerCtx, streamer, factChan, done)
 
@@ -189,20 +191,22 @@ func (c *CDCSource) Start(ctx context.Context) error {
 // Stop stops the CDC stream.
 func (c *CDCSource) Stop(ctx context.Context) error {
 	c.mu.Lock()
-	cancel, syncer, db, done := c.cancel, c.syncer, c.db, c.done
-	wasRunning := c.running
-	c.running = false
-	c.mu.Unlock()
-	if !wasRunning {
-		if done != nil {
-			select {
-			case <-done:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+	done := c.done
+	if !c.running {
+		c.mu.Unlock()
+		return waitForCDCStop(ctx, done)
+	}
+	if c.stopping {
+		c.mu.Unlock()
+		if err := waitForCDCStop(ctx, done); err != nil {
+			return err
 		}
+		c.finishStop(done)
 		return nil
 	}
+	c.stopping = true
+	cancel, syncer, db := c.cancel, c.syncer, c.db
+	c.mu.Unlock()
 	cancel()
 	if syncer != nil {
 		syncer.Close()
@@ -210,13 +214,40 @@ func (c *CDCSource) Stop(ctx context.Context) error {
 	if db != nil {
 		_ = db.Close()
 	}
+	if err := waitForCDCStop(ctx, done); err != nil {
+		go func() { <-done; c.finishStop(done) }()
+		return err
+	}
+	c.finishStop(done)
+	log.Printf("MySQL CDC source stopped")
+	return nil
+}
+
+func waitForCDCStop(ctx context.Context, done <-chan struct{}) error {
+	if done == nil {
+		return nil
+	}
 	select {
 	case <-done:
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	log.Printf("MySQL CDC source stopped")
-	return nil
+}
+
+func (c *CDCSource) finishStop(done <-chan struct{}) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.done != done {
+		return
+	}
+	c.running = false
+	c.stopping = false
+	c.syncer = nil
+	c.streamer = nil
+	c.db = nil
+	c.ctx = nil
+	c.cancel = nil
 }
 
 // GetSourceSchema returns schema metadata.

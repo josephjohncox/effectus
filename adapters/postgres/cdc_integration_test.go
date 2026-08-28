@@ -195,10 +195,15 @@ func TestPostgresPollerTupleCursorIntegration(t *testing.T) {
 	}
 	defer db.Close()
 	table := fmt.Sprintf("poll_lossless_%d", time.Now().UnixNano())
+	ledger := fmt.Sprintf("poll_ledger_%d", time.Now().UnixNano())
 	if _, err := db.Exec(fmt.Sprintf(`CREATE TABLE %s (id BIGSERIAL PRIMARY KEY, happened_at TIMESTAMPTZ NOT NULL, value TEXT)`, pq.QuoteIdentifier(table))); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(fmt.Sprintf(`CREATE TABLE %s (source_id TEXT NOT NULL, record_key TEXT NOT NULL, processed_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (source_id, record_key))`, pq.QuoteIdentifier(ledger))); err != nil {
+		t.Fatal(err)
+	}
 	defer db.Exec("DROP TABLE " + pq.QuoteIdentifier(table))
+	defer db.Exec("DROP TABLE " + pq.QuoteIdentifier(ledger))
 	stamp := time.Now().UTC().Truncate(time.Microsecond)
 	for i := 0; i < 5; i++ {
 		if _, err := db.Exec("INSERT INTO "+pq.QuoteIdentifier(table)+"(happened_at,value) VALUES ($1,$2)", stamp, fmt.Sprintf("v%d", i)); err != nil {
@@ -207,7 +212,7 @@ func TestPostgresPollerTupleCursorIntegration(t *testing.T) {
 	}
 	poller, err := NewPostgresPollerSource("poller", PollerConfig{
 		ConnectionString: dsn, Query: "SELECT id, happened_at, value FROM " + pq.QuoteIdentifier(table),
-		TimestampColumn: "happened_at", TieBreakColumn: "id", MaxRows: 2,
+		TimestampColumn: "happened_at", TieBreakColumn: "id", ProcessedLedger: ledger, MaxRows: 2,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -222,6 +227,16 @@ func TestPostgresPollerTupleCursorIntegration(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- poller.executePoll(blockedCtx, blocked) }()
 	for len(blocked) != 1 {
+		time.Sleep(time.Millisecond)
+	}
+	for {
+		var processed int
+		if err := db.QueryRow("SELECT count(*) FROM " + pq.QuoteIdentifier(ledger) + " WHERE source_id = 'poller'").Scan(&processed); err != nil {
+			t.Fatal(err)
+		}
+		if processed == 1 {
+			break
+		}
 		time.Sleep(time.Millisecond)
 	}
 	cancel()
@@ -253,6 +268,76 @@ func TestPostgresPollerTupleCursorIntegration(t *testing.T) {
 		if got := int(row["id"].(float64)); got != want {
 			t.Fatalf("id = %d, want %d", got, want)
 		}
+	}
+}
+
+func TestPostgresPollerFindsDelayedLowerCommit(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN not set")
+	}
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	table := fmt.Sprintf("poll_delayed_%d", time.Now().UnixNano())
+	ledger := fmt.Sprintf("poll_delayed_ledger_%d", time.Now().UnixNano())
+	if _, err := db.Exec(fmt.Sprintf(`CREATE TABLE %s (id BIGINT PRIMARY KEY, happened_at TIMESTAMPTZ NOT NULL, value TEXT)`, pq.QuoteIdentifier(table))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(fmt.Sprintf(`CREATE TABLE %s (source_id TEXT NOT NULL, record_key TEXT NOT NULL, processed_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (source_id, record_key))`, pq.QuoteIdentifier(ledger))); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Exec("DROP TABLE " + pq.QuoteIdentifier(table))
+	defer db.Exec("DROP TABLE " + pq.QuoteIdentifier(ledger))
+
+	lowerTime := time.Now().UTC().Add(-time.Minute)
+	tx, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec("INSERT INTO "+pq.QuoteIdentifier(table)+"(id,happened_at,value) VALUES (1,$1,'lower')", lowerTime); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO "+pq.QuoteIdentifier(table)+"(id,happened_at,value) VALUES (2,$1,'higher')", lowerTime.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	poller, err := NewPostgresPollerSource("delayed", PollerConfig{
+		ConnectionString: dsn, Query: "SELECT id, happened_at, value FROM " + pq.QuoteIdentifier(table),
+		TimestampColumn: "happened_at", TieBreakColumn: "id", ProcessedLedger: ledger, MaxRows: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := poller.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer poller.Stop(context.Background())
+
+	first := make(chan *adapters.TypedFact, 2)
+	if err := poller.executePoll(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 {
+		t.Fatalf("visible rows = %d, want higher committed row", len(first))
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	second := make(chan *adapters.TypedFact, 2)
+	if err := poller.executePoll(t.Context(), second); err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 1 {
+		t.Fatalf("delayed rows = %d, want delayed lower row", len(second))
+	}
+	var row map[string]interface{}
+	if err := json.Unmarshal((<-second).RawData, &row); err != nil {
+		t.Fatal(err)
+	}
+	if row["value"] != "lower" {
+		t.Fatalf("delayed value = %v", row["value"])
 	}
 }
 
