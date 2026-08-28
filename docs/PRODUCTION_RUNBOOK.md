@@ -14,15 +14,17 @@ An upgrade has downtime because old and new generations must not overlap.
 
 ## Startup checklist
 
-1. Pin the image and bundle by digest.
-2. Verify the bundle signature.
-3. Create a database backup.
-4. Run `effectusd --migrate-only` with the migration credential.
-5. Start `effectusd` with a runtime credential that has no DDL rights.
-6. Set API tokens and ACL rules.
-7. Set `trusted_proxy_cidrs` only for known proxy networks.
-8. Set the database pool from the approved connection budget.
-9. Check `/readyz` and `/metrics`.
+1. Pin the image and bundle by digest, and verify the bundle signature.
+2. Create a database backup.
+3. Run `effectusd --migrate-only` with the migration credential.
+4. Configure PostgreSQL with `EFFECTUS_SAGA_POSTGRES_DSN` or protected `saga.postgres.dsn`.
+5. Start `effectusd` with a runtime credential that has no DDL rights. Redis and legacy saga stores are not supported.
+6. Load the production `*.verbs.json` and `*.schema.json` manifests, and set `verbs.strict: true`.
+7. Treat the configured fact store as a projection, and set its merge strategy per namespace.
+8. Set API tokens and ACL rules. Keep `/api/*` protected.
+9. Set `trusted_proxy_cidrs` only for known proxy networks.
+10. Set the database pool from the approved connection budget.
+11. Check `/readyz` and `/metrics`.
 
 Normal startup performs read-only schema validation.
 Startup fails if migration version 10003 is not present.

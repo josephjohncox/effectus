@@ -67,8 +67,8 @@ var (
 	ociRef                   = flag.String("oci-ref", "", "OCI reference for bundle (e.g., ghcr.io/user/bundle:v1)")
 	ociCacheDir              = flag.String("oci-cache-dir", "./bundles", "Writable directory for OCI bundle cache")
 	ociSignatureVerifier     = flag.String("oci-signature-verifier", "", "Fixed executable used to verify an OCI reference and digest")
-	pluginDir                = flag.String("plugin-dir", "", "Directory containing verb plugins")
-	verbDir                  = flag.String("verb-dir", "", "Directory containing JSON verb specs")
+	pluginDir                = flag.String("plugin-dir", "", "Deprecated unsupported plugin directory (rejected)")
+	verbDir                  = flag.String("verb-dir", "", "Deprecated alias for --extensions-dir")
 	verbDuplicatePolicy      = flag.String("verb-duplicate-policy", "error", "Duplicate verb policy (error, replace, ignore)")
 	verbOCIWarmup            = flag.Bool("verb-oci-warmup", false, "Warm OCI verb executors at startup")
 	verbStrict               = flag.Bool("verb-strict", true, "Validate verb arguments and return values")
@@ -86,8 +86,8 @@ var (
 
 	// Runtime flags
 	sagaEnabled     = flag.Bool("saga", false, "Deprecated legacy saga mode (rejected by effectusd; use checked durable workflow runtime)")
-	sagaStoreType   = flag.String("saga-store", "memory", "Saga store (memory, redis, postgres)")
-	sagaRedisAddr   = flag.String("saga-redis-addr", "localhost:6379", "Redis address for saga store")
+	sagaStoreType   = flag.String("saga-store", "memory", "Deprecated legacy saga store (rejected)")
+	sagaRedisAddr   = flag.String("saga-redis-addr", "localhost:6379", "Deprecated Redis saga address (rejected)")
 	sagaRedisPass   = flag.String("saga-redis-password", "", "Redis password for saga store")
 	sagaRedisDB     = flag.Int("saga-redis-db", 0, "Redis DB for saga store")
 	sagaRedisPrefix = flag.String("saga-redis-prefix", "", "Redis key prefix for saga store")
@@ -158,8 +158,14 @@ var (
 var factsMergeNs namespaceStrategyFlag
 var schemaSources []adapters.SchemaSourceConfig
 
+func registerCustomFlags() {
+	if flag.CommandLine.Lookup("facts-merge-namespace") == nil {
+		flag.Var(&factsMergeNs, "facts-merge-namespace", "Namespace-specific merge strategy (namespace=first|last|error)")
+	}
+}
+
 func main() {
-	flag.Var(&factsMergeNs, "facts-merge-namespace", "Namespace-specific merge strategy (namespace=first|last|error)")
+	registerCustomFlags()
 	flag.Parse()
 
 	setFlags := map[string]bool{}
@@ -167,7 +173,16 @@ func main() {
 		setFlags[f.Name] = true
 	})
 
-	for _, secretFlag := range []string{"api-token", "api-read-token", "saga-redis-password", "saga-postgres-dsn"} {
+	if err := rejectExplicitLegacyFlags(setFlags); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if strings.TrimSpace(os.Getenv("EFFECTUS_SAGA_REDIS_PASSWORD")) != "" {
+		fmt.Fprintln(os.Stderr, "Error: EFFECTUS_SAGA_REDIS_PASSWORD is a legacy Redis setting and is not supported; remove it and configure PostgreSQL with EFFECTUS_SAGA_POSTGRES_DSN")
+		os.Exit(1)
+	}
+
+	for _, secretFlag := range []string{"api-token", "api-read-token", "saga-postgres-dsn"} {
 		if setFlags[secretFlag] {
 			fmt.Fprintf(os.Stderr, "--%s is rejected because command arguments expose secrets; use environment variables or a protected config file\n", secretFlag)
 			os.Exit(1)
@@ -202,9 +217,6 @@ func main() {
 	}
 	if *apiReadToken == "" {
 		*apiReadToken = os.Getenv("EFFECTUS_API_READ_TOKEN")
-	}
-	if *sagaRedisPass == "" {
-		*sagaRedisPass = os.Getenv("EFFECTUS_SAGA_REDIS_PASSWORD")
 	}
 	if *sagaPgDSN == "" {
 		*sagaPgDSN = os.Getenv("EFFECTUS_SAGA_POSTGRES_DSN")
@@ -248,14 +260,15 @@ func main() {
 		}
 	}
 
-	if *bundleFile == "" && *ociRef == "" {
-		fmt.Fprintln(os.Stderr, "Either -bundle or -oci-ref must be specified")
-		flag.PrintDefaults()
+	if err := validateBundleArguments(*bundleFile, *ociRef, *reloadInterval); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		if *bundleFile == "" && *ociRef == "" {
+			flag.PrintDefaults()
+		}
 		os.Exit(1)
 	}
-	if *bundleFile != "" && *ociRef != "" {
-		fmt.Fprintln(os.Stderr, "Use either -bundle or -oci-ref, not both")
-		os.Exit(1)
+	if strings.TrimSpace(*verbDir) != "" {
+		fmt.Fprintln(os.Stderr, "Notice: --verb-dir/verbs.spec_dirs is deprecated; use --extensions-dir/extensions.dirs")
 	}
 
 	// Create context with cancellation
@@ -351,11 +364,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Bundle contains in-memory legacy specifications; effectusd accepts embedded .eff or .effx RuleSources only.")
 		os.Exit(1)
 	}
-	if *sagaEnabled {
-		fmt.Fprintln(os.Stderr, "--saga is rejected: the legacy daemon executor does not use the V2 outbox. Use runtime.ExecuteWorkflowWithIdentity with a configured durable outbox.")
-		os.Exit(1)
-	}
-
 	var sagaStore schema.SagaStore
 	var capSystem *capability.CapabilitySystem
 
@@ -677,33 +685,6 @@ func loadVerbsAndExtensions(verbReg *verb.Registry, extensionDirs []string, exte
 
 	verbReg.Reset()
 
-	if *verbDir != "" && *pluginDir != "" {
-		return fmt.Errorf("use either -verb-dir or -plugin-dir, not both")
-	}
-
-	if *verbDir != "" {
-		for _, dir := range splitCommaList(*verbDir) {
-			if dir == "" {
-				continue
-			}
-			if *verbose {
-				fmt.Printf("Loading verb specs from directory: %s\n", dir)
-			}
-			if err := verbReg.RegisterDirectory(dir); err != nil {
-				return fmt.Errorf("loading verb specs from %s: %w", dir, err)
-			}
-		}
-	}
-
-	if *pluginDir != "" {
-		if *verbose {
-			fmt.Printf("Loading verb plugins from directory: %s\n", *pluginDir)
-		}
-		if err := verbReg.LoadPlugins(*pluginDir); err != nil {
-			return fmt.Errorf("loading verb plugins: %w", err)
-		}
-	}
-
 	hasExtensions := len(extensionDirs) > 0 || len(extensionOCIs) > 0
 	if hasExtensions {
 		if *verbose {
@@ -764,6 +745,36 @@ func validateBundleVerbHash(bundleHash string, registry *verb.Registry) error {
 	return nil
 }
 
+func validateBundleArguments(bundle, oci string, reload time.Duration) error {
+	if bundle == "" && oci == "" {
+		return fmt.Errorf("either -bundle or -oci-ref must be specified")
+	}
+	if bundle != "" && oci != "" {
+		return fmt.Errorf("use either -bundle or -oci-ref, not both")
+	}
+	if oci != "" && reload > 0 {
+		return fmt.Errorf("--reload-interval cannot poll an immutable OCI reference; publish and deploy a new digest instead")
+	}
+	return nil
+}
+
+func rejectExplicitLegacyFlags(setFlags map[string]bool) error {
+	for _, name := range []string{"saga", "saga-store", "saga-redis-addr", "saga-redis-password", "saga-redis-db", "saga-redis-prefix", "saga-redis-ttl"} {
+		if setFlags[name] {
+			return fmt.Errorf("--%s is a legacy saga/Redis setting and is not supported; remove it and configure PostgreSQL with EFFECTUS_SAGA_POSTGRES_DSN or protected saga.postgres.dsn", name)
+		}
+	}
+	if setFlags["plugin-dir"] {
+		return fmt.Errorf("--plugin-dir is not supported; use invocation-aware extension targets")
+	}
+	for _, name := range []string{"kafka-poison-audit", "kafka-delivery-ledger"} {
+		if setFlags[name] {
+			return fmt.Errorf("--%s is deprecated; remove it because PostgreSQL is the sole daemon attempt and poison ledger", name)
+		}
+	}
+	return nil
+}
+
 func splitCommaList(value string) []string {
 	parts := strings.Split(value, ",")
 	results := make([]string, 0, len(parts))
@@ -800,7 +811,7 @@ func validateFactSource() error {
 			return err
 		}
 		if strings.TrimSpace(*sagaPgDSN) == "" {
-			return fmt.Errorf("Kafka requires --saga-postgres-dsn for durable engine admission")
+			return fmt.Errorf("Kafka requires EFFECTUS_SAGA_POSTGRES_DSN or protected saga.postgres.dsn for durable engine admission")
 		}
 		return nil
 	default:

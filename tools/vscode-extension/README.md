@@ -8,7 +8,6 @@ This extension supports `.eff` and `.effx` rule files.
 - Fact and verb completion
 - Hover information
 - Rule validation
-- Rule formatting
 - Synthetic-data tests
 - Schema lineage views
 - Development hotload through the effectusd API
@@ -45,6 +44,8 @@ The default paths are:
 
 Run `Effectus: Initialize Effectus Workspace` from the Command Palette to create this layout.
 
+The extension resolves `effectusc` from `effectus.lsp.serverPath`, `PATH`, or `GOBIN`/the standard Go bin directory. It shows an installation error when no executable is available; there is no bundled fallback server.
+
 ## Settings
 
 ```json
@@ -52,6 +53,7 @@ Run `Effectus: Initialize Effectus Workspace` from the Command Palette to create
   "effectus.schemaPath": ".effectus/schemas",
   "effectus.verbSchemaPath": ".effectus/verbs",
   "effectus.factExamplesPath": "./examples",
+  "effectus.lsp.serverPath": "/optional/explicit/path/to/effectusc",
   "effectus.lsp.enabled": true,
   "effectus.autoComplete.schemas": true,
   "effectus.validation.realtime": true,
@@ -71,12 +73,10 @@ Store runtime tokens in VS Code secret or local workspace settings. Do not commi
 | --- | --- |
 | `Effectus: Initialize Effectus Workspace` | Create the default workspace layout |
 | `Effectus: Validate Current Rule` | Validate the open rule file |
-| `Effectus: Test Rule with Synthetic Data` | Test the open rule with generated facts |
 | `Effectus: Show Schema Lineage` | Open the lineage view |
 | `Effectus: Generate Schema Documentation` | Write schema documentation |
 | `Effectus: Start Development Server` | Start development hotload support |
 | `Effectus: Stop Development Server` | Stop development hotload support |
-| `Effectus: Format Rule` | Format the open rule file |
 
 ## Development hotload
 

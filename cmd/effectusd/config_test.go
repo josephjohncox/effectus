@@ -4,9 +4,21 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestValidateBundleArgumentsRejectsOCIReloadBeforeStartup(t *testing.T) {
+	err := validateBundleArguments("", "ghcr.io/acme/rules@sha256:digest", time.Minute)
+	require.EqualError(t, err, "--reload-interval cannot poll an immutable OCI reference; publish and deploy a new digest instead")
+}
+
+func TestApplyRuntimeConfigRejectsLegacyStoresAndFileLedgers(t *testing.T) {
+	require.ErrorContains(t, applyRuntimeConfig(&runtimeConfig{Saga: sagaConfig{Store: "redis"}}, map[string]bool{}), "legacy saga/Redis")
+	require.ErrorContains(t, applyRuntimeConfig(&runtimeConfig{Verbs: verbConfig{PluginDirs: []string{"plugins"}}}, map[string]bool{}), "plugin_dirs")
+	require.ErrorContains(t, applyRuntimeConfig(&runtimeConfig{Kafka: kafkaConfig{DeliveryLedger: "attempts.jsonl"}}, map[string]bool{}), "sole daemon attempt and poison ledger")
+}
 
 func TestLoadRuntimeConfigRejectsUnknownFields(t *testing.T) {
 	for _, test := range []struct {

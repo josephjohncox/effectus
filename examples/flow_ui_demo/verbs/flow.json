@@ -43,7 +43,6 @@
     "required_args": [
       "orderId"
     ],
-    "inverse": "OpenCase",
     "resources": [
       {
         "resource": "case",
@@ -121,7 +120,6 @@
     "required_args": [
       "authId"
     ],
-    "inverse": "HoldPayment",
     "resources": [
       {
         "resource": "payment_hold",
@@ -277,7 +275,6 @@
     "required_args": [
       "orderId"
     ],
-    "inverse": "ScheduleCallback",
     "resources": [
       {
         "resource": "callback",
@@ -297,32 +294,34 @@
       "channel",
       "message"
     ],
-    "inverse": "ClearAlert",
     "resources": [
       {
         "resource": "alert",
         "cap": 36
       }
     ],
-    "description": "Emit an alert"
+    "description": "Emit an alert",
+    "inverse": "ClearAlert"
   },
   "ClearAlert": {
     "arg_types": {
-      "orderId": "string"
+      "channel": "string",
+      "message": "string"
     },
     "return_type": "bool",
     "capability": 52,
     "required_args": [
-      "orderId"
+      "channel",
+      "message"
     ],
-    "inverse": "EmitAlert",
     "resources": [
       {
         "resource": "alert",
         "cap": 52
       }
     ],
-    "description": "Clear an alert"
+    "description": "Clear an alert",
+    "inverse": "EmitAlert"
   },
   "ReserveInventory": {
     "arg_types": {
@@ -353,7 +352,6 @@
     "required_args": [
       "orderId"
     ],
-    "inverse": "ReserveInventory",
     "resources": [
       {
         "resource": "inventory",
@@ -391,7 +389,6 @@
     "required_args": [
       "orderId"
     ],
-    "inverse": "CreateShipment",
     "resources": [
       {
         "resource": "shipment",
@@ -429,7 +426,6 @@
     "required_args": [
       "orderId"
     ],
-    "inverse": "MarkOrderReady",
     "resources": [
       {
         "resource": "order",
@@ -467,7 +463,6 @@
     "required_args": [
       "orderId"
     ],
-    "inverse": "EmitEvent",
     "resources": [
       {
         "resource": "event",
@@ -505,7 +500,6 @@
     "required_args": [
       "orderId"
     ],
-    "inverse": "HoldPayout",
     "resources": [
       {
         "resource": "payout",
@@ -543,7 +537,6 @@
     "required_args": [
       "orderId"
     ],
-    "inverse": "StartInvestigation",
     "resources": [
       {
         "resource": "investigation",

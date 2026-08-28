@@ -9,8 +9,10 @@ DATA_DIR="${SCRIPT_DIR}/../data"
 send_payload() {
   local file="$1"
   echo "Streaming ${file}"
-  curl -sS -X POST "${BASE_URL}/api/facts" \
+  local key="flow-stream-${file%.json}-v1"
+  curl --fail-with-body -sS -X POST "${BASE_URL}/api/facts" \
     -H "Authorization: Bearer ${TOKEN}" \
+    -H "Idempotency-Key: ${key}" \
     -H "Content-Type: application/json" \
     -d "@${DATA_DIR}/${file}" > /dev/null
 }

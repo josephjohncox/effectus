@@ -10,7 +10,8 @@ The server does not use `UnknownServiceHandler` or a mutable method registry.
 ## Execution RPC
 
 `ExecuteRuleset` accepts a `google.protobuf.Struct` fact set.
-The request must specify a ruleset name, version, and idempotency key.
+The request must specify a ruleset name, version, idempotency key, and `typed_facts`.
+The legacy `facts` `Any` field remains readable only for wire compatibility.
 
 The optional `generation_digest` field pins the request to one generation.
 The server rejects a digest that does not match the active generation.
@@ -18,6 +19,8 @@ The engine checks the digest again during admission.
 
 The service sends all requests to `runtime.Engine.Execute`.
 The response includes the execution state and generation digest.
+
+Only `ExecutionOptions.timeout_seconds` is supported. `dry_run`, `max_effects`, `enable_tracing`, `capability_filter`, `min_schema_version`, and `max_schema_version` are unsupported. The `schema_validation` message is also unsupported. A non-default unsupported field returns `InvalidArgument` naming that field.
 
 ## Management RPCs
 

@@ -1,3 +1,5 @@
+{{- $runtimeConfig := (.Values.config.contents | fromYaml) | default dict -}}
+{{- $runtimeBundle := (get $runtimeConfig "bundle") | default dict -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -45,6 +47,9 @@ spec:
           args:
             {{- if .Values.config.enabled }}
             - "--config={{ .Values.config.mountPath }}/{{ .Values.config.key }}"
+            {{- if not (get $runtimeBundle "cache_dir") }}
+            - "--oci-cache-dir={{ .Values.bundle.cacheDir }}"
+            {{- end }}
             {{- if .Values.bundle.signatureVerifier }}
             - "--oci-signature-verifier={{ .Values.bundle.signatureVerifier }}"
             {{- end }}

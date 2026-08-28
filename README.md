@@ -63,10 +63,11 @@ Effectusd requires PostgreSQL for durable workflow state:
 ```bash
 EFFECTUS_API_TOKEN="replace-me" \
 EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:password@db/effectus?sslmode=require" \
-  effectusd --bundle bundle.json --http-addr :8080
+  effectusd --bundle bundle.json --extensions-dir extensions --http-addr :8080
 ```
 
 Open `http://localhost:8080/ui`. Use `/healthz` for liveness and `/readyz` for readiness.
+To execute the repository's tested cold-start path, run `just ui-demo-smoke`.
 
 Use environment variables or Kubernetes Secrets for credentials. Effectusd rejects secret command-line flags.
 

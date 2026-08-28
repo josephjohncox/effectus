@@ -1703,8 +1703,9 @@ func (s *serverState) handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 type factIngestRequest struct {
-	Universe string                 `json:"universe"`
-	Facts    map[string]interface{} `json:"facts"`
+	Universe  string                 `json:"universe"`
+	Namespace string                 `json:"namespace,omitempty"`
+	Facts     map[string]interface{} `json:"facts"`
 }
 
 func (s *serverState) handleFacts(w http.ResponseWriter, r *http.Request) {
@@ -1744,9 +1745,19 @@ func (s *serverState) handleFacts(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusServiceUnavailable, "checked execution generation is unavailable")
 			return
 		}
-		namespace := strings.TrimSpace(req.Universe)
+		// Namespace identifies the tenant for durable admission. Universe is
+		// only the local projection key. Callers that omit namespace retain the
+		// pre-0.2 behavior where universe served both roles.
+		namespace := strings.TrimSpace(req.Namespace)
+		if namespace == "" {
+			namespace = strings.TrimSpace(req.Universe)
+		}
 		if namespace == "" {
 			namespace = "default"
+		}
+		universe := strings.TrimSpace(req.Universe)
+		if universe == "" {
+			universe = "default"
 		}
 		ruleset := generation.bundle.Name
 		version := generation.bundle.Version
@@ -1758,7 +1769,7 @@ func (s *serverState) handleFacts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if s.factStore != nil {
-			if err := s.factStore.Update(namespace, req.Facts); err != nil {
+			if err := s.factStore.Update(universe, req.Facts); err != nil {
 				writeJSONError(w, http.StatusInternalServerError, "facts were accepted but local projection failed")
 				return
 			}
@@ -2385,8 +2396,19 @@ const uiHTML = `<!doctype html>
       <h2>Playground</h2>
       <div class="stack">
         <div>
-          <label>Universe (optional)</label>
+          <label>Universe (optional projection key)</label>
           <input id="universe" placeholder="default" />
+        </div>
+        <div>
+          <label>Namespace (optional tenant identity; defaults to universe)</label>
+          <input id="namespace" placeholder="default" />
+        </div>
+        <div>
+          <label>Idempotency key (reuse this key when retrying the same submission)</label>
+          <div class="row">
+            <input id="idempotency-key" readonly />
+            <button class="secondary" onclick="newFactSubmission()">New submission</button>
+          </div>
         </div>
         <div>
           <label>Mode</label>
@@ -3210,9 +3232,25 @@ const uiHTML = `<!doctype html>
       }
     }
 
+    const generateIdempotencyKey = () => {
+      if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+        return globalThis.crypto.randomUUID();
+      }
+      return "ui-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+    };
+
+    function newFactSubmission() {
+      document.getElementById("idempotency-key").value = generateIdempotencyKey();
+      document.getElementById("dry-run-status").textContent = "New submission";
+    }
+
     async function ingestFacts() {
       const factsText = document.getElementById("facts").value.trim();
       const universe = document.getElementById("universe").value.trim();
+      const namespace = document.getElementById("namespace").value.trim();
+      const keyEl = document.getElementById("idempotency-key");
+      const idempotencyKey = keyEl.value || generateIdempotencyKey();
+      keyEl.value = idempotencyKey;
       const statusEl = document.getElementById("dry-run-status");
       if (!factsText) {
         statusEl.textContent = "Add facts JSON first";
@@ -3229,8 +3267,11 @@ const uiHTML = `<!doctype html>
       try {
         await fetchJSON("/api/facts", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ universe: universe, facts: facts })
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": idempotencyKey
+          },
+          body: JSON.stringify({ universe: universe, namespace: namespace, facts: facts })
         });
         const select = document.getElementById("facts-universe");
         if (select && universe) {
@@ -3399,6 +3440,7 @@ const uiHTML = `<!doctype html>
     if (ruleEditor) {
       ruleEditor.addEventListener("input", () => updateRulePreview());
     }
+    newFactSubmission();
     updateRulePreview();
     renderRuleDiffs([]);
     renderCanary(null);

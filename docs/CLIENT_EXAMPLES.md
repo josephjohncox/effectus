@@ -5,6 +5,8 @@ Generate client bindings with the repository Buf configuration.
 
 ## Go client
 
+The complete compile-tested form is in [`examples/grpc_execution/main.go`](../examples/grpc_execution/main.go).
+
 ```go
 facts, err := structpb.NewStruct(map[string]any{
     "order_id": "order-42",
@@ -34,7 +36,7 @@ response, err := effectusv1.NewRulesetExecutionServiceClient(connection).Execute
         Version:       "1.0.0",
         Namespace:     "tenant-a",
         IdempotencyKey: "order-42",
-        Facts:          facts,
+        TypedFacts:     facts,
         WaitMode: effectusv1.ExecutionWaitMode_EXECUTION_WAIT_MODE_TERMINAL,
     },
 )
@@ -45,6 +47,7 @@ if err != nil {
 
 Use the same idempotency key when you retry one logical request.
 Set `generation_digest` when the client requires one exact generation.
+Only `options.timeout_seconds` is supported. `schema_validation` and all other `ExecutionOptions` fields are unsupported and return field-specific `InvalidArgument` errors.
 
 ## Python request
 
@@ -54,7 +57,7 @@ request = execution_pb2.ExecutionRequest(
     version="1.0.0",
     namespace="tenant-a",
     idempotency_key="order-42",
-    facts=struct_pb2.Struct(fields={
+    typed_facts=struct_pb2.Struct(fields={
         "order_id": struct_pb2.Value(string_value="order-42"),
         "total_cents": struct_pb2.Value(number_value=12500),
     }),

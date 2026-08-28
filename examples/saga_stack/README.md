@@ -1,14 +1,16 @@
 # Saga Development Stack
 
-This Compose stack starts PostgreSQL and Redis for saga integration tests.
+This Compose stack provides PostgreSQL for the production-compatible daemon and Redis only for embedded library compatibility tests.
 
-## Start
+## Start PostgreSQL for effectusd
 
 ```bash
-docker compose -f examples/saga_stack/docker-compose.yml up -d
+just setup-db
 ```
 
-The stack exposes PostgreSQL at `localhost:55433` and Redis at `localhost:56379`.
+The recipe runs `docker compose -f examples/saga_stack/docker-compose.yml up -d postgres`, waits with `pg_isready`, and exposes the database at `localhost:55433` with DSN `postgres://effectus:effectus@localhost:55433/effectus_saga?sslmode=disable`.
+
+To run a compatibility test that explicitly needs Redis, start that service separately with `docker compose -f examples/saga_stack/docker-compose.yml up -d redis`.
 
 ## Stop
 

@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import {
     LanguageClient,
@@ -8,31 +10,24 @@ import {
 
 export class EffectusLanguageClient {
     private client: LanguageClient | undefined;
-    private context: vscode.ExtensionContext;
-
-    constructor(context: vscode.ExtensionContext) {
-        this.context = context;
-    }
 
     async start(): Promise<void> {
-        const serverOptions: ServerOptions = this.getServerOptions();
-        const clientOptions: LanguageClientOptions = this.getClientOptions();
-
-        this.client = new LanguageClient(
-            'effectusLanguageServer',
-            'Effectus Language Server',
-            serverOptions,
-            clientOptions
-        );
-
         try {
+            const serverOptions: ServerOptions = this.getServerOptions();
+            const clientOptions: LanguageClientOptions = this.getClientOptions();
+            this.client = new LanguageClient(
+                'effectusLanguageServer',
+                'Effectus Language Server',
+                serverOptions,
+                clientOptions
+            );
             await this.client.start();
             console.log('Effectus Language Server started successfully');
         } catch (error) {
+            this.client = undefined;
+            const detail = error instanceof Error ? error.message : String(error);
             console.error('Failed to start Effectus Language Server:', error);
-            vscode.window.showErrorMessage(
-                'Failed to start Effectus Language Server. Some features may not work.'
-            );
+            vscode.window.showErrorMessage(`Effectus Language Server is unavailable: ${detail}`);
         }
     }
 
@@ -44,49 +39,22 @@ export class EffectusLanguageClient {
     }
 
     private getServerOptions(): ServerOptions {
-        // Try to find the effectusc binary
         const effectuscPath = this.findEffectuscBinary();
-        
-        if (effectuscPath) {
-            // Use the effectusc binary with LSP mode
-            return {
-                command: effectuscPath,
-                args: ['lsp'],
-                transport: TransportKind.stdio
-            };
-        } else {
-            // Fallback: try to use a Node.js implementation or embedded server
-            const serverModule = vscode.Uri.joinPath(
-                this.context.extensionUri,
-                'server',
-                'server.js'
-            );
-
-            return {
-                run: {
-                    module: serverModule.fsPath,
-                    transport: TransportKind.ipc
-                },
-                debug: {
-                    module: serverModule.fsPath,
-                    transport: TransportKind.ipc,
-                    options: {
-                        execArgv: ['--nolazy', '--inspect=6009']
-                    }
-                }
-            };
+        if (!effectuscPath) {
+            throw new Error('install effectusc on PATH/GOBIN or set effectus.lsp.serverPath');
         }
+        return {
+            command: effectuscPath,
+            args: ['lsp'],
+            transport: TransportKind.stdio
+        };
     }
 
     private getClientOptions(): LanguageClientOptions {
         return {
-            documentSelector: [
-                { scheme: 'file', language: 'effectus' }
-            ],
+            documentSelector: [{ scheme: 'file', language: 'effectus' }],
             synchronize: {
-                // Synchronize configuration changes
                 configurationSection: 'effectus',
-                // Watch for changes to schema files
                 fileEvents: [
                     vscode.workspace.createFileSystemWatcher('**/.effectus/schemas/**/*'),
                     vscode.workspace.createFileSystemWatcher('**/*.{eff,effx}')
@@ -103,20 +71,10 @@ export class EffectusLanguageClient {
                 }
             },
             middleware: {
-                // Custom middleware for handling Effectus-specific features
-                provideCompletionItem: (document, position, context, token, next) => {
-                    // Add custom completion logic here if needed
-                    return next(document, position, context, token);
-                },
-                provideHover: (document, position, token, next) => {
-                    // Add custom hover logic here if needed
-                    return next(document, position, token);
-                },
+                provideCompletionItem: (document, position, context, token, next) => next(document, position, context, token),
+                provideHover: (document, position, token, next) => next(document, position, token),
                 handleDiagnostics: (uri, diagnostics, next) => {
-                    // Custom diagnostic handling
-                    const effectusDiagnostics = diagnostics.filter(d => 
-                        d.source === 'effectus' || d.source === 'effectusc'
-                    );
+                    const effectusDiagnostics = diagnostics.filter(d => d.source === 'effectus' || d.source === 'effectusc');
                     next(uri, effectusDiagnostics);
                 }
             }
@@ -124,38 +82,32 @@ export class EffectusLanguageClient {
     }
 
     private findEffectuscBinary(): string | undefined {
-        const config = vscode.workspace.getConfiguration('effectus');
-        
-        // Check if user specified a custom path
-        const customPath = config.get<string>('lsp.serverPath');
+        const customPath = vscode.workspace.getConfiguration('effectus').get<string>('lsp.serverPath')?.trim();
         if (customPath) {
-            return customPath;
-        }
-
-        // Try common locations
-        const commonPaths = [
-            // In workspace bin directory
-            vscode.workspace.workspaceFolders?.[0]?.uri.fsPath + '/bin/effectusc',
-            // In PATH
-            'effectusc',
-            // In Go bin directory
-            process.env.GOPATH + '/bin/effectusc',
-            process.env.HOME + '/go/bin/effectusc'
-        ];
-
-        for (const path of commonPaths) {
-            if (path && this.fileExists(path)) {
-                return path;
+            if (this.isExecutable(customPath)) {
+                return customPath;
             }
+            throw new Error(`configured effectus.lsp.serverPath is not executable: ${customPath}`);
         }
 
-        return undefined;
+        const executable = process.platform === 'win32' ? 'effectusc.exe' : 'effectusc';
+        const candidates = (process.env.PATH || '').split(path.delimiter).filter(Boolean).map(dir => path.join(dir, executable));
+        if (process.env.GOBIN) {
+            candidates.push(path.join(process.env.GOBIN, executable));
+        }
+        if (process.env.GOPATH) {
+            candidates.push(path.join(process.env.GOPATH, 'bin', executable));
+        }
+        if (process.env.HOME) {
+            candidates.push(path.join(process.env.HOME, 'go', 'bin', executable));
+        }
+        return candidates.find(candidate => this.isExecutable(candidate));
     }
 
-    private fileExists(path: string): boolean {
+    private isExecutable(candidate: string): boolean {
         try {
-            const fs = require('fs');
-            return fs.existsSync(path);
+            fs.accessSync(candidate, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK);
+            return fs.statSync(candidate).isFile();
         } catch {
             return false;
         }
@@ -177,4 +129,4 @@ export class EffectusLanguageClient {
             this.client.sendNotification(method, params);
         }
     }
-} 
+}

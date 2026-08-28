@@ -99,15 +99,16 @@ kafka:
   poison_policy: "halt"
 ```
 
-The daemon stores attempt and poison state in PostgreSQL table `effectus_kafka_deliveries`.
-Attempt limits survive rebalances and process restarts.
+PostgreSQL table `effectus_kafka_deliveries` is the sole daemon attempt and poison ledger.
+It increments the stable delivery attempt before each handler call, so attempt limits survive rebalances and process restarts.
 Back up this table with the other `effectus_*` tables.
+Deprecated `delivery_ledger` and `poison_audit` settings are rejected; remove them.
 The default poison policy leaves the failed offset uncommitted and stops the daemon.
-For `skip`, the same ledger records and deduplicates the poison acknowledgement.
+For `skip`, PostgreSQL records and deduplicates the poison acknowledgement.
 For `dlq`, set `dlq_topic` to a Kafka topic.
 Effectus waits for DLQ publication before it commits the source offset.
 
-Each message value uses this JSON shape:
+Each message value uses this JSON shape. `namespace` is the durable tenant identity; `universe` selects projection storage. HTTP compatibility uses `universe` as the namespace when `namespace` is omitted (or `default` when both are empty), but new clients should send both when the identities differ.
 
 ```json
 {
@@ -237,7 +238,8 @@ Resolve the published digest, sign it under the deployment trust policy, and lis
 - CLI flags override config values when both are provided.
 - `/api/*` endpoints require a token; `/healthz` and `/readyz` are open by default.
 - Set `api.hotload_rules` to enable `/api/rules/validate` and `/api/rules/hotload` (UI rule editor + VS Code hot reload).
-- Production effectusd rejects Go plugin executors. Use immutable invocation-aware targets, or use plugins only in an explicitly trusted embedded library process.
+- Production effectusd rejects Go plugin executors and explicitly supplied legacy saga or Redis settings. PostgreSQL is required for HTTP, gRPC, Kafka, and stream daemon transports.
+- Use `extensions.dirs` and `--extensions-dir` for local declarations. `verbs.spec_dirs` and `--verb-dir` remain deprecated aliases for the compatibility window and emit one startup notice.
 - Extension reload can re-read local `*.verbs.json` and `*.schema.json` files. An immutable OCI digest cannot change.
 - Deploy a new OCI digest to publish another generation. Effectusd does not poll mutable OCI tags.
 - Schema sources load at startup. Set `extensions.reload_interval` only when a local or external source can return new declarations.
@@ -272,11 +274,11 @@ data:
   effectusd.yaml: |
     bundle:
       oci: "ghcr.io/myorg/bundles/fraud-demo@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      cache_dir: "/data/bundles"
     http:
       addr: ":8080"
     api:
       auth: "token"
-      token: "write-token"
 ```
 
 Deployment snippet:
@@ -289,6 +291,11 @@ containers:
       - "--config=/etc/effectus/effectusd.yaml"
       - "--oci-signature-verifier=/usr/local/bin/effectus-verify-oci"
     env:
+      - name: EFFECTUS_API_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: effectusd-api
+            key: api-token
       - name: EFFECTUS_SAGA_POSTGRES_DSN
         valueFrom:
           secretKeyRef:

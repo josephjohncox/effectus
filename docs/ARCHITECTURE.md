@@ -109,9 +109,11 @@ Read [Durable Saga Protocol](DURABLE_SAGA_PROTOCOL.md) for the state machine and
 
 ### HTTP
 
-The HTTP source validates authentication and body limits before admission. A full internal queue returns HTTP 503.
+The HTTP source validates authentication, body limits, and `Idempotency-Key` before admission. It calls the checked engine with `WaitAccepted`; HTTP 202 follows durable PostgreSQL admission. The local fact store is a projection and is not the acknowledgement ledger.
 
-A successful response means the selected acknowledgement boundary completed. It does not prove an external effect occurred exactly once.
+A successful response means the durable admission boundary completed. It does not prove an external effect occurred exactly once.
+
+An embedded compatibility state without the checked engine can use a process-local queue and return HTTP 503 on saturation. Production effectusd does not use that queue as its HTTP acknowledgement boundary.
 
 ### Kafka
 

@@ -72,15 +72,17 @@ starting -> running -> draining -> stopped
 
 Readiness is true only during the `running` phase. Shutdown changes the phase to `draining` before it stops HTTP admission.
 
-The daemon then stops refresh workers and HTTP listeners. It drains the accepted in-process queue until the shutdown deadline.
+The daemon then stops refresh workers and HTTP listeners. It allows checked recovery workers to stop within the shutdown deadline.
 
 ## Fact admission
 
-A rejected fact request does not change the fact store. Queue saturation returns HTTP 503 before fact persistence.
+Production effectusd requires `Idempotency-Key` and sends HTTP facts through the checked engine with `WaitAccepted`. HTTP 202 means PostgreSQL durably admitted the execution. A matching retry returns the same execution identity; a changed payload for that identity returns HTTP 409.
 
-HTTP 202 means that the in-process queue accepted the request. It does not mean that durable execution accepted the request.
+The local fact store is a projection. A projection failure can follow durable admission, so it does not revoke the accepted execution. Retry the same logical request with the same key and payload.
 
-A daemon crash can lose queued work. Durable admission requires an outbox or another durable command log.
+### Embedded compatibility queue
+
+An embedded `serverState` without a checked engine retains the old process-local queue for compatibility tests. In that mode only, queue saturation returns HTTP 503 and a hard crash can lose queued work. This is not the effectusd production boundary.
 
 ## Supported HTTP behavior
 
@@ -103,4 +105,4 @@ The current history store is process-local for executable flow state. It is not 
 
 The persistent deployment API still stores some environment data with ruleset rows. A later migration must separate releases from activations.
 
-The queue is still process-local. A hard crash can lose accepted work before the drain phase starts.
+The embedded compatibility queue is process-local. Production effectusd does not use it as the HTTP acknowledgement boundary.

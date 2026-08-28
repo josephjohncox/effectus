@@ -1,0 +1,15 @@
+image:
+  tag: "test"
+postgres:
+  existingSecret: "effectusd-postgres"
+bundle:
+  signatureVerifier: "/usr/local/bin/verify"
+api:
+  existingSecret: "effectusd-api"
+config:
+  enabled: true
+  contents: |
+    bundle:
+      oci: "ghcr.io/example/rules@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    api:
+      auth: "token"

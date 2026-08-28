@@ -49,13 +49,16 @@ config:
   contents: |
     bundle:
       oci: "ghcr.io/OWNER/bundles/fraud-demo@sha256:BUNDLE_DIGEST"
+      cache_dir: "/data/bundles"
     http:
       addr: ":8080"
     api:
       auth: "token"
 ```
 
-Create `effectusd-api` as a Kubernetes Secret with the keys `api-token` and, optionally, `api-read-token`. Create `effectusd-postgres` with the `dsn` key. Do not put either secret in the ConfigMap.
+Create `effectusd-api` as a Kubernetes Secret with the keys `api-token` and, optionally, `api-read-token`. Create `effectusd-postgres` with the `dsn` key. The Deployment exposes both with `secretKeyRef`; do not put either secret in the ConfigMap.
+
+In ConfigMap mode the chart passes `--oci-cache-dir=/data/bundles` unless `bundle.cache_dir` is explicit. The `/data` volume stays writable while the root filesystem stays read-only.
 
 The selected image or an extra read-only volume must provide the executable named by `bundle.signatureVerifier`. Startup fails if OCI content cannot be verified.
 

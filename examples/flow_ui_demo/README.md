@@ -3,9 +3,10 @@
 This demo bundles multiple flow files and runs the status UI with a realistic facts shape. It also includes a SQL scrape mock to show scheduled polling from a database source.
 
 ## Quick start
-1. Start the UI demo:
+1. Start and wait for the durable PostgreSQL store, then start the UI demo:
 
 ```bash
+just setup-db
 just ui-flow-demo
 ```
 
@@ -20,6 +21,8 @@ just ui-flow-demo-open
 ```bash
 just ui-flow-demo-seed
 ```
+
+The seed and stream clients send deterministic `Idempotency-Key` values. A retry of the same logical update must reuse its key and payload.
 
 4. Stream simulated updates:
 

@@ -8,7 +8,7 @@ Facts are a typed snapshot of domain data. Rules read values through paths such 
 
 The compiler checks each referenced path against the candidate fact schema. The runtime pins the admitted fact payload to one execution identity.
 
-A production request uses a namespace and a universe. The namespace separates tenants. The universe identifies a fact snapshot within that namespace.
+A production request can use both `namespace` and `universe`. The namespace is the durable tenant identity used for admission and execution IDs. The universe is the local fact-projection key. HTTP callers that omit `namespace` retain compatibility: effectusd uses `universe` as the namespace, or `default` when both are empty. New clients should send both fields when those identities differ.
 
 ## Verbs
 

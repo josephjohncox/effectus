@@ -127,6 +127,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show rule performance metrics in status bar"
+        },
+        "effectus.lsp.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Explicit path to the effectusc language server executable"
         }
       }
     },
@@ -139,11 +144,6 @@
       {
         "command": "effectus.validateRule",
         "title": "Validate Current Rule",
-        "category": "Effectus"
-      },
-      {
-        "command": "effectus.testRule",
-        "title": "Test Rule with Synthetic Data",
         "category": "Effectus"
       },
       {
@@ -162,11 +162,6 @@
         "title": "Stop Development Server",
         "category": "Effectus",
         "icon": "$(debug-stop)"
-      },
-      {
-        "command": "effectus.rule.format",
-        "title": "Format Rule",
-        "category": "Effectus"
       },
       {
         "command": "effectus.workspace.init",
@@ -199,49 +194,6 @@
           "id": "effectus",
           "title": "Effectus",
           "icon": "$(graph-line)"
-        }
-      ]
-    },
-    "menus": {
-      "view/title": [
-        {
-          "command": "effectus.schema.refresh",
-          "when": "view == effectusSchemas",
-          "group": "navigation"
-        },
-        {
-          "command": "effectus.schema.explore",
-          "when": "view == effectusSchemas",
-          "group": "navigation"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "effectus.lineage.show",
-          "when": "view == effectusSchemas && viewItem == schema",
-          "group": "inline"
-        }
-      ],
-      "editor/context": [
-        {
-          "command": "effectus.rule.test",
-          "when": "resourceExtname == .eff || resourceExtname == .effx",
-          "group": "effectus"
-        },
-        {
-          "command": "effectus.rule.format",
-          "when": "resourceExtname == .eff || resourceExtname == .effx",
-          "group": "effectus"
-        }
-      ],
-      "commandPalette": [
-        {
-          "command": "effectus.rule.test",
-          "when": "resourceExtname == .eff || resourceExtname == .effx"
-        },
-        {
-          "command": "effectus.rule.testWithData",
-          "when": "resourceExtname == .eff || resourceExtname == .effx"
         }
       ]
     },
@@ -301,7 +253,9 @@
     "lint": "eslint src --ext ts",
     "test": "npm run compile && npm run lint",
     "package": "vsce package",
-    "deploy": "vsce publish"
+    "deploy": "vsce publish",
+    "test:integration": "npm run package && npm run compile-tests && node ./out/test/runTest.js",
+    "compile-tests": "tsc -p ./tsconfig.test.json"
   },
   "devDependencies": {
     "@types/node": "16.x",
@@ -311,7 +265,8 @@
     "@typescript-eslint/parser": "^5.31.0",
     "@vscode/vsce": "^3.9.2",
     "eslint": "^8.20.0",
-    "typescript": "^4.9.4"
+    "typescript": "^4.9.4",
+    "@vscode/test-electron": "^2.4.1"
   },
   "dependencies": {
     "vscode-languageclient": "^8.1.0",

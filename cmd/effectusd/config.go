@@ -186,6 +186,15 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 	if cfg == nil {
 		return nil
 	}
+	if cfg.Saga.Enabled != nil || cfg.Saga.Store != "" || cfg.Saga.Redis.Addr != "" || cfg.Saga.Redis.Password != "" || cfg.Saga.Redis.DB != nil || cfg.Saga.Redis.Prefix != "" || cfg.Saga.Redis.TTL != "" {
+		return fmt.Errorf("legacy saga/Redis settings are not supported; remove them and configure saga.postgres.dsn for the required PostgreSQL durable runtime")
+	}
+	if len(cfg.Verbs.PluginDirs) != 0 {
+		return fmt.Errorf("verbs.plugin_dirs is not supported; use invocation-aware extension targets")
+	}
+	if cfg.Kafka.PoisonAudit != "" || cfg.Kafka.DeliveryLedger != "" {
+		return fmt.Errorf("kafka.poison_audit and kafka.delivery_ledger are deprecated; remove them because PostgreSQL is the sole daemon attempt and poison ledger")
+	}
 
 	if cfg.Bundle.File != "" && !setFlags["bundle"] {
 		*bundleFile = cfg.Bundle.File
@@ -306,40 +315,12 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 		*factsCacheNs = *cfg.Facts.Cache.MaxNamespaces
 	}
 
-	if cfg.Saga.Enabled != nil && !setFlags["saga"] {
-		*sagaEnabled = *cfg.Saga.Enabled
-	}
-	if cfg.Saga.Store != "" && !setFlags["saga-store"] {
-		*sagaStoreType = cfg.Saga.Store
-	}
-	if cfg.Saga.Redis.Addr != "" && !setFlags["saga-redis-addr"] {
-		*sagaRedisAddr = cfg.Saga.Redis.Addr
-	}
-	if cfg.Saga.Redis.Password != "" && !setFlags["saga-redis-password"] {
-		*sagaRedisPass = cfg.Saga.Redis.Password
-	}
-	if cfg.Saga.Redis.DB != nil && !setFlags["saga-redis-db"] {
-		*sagaRedisDB = *cfg.Saga.Redis.DB
-	}
-	if cfg.Saga.Redis.Prefix != "" && !setFlags["saga-redis-prefix"] {
-		*sagaRedisPrefix = cfg.Saga.Redis.Prefix
-	}
-	if cfg.Saga.Redis.TTL != "" && !setFlags["saga-redis-ttl"] {
-		ttl, err := time.ParseDuration(cfg.Saga.Redis.TTL)
-		if err != nil {
-			return fmt.Errorf("saga.redis.ttl: %w", err)
-		}
-		*sagaRedisTTL = ttl
-	}
 	if cfg.Saga.Postgres.DSN != "" && !setFlags["saga-postgres-dsn"] {
 		*sagaPgDSN = cfg.Saga.Postgres.DSN
 	}
 
 	if len(cfg.Verbs.SpecDirs) > 0 && !setFlags["verb-dir"] {
 		*verbDir = strings.Join(cfg.Verbs.SpecDirs, ",")
-	}
-	if len(cfg.Verbs.PluginDirs) > 0 && !setFlags["plugin-dir"] {
-		*pluginDir = strings.Join(cfg.Verbs.PluginDirs, ",")
 	}
 	if cfg.Verbs.DuplicatePolicy != "" && !setFlags["verb-duplicate-policy"] {
 		*verbDuplicatePolicy = cfg.Verbs.DuplicatePolicy

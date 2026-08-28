@@ -1,0 +1,971 @@
+{
+  "name": "flow-demo-verbs",
+  "version": "1.0.0",
+  "description": "Production-format verb declarations for the flow demo",
+  "verbs": [
+    {
+      "name": "ScoreRisk",
+      "description": "Compute a composite risk score",
+      "capabilities": [
+        "read",
+        "idempotent",
+        "commutative"
+      ],
+      "resources": [],
+      "argTypes": {
+        "orderId": "string",
+        "deviceId": "string"
+      },
+      "requiredArgs": [
+        "orderId",
+        "deviceId"
+      ],
+      "returnType": "int",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      }
+    },
+    {
+      "name": "OpenCase",
+      "description": "Open an investigation case",
+      "capabilities": [
+        "write",
+        "create",
+        "exclusive"
+      ],
+      "resources": [
+        {
+          "resource": "case",
+          "capabilities": [
+            "write",
+            "create",
+            "exclusive"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "reason": "string",
+        "score": "int"
+      },
+      "requiredArgs": [
+        "orderId",
+        "reason"
+      ],
+      "returnType": "string",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "CloseCase"
+    },
+    {
+      "name": "CloseCase",
+      "description": "Close an investigation case",
+      "capabilities": [
+        "write",
+        "delete",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "case",
+          "capabilities": [
+            "write",
+            "delete",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "reason": "string"
+      },
+      "requiredArgs": [
+        "orderId"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      }
+    },
+    {
+      "name": "UpdateCase",
+      "description": "Update case status",
+      "capabilities": [
+        "write",
+        "exclusive"
+      ],
+      "resources": [
+        {
+          "resource": "case",
+          "capabilities": [
+            "write",
+            "exclusive"
+          ]
+        }
+      ],
+      "argTypes": {
+        "status": "string",
+        "caseId": "string"
+      },
+      "requiredArgs": [
+        "caseId",
+        "status"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "RevertCase"
+    },
+    {
+      "name": "RevertCase",
+      "description": "Revert case status",
+      "capabilities": [
+        "write",
+        "exclusive"
+      ],
+      "resources": [
+        {
+          "resource": "case",
+          "capabilities": [
+            "write",
+            "exclusive"
+          ]
+        }
+      ],
+      "argTypes": {
+        "status": "string",
+        "caseId": "string"
+      },
+      "requiredArgs": [
+        "caseId",
+        "status"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "UpdateCase"
+    },
+    {
+      "name": "HoldPayment",
+      "description": "Place a payment authorization on hold",
+      "capabilities": [
+        "write",
+        "create",
+        "exclusive"
+      ],
+      "resources": [
+        {
+          "resource": "payment_hold",
+          "capabilities": [
+            "write",
+            "create",
+            "exclusive"
+          ]
+        }
+      ],
+      "argTypes": {
+        "authId": "string",
+        "amount": "float"
+      },
+      "requiredArgs": [
+        "authId",
+        "amount"
+      ],
+      "returnType": "string",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "ReleasePayment"
+    },
+    {
+      "name": "ReleasePayment",
+      "description": "Release a payment hold",
+      "capabilities": [
+        "write",
+        "delete",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "payment_hold",
+          "capabilities": [
+            "write",
+            "delete",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "authId": "string"
+      },
+      "requiredArgs": [
+        "authId"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      }
+    },
+    {
+      "name": "QueueForReview",
+      "description": "Queue a case for manual review",
+      "capabilities": [
+        "write",
+        "create",
+        "exclusive"
+      ],
+      "resources": [
+        {
+          "resource": "review_queue",
+          "capabilities": [
+            "write",
+            "create",
+            "exclusive"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "queue": "string"
+      },
+      "requiredArgs": [
+        "orderId",
+        "queue"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "DequeueReview"
+    },
+    {
+      "name": "DequeueReview",
+      "description": "Remove a case from review queue",
+      "capabilities": [
+        "write",
+        "delete",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "review_queue",
+          "capabilities": [
+            "write",
+            "delete",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "queue": "string"
+      },
+      "requiredArgs": [
+        "orderId",
+        "queue"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "QueueForReview"
+    },
+    {
+      "name": "NotifyRisk",
+      "description": "Notify risk operations",
+      "capabilities": [
+        "write",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "notification",
+          "capabilities": [
+            "write",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "channel": "string"
+      },
+      "requiredArgs": [
+        "orderId",
+        "channel"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "UnnotifyRisk"
+    },
+    {
+      "name": "UnnotifyRisk",
+      "description": "Withdraw a risk notification",
+      "capabilities": [
+        "write",
+        "delete",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "notification",
+          "capabilities": [
+            "write",
+            "delete",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "channel": "string"
+      },
+      "requiredArgs": [
+        "orderId"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "NotifyRisk"
+    },
+    {
+      "name": "OpenEscalation",
+      "description": "Open an SLA escalation",
+      "capabilities": [
+        "write",
+        "create",
+        "exclusive"
+      ],
+      "resources": [
+        {
+          "resource": "escalation",
+          "capabilities": [
+            "write",
+            "create",
+            "exclusive"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "reason": "string"
+      },
+      "requiredArgs": [
+        "orderId",
+        "reason"
+      ],
+      "returnType": "string",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "CloseEscalation"
+    },
+    {
+      "name": "CloseEscalation",
+      "description": "Close an escalation",
+      "capabilities": [
+        "write",
+        "delete",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "escalation",
+          "capabilities": [
+            "write",
+            "delete",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "reason": "string"
+      },
+      "requiredArgs": [
+        "orderId"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "OpenEscalation"
+    },
+    {
+      "name": "ScheduleCallback",
+      "description": "Schedule a callback",
+      "capabilities": [
+        "write",
+        "create",
+        "exclusive"
+      ],
+      "resources": [
+        {
+          "resource": "callback",
+          "capabilities": [
+            "write",
+            "create",
+            "exclusive"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "atEpoch": "int"
+      },
+      "requiredArgs": [
+        "orderId",
+        "atEpoch"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "CancelCallback"
+    },
+    {
+      "name": "CancelCallback",
+      "description": "Cancel a callback",
+      "capabilities": [
+        "write",
+        "delete",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "callback",
+          "capabilities": [
+            "write",
+            "delete",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string"
+      },
+      "requiredArgs": [
+        "orderId"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      }
+    },
+    {
+      "name": "EmitAlert",
+      "description": "Emit an alert",
+      "capabilities": [
+        "write",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "alert",
+          "capabilities": [
+            "write",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "channel": "string",
+        "message": "string"
+      },
+      "requiredArgs": [
+        "channel",
+        "message"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "ClearAlert"
+    },
+    {
+      "name": "ClearAlert",
+      "description": "Clear an alert",
+      "capabilities": [
+        "write",
+        "delete",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "alert",
+          "capabilities": [
+            "write",
+            "delete",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "channel": "string",
+        "message": "string"
+      },
+      "requiredArgs": [
+        "channel",
+        "message"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "EmitAlert"
+    },
+    {
+      "name": "ReserveInventory",
+      "description": "Reserve inventory",
+      "capabilities": [
+        "write",
+        "create",
+        "exclusive"
+      ],
+      "resources": [
+        {
+          "resource": "inventory",
+          "capabilities": [
+            "write",
+            "create",
+            "exclusive"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "sku": "string"
+      },
+      "requiredArgs": [
+        "orderId",
+        "sku"
+      ],
+      "returnType": "string",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "ReleaseInventory"
+    },
+    {
+      "name": "ReleaseInventory",
+      "description": "Release inventory reservation",
+      "capabilities": [
+        "write",
+        "delete",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "inventory",
+          "capabilities": [
+            "write",
+            "delete",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string"
+      },
+      "requiredArgs": [
+        "orderId"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      }
+    },
+    {
+      "name": "CreateShipment",
+      "description": "Create a shipment",
+      "capabilities": [
+        "write",
+        "create",
+        "exclusive"
+      ],
+      "resources": [
+        {
+          "resource": "shipment",
+          "capabilities": [
+            "write",
+            "create",
+            "exclusive"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "carrier": "string"
+      },
+      "requiredArgs": [
+        "orderId",
+        "carrier"
+      ],
+      "returnType": "string",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "CancelShipment"
+    },
+    {
+      "name": "CancelShipment",
+      "description": "Cancel a shipment",
+      "capabilities": [
+        "write",
+        "delete",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "shipment",
+          "capabilities": [
+            "write",
+            "delete",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string"
+      },
+      "requiredArgs": [
+        "orderId"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      }
+    },
+    {
+      "name": "MarkOrderReady",
+      "description": "Mark order ready",
+      "capabilities": [
+        "write",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "order",
+          "capabilities": [
+            "write",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "status": "string"
+      },
+      "requiredArgs": [
+        "orderId",
+        "status"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "RevertOrderReady"
+    },
+    {
+      "name": "RevertOrderReady",
+      "description": "Revert order ready status",
+      "capabilities": [
+        "write",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "order",
+          "capabilities": [
+            "write",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string"
+      },
+      "requiredArgs": [
+        "orderId"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      }
+    },
+    {
+      "name": "EmitEvent",
+      "description": "Emit event to downstream systems",
+      "capabilities": [
+        "write",
+        "commutative"
+      ],
+      "resources": [
+        {
+          "resource": "event",
+          "capabilities": [
+            "write",
+            "commutative"
+          ]
+        }
+      ],
+      "argTypes": {
+        "topic": "string",
+        "orderId": "string"
+      },
+      "requiredArgs": [
+        "topic",
+        "orderId"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "RetractEvent"
+    },
+    {
+      "name": "RetractEvent",
+      "description": "Retract event",
+      "capabilities": [
+        "write",
+        "delete",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "event",
+          "capabilities": [
+            "write",
+            "delete",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string"
+      },
+      "requiredArgs": [
+        "orderId"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      }
+    },
+    {
+      "name": "HoldPayout",
+      "description": "Hold payout",
+      "capabilities": [
+        "write",
+        "create",
+        "exclusive"
+      ],
+      "resources": [
+        {
+          "resource": "payout",
+          "capabilities": [
+            "write",
+            "create",
+            "exclusive"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "amount": "float"
+      },
+      "requiredArgs": [
+        "orderId",
+        "amount"
+      ],
+      "returnType": "string",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "ReleasePayout"
+    },
+    {
+      "name": "ReleasePayout",
+      "description": "Release payout hold",
+      "capabilities": [
+        "write",
+        "delete",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "payout",
+          "capabilities": [
+            "write",
+            "delete",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string"
+      },
+      "requiredArgs": [
+        "orderId"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      }
+    },
+    {
+      "name": "StartInvestigation",
+      "description": "Start an investigation",
+      "capabilities": [
+        "write",
+        "create",
+        "exclusive"
+      ],
+      "resources": [
+        {
+          "resource": "investigation",
+          "capabilities": [
+            "write",
+            "create",
+            "exclusive"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "reason": "string"
+      },
+      "requiredArgs": [
+        "orderId",
+        "reason"
+      ],
+      "returnType": "string",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      },
+      "inverseVerb": "AbortInvestigation"
+    },
+    {
+      "name": "AbortInvestigation",
+      "description": "Abort an investigation",
+      "capabilities": [
+        "write",
+        "delete",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "investigation",
+          "capabilities": [
+            "write",
+            "delete",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string"
+      },
+      "requiredArgs": [
+        "orderId"
+      ],
+      "returnType": "bool",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      }
+    }
+  ]
+}

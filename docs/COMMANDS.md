@@ -110,8 +110,10 @@ effectusc format [options] file1.eff [file2.effx ...]
 Options:
   --write   Write formatted output back to files (default: true)
   --stdout  Print formatted output to stdout
-  --check   Check formatting without writing; return non-zero if changes are needed
+  --check   Return non-zero if files need formatting; never write files
 ```
+
+Plain `effectusc format` writes by default. `--check` is unconditionally read-only, even though `--write` defaults to true.
 
 **Example:**
 
@@ -295,6 +297,14 @@ effectusc resolve \
   ./extensions.json
 ```
 
+#### migrate-workflows
+
+Converts one legacy verb manifest into the production workflow manifest format.
+
+```bash
+effectusc migrate-workflows [--output workflow.verbs.json] legacy-verbs.json
+```
+
 #### capabilities
 
 Analyzes verb capabilities in rule files.
@@ -334,8 +344,8 @@ effectusd [options]
 --oci-ref          Digest-pinned OCI reference for a bundle
 --oci-cache-dir    Writable OCI cache directory
 --oci-signature-verifier Fixed verifier executable for OCI signatures
---plugin-dir       Rejected by production effectusd; compatibility only
 --extensions-dir   Directory containing extension manifests (*.verbs.json, *.schema.json)
+--verb-dir         Deprecated alias for --extensions-dir (emits a startup notice)
 --extensions-oci   OCI references for extension bundles (comma-separated)
 --extensions-reload-interval Interval for reloading extension manifests (0 to disable)
 --schema-sources   Path to schema sources config (YAML/JSON)
@@ -349,9 +359,10 @@ effectusd [options]
 #### Runtime Configuration
 
 ```bash
---saga             Deprecated legacy mode; effectusd rejects this option
 --fixed-time       Fixed time for deterministic evaluation (RFC3339/RFC3339Nano)
 ```
+
+PostgreSQL is required for every daemon transport. Explicit legacy saga-store, Redis, and plugin settings are rejected with migration guidance; they are not runtime choices.
 
 #### Fact Sources
 
@@ -368,8 +379,6 @@ effectusd [options]
 --kafka-poison-policy     Poison policy: halt, skip, or dlq (default: halt)
 --kafka-dlq-topic         DLQ topic for the dlq policy
 --kafka-dlq-mode          Explicit DLQ delivery contract
---kafka-delivery-ledger   Deprecated; state is stored in PostgreSQL
---kafka-poison-audit      Deprecated; state is stored in PostgreSQL
 ```
 
 #### Server Configuration
@@ -385,7 +394,7 @@ effectusd [options]
 --grpc-max-execution-duration Maximum execution duration
 --grpc-max-concurrent Maximum concurrent executions
 --metrics-addr     Address to expose metrics (default: :9090)
---pprof-addr       Address to expose pprof (default: :6060)
+--shutdown-timeout Deadline for graceful shutdown and worker drain (default: 30s)
 ```
 
 Supply the PostgreSQL ledger DSN through `EFFECTUS_SAGA_POSTGRES_DSN`. The daemon rejects a DSN supplied on the command line because process arguments can expose secrets.
@@ -502,14 +511,17 @@ EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require"
   effectusd --bundle ./bundle.json --rules-hotload
 ```
 
-Post facts for a universe snapshot:
+Post facts for a universe projection. Reuse the same `Idempotency-Key` and identical payload when retrying one logical request. Use a new key for a new submission.
 
 ```bash
-curl -X POST http://localhost:8080/api/facts \
+curl --fail-with-body -X POST http://localhost:8080/api/facts \
   -H 'Authorization: Bearer devtoken' \
+  -H 'Idempotency-Key: customer-order-42-v1' \
   -H 'Content-Type: application/json' \
-  -d '{"universe":"prod","facts":{"customer":{"tier":"gold"},"order":{"total":120}}}'
+  -d '{"universe":"prod-projection","namespace":"tenant-a","facts":{"customer":{"tier":"gold"},"order":{"total":120}}}'
 ```
+
+`namespace` is the durable tenant identity used in admission and execution IDs. `universe` is the local projection key. For compatibility, omitting `namespace` uses `universe` as the namespace (or `default` when both are empty).
 
 #### Use Kafka as Fact Source
 
@@ -523,7 +535,7 @@ effectusd \
   --kafka-topic customer-events
 ```
 
-#### Full compatibility configuration
+#### Full production configuration
 
 ```bash
 EFFECTUS_API_TOKEN="..." \
@@ -537,7 +549,6 @@ effectusd \
   --kafka-topic events \
   --http-addr :8080 \
   --metrics-addr :9090 \
-  --reload-interval 300s \
   --verbose
 ```
 

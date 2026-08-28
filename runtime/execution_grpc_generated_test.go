@@ -14,6 +14,28 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
+func TestValidateExecutionOptionsNamesUnsupportedField(t *testing.T) {
+	tests := []struct {
+		name    string
+		options *effectusv1.ExecutionOptions
+		message string
+	}{
+		{"dry run", &effectusv1.ExecutionOptions{DryRun: true}, "options.dry_run is not supported"},
+		{"max effects", &effectusv1.ExecutionOptions{MaxEffects: 1}, "options.max_effects is not supported"},
+		{"tracing", &effectusv1.ExecutionOptions{EnableTracing: true}, "options.enable_tracing is not supported"},
+		{"capabilities", &effectusv1.ExecutionOptions{CapabilityFilter: []string{"write"}}, "options.capability_filter is not supported"},
+		{"minimum schema", &effectusv1.ExecutionOptions{MinSchemaVersion: "1"}, "options.min_schema_version is not supported"},
+		{"maximum schema", &effectusv1.ExecutionOptions{MaxSchemaVersion: "2"}, "options.max_schema_version is not supported"},
+		{"negative timeout", &effectusv1.ExecutionOptions{TimeoutSeconds: -1}, "options.timeout_seconds must not be negative"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.EqualError(t, validateExecutionOptions(test.options), test.message)
+		})
+	}
+	require.NoError(t, validateExecutionOptions(&effectusv1.ExecutionOptions{TimeoutSeconds: 1}))
+}
+
 func TestGeneratedGRPCServiceExecutesThroughEngine(t *testing.T) {
 	runtime := newEngineTestRuntime(t, loader.NewStaticSourceLoader("workflow", "workflow.effx", []byte(validWorkflowSource("1"))))
 	listener := bufconn.Listen(1 << 20)

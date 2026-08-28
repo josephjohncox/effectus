@@ -20,7 +20,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Initialize language client if LSP is enabled
     const config = vscode.workspace.getConfiguration('effectus');
     if (config.get('lsp.enabled')) {
-        languageClient = new EffectusLanguageClient(context);
+        languageClient = new EffectusLanguageClient();
         languageClient.start();
     }
 
@@ -78,21 +78,6 @@ function registerCommands(context: vscode.ExtensionContext) {
         }
     });
 
-    // Test rule command
-    const testRuleCommand = vscode.commands.registerCommand('effectus.testRule', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || !isEffectusFile(editor.document)) {
-            vscode.window.showWarningMessage('Please open an Effectus rule file (.eff or .effx)');
-            return;
-        }
-
-        try {
-            await testRuleWithSyntheticData();
-        } catch (error) {
-            vscode.window.showErrorMessage(`Test failed: ${error}`);
-        }
-    });
-
     // Show lineage command
     const showLineageCommand = vscode.commands.registerCommand('effectus.showLineage', async () => {
         try {
@@ -121,21 +106,6 @@ function registerCommands(context: vscode.ExtensionContext) {
         }
     });
 
-    // Format rule command
-    const formatRuleCommand = vscode.commands.registerCommand('effectus.rule.format', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || !isEffectusFile(editor.document)) {
-            vscode.window.showWarningMessage('Please open an Effectus rule file (.eff or .effx)');
-            return;
-        }
-
-        try {
-            await formatRule();
-        } catch (error) {
-            vscode.window.showErrorMessage(`Formatting failed: ${error}`);
-        }
-    });
-
     // Initialize workspace command
     const initWorkspaceCommand = vscode.commands.registerCommand('effectus.workspace.init', async () => {
         try {
@@ -150,11 +120,9 @@ function registerCommands(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         generateDocsCommand,
         validateRuleCommand,
-        testRuleCommand,
         showLineageCommand,
         startServerCommand,
         stopServerCommand,
-        formatRuleCommand,
         initWorkspaceCommand
     );
 }
@@ -261,18 +229,6 @@ async function validateRule(document: vscode.TextDocument): Promise<vscode.Diagn
         }
     }
     return [];
-}
-
-async function testRuleWithSyntheticData(): Promise<void> {
-    // TODO: Implement rule testing with synthetic data
-    // This would generate test data based on schemas and execute the rule
-    vscode.window.showInformationMessage('Rule testing functionality coming soon');
-}
-
-async function formatRule(): Promise<void> {
-    // TODO: Implement rule formatting
-    // This would format the rule according to Effectus style guidelines
-    vscode.window.showInformationMessage('Rule formatting functionality coming soon');
 }
 
 async function initializeEffectusWorkspace(): Promise<void> {
