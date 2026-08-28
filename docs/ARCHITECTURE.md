@@ -36,9 +36,10 @@ Rule sources and contracts
 The production compile path has four stages:
 
 1. Load `.eff` and `.effx` source files.
-2. Build an immutable environment from fact types, functions, and verb contracts.
-3. Compile the sources with `compiler.CompileChecked`.
-4. validate and serialize the artifact through the `ir` package.
+2. Parse and normalize each source with the shared compiler front end.
+3. Build an immutable environment from fact types, functions, and verb contracts.
+4. Compile the normalized sources with `compiler.CompileChecked`.
+5. Validate and serialize the artifact through the `ir` package.
 
 The checked artifact contains no Go callbacks. It uses the protobuf schema in `effectus/v1/ir.proto`.
 
@@ -56,13 +57,17 @@ A runtime generation contains a coherent snapshot of:
 - Checked rule artifacts
 - Content and environment digests
 
-Activation uses an expected-generation comparison. A stale candidate cannot replace a newer active generation.
+`ExecutionRuntime` publishes this state with one expected-generation comparison. A stale candidate cannot replace the active generation.
 
-Each accepted execution records its generation. A later activation does not change that execution.
+The publication contains checked IR, bundle metadata, and one executor snapshot. The runtime retires these values together.
 
-Schema and verb refreshes recompile the rule sources before publication. A failed candidate never becomes active.
+Each accepted execution records and pins its generation. A later library publication does not change that execution.
 
-Read [Runtime Lifecycle](LIFECYCLE.md) for activation, refresh, drain, and shutdown rules.
+Effectusd uses immutable deployment. It validates rule candidates, but it rejects rule activation, rollback, and extension polling.
+
+`runtime.GenerationManager` remains a deprecated embedded compatibility API. It does not publish production daemon state.
+
+Read [Runtime Lifecycle](LIFECYCLE.md) for publication, drain, and shutdown rules.
 
 ## Execution path
 
@@ -135,9 +140,23 @@ The deprecated `runtime/ruleset_execution.proto` remains a schema-compatibility 
 
 A checked plan can invoke supported HTTP, gRPC, stream, Kafka, or OCI-resolved executors.
 
-Each invocation carries stable identity, attempt, contract, and fencing metadata. The destination must enforce the metadata when correctness depends on it.
+Loaders return immutable executor descriptors. `ExecutionRuntime` constructs the transport resources when it publishes a generation.
+
+The executor snapshot owns each transport resource. Generation handles delay resource retirement until active executions finish.
+
+Each invocation carries stable identity, attempt, contract, and fencing metadata. The destination must enforce metadata that affects correctness.
 
 In-process Go continuations and plugins are compatibility-only paths. They are not valid production checked IR.
+
+## Package contracts
+
+Narrow packages define the expression, execution-ledger, and workflow contracts:
+
+- `schema/expression`
+- `schema/ledger`
+- `schema/workflow`
+
+The top-level `schema` package keeps forwarding aliases for compatibility. New runtime contract dependencies use the narrow packages.
 
 ## Capability and fencing model
 

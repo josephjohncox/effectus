@@ -107,6 +107,14 @@ func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store fa
 func (s *serverState) SetCheckedEngine(engine *effectusruntime.Engine) {
 	s.mu.Lock()
 	s.checkedEngine = engine
+	// Production status reports the checked runtime publication identity. The
+	// daemon-local generation remains only for the engine-nil embedded path.
+	if engine != nil && s.generation != nil {
+		if digest := engine.ActiveGenerationDigest(); digest != "" {
+			s.generation.bundleDigest = digest
+			s.generation.publishedAt = time.Now().UTC()
+		}
+	}
 	s.mu.Unlock()
 }
 

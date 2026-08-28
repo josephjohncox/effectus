@@ -62,7 +62,7 @@ Effectusd requires PostgreSQL for durable workflow state:
 
 ```bash
 EFFECTUS_API_TOKEN="replace-me" \
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:password@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:password@db/effectus?sslmode=require" \
   effectusd --bundle bundle.json --extensions-dir extensions --http-addr :8080
 ```
 
@@ -77,7 +77,7 @@ Production OCI references must use a digest. The daemon also requires an operato
 
 ```bash
 EFFECTUS_API_TOKEN="replace-me" \
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:password@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:password@db/effectus?sslmode=require" \
   effectusd \
   --oci-ref ghcr.io/acme/rules@sha256:BUNDLE_DIGEST \
   --oci-signature-verifier /usr/local/bin/effectus-verify-oci

@@ -38,7 +38,7 @@ spec:
             - "--database-max-open=2"
             - "--database-max-idle=1"
           env:
-            - name: EFFECTUS_SAGA_POSTGRES_DSN
+            - name: EFFECTUS_POSTGRES_DSN
               valueFrom:
                 secretKeyRef:
                   name: {{ required "migrations.existingSecret is required when migrations.enabled is true and must be distinct from postgres.existingSecret" .Values.migrations.existingSecret }}

@@ -36,7 +36,7 @@ The DML role can read and change runtime rows. It can read the migration version
 Apply migrations with a one-shot command:
 
 ```bash
-EFFECTUS_SAGA_POSTGRES_DSN="$DDL_DSN" effectusd --database-migrations=apply
+EFFECTUS_POSTGRES_DSN="$DDL_DSN" effectusd --database-migrations=apply
 ```
 
 The Helm migration Job uses `migrations.existingSecret`. The Deployment uses `postgres.existingSecret` and `--database-migrations=validate`.
@@ -163,7 +163,7 @@ Set a retention period from audit, replay, and recovery requirements. Keep block
 Run a dry-run first:
 
 ```bash
-EFFECTUS_SAGA_POSTGRES_DSN="$DML_DSN" effectusd \
+EFFECTUS_POSTGRES_DSN="$DML_DSN" effectusd \
   --admin-prune-before=2026-01-01T00:00:00Z \
   --admin-prune-batch-size=500 \
   --admin-prune-dry-run=true
@@ -174,7 +174,7 @@ The command reports row counts for each table. Review the counts and blocked-sta
 Create a backup and complete a test restore before destructive mode. Then run:
 
 ```bash
-EFFECTUS_SAGA_POSTGRES_DSN="$DML_DSN" effectusd \
+EFFECTUS_POSTGRES_DSN="$DML_DSN" effectusd \
   --admin-prune-before=2026-01-01T00:00:00Z \
   --admin-prune-batch-size=500 \
   --admin-prune-dry-run=false \

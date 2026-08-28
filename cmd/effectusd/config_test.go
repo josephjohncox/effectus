@@ -14,10 +14,9 @@ func TestValidateBundleArgumentsRejectsOCIReloadBeforeStartup(t *testing.T) {
 	require.EqualError(t, err, "--reload-interval cannot poll an immutable OCI reference; publish and deploy a new digest instead")
 }
 
-func TestApplyRuntimeConfigRejectsLegacyStoresAndFileLedgers(t *testing.T) {
+func TestApplyRuntimeConfigRejectsLegacyStoresAndPlugins(t *testing.T) {
 	require.ErrorContains(t, applyRuntimeConfig(&runtimeConfig{Saga: sagaConfig{Store: "redis"}}, map[string]bool{}), "legacy saga/Redis")
 	require.ErrorContains(t, applyRuntimeConfig(&runtimeConfig{Verbs: verbConfig{PluginDirs: []string{"plugins"}}}, map[string]bool{}), "plugin_dirs")
-	require.ErrorContains(t, applyRuntimeConfig(&runtimeConfig{Kafka: kafkaConfig{DeliveryLedger: "attempts.jsonl"}}, map[string]bool{}), "sole daemon attempt and poison ledger")
 }
 
 func TestLoadRuntimeConfigRejectsUnknownFields(t *testing.T) {
@@ -63,9 +62,21 @@ kafka:
 	require.Equal(t, "facts.dlq", config.Kafka.DLQTopic)
 }
 
-func TestRuntimeConfigRejectsDeprecatedKafkaDeliveryLedger(t *testing.T) {
-	config := &runtimeConfig{Kafka: kafkaConfig{DeliveryLedger: "/data/ignored.jsonl"}}
-	require.ErrorContains(t, applyRuntimeConfig(config, nil), "effectus_kafka_deliveries")
+func TestRuntimeConfigIgnoresDeprecatedKafkaFileLedgers(t *testing.T) {
+	original := *postgresDSN
+	t.Cleanup(func() { *postgresDSN = original })
+	*postgresDSN = "postgres://authoritative"
+	config := &runtimeConfig{Kafka: kafkaConfig{DeliveryLedger: "/data/ignored.jsonl", PoisonAudit: "/data/poison.jsonl"}}
+	require.NoError(t, applyRuntimeConfig(config, nil))
+	require.Equal(t, "postgres://authoritative", *postgresDSN)
+}
+
+func TestRuntimeConfigUsesCanonicalDatabaseDSN(t *testing.T) {
+	original := *postgresDSN
+	t.Cleanup(func() { *postgresDSN = original })
+	*postgresDSN = ""
+	require.NoError(t, applyRuntimeConfig(&runtimeConfig{Database: databaseConfig{DSN: "postgres://canonical"}}, nil))
+	require.Equal(t, "postgres://canonical", *postgresDSN)
 }
 
 func TestLoadRuntimeConfigReadsDatabasePoolAndMigrationSettings(t *testing.T) {

@@ -67,7 +67,6 @@ var (
 	ociRef                   = flag.String("oci-ref", "", "OCI reference for bundle (e.g., ghcr.io/user/bundle:v1)")
 	ociCacheDir              = flag.String("oci-cache-dir", "./bundles", "Writable directory for OCI bundle cache")
 	ociSignatureVerifier     = flag.String("oci-signature-verifier", "", "Fixed executable used to verify an OCI reference and digest")
-	pluginDir                = flag.String("plugin-dir", "", "Deprecated unsupported plugin directory (rejected)")
 	verbDir                  = flag.String("verb-dir", "", "Deprecated alias for --extensions-dir")
 	verbDuplicatePolicy      = flag.String("verb-duplicate-policy", "error", "Duplicate verb policy (error, replace, ignore)")
 	verbOCIWarmup            = flag.Bool("verb-oci-warmup", false, "Warm OCI verb executors at startup")
@@ -93,15 +92,8 @@ var (
 	adminPruneDryRun         = flag.Bool("admin-prune-dry-run", true, "Report prune candidates without deleting them")
 	adminPruneBackupVerified = flag.Bool("admin-prune-backup-verified", false, "Confirm a restorable backup before destructive pruning")
 
-	// Runtime flags
-	sagaEnabled     = flag.Bool("saga", false, "Deprecated legacy saga mode (rejected by effectusd; use checked durable workflow runtime)")
-	sagaStoreType   = flag.String("saga-store", "memory", "Deprecated legacy saga store (rejected)")
-	sagaRedisAddr   = flag.String("saga-redis-addr", "localhost:6379", "Deprecated Redis saga address (rejected)")
-	sagaRedisPass   = flag.String("saga-redis-password", "", "Redis password for saga store")
-	sagaRedisDB     = flag.Int("saga-redis-db", 0, "Redis DB for saga store")
-	sagaRedisPrefix = flag.String("saga-redis-prefix", "", "Redis key prefix for saga store")
-	sagaRedisTTL    = flag.Duration("saga-redis-ttl", 0, "TTL for saga keys (0 to disable)")
-	sagaPgDSN       = flag.String("saga-postgres-dsn", "", "Postgres DSN for saga store")
+	// PostgreSQL is the daemon's only durable storage authority.
+	postgresDSN = new(string)
 
 	// Determinism
 	fixedTime = flag.String("fixed-time", "", "Fixed time for deterministic evaluation (RFC3339 or RFC3339Nano)")
@@ -181,6 +173,10 @@ func registerCustomFlags() {
 
 func main() {
 	registerCustomFlags()
+	if err := rejectRemovedDaemonArgs(os.Args[1:]); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 	flag.Parse()
 
 	setFlags := map[string]bool{}
@@ -188,16 +184,12 @@ func main() {
 		setFlags[f.Name] = true
 	})
 
-	if err := rejectExplicitLegacyFlags(setFlags); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
 	if strings.TrimSpace(os.Getenv("EFFECTUS_SAGA_REDIS_PASSWORD")) != "" {
-		fmt.Fprintln(os.Stderr, "Error: EFFECTUS_SAGA_REDIS_PASSWORD is a legacy Redis setting and is not supported; remove it and configure PostgreSQL with EFFECTUS_SAGA_POSTGRES_DSN")
+		fmt.Fprintln(os.Stderr, "Error: EFFECTUS_SAGA_REDIS_PASSWORD is a legacy Redis setting and is not supported; remove it and configure PostgreSQL with EFFECTUS_POSTGRES_DSN")
 		os.Exit(1)
 	}
 
-	for _, secretFlag := range []string{"api-token", "api-read-token", "saga-postgres-dsn"} {
+	for _, secretFlag := range []string{"api-token", "api-read-token"} {
 		if setFlags[secretFlag] {
 			fmt.Fprintf(os.Stderr, "--%s is rejected because command arguments expose secrets; use environment variables or a protected config file\n", secretFlag)
 			os.Exit(1)
@@ -233,13 +225,16 @@ func main() {
 	if *apiReadToken == "" {
 		*apiReadToken = os.Getenv("EFFECTUS_API_READ_TOKEN")
 	}
-	if *sagaPgDSN == "" {
-		*sagaPgDSN = os.Getenv("EFFECTUS_SAGA_POSTGRES_DSN")
+	if *postgresDSN == "" {
+		*postgresDSN = os.Getenv("EFFECTUS_POSTGRES_DSN")
+	}
+	if *postgresDSN == "" && strings.TrimSpace(os.Getenv("EFFECTUS_SAGA_POSTGRES_DSN")) != "" {
+		*postgresDSN = os.Getenv("EFFECTUS_SAGA_POSTGRES_DSN")
+		fmt.Fprintln(os.Stderr, "Warning: EFFECTUS_SAGA_POSTGRES_DSN is deprecated; use EFFECTUS_POSTGRES_DSN")
 	}
 
-	if strings.TrimSpace(*kafkaDeliveryLedger) != "" {
-		fmt.Fprintln(os.Stderr, "--kafka-delivery-ledger is no longer supported; delivery state is in PostgreSQL table effectus_kafka_deliveries")
-		os.Exit(1)
+	if strings.TrimSpace(*kafkaDeliveryLedger) != "" || strings.TrimSpace(*kafkaPoisonAudit) != "" {
+		fmt.Fprintln(os.Stderr, "Warning: Kafka file-ledger settings are ignored; PostgreSQL table effectus_kafka_deliveries is authoritative")
 	}
 	if err := validateDatabasePoolConfig(); err != nil {
 		fmt.Fprintf(os.Stderr, "Invalid database pool configuration: %v\n", err)
@@ -370,12 +365,12 @@ func main() {
 		os.Exit(1)
 	}
 	extensionDirs := splitCommaList(*extensionsDir)
-	if strings.TrimSpace(*pluginDir) != "" {
-		fmt.Fprintln(os.Stderr, "--plugin-dir is not supported by production effectusd; use immutable invocation-aware extension targets")
-		os.Exit(1)
-	}
 	for _, directory := range splitCommaList(*verbDir) {
 		if directory != "" {
+			if err := validateLegacyVerbDirAlias(directory); err != nil {
+				fmt.Fprintf(os.Stderr, "Invalid --verb-dir alias: %v\n", err)
+				os.Exit(1)
+			}
 			extensionDirs = append(extensionDirs, directory)
 		}
 	}
@@ -452,7 +447,7 @@ func main() {
 
 	factCh := make(chan factEnvelope, 32)
 	history := newBundleHistory(*rulesHistory, *rulesHistDir)
-	state := newServerState(bundle, factCh, store, storeConfig, auth, limiter, acl, typeSystem, schemaSources, verbReg, *rulesHotload, history, *sagaEnabled, sagaStore, capSystem)
+	state := newServerState(bundle, factCh, store, storeConfig, auth, limiter, acl, typeSystem, schemaSources, verbReg, *rulesHotload, history, false, sagaStore, capSystem)
 	state.SetTrustedProxies(trustedProxies)
 	state.recordBundleHistory(bundle, "startup")
 
@@ -789,21 +784,33 @@ func validateBundleArguments(bundle, oci string, reload time.Duration) error {
 	return nil
 }
 
-func rejectExplicitLegacyFlags(setFlags map[string]bool) error {
-	for _, name := range []string{"saga", "saga-store", "saga-redis-addr", "saga-redis-password", "saga-redis-db", "saga-redis-prefix", "saga-redis-ttl"} {
-		if setFlags[name] {
-			return fmt.Errorf("--%s is a legacy saga/Redis setting and is not supported; remove it and configure PostgreSQL with EFFECTUS_SAGA_POSTGRES_DSN or protected saga.postgres.dsn", name)
-		}
-	}
-	if setFlags["plugin-dir"] {
-		return fmt.Errorf("--plugin-dir is not supported; use invocation-aware extension targets")
-	}
-	for _, name := range []string{"kafka-poison-audit", "kafka-delivery-ledger"} {
-		if setFlags[name] {
-			return fmt.Errorf("--%s is deprecated; remove it because PostgreSQL is the sole daemon attempt and poison ledger", name)
+func rejectRemovedDaemonArgs(arguments []string) error {
+	legacy := []string{"--saga", "--saga-store", "--saga-redis-addr", "--saga-redis-password", "--saga-redis-db", "--saga-redis-prefix", "--saga-redis-ttl", "--saga-postgres-dsn", "--plugin-dir"}
+	for _, argument := range arguments {
+		name := strings.SplitN(argument, "=", 2)[0]
+		for _, removed := range legacy {
+			if name == removed {
+				return fmt.Errorf("%s is not supported by effectusd; use EFFECTUS_POSTGRES_DSN and declarative extensions", removed)
+			}
 		}
 	}
 	return nil
+}
+
+func validateLegacyVerbDirAlias(directory string) error {
+	return filepath.Walk(directory, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() || strings.ToLower(filepath.Ext(path)) != ".json" {
+			return nil
+		}
+		lower := strings.ToLower(path)
+		if !strings.HasSuffix(lower, ".verbs.json") && !strings.HasSuffix(lower, ".schema.json") {
+			return fmt.Errorf("legacy verb manifest %q is not an extension manifest; rename or migrate it to *.verbs.json and use --extensions-dir", path)
+		}
+		return nil
+	})
 }
 
 func splitCommaList(value string) []string {
@@ -841,8 +848,8 @@ func validateFactSource() error {
 		if err := kafkaadapter.ValidateConfig(daemonKafkaConfig()); err != nil {
 			return err
 		}
-		if strings.TrimSpace(*sagaPgDSN) == "" {
-			return fmt.Errorf("Kafka requires EFFECTUS_SAGA_POSTGRES_DSN or protected saga.postgres.dsn for durable engine admission")
+		if strings.TrimSpace(*postgresDSN) == "" {
+			return fmt.Errorf("Kafka requires EFFECTUS_POSTGRES_DSN or protected database.dsn for durable engine admission")
 		}
 		return nil
 	default:

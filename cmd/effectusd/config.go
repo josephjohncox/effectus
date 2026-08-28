@@ -100,6 +100,7 @@ type kafkaConfig struct {
 }
 
 type databaseConfig struct {
+	DSN                string `yaml:"dsn" json:"dsn"`
 	Migrations         string `yaml:"migrations" json:"migrations"`
 	MaxOpen            *int   `yaml:"max_open" json:"max_open"`
 	MaxIdle            *int   `yaml:"max_idle" json:"max_idle"`
@@ -192,13 +193,13 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 		return nil
 	}
 	if cfg.Saga.Enabled != nil || cfg.Saga.Store != "" || cfg.Saga.Redis.Addr != "" || cfg.Saga.Redis.Password != "" || cfg.Saga.Redis.DB != nil || cfg.Saga.Redis.Prefix != "" || cfg.Saga.Redis.TTL != "" {
-		return fmt.Errorf("legacy saga/Redis settings are not supported; remove them and configure saga.postgres.dsn for the required PostgreSQL durable runtime")
+		return fmt.Errorf("legacy saga/Redis settings are not supported; remove them and configure database.dsn for the required PostgreSQL durable runtime")
 	}
 	if len(cfg.Verbs.PluginDirs) != 0 {
 		return fmt.Errorf("verbs.plugin_dirs is not supported; use invocation-aware extension targets")
 	}
 	if cfg.Kafka.PoisonAudit != "" || cfg.Kafka.DeliveryLedger != "" {
-		return fmt.Errorf("kafka.poison_audit and kafka.delivery_ledger are deprecated; remove them because PostgreSQL table effectus_kafka_deliveries is the sole daemon attempt and poison ledger")
+		fmt.Fprintln(os.Stderr, "Warning: kafka.poison_audit and kafka.delivery_ledger are deprecated and ignored; PostgreSQL is authoritative")
 	}
 
 	if cfg.Bundle.File != "" && !setFlags["bundle"] {
@@ -320,8 +321,11 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 		*factsCacheNs = *cfg.Facts.Cache.MaxNamespaces
 	}
 
-	if cfg.Saga.Postgres.DSN != "" && !setFlags["saga-postgres-dsn"] {
-		*sagaPgDSN = cfg.Saga.Postgres.DSN
+	if cfg.Database.DSN != "" {
+		*postgresDSN = cfg.Database.DSN
+	} else if cfg.Saga.Postgres.DSN != "" {
+		*postgresDSN = cfg.Saga.Postgres.DSN
+		fmt.Fprintln(os.Stderr, "Warning: saga.postgres.dsn is deprecated; use database.dsn")
 	}
 	if cfg.Database.Migrations != "" && !setFlags["database-migrations"] {
 		*databaseMigrations = cfg.Database.Migrations
@@ -427,9 +431,6 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 	}
 	if cfg.Kafka.PoisonAudit != "" && !setFlags["kafka-poison-audit"] {
 		*kafkaPoisonAudit = cfg.Kafka.PoisonAudit
-	}
-	if cfg.Kafka.DeliveryLedger != "" {
-		return fmt.Errorf("kafka.delivery_ledger is no longer supported; effectusd stores delivery state in PostgreSQL table effectus_kafka_deliveries")
 	}
 	if cfg.Database.MaxOpenConnections != nil && !setFlags["db-max-open-connections"] {
 		*dbMaxOpen = *cfg.Database.MaxOpenConnections

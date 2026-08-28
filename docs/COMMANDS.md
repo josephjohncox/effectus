@@ -327,7 +327,7 @@ effectusc capabilities \
 
 ## effectusd - Runtime Daemon
 
-The `effectusd` command compiles embedded `.eff` and `.effx` sources to checked IR and routes HTTP, Kafka, and generated gRPC requests through one durable execution engine. It requires PostgreSQL through `EFFECTUS_SAGA_POSTGRES_DSN`.
+The `effectusd` command compiles embedded `.eff` and `.effx` sources to checked IR and routes HTTP, Kafka, and generated gRPC requests through one durable execution engine. It requires PostgreSQL through `EFFECTUS_POSTGRES_DSN`.
 
 ### Usage
 
@@ -397,7 +397,7 @@ PostgreSQL is required for every daemon transport. Explicit legacy saga-store, R
 --shutdown-timeout Deadline for graceful shutdown and worker drain (default: 30s)
 ```
 
-Supply the PostgreSQL ledger DSN through `EFFECTUS_SAGA_POSTGRES_DSN`. The daemon rejects a DSN supplied on the command line because process arguments can expose secrets.
+Supply the PostgreSQL ledger DSN through `EFFECTUS_POSTGRES_DSN`. The daemon rejects a DSN supplied on the command line because process arguments can expose secrets.
 
 #### API Security + Rate Limits
 
@@ -438,14 +438,14 @@ Example ACL file: `docs/acl.example.yml`.
 #### Run with Local Bundle
 
 ```bash
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
   effectusd --bundle ./bundle.json --verbose
 ```
 
 #### Run with OCI Registry Bundle
 
 ```bash
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
   effectusd \
   --oci-ref ghcr.io/myorg/customer-rules@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   --oci-signature-verifier /usr/local/bin/effectus-verify-oci
@@ -463,7 +463,7 @@ OCI references are immutable and digest-pinned. Publish, sign, and deploy a new 
 
 ```bash
 EFFECTUS_API_TOKEN=devtoken \
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
   effectusd --bundle ./bundle.json --http-addr :8080
 # open http://localhost:8080/ui
 ```
@@ -503,11 +503,11 @@ between the current and staged bundle before swapping:
 }
 ```
 
-Enable rule editing + hotload from the UI:
+Enable rule candidate validation from the UI. Checked daemon activation and rollback remain fail-closed; deploy a new immutable generation to apply changes:
 
 ```bash
 EFFECTUS_API_TOKEN=devtoken \
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
   effectusd --bundle ./bundle.json --rules-hotload
 ```
 
@@ -526,7 +526,7 @@ curl --fail-with-body -X POST http://localhost:8080/api/facts \
 #### Use Kafka as Fact Source
 
 ```bash
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
 effectusd \
   --bundle ./bundle.json \
   --fact-source kafka \
@@ -539,7 +539,7 @@ effectusd \
 
 ```bash
 EFFECTUS_API_TOKEN="..." \
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
 effectusd \
   --oci-ref ghcr.io/myorg/customer-rules@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   --oci-signature-verifier /usr/local/bin/effectus-verify-oci \
@@ -598,7 +598,7 @@ effectusc bundle \
 
 ```bash
 # Run the checked durable daemon
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
 effectusd \
   --oci-ref ghcr.io/myorg/my-rules@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   --oci-signature-verifier /usr/local/bin/effectus-verify-oci \
@@ -643,8 +643,7 @@ Effectusd reads these secrets from the environment:
 
 - `EFFECTUS_API_TOKEN`
 - `EFFECTUS_API_READ_TOKEN`
-- `EFFECTUS_SAGA_POSTGRES_DSN`
-- `EFFECTUS_SAGA_REDIS_PASSWORD` for library compatibility stores
+- `EFFECTUS_POSTGRES_DSN`
 
 The corresponding secret command-line flags are rejected because process arguments can expose their values.
 

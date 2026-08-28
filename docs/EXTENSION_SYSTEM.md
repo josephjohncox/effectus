@@ -176,7 +176,7 @@ Resolve the published tag to a digest. Sign that digest with the operator trust 
 Run effectusd with the immutable reference:
 
 ```bash
-EFFECTUS_SAGA_POSTGRES_DSN="$POSTGRES_DSN" \
+EFFECTUS_POSTGRES_DSN="$POSTGRES_DSN" \
   effectusd \
   --oci-ref ghcr.io/acme/effectus-payments@sha256:BUNDLE_DIGEST \
   --oci-signature-verifier /usr/local/bin/effectus-verify-oci

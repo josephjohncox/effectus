@@ -92,7 +92,7 @@ Start effectusd with the rule hotload API:
 
 ```bash
 EFFECTUS_API_TOKEN=devtoken \
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:password@localhost/effectus?sslmode=disable" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:password@localhost/effectus?sslmode=disable" \
   effectusd --bundle bundle.json --rules-hotload
 ```
 

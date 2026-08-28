@@ -39,14 +39,14 @@ func validateDatabaseSettings(settings databaseSettings) error {
 }
 
 func openDaemonDatabase() (*sql.DB, error) {
-	if strings.TrimSpace(*sagaPgDSN) == "" {
-		return nil, fmt.Errorf("EFFECTUS_SAGA_POSTGRES_DSN or protected saga.postgres.dsn is required")
+	if strings.TrimSpace(*postgresDSN) == "" {
+		return nil, fmt.Errorf("EFFECTUS_POSTGRES_DSN or protected database.dsn is required")
 	}
 	settings := databaseSettingsFromFlags()
 	if err := validateDatabaseSettings(settings); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("postgres", *sagaPgDSN)
+	db, err := sql.Open("postgres", *postgresDSN)
 	if err != nil {
 		return nil, err
 	}
@@ -59,10 +59,7 @@ func openDaemonDatabase() (*sql.DB, error) {
 	return db, nil
 }
 
-func rejectCheckedRuntimeMutation(hotload bool, bundleReload, extensionReload time.Duration) error {
-	if hotload {
-		return fmt.Errorf("rule activation is disabled because the checked engine is immutable; use /api/rules/validate and redeploy")
-	}
+func rejectCheckedRuntimeMutation(_ bool, bundleReload, extensionReload time.Duration) error {
 	if bundleReload > 0 {
 		return fmt.Errorf("--reload-interval is disabled because checked engine references cannot be swapped atomically; redeploy")
 	}

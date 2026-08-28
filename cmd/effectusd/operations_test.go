@@ -17,7 +17,7 @@ import (
 )
 
 func TestCheckedEngineReloadRejected(t *testing.T) {
-	require.ErrorContains(t, rejectCheckedRuntimeMutation(true, 0, 0), "rule activation")
+	require.NoError(t, rejectCheckedRuntimeMutation(true, 0, 0))
 	require.ErrorContains(t, rejectCheckedRuntimeMutation(false, time.Second, 0), "--reload-interval")
 	require.ErrorContains(t, rejectCheckedRuntimeMutation(false, 0, time.Second), "--extensions-reload-interval")
 	require.NoError(t, rejectCheckedRuntimeMutation(false, 0, 0))

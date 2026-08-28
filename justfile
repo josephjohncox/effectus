@@ -27,7 +27,7 @@ UI_FLOW_DEMO_STREAM := "examples/flow_ui_demo/scripts/stream_facts.sh"
 UI_FLOW_DEMO_TOKEN := "flow-demo-token"
 UI_FLOW_SQL_STACK := "examples/flow_ui_demo/sql_scrape"
 UI_FLOW_SQL_DSN := "postgres://effectus:effectus@localhost:55432/effectus_ui_demo?sslmode=disable"
-SAGA_POSTGRES_DSN := "postgres://effectus:effectus@localhost:55433/effectus_saga?sslmode=disable"
+DAEMON_POSTGRES_DSN := "postgres://effectus:effectus@localhost:55433/effectus_saga?sslmode=disable"
 SAGA_REDIS_ADDR := "localhost:56379"
 
 # Default recipe
@@ -133,7 +133,7 @@ setup-db:
 		{{DOCKER_COMPOSE}} exec -T postgres pg_isready -U effectus -d effectus_saga >/dev/null 2>&1 && exit 0; \
 		sleep 1; \
 	done; echo "ERROR PostgreSQL did not become ready"; exit 1
-	@echo "OK Database ready: {{SAGA_POSTGRES_DSN}}"
+	@echo "OK Database ready: {{DAEMON_POSTGRES_DSN}}"
 
 # Setup test database
 setup-test-db:
@@ -297,7 +297,7 @@ ui-demo: setup-db
 	@echo "  -H \"Authorization: Bearer {{UI_DEMO_TOKEN}}\" \\"
 	@echo "  -H \"Content-Type: application/json\" \\"
 	@echo "  -d '{\"universe\":\"default\",\"mode\":\"both\",\"use_stored\":true}'"
-	EFFECTUS_API_TOKEN={{UI_DEMO_TOKEN}} EFFECTUS_SAGA_POSTGRES_DSN='{{SAGA_POSTGRES_DSN}}' go run ./cmd/effectusd \
+	EFFECTUS_API_TOKEN={{UI_DEMO_TOKEN}} EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' go run ./cmd/effectusd \
 		--bundle {{UI_DEMO_BUNDLE}} \
 		--http-addr :8080 \
 		--rules-hotload \
@@ -323,7 +323,7 @@ ui-demo-smoke:
 		--schema-dir {{UI_DEMO_SCHEMA}} --verb-dir {{UI_DEMO_VERB_DIR}} \
 		--verbschema {{UI_DEMO_VERBS}} --rules-dir {{UI_DEMO_RULES}} --output {{UI_DEMO_BUNDLE}}; \
 	go build -o out/ui_demo/effectusd ./cmd/effectusd; \
-	EFFECTUS_API_TOKEN={{UI_DEMO_TOKEN}} EFFECTUS_SAGA_POSTGRES_DSN='{{SAGA_POSTGRES_DSN}}' \
+	EFFECTUS_API_TOKEN={{UI_DEMO_TOKEN}} EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' \
 		out/ui_demo/effectusd --bundle {{UI_DEMO_BUNDLE}} --http-addr 127.0.0.1:18080 \
 		--metrics-addr '' --extensions-dir {{UI_DEMO_EXTENSIONS}} --facts-store memory \
 		>out/ui_demo/effectusd.log 2>&1 & pid=$!; \
@@ -392,7 +392,7 @@ ui-flow-demo: setup-db
 	@echo "just ui-flow-demo-sql-up"
 	@echo "just ui-flow-demo-sql-scrape"
 	@echo "just ui-flow-demo-sql-bump  # insert a new row"
-	EFFECTUS_API_TOKEN={{UI_FLOW_DEMO_TOKEN}} EFFECTUS_SAGA_POSTGRES_DSN='{{SAGA_POSTGRES_DSN}}' go run ./cmd/effectusd \
+	EFFECTUS_API_TOKEN={{UI_FLOW_DEMO_TOKEN}} EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' go run ./cmd/effectusd \
 		--bundle {{UI_FLOW_DEMO_BUNDLE}} \
 		--http-addr :8080 \
 		--rules-hotload \
@@ -542,7 +542,7 @@ saga-logs:
 	docker compose -f {{SAGA_STACK}}/docker-compose.yml logs -f
 
 saga-test:
-	POSTGRES_DSN="{{SAGA_POSTGRES_DSN}}" REDIS_ADDR="{{SAGA_REDIS_ADDR}}" go test -v -tags=integration ./cmd/effectusd
+	POSTGRES_DSN="{{DAEMON_POSTGRES_DSN}}" REDIS_ADDR="{{SAGA_REDIS_ADDR}}" go test -v -tags=integration ./cmd/effectusd
 
 # Clean generated SQL files
 sql-clean:

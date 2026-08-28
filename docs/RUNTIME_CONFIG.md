@@ -6,10 +6,12 @@ Run with:
 
 ```bash
 EFFECTUS_API_TOKEN="..." EFFECTUS_API_READ_TOKEN="..." \
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
   effectusd --config effectusd.yaml \
   --oci-signature-verifier /usr/local/bin/effectus-verify-oci
 ```
+
+`EFFECTUS_SAGA_POSTGRES_DSN` and `saga.postgres.dsn` are warning-producing aliases for one compatibility window. New deployments must use `EFFECTUS_POSTGRES_DSN` or protected `database.dsn`.
 
 ## Example: Mixed HTTP + OCI verb sources
 
@@ -102,7 +104,7 @@ kafka:
 PostgreSQL table `effectus_kafka_deliveries` is the sole daemon attempt and poison ledger.
 It increments the stable delivery attempt before each handler call, so attempt limits survive rebalances and process restarts.
 Back up this table with the other `effectus_*` tables.
-Deprecated `delivery_ledger` and `poison_audit` settings are rejected; remove them.
+Deprecated `delivery_ledger` and `poison_audit` settings produce a warning and are ignored during the compatibility window. PostgreSQL remains authoritative; remove these settings.
 The default poison policy leaves the failed offset uncommitted and stops the daemon.
 For `skip`, the PostgreSQL ledger records and deduplicates the poison acknowledgement.
 For `dlq`, set `dlq_topic` to a Kafka topic.
@@ -185,7 +187,7 @@ verbs:
   oci_warmup: true
   strict: true
 
-# Supply EFFECTUS_SAGA_POSTGRES_DSN from the secret manager.
+# Supply EFFECTUS_POSTGRES_DSN from the secret manager.
 # Run effectusd --database-migrations=apply with a DDL credential before normal startup.
 # The old saga.enabled mode is rejected; checked execution always uses V2.
 ```
@@ -237,9 +239,8 @@ Resolve the published digest, sign it under the deployment trust policy, and lis
 
 - CLI flags override config values when both are provided.
 - `/api/*` endpoints require a token; `/healthz` and `/readyz` are open by default.
-- The checked daemon rejects `api.hotload_rules`, `extensions.reload_interval`, and `bundle.reload_interval` before it opens a database or listener.
-- `/api/rules/validate` remains available for candidate validation. Deploy a new immutable digest for activation.
-- Production effectusd rejects Go plugin executors. Use immutable invocation-aware targets, or use plugins only in an explicitly trusted embedded library process.
+- The checked daemon rejects `extensions.reload_interval` and `bundle.reload_interval` before it opens a database or listener.
+- `api.hotload_rules` enables candidate validation, but apply and rollback fail closed. Deploy a new immutable digest for activation.
 - Production effectusd rejects Go plugin executors and explicitly supplied legacy saga or Redis settings. PostgreSQL is required for HTTP, gRPC, Kafka, and stream daemon transports.
 - Use `extensions.dirs` and `--extensions-dir` for local declarations. `verbs.spec_dirs` and `--verb-dir` are deprecated compatibility aliases.
 - Deploy a new OCI digest to publish another generation. Effectusd does not poll mutable OCI tags.
@@ -247,7 +248,7 @@ Resolve the published digest, sign it under the deployment trust policy, and lis
 - `verbs.duplicate_policy` controls how duplicate verb names are resolved; `verbs.oci_warmup` prefetches OCI verb bundles at startup.
 - `verbs.strict` controls runtime argument and return checks. The default is `true`. Use `false` only for unchecked development code.
 - `fixed_time` pins deterministic time for expression evaluation (useful for tests and canary runs).
-- Effectusd requires `EFFECTUS_SAGA_POSTGRES_DSN`. Redis remains available for tested library recovery scenarios but does not replace atomic PostgreSQL admission.
+- Effectusd requires `EFFECTUS_POSTGRES_DSN`. Redis remains available for tested library recovery scenarios but does not replace atomic PostgreSQL admission.
 
 ## External Schema Sources (Buf, SQL, Catalogs)
 
@@ -297,7 +298,7 @@ containers:
           secretKeyRef:
             name: effectusd-api
             key: api-token
-      - name: EFFECTUS_SAGA_POSTGRES_DSN
+      - name: EFFECTUS_POSTGRES_DSN
         valueFrom:
           secretKeyRef:
             name: effectus-postgres

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -297,6 +298,34 @@ func (s *serverState) evaluateRuleHotload(req ruleHotloadRequest, apply bool) ru
 			Diagnostics: diagnostics,
 			SourceDiff:  sourceDiff,
 		}
+	}
+
+	// Validation attests the same callback-free compiler boundary used by the
+	// daemon. Legacy lowering below exists only for embedded canary summaries.
+	var checkedErr error
+	if generation.verbs != nil {
+		environment, err := compiler.BuildIREnvironment(typeSystem, generation.verbs)
+		checkedErr = err
+		if err == nil {
+			checkedSources := make([]compiler.Source, 0, len(sources))
+			for index, source := range sources {
+				path := strings.TrimSpace(source.Path)
+				format := normalizeRuleFormat(source.Format, path)
+				if path == "" {
+					path = fmt.Sprintf("rule-%d.%s", index+1, format)
+				} else if filepath.Ext(path) == "" {
+					path += "." + format
+				}
+				checkedSources = append(checkedSources, compiler.Source{Path: path, Content: []byte(source.Content)})
+			}
+			_, checkedErr = compiler.CompileChecked(context.Background(), checkedSources, environment, compiler.CompileOptions{})
+		}
+	}
+	if checkedErr != nil {
+		if apply {
+			recordHotloadFailure()
+		}
+		return ruleCheckResponse{OK: false, Diagnostics: append(diagnostics, ruleDiagnostic{Severity: lint.SeverityError, Message: checkedErr.Error(), Line: 1, Column: 1}), SourceDiff: sourceDiff}
 	}
 
 	var staged *unified.Bundle

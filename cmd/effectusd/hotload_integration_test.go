@@ -12,13 +12,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	effectusruntime "github.com/effectus/effectus-go/runtime"
 	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/effectus/effectus-go/unified"
 	"github.com/stretchr/testify/require"
 )
 
-func TestHotloadAPIIntegration(t *testing.T) {
+func TestHotloadFailsClosedWithCheckedEngine(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")
 	schemaPath := filepath.Join(repoRoot, "examples", "fraud_e2e", "schema", "fraud_facts.json")
 	rulePath := filepath.Join(repoRoot, "examples", "fraud_e2e", "rules", "fraud_rules.eff")
@@ -67,6 +68,12 @@ func TestHotloadAPIIntegration(t *testing.T) {
 	updated := state.Bundle()
 	require.NotNil(t, updated)
 	require.NotEmpty(t, updated.Rules)
+
+	state.SetCheckedEngine(new(effectusruntime.Engine))
+	checkedResponse := postRuleCheck(t, server.URL+"/api/rules/hotload", payload)
+	require.False(t, checkedResponse.Applied)
+	require.NotEmpty(t, checkedResponse.Diagnostics)
+	require.Contains(t, checkedResponse.Diagnostics[0].Message, "checked execution engine is installed")
 }
 
 func registerDemoVerbs(t *testing.T, registry *verb.Registry) {
@@ -82,6 +89,9 @@ func registerDemoVerbs(t *testing.T, registry *verb.Registry) {
 				{Resource: "fraud", Cap: verb.CapWrite | verb.CapIdempotent},
 			})
 		require.NoError(t, registry.RegisterVerb(spec))
+		undo := verb.NewSpec(name+"Undo", verb.CapWrite|verb.CapIdempotent, args, "bool").
+			WithResources(verb.ResourceSet{{Resource: "fraud", Cap: verb.CapWrite | verb.CapIdempotent}})
+		require.NoError(t, registry.RegisterVerb(undo))
 	}
 
 	register("FlagFraud", map[string]string{"orderId": "string", "reason": "string"})
@@ -102,7 +112,7 @@ func postRuleCheck(t *testing.T, url string, payload map[string]interface{}) rul
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, []int{http.StatusOK, http.StatusUnprocessableEntity, http.StatusConflict}, resp.StatusCode)
 
 	var parsed ruleCheckResponse
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&parsed))

@@ -37,10 +37,23 @@ func (handler kafkaFactHandler) Handle(ctx context.Context, delivery kafkaadapte
 }
 
 func configureDaemonExecutionEngine(ctx context.Context, bundle *unified.Bundle, extensionDirs, extensionOCIs []string) (*effectusruntime.ExecutionRuntime, *sql.DB, error) {
-	if strings.TrimSpace(*sagaPgDSN) == "" {
-		return nil, nil, fmt.Errorf("checked transport execution requires EFFECTUS_SAGA_POSTGRES_DSN or protected saga.postgres.dsn configuration")
+	if strings.TrimSpace(*postgresDSN) == "" {
+		return nil, nil, fmt.Errorf("checked transport execution requires EFFECTUS_POSTGRES_DSN or protected database.dsn configuration")
 	}
 	execution := effectusruntime.NewExecutionRuntime()
+	metadata := effectusruntime.GenerationMetadata{Ruleset: "default", Version: "active"}
+	if bundle != nil {
+		metadata.Ruleset = bundle.Name
+		metadata.Version = bundle.Version
+		digest, err := unified.BundleDigest(bundle)
+		if err != nil {
+			return nil, nil, fmt.Errorf("compute bundle generation metadata: %w", err)
+		}
+		metadata.BundleDigest = digest
+	}
+	if err := execution.ConfigureGenerationMetadata(metadata); err != nil {
+		return nil, nil, err
+	}
 	for _, directory := range extensionDirs {
 		loaders, err := loader.LoadFromDirectory(directory)
 		if err != nil {
@@ -131,8 +144,8 @@ func validateDatabasePoolConfig() error {
 }
 
 func runDatabaseMaintenance(ctx context.Context) error {
-	if strings.TrimSpace(*sagaPgDSN) == "" {
-		return fmt.Errorf("EFFECTUS_SAGA_POSTGRES_DSN or saga.postgres.dsn is required")
+	if strings.TrimSpace(*postgresDSN) == "" {
+		return fmt.Errorf("EFFECTUS_POSTGRES_DSN or database.dsn is required")
 	}
 	db, err := openDaemonDatabase()
 	if err != nil {

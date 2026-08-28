@@ -177,7 +177,7 @@ effectusc bundle \
   --oci-ref ghcr.io/myorg/bundles/fraud-demo:1.0.0
 
 EFFECTUS_API_TOKEN=demo-token \
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
 effectusd \
   --oci-ref ghcr.io/myorg/bundles/fraud-demo@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   --oci-signature-verifier /usr/local/bin/effectus-verify-oci \

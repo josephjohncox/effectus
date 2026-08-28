@@ -340,7 +340,7 @@ func TestValidateFactSourceAcceptsKafkaAndRejectsUnsupportedContracts(t *testing
 	originalCluster := *kafkaClusterNamespace
 	originalContract := *kafkaAckContract
 	originalLedger := *kafkaDeliveryLedger
-	originalDSN := *sagaPgDSN
+	originalDSN := *postgresDSN
 	t.Cleanup(func() {
 		*factSource = originalSource
 		*kafkaBrokers = originalBrokers
@@ -349,7 +349,7 @@ func TestValidateFactSourceAcceptsKafkaAndRejectsUnsupportedContracts(t *testing
 		*kafkaClusterNamespace = originalCluster
 		*kafkaAckContract = originalContract
 		*kafkaDeliveryLedger = originalLedger
-		*sagaPgDSN = originalDSN
+		*postgresDSN = originalDSN
 	})
 
 	*factSource = "http"
@@ -362,7 +362,7 @@ func TestValidateFactSourceAcceptsKafkaAndRejectsUnsupportedContracts(t *testing
 	*kafkaClusterNamespace = "test"
 	*kafkaAckContract = "completed_processing"
 	*kafkaDeliveryLedger = filepath.Join(t.TempDir(), "deliveries.jsonl")
-	*sagaPgDSN = "postgres://configured"
+	*postgresDSN = "postgres://configured"
 	require.NoError(t, validateFactSource())
 
 	*kafkaAckContract = "durable_acceptance"

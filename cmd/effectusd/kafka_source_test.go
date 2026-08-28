@@ -14,11 +14,11 @@ import (
 )
 
 func TestDaemonDatabasePoolConfiguration(t *testing.T) {
-	oldDSN, oldOpen, oldIdle, oldLifetime, oldIdleTime := *sagaPgDSN, *dbMaxOpen, *dbMaxIdle, *dbConnLifetime, *dbConnIdleTime
+	oldDSN, oldOpen, oldIdle, oldLifetime, oldIdleTime := *postgresDSN, *dbMaxOpen, *dbMaxIdle, *dbConnLifetime, *dbConnIdleTime
 	t.Cleanup(func() {
-		*sagaPgDSN, *dbMaxOpen, *dbMaxIdle, *dbConnLifetime, *dbConnIdleTime = oldDSN, oldOpen, oldIdle, oldLifetime, oldIdleTime
+		*postgresDSN, *dbMaxOpen, *dbMaxIdle, *dbConnLifetime, *dbConnIdleTime = oldDSN, oldOpen, oldIdle, oldLifetime, oldIdleTime
 	})
-	*sagaPgDSN, *dbMaxOpen, *dbMaxIdle = "postgres://unused", 7, 3
+	*postgresDSN, *dbMaxOpen, *dbMaxIdle = "postgres://unused", 7, 3
 	*dbConnLifetime, *dbConnIdleTime = time.Minute, 30*time.Second
 	require.NoError(t, validateDatabasePoolConfig())
 	db, err := openDaemonDatabase()

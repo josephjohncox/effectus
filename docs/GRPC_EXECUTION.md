@@ -66,7 +66,7 @@ grpc:
 ```
 
 The gRPC service uses the PostgreSQL execution ledger.
-Set `saga.postgres.dsn` before you enable the service.
+Set `database.dsn` before you enable the service.
 
 ## Outbound gRPC verbs
 

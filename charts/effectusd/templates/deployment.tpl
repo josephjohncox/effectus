@@ -93,7 +93,7 @@ spec:
             - "--api-acl-file={{ .Values.api.aclFile }}"
             {{- end }}
           env:
-            - name: EFFECTUS_SAGA_POSTGRES_DSN
+            - name: EFFECTUS_POSTGRES_DSN
               valueFrom:
                 secretKeyRef:
                   name: {{ required "postgres.existingSecret is required" .Values.postgres.existingSecret }}
