@@ -240,8 +240,9 @@ func (c *Compiler) compileParsedSources(sources []parsedSource, schema effectus.
 	}, nil
 }
 
-// CompiledSpec is the concrete, checked result of compiling list and flow rules.
-// It is the canonical boundary between compilation and execution.
+// CompiledSpec is the legacy in-memory list/flow compatibility result. It can
+// contain callbacks and must not be serialized as a production artifact. Use
+// CompileChecked for validated, callback-free artifacts.
 type CompiledSpec struct {
 	List *list.Spec
 	Flow *flow.Spec

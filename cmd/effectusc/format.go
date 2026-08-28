@@ -52,7 +52,7 @@ func newFormatCommand() *Command {
 				continue
 			}
 
-			if *write {
+			if *write && !*check {
 				if err := os.WriteFile(filename, []byte(formatted), 0644); err != nil {
 					return fmt.Errorf("writing %s: %w", filename, err)
 				}

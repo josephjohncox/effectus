@@ -9,6 +9,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type contextOnlyExecutor struct{}
+
+func (contextOnlyExecutor) DoContext(ctx context.Context, _ effectus.Effect) (interface{}, error) {
+	return ctx.Value("key"), nil
+}
+
+var _ effectus.ContextExecutor = contextOnlyExecutor{}
+
+func TestInvokeContextAcceptsContextOnlyExecutor(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "key", "value")
+	result, err := effectus.InvokeContext(ctx, contextOnlyExecutor{}, effectus.Effect{})
+	require.NoError(t, err)
+	require.Equal(t, "value", result)
+}
+
 func TestExecutorAdapterValidatesTypedVerbsByDefault(t *testing.T) {
 	registry := verb.NewRegistry(nil)
 	require.NoError(t, registry.RegisterVerb(&verb.Spec{

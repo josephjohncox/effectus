@@ -35,7 +35,7 @@ Options:
 **Example:**
 
 ```bash
-effectusc parse rules/customer.eff rules/payment.eff --verbose
+effectusc parse --verbose rules/customer.eff rules/payment.eff
 ```
 
 #### typecheck
@@ -110,7 +110,7 @@ effectusc format [options] file1.eff [file2.effx ...]
 Options:
   --write   Write formatted output back to files (default: true)
   --stdout  Print formatted output to stdout
-  --check   Return non-zero exit code if files need formatting
+  --check   Check formatting without writing; return non-zero if changes are needed
 ```
 
 **Example:**
@@ -189,7 +189,7 @@ effectusc facts --schema schemas/ rules/*.eff
 
 #### compile
 
-Compiles rule files into a unified specification.
+Compiles rule files into a checked IR protobuf artifact. The artifact is validated against the supplied schema and verb declarations.
 
 ```bash
 effectusc compile [options] file1.eff [file2.eff ...]
@@ -198,7 +198,7 @@ Options:
   --schema       Comma-separated list of schema files to load
   --schema-sources Path to schema sources config (YAML/JSON)
   --verbschema   Comma-separated list of verb schema files to load
-  --output       Output file for compiled spec (default: spec.json)
+  --output       Output file for checked IR (default: rules.effir)
   --verbose      Show detailed output
 ```
 
@@ -208,8 +208,16 @@ Options:
 effectusc compile \
   --schema schemas/ \
   --verbschema verbs/ \
-  --output customer-rules.json \
+  --output customer-rules.effir \
   rules/*.eff
+```
+
+#### migrate-workflows
+
+Converts one legacy JSON workflow manifest to `.effx` source. By default, the command prints the source.
+
+```bash
+effectusc migrate-workflows [--output workflow.effx] legacy-workflows.json
 ```
 
 #### bundle

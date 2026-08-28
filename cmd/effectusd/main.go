@@ -310,15 +310,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Verify verb hash
-	if verbReg.Count() > 0 {
-		currentVerbHash := verbReg.GetVerbHash()
-		if currentVerbHash != bundle.VerbHash {
-			fmt.Fprintf(os.Stderr, "Warning: verb hash mismatch\n")
-			fmt.Fprintf(os.Stderr, "  Bundle hash: %s\n", bundle.VerbHash)
-			fmt.Fprintf(os.Stderr, "  Current hash: %s\n", currentVerbHash)
-			// In production, you might want to fail here
-		}
+	// Verify the active contract before starting listeners or execution engines.
+	if err := validateBundleVerbHash(bundle.VerbHash, verbReg); err != nil {
+		fmt.Fprintf(os.Stderr, "Verb contract admission failed: %v\n", err)
+		os.Exit(1)
 	}
 
 	if bundle.ListSpec != nil || bundle.FlowSpec != nil {
@@ -759,6 +754,20 @@ func loadVerbsAndExtensions(verbReg *verb.Registry, extensionDirs []string, exte
 		}
 	}
 	instrumentVerbRegistry(verbReg)
+	return nil
+}
+
+func validateBundleVerbHash(bundleHash string, registry *verb.Registry) error {
+	if strings.TrimSpace(bundleHash) == "" {
+		return fmt.Errorf("bundle verb_hash is missing")
+	}
+	if registry == nil {
+		return fmt.Errorf("active verb registry is missing")
+	}
+	currentHash := registry.GetVerbHash()
+	if currentHash != bundleHash {
+		return fmt.Errorf("verb_hash mismatch: bundle=%s active=%s", bundleHash, currentHash)
+	}
 	return nil
 }
 

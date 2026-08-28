@@ -25,9 +25,15 @@ type ContextExecutor interface {
 // Invoke executes an effect through the context-aware API when available.
 func Invoke(ctx context.Context, executor Executor, effect Effect) (interface{}, error) {
 	if contextual, ok := executor.(ContextExecutor); ok {
-		return contextual.DoContext(ctx, effect)
+		return InvokeContext(ctx, contextual, effect)
 	}
 	return executor.Do(effect)
+}
+
+// InvokeContext executes an effect using an executor that only implements the
+// context-aware contract. It does not require the deprecated Executor.Do method.
+func InvokeContext(ctx context.Context, executor ContextExecutor, effect Effect) (interface{}, error) {
+	return executor.DoContext(ctx, effect)
 }
 
 // Spec is the interface implemented by both list.Spec and flow.Spec

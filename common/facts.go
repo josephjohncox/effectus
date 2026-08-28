@@ -60,22 +60,30 @@ type BasicFacts struct {
 	schema  SchemaInfo
 }
 
-// NewBasicFacts creates a new facts instance from data and schema
-func NewBasicFacts(data map[string]interface{}, schema SchemaInfo) *BasicFacts {
+// TryNewBasicFacts creates a facts instance and reports values that JSON cannot
+// represent (for example channels, functions, and cyclic maps).
+func TryNewBasicFacts(data map[string]interface{}, schema SchemaInfo) (*BasicFacts, error) {
 	if schema == nil {
 		schema = NewBasicSchema()
 	}
 
-	// Convert data to JSON
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		panic(fmt.Sprintf("failed to marshal data: %v", err))
+		return nil, fmt.Errorf("marshal facts data: %w", err)
 	}
 
-	return &BasicFacts{
-		rawJSON: string(jsonBytes),
-		schema:  schema,
+	return &BasicFacts{rawJSON: string(jsonBytes), schema: schema}, nil
+}
+
+// NewBasicFacts creates a new facts instance from data and schema.
+// Deprecated: use TryNewBasicFacts. This compatibility constructor panics when
+// data is not JSON encodable.
+func NewBasicFacts(data map[string]interface{}, schema SchemaInfo) *BasicFacts {
+	facts, err := TryNewBasicFacts(data, schema)
+	if err != nil {
+		panic(err)
 	}
+	return facts
 }
 
 // Get implements Facts interface
@@ -161,9 +169,19 @@ func (f *BasicFacts) HasPath(path string) bool {
 	return exists
 }
 
-// WithData creates a new Facts instance with updated data
+// TryWithData creates a new facts value with updated data.
+func (f *BasicFacts) TryWithData(updatedData map[string]interface{}) (*BasicFacts, error) {
+	return TryNewBasicFacts(updatedData, f.schema)
+}
+
+// WithData creates a new Facts instance with updated data.
+// Deprecated: use TryWithData.
 func (f *BasicFacts) WithData(updatedData map[string]interface{}) *BasicFacts {
-	return NewBasicFacts(updatedData, f.schema)
+	facts, err := f.TryWithData(updatedData)
+	if err != nil {
+		panic(err)
+	}
+	return facts
 }
 
 // Helper to convert gjson.Result to interface{}

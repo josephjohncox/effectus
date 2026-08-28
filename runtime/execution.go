@@ -70,12 +70,10 @@ func NewExecutionRuntime() *ExecutionRuntime {
 	}
 	runtime.engine = newRuntimeEngine(runtime)
 
-	// Register default executor factories
+	// Checked extension compilation intentionally emits only local bindings.
+	// Non-local factories remain available as compatibility APIs, but callers
+	// must register them explicitly so unreachable transports are not enabled.
 	runtime.RegisterExecutorFactory(compiler.ExecutorLocal, &LocalExecutorFactory{})
-	runtime.RegisterExecutorFactory(compiler.ExecutorHTTP, &HTTPExecutorFactory{})
-	runtime.RegisterExecutorFactory(compiler.ExecutorGRPC, &GRPCExecutorFactory{})
-	runtime.RegisterExecutorFactory(compiler.ExecutorMessage, &MessageExecutorFactory{})
-	runtime.RegisterExecutorFactory(compiler.ExecutorMock, &MockExecutorFactory{})
 
 	return runtime
 }

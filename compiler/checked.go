@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -15,6 +16,8 @@ import (
 	"github.com/effectus/effectus-go/ast"
 	effectusv1 "github.com/effectus/effectus-go/gen/effectus/v1"
 	"github.com/effectus/effectus-go/ir"
+	"github.com/effectus/effectus-go/schema/types"
+	"github.com/effectus/effectus-go/schema/verb"
 	exprast "github.com/expr-lang/expr/ast"
 	exprparser "github.com/expr-lang/expr/parser"
 )
@@ -38,6 +41,142 @@ const (
 	ExecutionPolicyFailFast     = effectusv1.ExecutionPolicy_EXECUTION_POLICY_DURABLE_FAIL_FAST
 	ExecutionPolicyCompensating = effectusv1.ExecutionPolicy_EXECUTION_POLICY_DURABLE_COMPENSATING
 )
+
+// LoadSources reads Effectus source paths for CompileChecked. It is the shared
+// file front end used by command-line checked compilation.
+func LoadSources(paths []string) ([]Source, error) {
+	sources := make([]Source, 0, len(paths))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read source %s: %w", path, err)
+		}
+		sources = append(sources, Source{Path: path, Content: data})
+	}
+	return sources, nil
+}
+
+// BuildIREnvironment converts loaded schema and verb declarations to the
+// immutable declaration environment required by checked compilation.
+func BuildIREnvironment(typeSystem *types.TypeSystem, registry *verb.Registry) (ir.Environment, error) {
+	environment := ir.Environment{
+		Facts: make(map[string]string), Verbs: make(map[string]ir.VerbContract),
+		Functions: make(map[string]ir.FunctionContract), Types: make(map[string]ir.TypeDefinition),
+	}
+	if typeSystem != nil {
+		for name, typ := range typeSystem.GetAllTypes() {
+			definition, structural, err := irTypeDefinition(typ)
+			if err != nil {
+				return ir.Environment{}, fmt.Errorf("type %s: %w", name, err)
+			}
+			if structural {
+				environment.Types[name] = definition
+			}
+		}
+		for _, path := range typeSystem.GetAllFactPaths() {
+			typ, err := typeSystem.GetFactType(path)
+			if err != nil {
+				return ir.Environment{}, fmt.Errorf("fact %s: %w", path, err)
+			}
+			environment.Facts[path], err = irTypeName(typ)
+			if err != nil {
+				return ir.Environment{}, fmt.Errorf("fact %s: %w", path, err)
+			}
+		}
+		for _, spec := range types.StandardLibrary() {
+			if spec == nil || spec.Unsafe {
+				continue
+			}
+			contract := ir.FunctionContract{
+				ArgumentTypes: append([]string(nil), spec.ArgTypes...), ReturnType: spec.ReturnType, Pure: true, Total: true,
+			}
+			// Polymorphic legacy helpers use open "any" contracts, which checked IR
+			// intentionally cannot prove. Do not advertise them as checked functions.
+			probe := ir.Environment{Types: environment.Types, Functions: map[string]ir.FunctionContract{spec.Name: contract}}
+			if _, err := ir.EnvironmentDigest(probe); err == nil {
+				environment.Functions[spec.Name] = contract
+			}
+		}
+	}
+	if registry != nil {
+		for _, spec := range registry.GetAllVerbs() {
+			contract := ir.VerbContract{
+				Arguments: cloneStringValues(spec.ArgTypes), RequiredArgs: append([]string(nil), spec.RequiredArgs...),
+				ResultType: spec.ReturnType, InverseVerb: spec.Inverse, RetryPolicy: ir.RetryPolicy{MaxAttempts: 1},
+			}
+			if spec.Capability&verb.CapIdempotent != 0 {
+				contract.IdempotencyPolicy = ir.IdempotencyKeyRequired
+			}
+			contract.FencingRequired = spec.Capability&verb.CapExclusive != 0
+			environment.Verbs[spec.Name] = contract
+		}
+	}
+	if _, err := ir.EnvironmentDigest(environment); err != nil {
+		return ir.Environment{}, fmt.Errorf("checked declarations: %w", err)
+	}
+	return environment, nil
+}
+
+func irTypeName(typ *types.Type) (string, error) {
+	if typ == nil {
+		return "", fmt.Errorf("type is nil")
+	}
+	if typ.ReferenceType != "" {
+		return typ.ReferenceType, nil
+	}
+	switch typ.PrimType {
+	case types.TypeBool:
+		return "bool", nil
+	case types.TypeInt:
+		return "int", nil
+	case types.TypeFloat:
+		return "float", nil
+	case types.TypeString:
+		return "string", nil
+	case types.TypeTime, types.TypeDate, types.TypeDuration:
+		return "", fmt.Errorf("temporal type %s is not supported by checked IR", typ.String())
+	case types.TypeList:
+		element, err := irTypeName(typ.ElementType)
+		return "[]" + element, err
+	case types.TypeMap:
+		element, err := irTypeName(typ.MapValueType())
+		return "map<" + element + ">", err
+	case types.TypeObject:
+		if typ.Name != "" {
+			return typ.Name, nil
+		}
+	}
+	if typ.Name != "" {
+		return typ.Name, nil
+	}
+	return "", fmt.Errorf("open or unknown type is not valid in checked IR")
+}
+
+func irTypeDefinition(typ *types.Type) (ir.TypeDefinition, bool, error) {
+	if typ == nil {
+		return ir.TypeDefinition{}, false, fmt.Errorf("type is nil")
+	}
+	switch typ.PrimType {
+	case types.TypeObject:
+		fields := make(map[string]string, len(typ.Properties))
+		for name, fieldType := range typ.Properties {
+			converted, err := irTypeName(fieldType)
+			if err != nil {
+				return ir.TypeDefinition{}, false, fmt.Errorf("field %s: %w", name, err)
+			}
+			fields[name] = converted
+		}
+		return ir.TypeDefinition{Kind: ir.TypeKindObject, Fields: fields}, true, nil
+	case types.TypeList:
+		element, err := irTypeName(typ.ElementType)
+		return ir.TypeDefinition{Kind: ir.TypeKindList, ElementType: element}, true, err
+	case types.TypeMap:
+		element, err := irTypeName(typ.MapValueType())
+		return ir.TypeDefinition{Kind: ir.TypeKindMap, ElementType: element}, true, err
+	default:
+		return ir.TypeDefinition{}, false, nil
+	}
+}
 
 const (
 	checkedCompilerName    = "effectusc"

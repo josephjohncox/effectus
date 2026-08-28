@@ -134,8 +134,23 @@ func validateExecutionOptions(options *effectusv1.ExecutionOptions) error {
 	if options == nil {
 		return nil
 	}
-	if options.DryRun || options.MaxEffects != 0 || options.EnableTracing || len(options.CapabilityFilter) != 0 || options.MinSchemaVersion != "" || options.MaxSchemaVersion != "" {
-		return fmt.Errorf("unsupported execution options")
+	if options.DryRun {
+		return fmt.Errorf("dry_run is not supported")
+	}
+	if options.MaxEffects != 0 {
+		return fmt.Errorf("max_effects is not supported")
+	}
+	if options.EnableTracing {
+		return fmt.Errorf("enable_tracing is not supported")
+	}
+	if len(options.CapabilityFilter) != 0 {
+		return fmt.Errorf("capability_filter is not supported")
+	}
+	if options.MinSchemaVersion != "" {
+		return fmt.Errorf("min_schema_version is not supported")
+	}
+	if options.MaxSchemaVersion != "" {
+		return fmt.Errorf("max_schema_version is not supported")
 	}
 	if options.TimeoutSeconds < 0 {
 		return fmt.Errorf("timeout_seconds must not be negative")

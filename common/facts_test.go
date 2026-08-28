@@ -5,7 +5,24 @@ import (
 
 	"github.com/effectus/effectus-go/pathutil"
 	"github.com/effectus/effectus-go/schema/types"
+	"github.com/stretchr/testify/require"
 )
+
+func TestTryNewBasicFactsRejectsUnsupportedValues(t *testing.T) {
+	cyclic := map[string]interface{}{}
+	cyclic["self"] = cyclic
+	for name, value := range map[string]interface{}{
+		"channel":  make(chan int),
+		"function": func() {},
+		"cycle":    cyclic,
+	} {
+		t.Run(name, func(t *testing.T) {
+			facts, err := TryNewBasicFacts(map[string]interface{}{"value": value}, nil)
+			require.Error(t, err)
+			require.Nil(t, facts)
+		})
+	}
+}
 
 func TestBasicFacts(t *testing.T) {
 	// Sample data structure

@@ -35,6 +35,9 @@ flow "charge-order" priority 10 {
 	require.Equal(t, 1, unit.CheckedIR.PlanCount())
 	require.Equal(t, 2, unit.CheckedIR.StepCount())
 	require.Equal(t, "effectusc", unit.CheckedIR.CloneArtifact().Compiler.Name)
+	for name, config := range unit.ExecutionPlan.Executors {
+		require.Equal(t, ExecutorLocal, config.GetType(), "verb %s", name)
+	}
 
 	second, err := NewExtensionCompiler().Compile(t.Context(), manager)
 	require.NoError(t, err)

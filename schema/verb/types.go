@@ -51,10 +51,44 @@ type Spec struct {
 func NewSpec(name string, cap Capability, argTypes map[string]string, returnType string) *Spec {
 	return &Spec{
 		Name:       name,
-		ArgTypes:   argTypes,
+		ArgTypes:   cloneStringMap(argTypes),
 		ReturnType: returnType,
 		Capability: cap,
 	}
+}
+
+func cloneSpec(spec *Spec) *Spec {
+	if spec == nil {
+		return nil
+	}
+	clone := *spec
+	clone.ArgTypes = cloneStringMap(spec.ArgTypes)
+	clone.RequiredArgs = append([]string(nil), spec.RequiredArgs...)
+	clone.Resources = append(ResourceSet(nil), spec.Resources...)
+	clone.StrictArgs = cloneBool(spec.StrictArgs)
+	clone.StrictReturn = cloneBool(spec.StrictReturn)
+	// Executor implementations have identity and lifecycle. Never clone them.
+	clone.Executor = spec.Executor
+	return &clone
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	clone := make(map[string]string, len(values))
+	for key, value := range values {
+		clone[key] = value
+	}
+	return clone
+}
+
+func cloneBool(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
 }
 
 // WithInverse adds an inverse verb to the specification
@@ -71,13 +105,13 @@ func (s *Spec) WithDescription(desc string) *Spec {
 
 // WithRequiredArgs adds required arguments to the specification.
 func (s *Spec) WithRequiredArgs(args []string) *Spec {
-	s.RequiredArgs = args
+	s.RequiredArgs = append([]string(nil), args...)
 	return s
 }
 
 // WithResources adds resource capability requirements to the specification.
 func (s *Spec) WithResources(resources ResourceSet) *Spec {
-	s.Resources = resources
+	s.Resources = append(ResourceSet(nil), resources...)
 	return s
 }
 

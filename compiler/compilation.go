@@ -61,7 +61,9 @@ type CompiledVerbSpec struct {
 	ValidationRules []ValidationRule
 }
 
-// ExecutorType defines how a verb should be executed
+// ExecutorType defines how a verb should be executed. Checked extension
+// compilation emits ExecutorLocal only. Other values are compatibility types
+// for callers that explicitly own transport lifecycle and runtime factories.
 type ExecutorType string
 
 const (
@@ -92,7 +94,8 @@ func (lec *LocalExecutorConfig) Validate() error {
 	return nil
 }
 
-// HTTPExecutorConfig for HTTP-based execution
+// HTTPExecutorConfig is retained for callers that explicitly own an HTTP
+// transport factory. Checked extension compilation does not emit this config.
 type HTTPExecutorConfig struct {
 	URL                 string            `json:"url"`
 	Method              string            `json:"method"`
@@ -122,7 +125,8 @@ func (hec *HTTPExecutorConfig) Validate() error {
 	return nil
 }
 
-// GRPCExecutorConfig for gRPC-based execution
+// GRPCExecutorConfig is retained for callers that explicitly own a gRPC
+// transport factory. Checked extension compilation does not emit this config.
 type GRPCExecutorConfig struct {
 	Address     string            `json:"address"`
 	Method      string            `json:"method"` // Fully-qualified method, e.g. /package.Service/Call
@@ -158,7 +162,8 @@ func (gec *GRPCExecutorConfig) Validate() error {
 	return nil
 }
 
-// MessageExecutorConfig for message queue execution
+// MessageExecutorConfig is retained for callers that explicitly own a message
+// transport factory. Checked extension compilation does not emit this config.
 type MessageExecutorConfig struct {
 	Publisher           string            `json:"publisher,omitempty"` // "kafka" or "http"
 	Brokers             []string          `json:"brokers,omitempty"`

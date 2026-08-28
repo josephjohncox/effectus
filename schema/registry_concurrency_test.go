@@ -24,6 +24,34 @@ type predicateTestSchema struct{}
 
 func (predicateTestSchema) ValidatePath(string) bool { return true }
 
+func TestRegistryConcurrentMutationAndPredicateEvaluation(t *testing.T) {
+	registry := NewRegistry()
+	registry.Set("enabled", true)
+	predicate, err := registry.NewPredicate("enabled")
+	require.NoError(t, err)
+
+	var wait sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wait.Add(3)
+		go func(value int) {
+			defer wait.Done()
+			registry.Set("counter", value)
+		}(i)
+		go func(value int) {
+			defer wait.Done()
+			registry.RegisterFunction("dynamic", func() int { return value })
+		}(i)
+		go func() {
+			defer wait.Done()
+			matched, evalErr := predicate.EvaluateWithRegistry(registry)
+			if evalErr != nil || !matched {
+				t.Errorf("evaluate: matched=%v err=%v", matched, evalErr)
+			}
+		}()
+	}
+	wait.Wait()
+}
+
 func TestEvaluatePredicatesWithFactsDoesNotMutateCompiledPredicate(t *testing.T) {
 	registry := NewRegistry()
 	registry.Set("enabled", true)
