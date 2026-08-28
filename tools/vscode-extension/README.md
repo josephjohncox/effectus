@@ -7,16 +7,18 @@ This extension supports `.eff` and `.effx` rule files.
 - Syntax highlighting
 - Fact and verb completion
 - Hover information
-- Rule validation
-- Synthetic-data tests
-- Schema lineage views
-- Development hotload through the effectusd API
+- Rule validation with effectusd or `effectusc`
+- Rule formatting with `effectusc`
+- Schema lineage in a webview
+- Runtime hotload through the effectusd HTTP API
 
 ## Requirements
 
 - VS Code 1.74 or later
-- `effectusc` on `PATH`
+- `effectusc` on `PATH`, or an explicit `effectus.lsp.serverPath`
 - A workspace with `.eff`, `.effx`, or `.effectus/config.yaml`
+
+The runtime hotload commands also require an effectusd API URL.
 
 ## Install a VSIX
 
@@ -40,11 +42,10 @@ The default paths are:
 ├── config.yaml
 ├── schemas/
 └── verbs/
+examples/
 ```
 
-Run `Effectus: Initialize Effectus Workspace` from the Command Palette to create this layout.
-
-The extension resolves `effectusc` from `effectus.lsp.serverPath`, `PATH`, or `GOBIN`/the standard Go bin directory. It shows an installation error when no executable is available; there is no bundled fallback server.
+Run `Effectus: Initialize Effectus Workspace` to create these directories and the configuration file.
 
 ## Settings
 
@@ -53,34 +54,41 @@ The extension resolves `effectusc` from `effectus.lsp.serverPath`, `PATH`, or `G
   "effectus.schemaPath": ".effectus/schemas",
   "effectus.verbSchemaPath": ".effectus/verbs",
   "effectus.factExamplesPath": "./examples",
-  "effectus.lsp.serverPath": "/optional/explicit/path/to/effectusc",
   "effectus.lsp.enabled": true,
+  "effectus.lsp.serverPath": "",
   "effectus.autoComplete.schemas": true,
   "effectus.validation.realtime": true,
   "effectus.lint.unsafe": "warn",
   "effectus.lint.verbs": "error",
-  "effectus.hotReload.enabled": false,
   "effectus.runtime.apiUrl": "http://localhost:8080",
   "effectus.runtime.apiToken": ""
 }
 ```
 
-Store runtime tokens in VS Code secret or local workspace settings. Do not commit them.
+Leave `effectus.lsp.serverPath` empty to search the workspace, `PATH`, `GOPATH`, and `$HOME/go/bin`.
+
+Store runtime tokens in local workspace settings or another private store. Do not commit a token.
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
 | `Effectus: Initialize Effectus Workspace` | Create the default workspace layout |
-| `Effectus: Validate Current Rule` | Validate the open rule file |
-| `Effectus: Show Schema Lineage` | Open the lineage view |
+| `Effectus: Validate Current Rule` | Validate the open rule with effectusd, current diagnostics, or `effectusc` |
+| `Effectus: Show Schema Lineage` | Open the schema lineage webview |
 | `Effectus: Generate Schema Documentation` | Write schema documentation |
-| `Effectus: Start Development Server` | Start development hotload support |
-| `Effectus: Stop Development Server` | Stop development hotload support |
+| `Effectus: Enable Runtime Hotload` | Connect hotload to the configured effectusd API |
+| `Effectus: Disable Runtime Hotload` | Stop runtime hotload |
+| `Effectus: Format Rule` | Format the open rule with `effectusc` |
+| `Effectus: Refresh Effectus Schemas` | Reload schemas from the workspace |
 
-## Development hotload
+The formatter sends a temporary copy to `effectusc format --stdout --write=false`. It applies one edit only after the command succeeds.
 
-Start effectusd with the rule hotload API enabled:
+The validation command does not report success if no validator is available.
+
+## Runtime hotload
+
+Start effectusd with the rule hotload API:
 
 ```bash
 EFFECTUS_API_TOKEN=devtoken \
@@ -90,9 +98,11 @@ EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:password@localhost/effectus?sslm
 
 Set `effectus.runtime.apiUrl` and `effectus.runtime.apiToken` in local VS Code settings.
 
-Hotload validates and activates a candidate generation. It does not mutate an active generation in place.
+The extension calls `/api/status`, `/api/rules/validate`, and `/api/rules/hotload`. It does not start a local server process.
 
-Do not use development hotload as an OCI deployment mechanism. Production OCI deployments use signed, digest-pinned bundles.
+Hotload validates and activates a candidate generation. It does not change an active generation in place.
+
+Do not use runtime hotload for an OCI deployment. Production OCI deployments use signed, digest-pinned bundles.
 
 ## Develop the extension
 
@@ -111,11 +121,15 @@ Use watch mode while you edit TypeScript:
 just vscode-watch
 ```
 
+`npm test` runs static checks, unit tests, source activation tests, and packaged VSIX activation tests.
+
+Linux test hosts require a display or `xvfb-run`.
+
 ## Troubleshoot
 
-### The extension does not start
+### The language server does not start
 
-Make sure the workspace contains an `.eff` file, an `.effx` file, or `.effectus/config.yaml`.
+Make sure `effectusc` is executable and available on `PATH`. You can also set `effectus.lsp.serverPath` to an absolute path.
 
 ### Completion does not show schema fields
 
@@ -123,7 +137,7 @@ Check `effectus.schemaPath` and `effectus.verbSchemaPath`. Then reload the VS Co
 
 ### Runtime hotload fails
 
-Check the API URL, token, effectusd logs, and `/readyz`. Make sure effectusd started with `--rules-hotload`.
+Check the API URL, token, effectusd logs, and `/readyz`. Make sure effectusd uses `--rules-hotload`.
 
 ## License
 

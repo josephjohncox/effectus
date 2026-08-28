@@ -1,7 +1,9 @@
 .eslint*
+.gitignore
 .github/**
 .vscode/**
 .vscode-test/**
+out/test/**
 **/*.map
 go.mod
 node_modules/.cache/**

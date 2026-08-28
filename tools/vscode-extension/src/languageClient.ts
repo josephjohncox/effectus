@@ -1,33 +1,48 @@
-import * as fs from 'fs';
-import * as path from 'path';
 import * as vscode from 'vscode';
 import {
     LanguageClient,
     LanguageClientOptions,
-    ServerOptions,
-    TransportKind
+    ServerOptions
 } from 'vscode-languageclient/node';
+import { resolveConfiguredEffectusc } from './compilerOperations';
+
+const installUrl = vscode.Uri.parse('https://github.com/effectus/effectus/releases/latest');
+
+export function createServerOptions(executable: string): ServerOptions {
+    return {
+        command: executable,
+        args: ['lsp']
+    };
+}
 
 export class EffectusLanguageClient {
     private client: LanguageClient | undefined;
+    private missingBinaryPromptShown = false;
 
-    async start(): Promise<void> {
+    async start(): Promise<boolean> {
+        const resolution = resolveConfiguredEffectusc();
+        if (!resolution.path) {
+            await this.showMissingBinaryPrompt(resolution.error);
+            return false;
+        }
+
         try {
-            const serverOptions: ServerOptions = this.getServerOptions();
-            const clientOptions: LanguageClientOptions = this.getClientOptions();
             this.client = new LanguageClient(
                 'effectusLanguageServer',
                 'Effectus Language Server',
-                serverOptions,
-                clientOptions
+                createServerOptions(resolution.path),
+                this.getClientOptions()
             );
             await this.client.start();
             console.log('Effectus Language Server started successfully');
+            return true;
         } catch (error) {
             this.client = undefined;
-            const detail = error instanceof Error ? error.message : String(error);
             console.error('Failed to start Effectus Language Server:', error);
-            vscode.window.showErrorMessage(`Effectus Language Server is unavailable: ${detail}`);
+            await vscode.window.showErrorMessage(
+                `Failed to start effectusc lsp: ${error instanceof Error ? error.message : String(error)}`
+            );
+            return false;
         }
     }
 
@@ -38,19 +53,40 @@ export class EffectusLanguageClient {
         }
     }
 
-    private getServerOptions(): ServerOptions {
-        const effectuscPath = this.findEffectuscBinary();
-        if (!effectuscPath) {
-            throw new Error('install effectusc on PATH/GOBIN or set effectus.lsp.serverPath');
+    isRunning(): boolean {
+        return this.client !== undefined;
+    }
+
+    async sendRequest<T>(method: string, params?: any): Promise<T> {
+        if (!this.client) {
+            throw new Error('Language client is not running');
         }
-        return {
-            command: effectuscPath,
-            args: ['lsp'],
-            transport: TransportKind.stdio
-        };
+        return this.client.sendRequest(method, params);
+    }
+
+    sendNotification(method: string, params?: any): void {
+        this.client?.sendNotification(method, params);
+    }
+
+    private async showMissingBinaryPrompt(detail?: string): Promise<void> {
+        if (this.missingBinaryPromptShown) {
+            return;
+        }
+        this.missingBinaryPromptShown = true;
+        const choice = await vscode.window.showErrorMessage(
+            `Effectus language support could not find effectusc on PATH or at effectus.lsp.serverPath. ${detail || ''}`.trim(),
+            'Install Effectus',
+            'Open Settings'
+        );
+        if (choice === 'Install Effectus') {
+            await vscode.env.openExternal(installUrl);
+        } else if (choice === 'Open Settings') {
+            await vscode.commands.executeCommand('workbench.action.openSettings', 'effectus.lsp.serverPath');
+        }
     }
 
     private getClientOptions(): LanguageClientOptions {
+        const configuration = vscode.workspace.getConfiguration('effectus');
         return {
             documentSelector: [{ scheme: 'file', language: 'effectus' }],
             synchronize: {
@@ -61,72 +97,24 @@ export class EffectusLanguageClient {
                 ]
             },
             initializationOptions: {
-                schemaPath: vscode.workspace.getConfiguration('effectus').get('schemaPath'),
-                verbSchemaPath: vscode.workspace.getConfiguration('effectus').get('verbSchemaPath'),
-                examplesPath: vscode.workspace.getConfiguration('effectus').get('factExamplesPath'),
-                unsafeMode: vscode.workspace.getConfiguration('effectus').get('lint.unsafe'),
-                verbMode: vscode.workspace.getConfiguration('effectus').get('lint.verbs'),
-                validation: {
-                    realtime: vscode.workspace.getConfiguration('effectus').get('validation.realtime')
-                }
+                schemaPath: configuration.get('schemaPath'),
+                verbSchemaPath: configuration.get('verbSchemaPath'),
+                examplesPath: configuration.get('factExamplesPath'),
+                unsafeMode: configuration.get('lint.unsafe'),
+                verbMode: configuration.get('lint.verbs'),
+                validation: { realtime: configuration.get('validation.realtime') }
             },
             middleware: {
-                provideCompletionItem: (document, position, context, token, next) => next(document, position, context, token),
-                provideHover: (document, position, token, next) => next(document, position, token),
+                provideCompletionItem: (document, position, context, token, next) =>
+                    next(document, position, context, token),
+                provideHover: (document, position, token, next) =>
+                    next(document, position, token),
                 handleDiagnostics: (uri, diagnostics, next) => {
-                    const effectusDiagnostics = diagnostics.filter(d => d.source === 'effectus' || d.source === 'effectusc');
-                    next(uri, effectusDiagnostics);
+                    next(uri, diagnostics.filter(diagnostic =>
+                        diagnostic.source === 'effectus' || diagnostic.source === 'effectusc'
+                    ));
                 }
             }
         };
-    }
-
-    private findEffectuscBinary(): string | undefined {
-        const customPath = vscode.workspace.getConfiguration('effectus').get<string>('lsp.serverPath')?.trim();
-        if (customPath) {
-            if (this.isExecutable(customPath)) {
-                return customPath;
-            }
-            throw new Error(`configured effectus.lsp.serverPath is not executable: ${customPath}`);
-        }
-
-        const executable = process.platform === 'win32' ? 'effectusc.exe' : 'effectusc';
-        const candidates = (process.env.PATH || '').split(path.delimiter).filter(Boolean).map(dir => path.join(dir, executable));
-        if (process.env.GOBIN) {
-            candidates.push(path.join(process.env.GOBIN, executable));
-        }
-        if (process.env.GOPATH) {
-            candidates.push(path.join(process.env.GOPATH, 'bin', executable));
-        }
-        if (process.env.HOME) {
-            candidates.push(path.join(process.env.HOME, 'go', 'bin', executable));
-        }
-        return candidates.find(candidate => this.isExecutable(candidate));
-    }
-
-    private isExecutable(candidate: string): boolean {
-        try {
-            fs.accessSync(candidate, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK);
-            return fs.statSync(candidate).isFile();
-        } catch {
-            return false;
-        }
-    }
-
-    public isRunning(): boolean {
-        return this.client !== undefined;
-    }
-
-    public async sendRequest<T>(method: string, params?: any): Promise<T> {
-        if (!this.client) {
-            throw new Error('Language client is not running');
-        }
-        return this.client.sendRequest(method, params);
-    }
-
-    public sendNotification(method: string, params?: any): void {
-        if (this.client) {
-            this.client.sendNotification(method, params);
-        }
     }
 }
