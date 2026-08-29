@@ -5,7 +5,7 @@ Generate client bindings with the repository Buf configuration.
 
 ## Go client
 
-The complete compile-tested form is in [`examples/grpc_execution/main.go`](../examples/grpc_execution/main.go).
+The complete compile-tested form is in [`examples/grpc_execution/main.go`](https://github.com/josephjohncox/effectus/blob/main/examples/grpc_execution/main.go).
 
 ```go
 facts, err := structpb.NewStruct(map[string]any{

@@ -45,7 +45,7 @@ The checked artifact contains no Go callbacks. It uses the protobuf schema in `e
 
 The checker validates fact paths, argument types, result slots, plan order, contract hashes, and structural limits. It rejects unknown protobuf fields.
 
-Read [Checked IR](../ir/README.md) for the full checker contract.
+Read [Checked IR](https://github.com/josephjohncox/effectus/blob/main/ir/README.md) for the full checker contract.
 
 ## Runtime generations
 

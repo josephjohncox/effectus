@@ -37,6 +37,7 @@ bin/
 *.log
 **/dist/
 **/build/
+site/
 **/.DS_Store
 
 # Generated assets

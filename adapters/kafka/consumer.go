@@ -96,6 +96,9 @@ func (runner *consumerGroupRunner) Run(ctx context.Context, process func(context
 			if cause := context.Cause(runCtx); cause != nil && !errors.Is(cause, context.Canceled) {
 				return cause
 			}
+			if isTemporaryGroupError(err) {
+				continue
+			}
 			return err
 		}
 		runner.ready.Store(true)
@@ -148,6 +151,11 @@ func (runner *consumerGroupRunner) Run(ctx context.Context, process func(context
 			})
 		}
 	}
+}
+
+func isTemporaryGroupError(err error) bool {
+	var temporary interface{ Temporary() bool }
+	return errors.As(err, &temporary) && temporary.Temporary()
 }
 
 func (runner *consumerGroupRunner) Ready() bool { return runner.ready.Load() }

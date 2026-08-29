@@ -78,7 +78,7 @@ The deprecated dynamic gRPC schema follows this policy. Generated `effectus.v1` 
 
 The TLA+ models check bounded saga and generation state machines. They do not prove external service behavior or full Go implementation equivalence.
 
-Read [Theory Notes](theory/README.md) for semantic models and [Executable State Models](../formal/README.md) for model scope.
+Read [Theory Notes](theory/README.md) for semantic models and [Executable State Models](https://github.com/josephjohncox/effectus/blob/main/formal/README.md) for model scope.
 
 ## Related documents
 
