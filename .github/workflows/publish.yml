@@ -66,16 +66,20 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
+          OWNER=${OWNER:-}
+          test -n "$OWNER"
           version="${GITHUB_REF_NAME#v}"
           owner=$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "image=ghcr.io/$owner/effectusd:$version" >> "$GITHUB_OUTPUT"
-          echo "bundle=ghcr.io/$owner/bundles/flow-ui-demo:$version" >> "$GITHUB_OUTPUT"
-          echo "chart=ghcr.io/$owner/helm/effectusd:$version" >> "$GITHUB_OUTPUT"
-          echo "image_repo=ghcr.io/$owner/effectusd" >> "$GITHUB_OUTPUT"
-          echo "bundle_repo=ghcr.io/$owner/bundles/flow-ui-demo" >> "$GITHUB_OUTPUT"
-          echo "chart_repo=ghcr.io/$owner/helm/effectusd" >> "$GITHUB_OUTPUT"
-          echo "chart_stage_repo=ghcr.io/$owner/helm-staging-${GITHUB_SHA}/effectusd" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$version"
+            echo "image=ghcr.io/$owner/effectusd:$version"
+            echo "bundle=ghcr.io/$owner/bundles/flow-ui-demo:$version"
+            echo "chart=ghcr.io/$owner/helm/effectusd:$version"
+            echo "image_repo=ghcr.io/$owner/effectusd"
+            echo "bundle_repo=ghcr.io/$owner/bundles/flow-ui-demo"
+            echo "chart_repo=ghcr.io/$owner/helm/effectusd"
+            echo "chart_stage_repo=ghcr.io/$owner/helm-staging-${GITHUB_SHA}/effectusd"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Fail closed when release outputs exist
         env:
