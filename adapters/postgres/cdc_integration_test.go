@@ -9,10 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"testing"
 	"time"
-
-	"github.com/lib/pq"
 
 	"github.com/effectus/effectus-go/adapters"
 )
@@ -206,24 +205,25 @@ func TestPostgresPollerTupleCursorIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	table := fmt.Sprintf("poll_lossless_%d", time.Now().UnixNano())
-	ledger := fmt.Sprintf("poll_ledger_%d", time.Now().UnixNano())
-	if _, err := db.Exec(fmt.Sprintf(`CREATE TABLE %s (id BIGSERIAL PRIMARY KEY, happened_at TIMESTAMPTZ NOT NULL, value TEXT)`, pq.QuoteIdentifier(table))); err != nil {
+	const ledger = "poll_lossless_ledger"
+	_, _ = db.Exec("DROP TABLE IF EXISTS poll_lossless")
+	_, _ = db.Exec("DROP TABLE IF EXISTS poll_lossless_ledger")
+	if _, err := db.Exec(`CREATE TABLE poll_lossless (id BIGSERIAL PRIMARY KEY, happened_at TIMESTAMPTZ NOT NULL, value TEXT)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(fmt.Sprintf(`CREATE TABLE %s (source_id TEXT NOT NULL, record_key TEXT NOT NULL, processed_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (source_id, record_key))`, pq.QuoteIdentifier(ledger))); err != nil {
+	if _, err := db.Exec(`CREATE TABLE poll_lossless_ledger (source_id TEXT NOT NULL, record_key TEXT NOT NULL, processed_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (source_id, record_key))`); err != nil {
 		t.Fatal(err)
 	}
-	defer db.Exec("DROP TABLE " + pq.QuoteIdentifier(table))
-	defer db.Exec("DROP TABLE " + pq.QuoteIdentifier(ledger))
+	defer db.Exec("DROP TABLE poll_lossless")
+	defer db.Exec("DROP TABLE poll_lossless_ledger")
 	stamp := time.Now().UTC().Truncate(time.Microsecond)
 	for i := 0; i < 5; i++ {
-		if _, err := db.Exec("INSERT INTO "+pq.QuoteIdentifier(table)+"(happened_at,value) VALUES ($1,$2)", stamp, fmt.Sprintf("v%d", i)); err != nil {
+		if _, err := db.Exec("INSERT INTO poll_lossless(happened_at,value) VALUES ($1,$2)", stamp, "v"+strconv.Itoa(i)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	poller, err := NewPostgresPollerSource("poller", PollerConfig{
-		ConnectionString: dsn, Query: "SELECT id, happened_at, value FROM " + pq.QuoteIdentifier(table),
+		ConnectionString: dsn, Query: "SELECT id, happened_at, value FROM poll_lossless",
 		TimestampColumn: "happened_at", TieBreakColumn: "id", ProcessedLedger: ledger, MaxRows: 2,
 	})
 	if err != nil {
@@ -242,7 +242,7 @@ func TestPostgresPollerTupleCursorIntegration(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	var processed int
-	if err := db.QueryRow("SELECT count(*) FROM " + pq.QuoteIdentifier(ledger) + " WHERE source_id = 'poller'").Scan(&processed); err != nil {
+	if err := db.QueryRow("SELECT count(*) FROM poll_lossless_ledger WHERE source_id = 'poller'").Scan(&processed); err != nil {
 		t.Fatal(err)
 	}
 	if processed != 0 {
@@ -294,30 +294,31 @@ func TestPostgresPollerFindsDelayedLowerCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	table := fmt.Sprintf("poll_delayed_%d", time.Now().UnixNano())
-	ledger := fmt.Sprintf("poll_delayed_ledger_%d", time.Now().UnixNano())
-	if _, err := db.Exec(fmt.Sprintf(`CREATE TABLE %s (id BIGINT PRIMARY KEY, happened_at TIMESTAMPTZ NOT NULL, value TEXT)`, pq.QuoteIdentifier(table))); err != nil {
+	const ledger = "poll_delayed_ledger"
+	_, _ = db.Exec("DROP TABLE IF EXISTS poll_delayed")
+	_, _ = db.Exec("DROP TABLE IF EXISTS poll_delayed_ledger")
+	if _, err := db.Exec(`CREATE TABLE poll_delayed (id BIGINT PRIMARY KEY, happened_at TIMESTAMPTZ NOT NULL, value TEXT)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(fmt.Sprintf(`CREATE TABLE %s (source_id TEXT NOT NULL, record_key TEXT NOT NULL, processed_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (source_id, record_key))`, pq.QuoteIdentifier(ledger))); err != nil {
+	if _, err := db.Exec(`CREATE TABLE poll_delayed_ledger (source_id TEXT NOT NULL, record_key TEXT NOT NULL, processed_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (source_id, record_key))`); err != nil {
 		t.Fatal(err)
 	}
-	defer db.Exec("DROP TABLE " + pq.QuoteIdentifier(table))
-	defer db.Exec("DROP TABLE " + pq.QuoteIdentifier(ledger))
+	defer db.Exec("DROP TABLE poll_delayed")
+	defer db.Exec("DROP TABLE poll_delayed_ledger")
 
 	lowerTime := time.Now().UTC().Add(-time.Minute)
 	tx, err := db.BeginTx(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec("INSERT INTO "+pq.QuoteIdentifier(table)+"(id,happened_at,value) VALUES (1,$1,'lower')", lowerTime); err != nil {
+	if _, err := tx.Exec("INSERT INTO poll_delayed(id,happened_at,value) VALUES (1,$1,'lower')", lowerTime); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("INSERT INTO "+pq.QuoteIdentifier(table)+"(id,happened_at,value) VALUES (2,$1,'higher')", lowerTime.Add(time.Second)); err != nil {
+	if _, err := db.Exec("INSERT INTO poll_delayed(id,happened_at,value) VALUES (2,$1,'higher')", lowerTime.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	poller, err := NewPostgresPollerSource("delayed", PollerConfig{
-		ConnectionString: dsn, Query: "SELECT id, happened_at, value FROM " + pq.QuoteIdentifier(table),
+		ConnectionString: dsn, Query: "SELECT id, happened_at, value FROM poll_delayed",
 		TimestampColumn: "happened_at", TieBreakColumn: "id", ProcessedLedger: ledger, MaxRows: 10,
 	})
 	if err != nil {

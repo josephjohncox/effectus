@@ -1,0 +1,20 @@
+{
+  "RequestManualReview": {
+    "Name": "RequestManualReview",
+    "Description": "Create a durable manual review for a high-value order",
+    "ArgTypes": {
+      "orderId": {"PrimType": 4, "Name": "string"},
+      "reason": {"PrimType": 4, "Name": "string"}
+    },
+    "RequiredArgs": ["orderId", "reason"]
+  },
+  "CancelManualReview": {
+    "Name": "CancelManualReview",
+    "Description": "Cancel a manual review during compensation",
+    "ArgTypes": {
+      "orderId": {"PrimType": 4, "Name": "string"},
+      "reason": {"PrimType": 4, "Name": "string"}
+    },
+    "RequiredArgs": ["orderId", "reason"]
+  }
+}

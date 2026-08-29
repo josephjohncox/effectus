@@ -97,9 +97,7 @@ func (executor checkedWorkflowInvocationExecutor) Invoke(ctx context.Context, re
 
 func (er *ExecutionRuntime) executeCheckedWorkflowMode(ctx context.Context, unit *compiler.CompiledUnit, namespace, executionID string, facts map[string]interface{}, selectedPlanIDs map[string]struct{}, waitMode WaitMode) error {
 	resolvedFacts := cloneWorkflowFacts(unit.InitialData)
-	for path, value := range facts {
-		resolvedFacts[path] = value
-	}
+	mergeExecutionFactOverrides(resolvedFacts, facts)
 	artifact := unit.CheckedIR.CloneArtifact()
 	dispatcherOptions := er.workflowOptions
 	dispatcherOptions.RequestID = executionID
@@ -665,11 +663,31 @@ func cloneWorkflowFacts(facts map[string]interface{}) map[string]interface{} {
 	return clone
 }
 
-func lookupWorkflowFact(facts map[string]interface{}, path string) (interface{}, bool) {
-	if value, exists := facts[path]; exists {
-		return value, true
+func mergeExecutionFactOverrides(target, overrides map[string]interface{}) {
+	for path, value := range overrides {
+		target[path] = value
+		flattenExecutionFact(target, path, value)
 	}
+}
+
+func flattenExecutionFact(target map[string]interface{}, prefix string, value interface{}) {
+	object, ok := value.(map[string]interface{})
+	if !ok {
+		return
+	}
+	for key, child := range object {
+		path := key
+		if prefix != "" {
+			path = prefix + "." + key
+		}
+		target[path] = child
+		flattenExecutionFact(target, path, child)
+	}
+}
+
+func lookupWorkflowFact(facts map[string]interface{}, path string) (interface{}, bool) {
 	current := interface{}(facts)
+	nested := true
 	for start := 0; start < len(path); {
 		end := start
 		for end < len(path) && path[end] != '.' {
@@ -677,15 +695,21 @@ func lookupWorkflowFact(facts map[string]interface{}, path string) (interface{},
 		}
 		object, ok := current.(map[string]interface{})
 		if !ok {
-			return nil, false
+			nested = false
+			break
 		}
 		current, ok = object[path[start:end]]
 		if !ok {
-			return nil, false
+			nested = false
+			break
 		}
 		start = end + 1
 	}
-	return current, true
+	if nested {
+		return current, true
+	}
+	value, exists := facts[path]
+	return value, exists
 }
 
 func checkedLiteralValue(literal *effectusv1.Literal) (interface{}, error) {

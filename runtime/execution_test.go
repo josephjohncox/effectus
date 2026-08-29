@@ -120,6 +120,17 @@ func TestCheckedWorkflowResolvesPublishedInitialData(t *testing.T) {
 	require.NoError(t, runtime.ExecuteWorkflowWithIdentity(t.Context(), "test", "initial-data-execution", nil))
 }
 
+func TestNestedAdmissionFactsOverrideFlatInitialData(t *testing.T) {
+	facts := map[string]interface{}{"order.total": 0.0}
+	mergeAdmissionFactOverrides(facts, map[string]interface{}{
+		"order": map[string]interface{}{"total": 2500.0},
+	})
+	require.Equal(t, 2500.0, facts["order.total"])
+	value, ok := lookupWorkflowFact(facts, "order.total")
+	require.True(t, ok)
+	require.Equal(t, 2500.0, value)
+}
+
 func validWorkflowManifest() string {
 	return `{
   "name":"test",

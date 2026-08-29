@@ -33,7 +33,7 @@ var (
 func fraudAsset(relative string) string {
 	_, source, _, ok := runtime.Caller(0)
 	if !ok {
-		panic("locate fraud example source")
+		return filepath.FromSlash(relative)
 	}
 	return filepath.Join(filepath.Dir(source), filepath.FromSlash(relative))
 }
@@ -351,13 +351,13 @@ func runListRules(ctx context.Context, facts *exampleFacts, ts *types.TypeSystem
 
 	file, err := comp.ParseAndTypeCheck(rulesFile, facts)
 	if err != nil {
-		return err
+		return fmt.Errorf("parse fraud list rules: %w", err)
 	}
 
 	listCompiler := &list.Compiler{}
 	specAny, err := listCompiler.CompileParsedFile(file, rulesFile, facts.Schema())
 	if err != nil {
-		return err
+		return fmt.Errorf("compile fraud list rules: %w", err)
 	}
 
 	spec := specAny.(*list.Spec)
@@ -373,13 +373,13 @@ func runFraudFlow(ctx context.Context, facts *exampleFacts, ts *types.TypeSystem
 
 	file, err := comp.ParseAndTypeCheck(flowFile, facts)
 	if err != nil {
-		return err
+		return fmt.Errorf("parse fraud flow: %w", err)
 	}
 
 	flowCompiler := &flow.Compiler{}
 	specAny, err := flowCompiler.CompileParsedFile(file, flowFile, facts.Schema())
 	if err != nil {
-		return err
+		return fmt.Errorf("compile fraud flow: %w", err)
 	}
 
 	spec := specAny.(*flow.Spec)

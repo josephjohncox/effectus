@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -58,6 +59,10 @@ func main() {
 
 func setupFactSources(ctx context.Context) ([]adapters.FactSource, error) {
 	var sources []adapters.FactSource
+	webhookKey := os.Getenv("WEBHOOK_API_KEY")
+	if webhookKey == "" {
+		return nil, fmt.Errorf("WEBHOOK_API_KEY is required")
+	}
 
 	// HTTP Webhook Source
 	httpConfig := adapters.SourceConfig{
@@ -69,7 +74,7 @@ func setupFactSources(ctx context.Context) ([]adapters.FactSource, error) {
 			"auth_method": "api_key",
 			"auth_config": map[string]interface{}{
 				"token_header":   "X-API-Key",
-				"expected_token": "demo-api-key-123",
+				"expected_token": webhookKey,
 			},
 		},
 		Mappings: []adapters.FactMapping{
@@ -231,13 +236,13 @@ func showExampleUsage() {
 		log.Println("# User created event:")
 		log.Println("curl -X POST http://localhost:8080/webhook/events \\")
 		log.Println("  -H 'Content-Type: application/json' \\")
-		log.Println("  -H 'X-API-Key: demo-api-key-123' \\")
+		log.Println("  -H \"X-API-Key: $WEBHOOK_API_KEY\" \\")
 		log.Println("  -d '{\"event_type\": \"user.created\", \"user\": {\"id\": \"123\", \"email\": \"test@example.com\"}}'")
 		log.Println("")
 		log.Println("# Order completed event:")
 		log.Println("curl -X POST http://localhost:8080/webhook/events \\")
 		log.Println("  -H 'Content-Type: application/json' \\")
-		log.Println("  -H 'X-API-Key: demo-api-key-123' \\")
+		log.Println("  -H \"X-API-Key: $WEBHOOK_API_KEY\" \\")
 		log.Println("  -d '{\"event_type\": \"order.completed\", \"order\": {\"id\": \"456\", \"amount\": 99.99}}'")
 		log.Println("")
 	}()

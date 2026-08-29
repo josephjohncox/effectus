@@ -1,0 +1,57 @@
+{
+  "name": "order-review-verbs",
+  "version": "1.0.0",
+  "description": "HTTP business executor declarations for the order review demo",
+  "verbs": [
+    {
+      "name": "RequestManualReview",
+      "description": "Create a durable manual review for a high-value order",
+      "capabilities": ["write", "create", "idempotent"],
+      "resources": [
+        {
+          "resource": "order_review",
+          "capabilities": ["write", "create", "idempotent"]
+        }
+      ],
+      "argTypes": {"orderId": "string", "reason": "string"},
+      "requiredArgs": ["orderId", "reason"],
+      "returnType": "string",
+      "inverseVerb": "CancelManualReview",
+      "target": {
+        "type": "http",
+        "config": {
+          "url": "http://business-executor:8090/reviews",
+          "method": "POST",
+          "timeout": "5s",
+          "allowPrivateNetwork": true,
+          "headers": {"X-Demo-Token": "local-example-only"}
+        }
+      }
+    },
+    {
+      "name": "CancelManualReview",
+      "description": "Cancel a manual review during compensation",
+      "capabilities": ["write", "delete", "idempotent"],
+      "resources": [
+        {
+          "resource": "order_review",
+          "capabilities": ["write", "delete", "idempotent"]
+        }
+      ],
+      "argTypes": {"orderId": "string", "reason": "string"},
+      "requiredArgs": ["orderId", "reason"],
+      "returnType": "string",
+      "inverseVerb": "RequestManualReview",
+      "target": {
+        "type": "http",
+        "config": {
+          "url": "http://business-executor:8090/reviews/cancel",
+          "method": "POST",
+          "timeout": "5s",
+          "allowPrivateNetwork": true,
+          "headers": {"X-Demo-Token": "local-example-only"}
+        }
+      }
+    }
+  ]
+}

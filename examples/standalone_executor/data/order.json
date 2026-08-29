@@ -1,0 +1,12 @@
+{
+  "namespace": "merchant-42",
+  "universe": "merchant-42",
+  "facts": {
+    "order": {
+      "id": "order-200",
+      "total": 2499.00,
+      "currency": "USD",
+      "risk_score": 82
+    }
+  }
+}
