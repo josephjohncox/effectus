@@ -2,6 +2,8 @@
 
 ![Effectus logo](./effectus-small.png)
 
+**[Documentation](https://josephjohncox.github.io/effectus/)** · **[Getting started](https://josephjohncox.github.io/effectus/GETTING_STARTED/)** · **[Releases](https://github.com/josephjohncox/effectus/releases)**
+
 Effectus is a typed rule compiler and execution runtime. It compiles `.eff` and `.effx` sources into checked protobuf IR.
 
 The production daemon uses one durable execution engine for HTTP, Kafka, generated gRPC, and recovery work.
@@ -26,10 +28,19 @@ Read [Runtime Guarantees](docs/GUARANTEES.md) before you use Effectus in product
 
 ## Install
 
+Download prebuilt binaries, checksums, SBOMs, and signatures from the [latest release](https://github.com/josephjohncox/effectus/releases/latest).
+
+Build from source when you need the examples or development tools:
+
 ```bash
-go install github.com/effectus/effectus-go/cmd/effectusc@latest
-go install github.com/effectus/effectus-go/cmd/effectusd@latest
+git clone https://github.com/josephjohncox/effectus.git
+cd effectus
+git checkout v0.2.1
+just build
+export PATH="$PWD/bin:$PATH"
 ```
+
+Follow the [checked walkthrough](https://josephjohncox.github.io/effectus/GETTING_STARTED/) to start PostgreSQL, compile a bundle, run `effectusd`, and submit facts.
 
 ## Compile rules
 
@@ -96,8 +107,9 @@ Read [Extension System](docs/EXTENSION_SYSTEM.md) for manifest formats and secur
 
 ## Documentation
 
-Start with the [documentation index](docs/README.md).
+Read the [published documentation](https://josephjohncox.github.io/effectus/) or browse the Markdown files in this repository.
 
+- [Getting started](https://josephjohncox.github.io/effectus/GETTING_STARTED/)
 - [Basics](docs/BASICS.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Runtime guarantees](docs/GUARANTEES.md)

@@ -326,6 +326,7 @@ jobs:
           set -euo pipefail
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
           actionlint .github/workflows/ci.yml \
+            .github/workflows/docs.yml \
             .github/workflows/publish.yml \
             .github/workflows/recover-release.yml
           .github/scripts/release-preflight_test.sh

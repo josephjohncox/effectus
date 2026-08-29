@@ -1,14 +1,15 @@
 # Effectus Documentation
 
-Use this index to find the authoritative document for each topic.
+Read the [published documentation](https://josephjohncox.github.io/effectus/) or use this source index.
 
 ## Start here
 
-1. Read [Basics](BASICS.md) for facts, rules, flows, verbs, and effects.
-2. Read [Architecture](ARCHITECTURE.md) for the production data path.
-3. Read [Runtime Guarantees](GUARANTEES.md) for implemented guarantees and limits.
-4. Read [System Intent](SYSTEM_INTENT.md) for the design criteria.
-5. Use the [Glossary](GLOSSARY.md) for shared terms.
+1. Complete [Getting Started](GETTING_STARTED.md) to run the checked HTTP path.
+2. Read [Basics](BASICS.md) for facts, rules, flows, verbs, and effects.
+3. Read [Architecture](ARCHITECTURE.md) for the production data path.
+4. Read [Runtime Guarantees](GUARANTEES.md) for implemented guarantees and limits.
+5. Read [System Intent](SYSTEM_INTENT.md) for the design criteria.
+6. Use the [Glossary](GLOSSARY.md) for shared terms.
 
 ## Build and use rules
 

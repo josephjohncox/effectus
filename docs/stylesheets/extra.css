@@ -1,0 +1,33 @@
+:root {
+  --md-primary-fg-color: #263238;
+  --md-accent-fg-color: #3f51b5;
+}
+
+.md-grid {
+  max-width: 76rem;
+}
+
+.effectus-hero {
+  margin: 1.5rem 0 2rem;
+  padding: 2rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.5rem;
+  background: linear-gradient(
+    135deg,
+    var(--md-code-bg-color),
+    var(--md-default-bg-color)
+  );
+}
+
+.effectus-hero h1 {
+  margin-bottom: 0.5rem;
+}
+
+.effectus-hero p {
+  max-width: 48rem;
+  font-size: 1.05rem;
+}
+
+.grid.cards > ul > li {
+  border-radius: 0.4rem;
+}

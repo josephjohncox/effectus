@@ -54,7 +54,7 @@ The checker applies structural limits and recalculates environment and contract 
 
 `Checked.Marshal` produces deterministic bytes. `Checked.Digest` identifies the exact artifact content.
 
-Read [Checked IR](../ir/README.md) for the full checker list.
+Read [Checked IR](https://github.com/josephjohncox/effectus/blob/main/ir/README.md) for the full checker list.
 
 ## Build a candidate generation
 

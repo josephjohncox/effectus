@@ -2,7 +2,7 @@
 
 These documents describe semantic models for Effectus. They are not proofs of the complete Go implementation.
 
-Use [Runtime Guarantees](../GUARANTEES.md) for implemented behavior. Use [Executable State Models](../../formal/README.md) for the bounded TLA+ models.
+Use [Runtime Guarantees](../GUARANTEES.md) for implemented behavior. Use [Executable State Models](https://github.com/josephjohncox/effectus/blob/main/formal/README.md) for the bounded TLA+ models.
 
 ## Scope
 

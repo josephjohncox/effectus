@@ -234,4 +234,4 @@ The runtime blocks automatic compensation when a forward operation has an unknow
 - [Runtime Guarantees](GUARANTEES.md)
 - [Runtime Lifecycle](LIFECYCLE.md)
 - [Durable Saga Protocol](DURABLE_SAGA_PROTOCOL.md)
-- [Loader Package](../loader/README.md)
+- [Loader Package](https://github.com/josephjohncox/effectus/blob/main/loader/README.md)
