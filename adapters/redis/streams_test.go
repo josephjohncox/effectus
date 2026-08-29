@@ -39,6 +39,28 @@ func TestAcknowledgeRetriesCheckedXACK(t *testing.T) {
 	}
 }
 
+func TestAcknowledgeAcceptsCommitThenResponseError(t *testing.T) {
+	source, err := NewRedisStreamsSource("test", StreamsConfig{Streams: []string{"events"}, ConsumerGroup: "group"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	source.xack = func(context.Context, string, string, string) (int64, error) {
+		if calls.Add(1) == 1 {
+			return 0, errors.New("response lost after commit")
+		}
+		return 0, nil
+	}
+	source.pending = func(context.Context, string, string, string) (bool, error) { return false, nil }
+	ack := source.acknowledger("events", "1-0")
+	if err := ack(t.Context()); err != nil {
+		t.Fatalf("acknowledgement did not verify the committed outcome: %v", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("XACK calls = %d, want 2", calls.Load())
+	}
+}
+
 func TestDeliveryBlocksUntilAcceptedOrCanceled(t *testing.T) {
 	source, err := NewRedisStreamsSource("test", StreamsConfig{Streams: []string{"events"}})
 	if err != nil {

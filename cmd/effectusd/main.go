@@ -126,8 +126,8 @@ var (
 
 	// API auth + rate limit flags
 	apiAuthMode        = flag.String("api-auth", "token", "API auth mode (token, disabled)")
-	apiToken           = flag.String("api-token", "", "Write token for /api endpoints (comma-separated)")
-	apiReadToken       = flag.String("api-read-token", "", "Read-only token for /api endpoints (comma-separated)")
+	apiToken           = flag.String("api-token", "", "Rejected compatibility argument; use EFFECTUS_API_TOKEN or protected config")
+	apiReadToken       = flag.String("api-read-token", "", "Rejected compatibility argument; use EFFECTUS_API_READ_TOKEN or protected config")
 	apiACLFile         = flag.String("api-acl-file", "", "Path to API ACL file (YAML/JSON)")
 	apiRateLimit       = flag.Int("api-rate-limit", 120, "API requests per minute per client (0 to disable)")
 	apiRateBurst       = flag.Int("api-rate-burst", 60, "API burst size (0 to use rate limit)")
@@ -138,7 +138,7 @@ var (
 	dbMaxIdle          = databaseMaxIdle
 	dbConnLifetime     = databaseMaxLifetime
 	dbConnIdleTime     = databaseMaxIdleTime
-	rulesHotload       = flag.Bool("rules-hotload", false, "Enable read-only /api/rules/validate (checked engine mutation remains disabled)")
+	rulesHotload       = flag.Bool("rules-hotload", false, "Rejected compatibility argument; /api/rules/validate is always available")
 	rulesHistory       = flag.Int("rules-history", 5, "Number of hotload bundles to keep in memory/on disk")
 	rulesHistDir       = flag.String("rules-history-dir", "./out/rules_history", "Directory for bundle history snapshots")
 	factsStore         = flag.String("facts-store", "file", "Facts store (file, memory)")
@@ -486,6 +486,7 @@ func main() {
 			os.Exit(1)
 		}
 		state.SetKafkaSource(kafkaSource)
+		setMetricsKafkaSource(kafkaSource)
 	}
 	if strings.TrimSpace(*grpcAddr) != "" {
 		grpcExecutionServer, err = configureDaemonGRPCServer(execution, bundle)
@@ -510,6 +511,7 @@ func main() {
 	}
 	if executionDB != nil {
 		setMetricsDatabase(executionDB)
+		state.SetDatabase(executionDB)
 	}
 
 	var metricsServer *http.Server

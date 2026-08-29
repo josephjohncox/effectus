@@ -135,6 +135,10 @@ setup-db:
 	done; echo "ERROR PostgreSQL did not become ready"; exit 1
 	@echo "OK Database ready: {{DAEMON_POSTGRES_DSN}}"
 
+# Run an isolated PostgreSQL restore drill and write evidence under out/restore-drill.
+restore-drill: setup-db
+	EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' ./scripts/restore-drill.sh
+
 # Setup test database
 setup-test-db:
 	@echo "Creating test database..."
@@ -204,7 +208,8 @@ test-integration: test-integration-postgres test-integration-redis test-integrat
 # Run PostgreSQL integration tests.
 test-integration-postgres:
 	@test -n "${DB_DSN:-}" || { echo "ERROR DB_DSN is required"; exit 1; }
-	DB_DSN="$DB_DSN" POSTGRES_DSN="${POSTGRES_DSN:-$DB_DSN}" go test -v -tags=integration ./runtime/... ./schema ./cmd/effectusd
+	EFFECTUS_POSTGRES_DSN="$DB_DSN" go run ./cmd/effectusd --database-migrations=apply
+	DB_DSN="$DB_DSN" POSTGRES_DSN="${POSTGRES_DSN:-$DB_DSN}" go test -p 1 -v -tags=integration ./runtime/... ./schema ./cmd/effectusd
 
 # Run Redis integration tests.
 test-integration-redis:
@@ -230,6 +235,10 @@ test-docs:
 	cp examples/fraud_e2e/rules/fraud_rules.eff "$tmp/rule.eff"; \
 	go run ./cmd/effectusc parse --verbose "$tmp/rule.eff" >/dev/null; \
 	go run ./cmd/effectusc format --stdout "$tmp/rule.eff" >/dev/null; \
+	go run ./cmd/effectusc bundle --name flow-ui-demo --version 1.0.0 \
+		--schema-dir examples/flow_ui_demo/schema --verb-dir examples/flow_ui_demo/verbs \
+		--verbschema examples/flow_ui_demo/schema/flow_verbs.json --rules-dir examples/flow_ui_demo/rules \
+		--output "$tmp/bundle.json"; test -s "$tmp/bundle.json"; \
 	go test ./cmd/effectusc -run 'TestDocumentedCompilerCommands|TestFormatCheckDoesNotWrite'; \
 	go test ./cmd/effectusd -run TestDocumentedDaemonFlags; \
 	(cd examples && go test ./grpc_execution); \
@@ -250,7 +259,10 @@ test-examples:
 		examples/extension_system \
 		examples/fraud_e2e/mocks; do \
 		echo "==> $module"; (cd "$module" && go test ./...); \
-	done
+	done; \
+	(cd examples/coherent_flow && go run .); \
+	(cd examples && go run ./fraud_e2e); \
+	(cd examples && go run ./multi_bundle_runtime)
 
 # Render and validate all supported Helm deployment fixtures.
 test-helm:
@@ -352,6 +364,28 @@ ui-demo-smoke:
 		-H 'Content-Type: application/json' -d '{"universe":"demo","facts":{"transaction":{"id":"changed"}}}'); \
 	test "$status" = 409; echo "OK checked UI cold-start and replay smoke passed"
 
+# Start a complete local generated-gRPC execution path.
+grpc-execution-smoke:
+	@set -eu; pid=''; \
+	trap 'test -z "$pid" || { kill "$pid" >/dev/null 2>&1 || true; wait "$pid" >/dev/null 2>&1 || true; }; {{UI_SMOKE_COMPOSE}} down -v >/dev/null 2>&1 || true' EXIT INT TERM; \
+	{{UI_SMOKE_COMPOSE}} down -v >/dev/null 2>&1 || true; COMPOSE_PROJECT_NAME=effectus-ui-demo-smoke just setup-db; \
+	mkdir -p out/grpc_execution; \
+	go run ./cmd/effectusc bundle --name flow-ui-demo --version 1.0.0 \
+		--schema-dir {{UI_FLOW_DEMO_SCHEMA}} --verb-dir {{UI_FLOW_DEMO_VERB_DIR}} \
+		--verbschema {{UI_FLOW_DEMO_VERBS}} --rules-dir {{UI_FLOW_DEMO_RULES}} --output out/grpc_execution/bundle.json; \
+	go build -o out/grpc_execution/effectusd ./cmd/effectusd; \
+	EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' out/grpc_execution/effectusd --database-migrations=apply; \
+	EFFECTUS_API_TOKEN={{UI_FLOW_DEMO_TOKEN}} EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' \
+		out/grpc_execution/effectusd --bundle out/grpc_execution/bundle.json --http-addr 127.0.0.1:18082 \
+		--grpc-addr 127.0.0.1:18081 --grpc-allow-insecure --metrics-addr '' \
+		--extensions-dir {{UI_FLOW_DEMO_EXTENSIONS}} --facts-store memory \
+		>out/grpc_execution/effectusd.log 2>&1 & pid=$!; \
+	for attempt in $(seq 1 90); do curl --fail --silent http://127.0.0.1:18082/readyz >/dev/null && break; \
+		kill -0 $pid 2>/dev/null || { cat out/grpc_execution/effectusd.log; exit 1; }; sleep 1; done; \
+	curl --fail --silent http://127.0.0.1:18082/readyz >/dev/null; \
+	(cd examples && go run ./grpc_execution --address 127.0.0.1:18081 --token {{UI_FLOW_DEMO_TOKEN}} --ruleset flow-ui-demo --version 1.0.0); \
+	echo "OK generated gRPC execution smoke passed"
+
 # Open the demo UI in a browser (macOS/Linux).
 ui-demo-open:
 	@if command -v open >/dev/null 2>&1; then open http://localhost:8080/ui; \
@@ -404,10 +438,33 @@ ui-flow-demo: setup-db
 	EFFECTUS_API_TOKEN={{UI_FLOW_DEMO_TOKEN}} EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' go run ./cmd/effectusd \
 		--bundle {{UI_FLOW_DEMO_BUNDLE}} \
 		--http-addr :8080 \
-		--rules-hotload \
 		--extensions-dir {{UI_FLOW_DEMO_EXTENSIONS}} \
 		--facts-store file \
 		--facts-path out/flow_ui_demo/facts.json
+
+# Cold-start and execute the documented flow UI ingest and stream journey.
+ui-flow-demo-smoke:
+	@set -eu; pid=''; \
+	trap 'test -z "$pid" || { kill "$pid" >/dev/null 2>&1 || true; wait "$pid" >/dev/null 2>&1 || true; }; {{UI_SMOKE_COMPOSE}} down -v >/dev/null 2>&1 || true' EXIT INT TERM; \
+	{{UI_SMOKE_COMPOSE}} down -v >/dev/null 2>&1 || true; COMPOSE_PROJECT_NAME=effectus-ui-demo-smoke just setup-db; \
+	mkdir -p out/flow_ui_demo; \
+	go run ./cmd/effectusc bundle --name flow-ui-demo --version 1.0.0 \
+		--schema-dir {{UI_FLOW_DEMO_SCHEMA}} --verb-dir {{UI_FLOW_DEMO_VERB_DIR}} \
+		--verbschema {{UI_FLOW_DEMO_VERBS}} --rules-dir {{UI_FLOW_DEMO_RULES}} --output {{UI_FLOW_DEMO_BUNDLE}}; \
+	go build -o out/flow_ui_demo/effectusd ./cmd/effectusd; \
+	EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' out/flow_ui_demo/effectusd --database-migrations=apply; \
+	EFFECTUS_API_TOKEN={{UI_FLOW_DEMO_TOKEN}} EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' \
+		out/flow_ui_demo/effectusd --bundle {{UI_FLOW_DEMO_BUNDLE}} --http-addr 127.0.0.1:18084 \
+		--metrics-addr '' --extensions-dir {{UI_FLOW_DEMO_EXTENSIONS}} --facts-store memory \
+		>out/flow_ui_demo/effectusd.log 2>&1 & pid=$!; \
+	for attempt in $(seq 1 90); do curl --fail --silent http://127.0.0.1:18084/readyz >/dev/null && break; \
+		kill -0 $pid 2>/dev/null || { cat out/flow_ui_demo/effectusd.log; exit 1; }; sleep 1; done; \
+	curl --fail --silent http://127.0.0.1:18084/readyz >/dev/null; \
+	curl --fail-with-body --silent -X POST http://127.0.0.1:18084/api/facts \
+		-H 'Authorization: Bearer {{UI_FLOW_DEMO_TOKEN}}' -H 'Idempotency-Key: flow-demo-seed-v1' \
+		-H 'Content-Type: application/json' -d @{{UI_FLOW_DEMO_FACTS}} >/dev/null; \
+	EFFECTUS_URL=http://127.0.0.1:18084 EFFECTUS_TOKEN={{UI_FLOW_DEMO_TOKEN}} {{UI_FLOW_DEMO_STREAM}}; \
+	echo "OK flow UI readiness, seed, and stream smoke passed"
 
 # Seed the flow demo facts into the running UI instance.
 ui-flow-demo-seed:
@@ -696,9 +753,9 @@ example-coherent-flow:
 example-extension-system:
 	cd examples/extension_system && go run main.go
 
-# Run the gRPC execution example
+# Run the complete generated gRPC execution example.
 example-grpc-execution:
-	cd examples/grpc_execution && go run main.go
+	just grpc-execution-smoke
 
 # Run the modern SQL usage example
 example-modern-sql:

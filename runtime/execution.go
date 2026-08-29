@@ -233,7 +233,13 @@ func (er *ExecutionRuntime) publishGeneration(unit *compiler.CompiledUnit, snaps
 	er.state = StateReady
 	er.mu.Unlock()
 	if previous != nil && previous.unit != nil && previous.unit.ExtensionSnapshot != nil && previous.unit.ExtensionSnapshot != snapshot {
-		return previous.unit.ExtensionSnapshot.Retire()
+		// Publication has committed. A previous generation cleanup failure must
+		// never be reported as candidate rejection because callers would retire
+		// the now-active snapshot. Cleanup is best-effort and independently
+		// observable through the runtime log.
+		if err := previous.unit.ExtensionSnapshot.Retire(); err != nil {
+			log.Printf("retire previous execution generation %s: %v", previous.GenerationDigest, err)
+		}
 	}
 	return nil
 }

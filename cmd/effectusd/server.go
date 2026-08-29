@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -61,26 +62,28 @@ const (
 )
 
 type serverState struct {
-	mu             sync.RWMutex
-	generation     *runtimeGeneration
-	phase          processPhase
-	startedAt      time.Time
-	sources        []adapters.SchemaSourceConfig
-	rulesOn        bool
-	history        *bundleHistory
-	sagaOn         bool
-	sagaStore      schema.SagaStore
-	capSystem      *capability.CapabilitySystem
-	factStore      factStore
-	factConfig     factStoreConfig
-	factCh         chan<- factEnvelope
-	auth           apiAuth
-	limiter        *rateLimiter
-	acl            *aclMatcher
-	kafkaReady     interface{ Ready() error }
-	grpcReady      interface{ Ready() error }
-	checkedEngine  *effectusruntime.Engine
-	trustedProxies []netip.Prefix
+	mu                   sync.RWMutex
+	generation           *runtimeGeneration
+	phase                processPhase
+	startedAt            time.Time
+	sources              []adapters.SchemaSourceConfig
+	rulesOn              bool
+	history              *bundleHistory
+	sagaOn               bool
+	sagaStore            schema.SagaStore
+	capSystem            *capability.CapabilitySystem
+	factStore            factStore
+	factConfig           factStoreConfig
+	factCh               chan<- factEnvelope
+	auth                 apiAuth
+	limiter              *rateLimiter
+	acl                  *aclMatcher
+	kafkaReady           interface{ Ready() error }
+	grpcReady            interface{ Ready() error }
+	checkedEngine        *effectusruntime.Engine
+	database             *sql.DB
+	databaseFailureSince time.Time
+	trustedProxies       []netip.Prefix
 }
 
 func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store factStore, config factStoreConfig, auth apiAuth, limiter *rateLimiter, acl *aclMatcher, typeSystem *types.TypeSystem, sources []adapters.SchemaSourceConfig, verbReg *verb.Registry, rulesHotload bool, history *bundleHistory, sagaEnabled bool, sagaStore schema.SagaStore, capSystem *capability.CapabilitySystem) *serverState {
@@ -107,6 +110,13 @@ func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store fa
 func (s *serverState) SetCheckedEngine(engine *effectusruntime.Engine) {
 	s.mu.Lock()
 	s.checkedEngine = engine
+	s.mu.Unlock()
+}
+
+func (s *serverState) SetDatabase(database *sql.DB) {
+	s.mu.Lock()
+	s.database = database
+	s.databaseFailureSince = time.Time{}
 	s.mu.Unlock()
 }
 
@@ -1691,8 +1701,26 @@ func (s *serverState) handleReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.RLock()
-	kafkaReady, grpcReady := s.kafkaReady, s.grpcReady
+	kafkaReady, grpcReady, database := s.kafkaReady, s.grpcReady, s.database
 	s.mu.RUnlock()
+	if database != nil {
+		probeCtx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
+		err := database.PingContext(probeCtx)
+		cancel()
+		now := time.Now()
+		s.mu.Lock()
+		if err == nil {
+			s.databaseFailureSince = time.Time{}
+		} else if s.databaseFailureSince.IsZero() {
+			s.databaseFailureSince = now
+		}
+		failedSince := s.databaseFailureSince
+		s.mu.Unlock()
+		if err != nil && now.Sub(failedSince) >= 5*time.Second {
+			writeJSONError(w, http.StatusServiceUnavailable, fmt.Sprintf("PostgreSQL durability boundary is not ready: %v", err))
+			return
+		}
+	}
 	if kafkaReady != nil {
 		if err := kafkaReady.Ready(); err != nil {
 			writeJSONError(w, http.StatusServiceUnavailable, fmt.Sprintf("Kafka consumer is not ready: %v", err))

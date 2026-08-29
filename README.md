@@ -45,13 +45,14 @@ rule "HighRiskLargeTxn" {
 Create a bundle:
 
 ```bash
-effectusc bundle \
-  --name fraud-demo \
+go run ./cmd/effectusc bundle \
+  --name flow-ui-demo \
   --version 1.0.0 \
-  --schema-dir schemas \
-  --verb-dir verbs \
-  --rules-dir rules \
-  --output bundle.json
+  --schema-dir examples/flow_ui_demo/schema \
+  --verb-dir examples/flow_ui_demo/verbs \
+  --verbschema examples/flow_ui_demo/schema/flow_verbs.json \
+  --rules-dir examples/flow_ui_demo/rules \
+  --output out/flow-ui-demo-bundle.json
 ```
 
 The compiler checks each source file before it writes the bundle. Production generations contain checked first-order IR, not Go callbacks.
@@ -63,7 +64,7 @@ Effectusd requires PostgreSQL for durable workflow state:
 ```bash
 EFFECTUS_API_TOKEN="replace-me" \
 EFFECTUS_POSTGRES_DSN="postgres://effectus:password@db/effectus?sslmode=require" \
-  effectusd --bundle bundle.json --extensions-dir extensions --http-addr :8080
+  effectusd --bundle out/flow-ui-demo-bundle.json --extensions-dir examples/flow_ui_demo/extensions --http-addr :8080
 ```
 
 Open `http://localhost:8080/ui`. Use `/healthz` for liveness and `/readyz` for readiness.

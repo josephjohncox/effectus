@@ -91,6 +91,8 @@ just ui-demo-smoke
 ```
 
 For interactive sessions, use `just ui-demo` or `just ui-flow-demo` after `just setup-db`.
+Use `just ui-flow-demo-smoke` to prove flow readiness, baseline ingestion, and the stream script.
+Use `just grpc-execution-smoke` for the generated gRPC client and daemon journey.
 
 ## Production differences
 

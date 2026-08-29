@@ -111,6 +111,19 @@ type ExecutionLedger interface {
 	FinishExecutionLease(context.Context, ExecutionLease, ExecutionState, string) error
 }
 
+type RecoveryStats struct {
+	Nonterminal       int64
+	Blocked           int64
+	OldestNonterminal time.Time
+	OldestOutbox      time.Time
+}
+
+// RecoveryStatsReader reports uncapped durable populations without acquiring
+// recovery leases.
+type RecoveryStatsReader interface {
+	RecoveryStats(context.Context) (RecoveryStats, error)
+}
+
 type AtomicAdmissionStore interface {
 	ExecutionLedger
 	AdmitExecutionAtomic(context.Context, DurableAdmission) (ExecutionRecord, bool, error)

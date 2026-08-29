@@ -61,7 +61,8 @@ func TestMySQLCDCIntegration(t *testing.T) {
 		SchemaMapping: map[string]string{
 			fmt.Sprintf("%s.cdc_events", database): "test.cdc_event",
 		},
-		DSN: dsn,
+		DSN:            dsn,
+		CheckpointPath: t.TempDir() + "/mysql-cdc-checkpoint.json",
 	})
 	if err != nil {
 		t.Fatalf("create source: %v", err)
@@ -86,6 +87,12 @@ func TestMySQLCDCIntegration(t *testing.T) {
 	case fact := <-facts:
 		if fact == nil {
 			t.Fatalf("expected fact")
+		}
+		if fact.Acknowledge == nil {
+			t.Fatalf("expected durable acknowledgement")
+		}
+		if err := fact.Acknowledge(ctx); err != nil {
+			t.Fatalf("acknowledge fact: %v", err)
 		}
 	case <-ctx.Done():
 		t.Fatalf("timeout waiting for fact")

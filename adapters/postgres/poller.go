@@ -272,7 +272,7 @@ func (p *PostgresPollerSource) GetMetadata() adapters.SourceMetadata {
 }
 
 // executePoll drains every page that is visible through the ordered tuple
-// cursor. The cursor moves only after a successful channel handoff.
+// cursor. The durable ledger and cursor move only after caller acknowledgement.
 func (p *PostgresPollerSource) executePoll(ctx context.Context, factChan chan<- *adapters.TypedFact) error {
 	p.mu.Lock()
 	db := p.db
@@ -293,24 +293,27 @@ func (p *PostgresPollerSource) executePoll(ctx context.Context, factChan chan<- 
 			return fmt.Errorf("failed to get columns: %w", err)
 		}
 
-		rowCount := 0
+		type preparedRow struct {
+			fact *adapters.TypedFact
+			next pollCursor
+		}
+		prepared := make([]preparedRow, 0, p.maxRows)
 		for rows.Next() {
 			values := make([]interface{}, len(columns))
 			valuePtrs := make([]interface{}, len(columns))
-			for i := range values {
-				valuePtrs[i] = &values[i]
+			for index := range values {
+				valuePtrs[index] = &values[index]
 			}
 			if err := rows.Scan(valuePtrs...); err != nil {
 				rows.Close()
 				return fmt.Errorf("failed to scan row: %w", err)
 			}
-
 			rowData := make(map[string]interface{}, len(columns))
-			for i, col := range columns {
-				if b, ok := values[i].([]byte); ok {
-					rowData[col] = string(b)
+			for index, column := range columns {
+				if data, ok := values[index].([]byte); ok {
+					rowData[column] = string(data)
 				} else {
-					rowData[col] = values[i]
+					rowData[column] = values[index]
 				}
 			}
 			fact, err := p.transformRow(rowData, columns)
@@ -318,41 +321,58 @@ func (p *PostgresPollerSource) executePoll(ctx context.Context, factChan chan<- 
 				rows.Close()
 				return fmt.Errorf("failed to transform row: %w", err)
 			}
-
 			var next pollCursor
 			if p.timestampColumn != "" {
-				ts, err := timestampValue(rowData[p.timestampColumn])
-				if err != nil {
+				timestamp, timestampErr := timestampValue(rowData[p.timestampColumn])
+				if timestampErr != nil {
 					rows.Close()
-					return fmt.Errorf("cursor column %s: %w", p.timestampColumn, err)
+					return fmt.Errorf("cursor column %s: %w", p.timestampColumn, timestampErr)
 				}
 				tie, ok := rowData[p.tieBreakColumn]
 				if !ok || tie == nil {
 					rows.Close()
 					return fmt.Errorf("cursor tie-break column %s is missing or null", p.tieBreakColumn)
 				}
-				next = pollCursor{timestamp: ts, tieBreak: tie, set: true}
+				next = pollCursor{timestamp: timestamp, tieBreak: tie, set: true}
 			}
-
-			select {
-			case factChan <- fact:
-				if next.set {
-					if err := p.markProcessed(ctx, db, next.tieBreak); err != nil {
-						rows.Close()
-						return err
-					}
-				}
-				rowCount++
-			case <-ctx.Done():
-				rows.Close()
-				return ctx.Err()
-			}
+			prepared = append(prepared, preparedRow{fact: fact, next: next})
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
 			return fmt.Errorf("row iteration error: %w", err)
 		}
-		rows.Close()
+		rows.Close() // release the query connection before acknowledgement commits
+
+		for _, row := range prepared {
+			if row.next.set {
+				next := row.next
+				barrier := adapters.NewAcknowledgementBarrier(1, func(ackCtx context.Context) error {
+					if err := p.markProcessed(ackCtx, db, next.tieBreak); err != nil {
+						return err
+					}
+					p.mu.Lock()
+					p.cursor = next
+					p.mu.Unlock()
+					return nil
+				})
+				row.fact.Acknowledge = barrier.Callback(0)
+				select {
+				case factChan <- row.fact:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				if err := barrier.Wait(ctx); err != nil {
+					return err
+				}
+			} else {
+				select {
+				case factChan <- row.fact:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rowCount := len(prepared)
 
 		// Batch mode has no durable cursor and therefore executes once per tick.
 		if p.timestampColumn == "" || rowCount < p.maxRows {
@@ -370,14 +390,10 @@ func (p *PostgresPollerSource) buildQuery() (string, []interface{}) {
 	tie := pq.QuoteIdentifier(p.tieBreakColumn)
 	ledger := pq.QuoteIdentifier(p.processedLedger)
 	notProcessed := fmt.Sprintf("NOT EXISTS (SELECT 1 FROM %s AS effectus_processed WHERE effectus_processed.source_id = $1 AND effectus_processed.record_key = effectus_source.%s::text)", ledger, tie)
-	p.mu.Lock()
-	start := p.cursor
-	p.mu.Unlock()
-	if !start.set {
-		return fmt.Sprintf("%s WHERE %s ORDER BY %s, %s LIMIT $2", base, notProcessed, ts, tie), []interface{}{p.sourceID, p.maxRows}
-	}
-	return fmt.Sprintf("%s WHERE %s AND (%s > $2 OR (%s = $2 AND %s > $3)) ORDER BY %s, %s LIMIT $4", base, notProcessed, ts, ts, tie, ts, tie),
-		[]interface{}{p.sourceID, start.timestamp, start.tieBreak, p.maxRows}
+	// The processed-key ledger is the durable cursor. Do not add a tuple lower
+	// bound here: a transaction with an older timestamp can commit after a
+	// newer row and must still be discovered on a later scan.
+	return fmt.Sprintf("%s WHERE %s ORDER BY %s, %s LIMIT $2", base, notProcessed, ts, tie), []interface{}{p.sourceID, p.maxRows}
 }
 
 func (p *PostgresPollerSource) markProcessed(ctx context.Context, db *sql.DB, tieBreak interface{}) error {

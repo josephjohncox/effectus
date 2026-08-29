@@ -60,12 +60,27 @@ func (worker *RecoveryWorker) RunOnce(ctx context.Context) (int, error) {
 	if leaseDuration <= 0 {
 		leaseDuration = 30 * time.Second
 	}
+	if reader, ok := worker.Store.(ledger.RecoveryStatsReader); ok {
+		stats, statsErr := reader.RecoveryStats(ctx)
+		if statsErr != nil {
+			worker.observe(RecoveryObservation{Err: statsErr})
+			return 0, fmt.Errorf("measure recovery backlog: %w", statsErr)
+		}
+		now := time.Now()
+		observation := RecoveryObservation{BacklogMeasured: true, Backlog: stats.Nonterminal, Blocked: stats.Blocked}
+		if !stats.OldestNonterminal.IsZero() {
+			observation.OldestExecutionAge = now.Sub(stats.OldestNonterminal)
+		}
+		if !stats.OldestOutbox.IsZero() {
+			observation.OldestOutboxAge = now.Sub(stats.OldestOutbox)
+		}
+		worker.observe(observation)
+	}
 	leases, err := worker.Store.LeaseExecutions(ctx, worker.Owner, batchSize, leaseDuration)
 	if err != nil {
 		worker.observe(RecoveryObservation{Err: err})
 		return 0, fmt.Errorf("lease recovery executions: %w", err)
 	}
-	worker.observe(RecoveryObservation{BacklogMeasured: true, Backlog: len(leases)})
 	if len(leases) > batchSize {
 		return 0, fmt.Errorf("recovery lease store returned %d executions, limit is %d", len(leases), batchSize)
 	}

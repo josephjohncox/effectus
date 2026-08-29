@@ -30,13 +30,14 @@ type RedisStreamsSource struct {
 	claimInterval time.Duration
 	schemaName    string
 
-	client redis.UniversalClient
-	xack   func(context.Context, string, string, string) (int64, error)
-	ctx    context.Context
-	cancel context.CancelFunc
-	done   chan struct{}
-	out    chan *adapters.TypedFact
-	schema *adapters.Schema
+	client  redis.UniversalClient
+	xack    func(context.Context, string, string, string) (int64, error)
+	pending func(context.Context, string, string, string) (bool, error)
+	ctx     context.Context
+	cancel  context.CancelFunc
+	done    chan struct{}
+	out     chan *adapters.TypedFact
+	schema  *adapters.Schema
 
 	mu      sync.Mutex
 	running bool
@@ -398,7 +399,18 @@ func (r *RedisStreamsSource) acknowledger(stream, messageID string) func(context
 				acknowledged = true
 				return nil
 			}
-			if err != nil {
+			if err == nil && count == 0 {
+				isPending, pendingErr := r.messagePending(ctx, stream, messageID)
+				if pendingErr == nil && !isPending {
+					acknowledged = true
+					return nil
+				}
+				if pendingErr != nil {
+					lastErr = pendingErr
+				} else {
+					lastErr = fmt.Errorf("message remains pending after XACK returned zero")
+				}
+			} else if err != nil {
 				lastErr = err
 			} else {
 				lastErr = fmt.Errorf("XACK acknowledged %d messages", count)
@@ -426,6 +438,23 @@ func (r *RedisStreamsSource) ackMessage(ctx context.Context, stream, messageID s
 		return 0, fmt.Errorf("Redis client is stopped")
 	}
 	return client.XAck(ctx, stream, r.consumerGroup, messageID).Result()
+}
+
+func (r *RedisStreamsSource) messagePending(ctx context.Context, stream, messageID string) (bool, error) {
+	if r.pending != nil {
+		return r.pending(ctx, stream, r.consumerGroup, messageID)
+	}
+	r.mu.Lock()
+	client := r.client
+	r.mu.Unlock()
+	if client == nil {
+		return false, fmt.Errorf("Redis client is stopped")
+	}
+	messages, err := client.XPendingExt(ctx, &redis.XPendingExtArgs{Stream: stream, Group: r.consumerGroup, Start: messageID, End: messageID, Count: 1}).Result()
+	if err != nil {
+		return false, err
+	}
+	return len(messages) == 1 && messages[0].ID == messageID, nil
 }
 
 func (r *RedisStreamsSource) transformMessage(streamName string, message redis.XMessage) (*adapters.TypedFact, error) {

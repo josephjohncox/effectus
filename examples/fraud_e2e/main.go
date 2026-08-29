@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/effectus/effectus-go"
@@ -21,12 +23,20 @@ import (
 	"github.com/effectus/effectus-go/schema/verb"
 )
 
-const (
-	schemaFile = "examples/fraud_e2e/schema/fraud_facts.json"
-	factsFile  = "examples/fraud_e2e/data/facts.json"
-	rulesFile  = "examples/fraud_e2e/rules/fraud_rules.eff"
-	flowFile   = "examples/fraud_e2e/flows/fraud_flow.effx"
+var (
+	schemaFile = fraudAsset("schema/fraud_facts.json")
+	factsFile  = fraudAsset("data/facts.json")
+	rulesFile  = fraudAsset("rules/fraud_rules.eff")
+	flowFile   = fraudAsset("flows/fraud_flow.effx")
 )
+
+func fraudAsset(relative string) string {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("locate fraud example source")
+	}
+	return filepath.Join(filepath.Dir(source), filepath.FromSlash(relative))
+}
 
 // Facts implementation for this example.
 type exampleFacts struct {

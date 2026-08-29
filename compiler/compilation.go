@@ -39,16 +39,17 @@ type CompilationWarning struct {
 
 // CompiledUnit represents a fully validated and ready-to-execute unit
 type CompiledUnit struct {
-	VerbSpecs         map[string]*CompiledVerbSpec
-	Functions         map[string]*CompiledFunction
-	TypeSystem        *TypeSystem
-	ExecutionPlan     *ExecutionPlan
-	CheckedIR         *ir.Checked
-	IREnvironment     ir.Environment
-	InitialData       map[string]interface{}
-	Dependencies      []string // External dependencies required
-	Capabilities      []string // Required capabilities
-	ExtensionSnapshot *loader.ExtensionSnapshot
+	VerbSpecs              map[string]*CompiledVerbSpec
+	Functions              map[string]*CompiledFunction
+	TypeSystem             *TypeSystem
+	ExecutionPlan          *ExecutionPlan
+	CheckedIR              *ir.Checked
+	IREnvironment          ir.Environment
+	InitialData            map[string]interface{}
+	Dependencies           []string // External dependencies required
+	Capabilities           []string // Required capabilities
+	ExtensionSnapshot      *loader.ExtensionSnapshot
+	ExecutionOwnedSnapshot bool // retired after recovery acquires its execution handle
 }
 
 // CompiledVerbSpec represents a validated verb specification

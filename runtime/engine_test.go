@@ -3,6 +3,7 @@ package runtime
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -17,6 +18,31 @@ func (observer *recordingRuntimeObserver) ObserveExecution(ExecuteResult, error)
 	observer.executions.Add(1)
 }
 func (*recordingRuntimeObserver) ObserveRecovery(RecoveryObservation) {}
+
+func TestLoadExecutionRecordLocksCachedGenerationIdentity(t *testing.T) {
+	engine := &Engine{executions: map[string]*engineExecution{}}
+	execution := &engineExecution{record: schema.ExecutionRecord{ExecutionID: "same", GenerationDigest: "generation"}}
+	engine.executions["same"] = execution
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		for index := 0; index < 1000; index++ {
+			execution.mu.Lock()
+			execution.record.GenerationDigest = "generation"
+			execution.mu.Unlock()
+		}
+	}()
+	go func() {
+		defer workers.Done()
+		for index := 0; index < 1000; index++ {
+			loaded, err := engine.loadExecutionRecord(t.Context(), schema.ExecutionRecord{ExecutionID: "same", GenerationDigest: "generation"}, nil)
+			require.NoError(t, err)
+			require.Same(t, execution, loaded)
+		}
+	}()
+	workers.Wait()
+}
 
 func TestEngineObserverReceivesCheckedExecution(t *testing.T) {
 	runtime := newEngineTestRuntime(t, loader.NewStaticSourceLoader("workflow", "workflow.effx", []byte(validWorkflowSource("1"))))

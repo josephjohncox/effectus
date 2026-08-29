@@ -72,6 +72,65 @@ func newTestSource(t *testing.T, client s3API, format string, max int) *Source {
 	return source
 }
 
+func pollAndAcknowledge(t *testing.T, source *Source, out chan *adapters.TypedFact, count int) error {
+	t.Helper()
+	errCh := make(chan error, 1)
+	go func() { errCh <- source.pollOnce(t.Context(), out) }()
+	for index := 0; index < count; index++ {
+		select {
+		case fact := <-out:
+			if fact == nil || fact.Acknowledge == nil {
+				t.Fatalf("fact %d has no acknowledgement", index)
+			}
+			if err := fact.Acknowledge(t.Context()); err != nil {
+				t.Fatalf("acknowledge fact %d: %v", index, err)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for fact %d", index)
+		}
+	}
+	return <-errCh
+}
+
+func TestSubscribeUsesOneRestartableWorker(t *testing.T) {
+	now := time.Now().UTC()
+	client := &fakeS3{pages: [][]types.Object{{object("one", now)}}, payloads: map[string][]byte{"one": []byte(`{"id":1}`)}, failOnce: map[string]bool{}}
+	source := newTestSource(t, client, "json", 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	first, err := source.Subscribe(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := source.Subscribe(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatal("concurrent subscriptions started different workers")
+	}
+	fact := <-first
+	if fact == nil || fact.Acknowledge == nil {
+		t.Fatal("stream fact has no acknowledgement")
+	}
+	if err := fact.Acknowledge(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := source.Stop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := source.Subscribe(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restarted == first {
+		t.Fatal("restart reused a closed output channel")
+	}
+	if err := source.Stop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStreamScansAllPagesBeforeMaxObjects(t *testing.T) {
 	base := time.Unix(100, 0).UTC()
 	client := &fakeS3{
@@ -85,14 +144,11 @@ func TestStreamScansAllPagesBeforeMaxObjects(t *testing.T) {
 	source := newTestSource(t, client, "json", 2)
 	source.lastSeenTime = base
 	out := make(chan *adapters.TypedFact, 2)
-	if err := source.pollOnce(t.Context(), out); err != nil {
+	if err := pollAndAcknowledge(t, source, out, 2); err != nil {
 		t.Fatal(err)
 	}
 	if client.lists != 2 {
 		t.Fatalf("listed %d pages, want 2", client.lists)
-	}
-	if got := len(out); got != 2 {
-		t.Fatalf("emitted %d facts, want 2", got)
 	}
 	if source.lastSeenKey != "new-d" {
 		t.Fatalf("cursor key = %q, want new-d", source.lastSeenKey)
@@ -109,7 +165,7 @@ func TestStreamStopsAtFailedObjectAndRetriesFromCursor(t *testing.T) {
 	}
 	source := newTestSource(t, client, "json", 0)
 	out := make(chan *adapters.TypedFact, 4)
-	if err := source.pollOnce(t.Context(), out); err == nil {
+	if err := pollAndAcknowledge(t, source, out, 1); err == nil {
 		t.Fatal("expected first poll to fail")
 	}
 	if source.lastSeenKey != "a" {
@@ -119,14 +175,11 @@ func TestStreamStopsAtFailedObjectAndRetriesFromCursor(t *testing.T) {
 	client.pages = [][]types.Object{objects}
 	client.lists = 0
 	client.mu.Unlock()
-	if err := source.pollOnce(t.Context(), out); err != nil {
+	if err := pollAndAcknowledge(t, source, out, 2); err != nil {
 		t.Fatal(err)
 	}
 	if source.lastSeenKey != "c" {
 		t.Fatalf("cursor key = %q, want c", source.lastSeenKey)
-	}
-	if got := len(out); got != 3 { // a once, then b and c
-		t.Fatalf("emitted %d facts, want 3", got)
 	}
 }
 

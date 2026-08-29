@@ -73,17 +73,11 @@ func TestS3StreamMaxObjectsAndBackpressureIntegration(t *testing.T) {
 	}
 	defer source.Stop(context.Background())
 	out := make(chan *adapters.TypedFact, 3)
-	if err := source.pollOnce(t.Context(), out); err != nil {
+	if err := pollAndAcknowledge(t, source, out, 2); err != nil {
 		t.Fatal(err)
 	}
-	if len(out) != 2 {
-		t.Fatalf("first poll emitted %d objects, want 2", len(out))
-	}
-	if err := source.pollOnce(t.Context(), out); err != nil {
+	if err := pollAndAcknowledge(t, source, out, 1); err != nil {
 		t.Fatal(err)
-	}
-	if len(out) != 3 {
-		t.Fatalf("two polls emitted %d objects, want 3", len(out))
 	}
 
 	var ndjson bytes.Buffer
@@ -111,7 +105,13 @@ func TestS3StreamMaxObjectsAndBackpressureIntegration(t *testing.T) {
 	time.Sleep(100 * time.Millisecond) // force the producer to block on channel capacity
 	for i := 0; i < 150; i++ {
 		select {
-		case <-facts:
+		case fact := <-facts:
+			if fact.Acknowledge == nil {
+				t.Fatalf("record %d has no acknowledgement", i)
+			}
+			if err := fact.Acknowledge(t.Context()); err != nil {
+				t.Fatalf("acknowledge record %d: %v", i, err)
+			}
 		case <-time.After(5 * time.Second):
 			t.Fatalf("received %d/150 records", i)
 		}

@@ -36,6 +36,9 @@ type Source struct {
 	client       s3API
 	ctx          context.Context
 	cancel       context.CancelFunc
+	out          chan *adapters.TypedFact
+	done         chan struct{}
+	running      bool
 	metrics      adapters.SourceMetrics
 	mappings     []factMapping
 	lastSeenTime time.Time
@@ -79,12 +82,8 @@ func NewSource(config *Config, mappings []adapters.FactMapping) (*Source, error)
 		return nil, err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	source := &Source{
 		config:  config,
-		ctx:     ctx,
-		cancel:  cancel,
 		metrics: adapters.GetGlobalMetrics(),
 	}
 
@@ -154,6 +153,12 @@ func validateConfig(config *Config) error {
 
 // Start initializes the S3 client.
 func (s *Source) Start(ctx context.Context) error {
+	s.mu.Lock()
+	if s.client != nil {
+		s.mu.Unlock()
+		return nil
+	}
+	s.mu.Unlock()
 	opts := []func(*config.LoadOptions) error{
 		config.WithRegion(s.config.Region),
 	}
@@ -185,9 +190,14 @@ func (s *Source) Start(ctx context.Context) error {
 		return fmt.Errorf("load aws config: %w", err)
 	}
 
-	s.client = s3.NewFromConfig(cfg, func(options *s3.Options) {
+	client := s3.NewFromConfig(cfg, func(options *s3.Options) {
 		options.UsePathStyle = s.config.ForcePathStyle
 	})
+	s.mu.Lock()
+	if s.client == nil {
+		s.client = client
+	}
+	s.mu.Unlock()
 
 	log.Printf("S3 source %s started (bucket=%s, mode=%s)", s.config.SourceID, s.config.Bucket, s.config.Mode)
 	return nil
@@ -195,40 +205,89 @@ func (s *Source) Start(ctx context.Context) error {
 
 // Stop stops the source.
 func (s *Source) Stop(ctx context.Context) error {
-	s.cancel()
+	s.mu.Lock()
+	cancel, done := s.cancel, s.done
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	s.mu.Lock()
+	if s.done == done {
+		s.ctx = nil
+		s.cancel = nil
+		s.out = nil
+		s.done = nil
+		s.running = false
+	}
+	s.mu.Unlock()
 	log.Printf("S3 source %s stopped", s.config.SourceID)
 	return nil
 }
 
-// Subscribe polls S3 and emits TypedFacts.
+// Subscribe polls S3 through one serialized worker per source generation.
 func (s *Source) Subscribe(ctx context.Context, factTypes []string) (<-chan *adapters.TypedFact, error) {
-	factChan := make(chan *adapters.TypedFact, 100)
-
-	go func() {
-		defer close(factChan)
-
-		ticker := time.NewTicker(s.config.PollInterval)
-		defer ticker.Stop()
-
-		if err := s.pollOnce(ctx, factChan); err != nil && ctx.Err() == nil && s.ctx.Err() == nil {
-			log.Printf("S3 poll error: %v", err)
+	s.mu.Lock()
+	if s.running {
+		out := s.out
+		s.mu.Unlock()
+		return out, nil
+	}
+	clientReady := s.client != nil
+	s.mu.Unlock()
+	if !clientReady {
+		if err := s.Start(ctx); err != nil {
+			return nil, err
 		}
+	}
 
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-s.ctx.Done():
-				return
-			case <-ticker.C:
-				if err := s.pollOnce(ctx, factChan); err != nil && ctx.Err() == nil && s.ctx.Err() == nil {
-					log.Printf("S3 poll error: %v", err)
-				}
+	s.mu.Lock()
+	if s.running {
+		out := s.out
+		s.mu.Unlock()
+		return out, nil
+	}
+	workerCtx, cancel := context.WithCancel(ctx)
+	factChan := make(chan *adapters.TypedFact, 100)
+	done := make(chan struct{})
+	s.ctx, s.cancel, s.out, s.done, s.running = workerCtx, cancel, factChan, done, true
+	s.mu.Unlock()
+
+	go s.pollLoop(workerCtx, factChan, done)
+	return factChan, nil
+}
+
+func (s *Source) pollLoop(ctx context.Context, factChan chan *adapters.TypedFact, done chan struct{}) {
+	defer close(done)
+	defer close(factChan)
+	defer func() {
+		s.mu.Lock()
+		if s.done == done {
+			s.running = false
+		}
+		s.mu.Unlock()
+	}()
+	ticker := time.NewTicker(s.config.PollInterval)
+	defer ticker.Stop()
+	if err := s.pollOnce(ctx, factChan); err != nil && ctx.Err() == nil {
+		log.Printf("S3 poll error: %v", err)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.pollOnce(ctx, factChan); err != nil && ctx.Err() == nil {
+				log.Printf("S3 poll error: %v", err)
 			}
 		}
-	}()
-
-	return factChan, nil
+	}
 }
 
 // GetSourceSchema returns schema metadata.
@@ -248,10 +307,13 @@ func (s *Source) GetSourceSchema() *adapters.Schema {
 
 // HealthCheck checks bucket access.
 func (s *Source) HealthCheck() error {
-	if s.client == nil {
+	s.mu.Lock()
+	client := s.client
+	s.mu.Unlock()
+	if client == nil {
 		return fmt.Errorf("s3 client not initialized")
 	}
-	_, err := s.client.HeadBucket(context.Background(), &s3.HeadBucketInput{
+	_, err := client.HeadBucket(context.Background(), &s3.HeadBucketInput{
 		Bucket: aws.String(s.config.Bucket),
 	})
 	if err != nil {
@@ -306,9 +368,6 @@ func (s *Source) pollOnce(subscriptionCtx context.Context, factChan chan<- *adap
 	for _, object := range objects {
 		if err := s.emitObject(ctx, object, factChan); err != nil {
 			return fmt.Errorf("emit %s: %w", aws.ToString(object.Key), err)
-		}
-		if s.config.Mode == "stream" {
-			s.updateCursor([]types.Object{object})
 		}
 	}
 	return nil
@@ -439,7 +498,14 @@ func (s *Source) emitObject(ctx context.Context, object types.Object, factChan c
 		metadata["s3_last_modified"] = object.LastModified.Format(time.RFC3339Nano)
 	}
 
-	for _, record := range records {
+	var barrier *adapters.AcknowledgementBarrier
+	if s.config.Mode == "stream" && len(records) > 0 {
+		barrier = adapters.NewAcknowledgementBarrier(len(records), func(context.Context) error {
+			s.updateCursor([]types.Object{object})
+			return nil
+		})
+	}
+	for index, record := range records {
 		structData, err := structpb.NewStruct(record)
 		if err != nil {
 			return err
@@ -453,17 +519,23 @@ func (s *Source) emitObject(ctx context.Context, object types.Object, factChan c
 			SourceID:      s.config.SourceID,
 			Metadata:      metadata,
 		}
+		if barrier != nil {
+			fact.Acknowledge = barrier.Callback(index)
+		}
 
 		select {
 		case factChan <- fact:
 			s.metrics.RecordFactProcessed(s.config.SourceID, schemaName)
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-s.ctx.Done():
-			return s.ctx.Err()
 		}
 	}
-
+	if barrier != nil {
+		return barrier.Wait(ctx)
+	}
+	if s.config.Mode == "stream" {
+		s.updateCursor([]types.Object{object})
+	}
 	return nil
 }
 

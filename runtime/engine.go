@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/effectus/effectus-go/compiler"
 	"github.com/effectus/effectus-go/invocation"
@@ -37,11 +38,14 @@ type Observer interface {
 
 // RecoveryObservation describes one bounded recovery poll or disposition.
 type RecoveryObservation struct {
-	BacklogMeasured bool
-	Backlog         int
-	ExecutionID     string
-	State           string
-	Err             error
+	BacklogMeasured    bool
+	Backlog            int64
+	Blocked            int64
+	OldestExecutionAge time.Duration
+	OldestOutboxAge    time.Duration
+	ExecutionID        string
+	State              string
+	Err                error
 }
 
 // WaitMode controls how far Execute drives the shared state machine.
@@ -453,8 +457,13 @@ func (engine *Engine) loadExecutionRecord(ctx context.Context, record schema.Exe
 	engine.mu.Lock()
 	cached := engine.executions[record.ExecutionID]
 	engine.mu.Unlock()
-	if cached != nil && cached.record.GenerationDigest == record.GenerationDigest {
-		return cached, nil
+	if cached != nil {
+		cached.mu.Lock()
+		generationDigest := cached.record.GenerationDigest
+		cached.mu.Unlock()
+		if generationDigest == record.GenerationDigest {
+			return cached, nil
+		}
 	}
 	facts, err := decodeExecutionFacts(record.EffectiveFacts)
 	if err != nil {
@@ -515,28 +524,40 @@ func (engine *Engine) loadExecutionRecord(ctx context.Context, record schema.Exe
 	if err != nil {
 		return engine.blockDependency(ctx, record, facts, selected, err)
 	}
+	var snapshotHandle *loader.ExtensionSnapshotHandle
+	if unit != nil && unit.ExtensionSnapshot != nil {
+		snapshotHandle, err = unit.ExtensionSnapshot.Acquire()
+		if err != nil {
+			return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("acquire resolved extension snapshot: %w", err))
+		}
+		if unit.ExecutionOwnedSnapshot {
+			if retireErr := unit.ExtensionSnapshot.Retire(); retireErr != nil {
+				_ = snapshotHandle.Release()
+				return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("retire execution-owned snapshot: %w", retireErr))
+			}
+		}
+	}
+	blockResolved := func(cause error) (*engineExecution, error) {
+		if snapshotHandle != nil {
+			_ = snapshotHandle.Release()
+		}
+		return engine.blockDependency(ctx, record, facts, selected, cause)
+	}
 	if unit == nil || unit.CheckedIR == nil || unit.CheckedIR.Digest() != checked.Digest() {
-		return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("resolver returned a mismatched checked generation"))
+		return blockResolved(fmt.Errorf("resolver returned a mismatched checked generation"))
 	}
 	resolvedArtifact, resolvedErr := executionArtifactForUnit(unit)
 	if resolvedErr != nil || resolvedArtifact.GenerationDigest != record.GenerationDigest {
-		return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("resolver executor/function manifest does not match pinned generation: %v", resolvedErr))
+		return blockResolved(fmt.Errorf("resolver executor/function manifest does not match pinned generation: %v", resolvedErr))
 	}
 	if err := engine.validateUnitExecutors(unit); err != nil {
-		return engine.blockDependency(ctx, record, facts, selected, err)
+		return blockResolved(err)
 	}
 	for _, plan := range checked.CloneArtifact().Plans {
 		for _, step := range plan.Steps {
 			if unit.VerbSpecs[step.Verb] == nil {
-				return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("verb contract %q is unavailable", step.Verb))
+				return blockResolved(fmt.Errorf("verb contract %q is unavailable", step.Verb))
 			}
-		}
-	}
-	var snapshotHandle *loader.ExtensionSnapshotHandle
-	if unit.ExtensionSnapshot != nil {
-		snapshotHandle, err = unit.ExtensionSnapshot.Acquire()
-		if err != nil {
-			return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("acquire resolved extension snapshot: %w", err))
 		}
 	}
 	execution := &engineExecution{record: record, facts: facts, selected: selected, unit: unit, snapshotHandle: snapshotHandle}

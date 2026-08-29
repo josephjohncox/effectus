@@ -261,10 +261,31 @@ jobs:
           image_digest=$(cat "$RUNNER_TEMP/image.digest")
           bundle_digest=$(cat "$RUNNER_TEMP/bundle.digest")
           chart_digest=$(cat "$RUNNER_TEMP/chart.digest")
+          check_absent() {
+            ref=$1
+            error_file=$(mktemp)
+            if crane digest "$ref" >/dev/null 2>"$error_file"; then
+              echo "release destination appeared before promotion: $ref" >&2
+              rm -f "$error_file"
+              exit 1
+            fi
+            grep -Eqi 'MANIFEST_UNKNOWN|NAME_UNKNOWN|manifest unknown|not found|404' "$error_file" || {
+              echo "cannot prove release destination is absent: $ref" >&2
+              cat "$error_file" >&2
+              rm -f "$error_file"
+              exit 1
+            }
+            rm -f "$error_file"
+          }
+          # Repository settings must reject tag mutation. These last-moment
+          # checks additionally fail closed if another publisher wins a race.
+          check_absent "${IMAGE_REPO}:${VERSION}"
           crane tag "${IMAGE_REPO}@${image_digest}" "$VERSION"
           test "$(crane digest "${IMAGE_REPO}:${VERSION}")" = "$image_digest"
+          check_absent "${BUNDLE_REPO}:${VERSION}"
           crane tag "${BUNDLE_REPO}@${bundle_digest}" "$VERSION"
           test "$(crane digest "${BUNDLE_REPO}:${VERSION}")" = "$bundle_digest"
+          check_absent "${CHART_REPO}:${VERSION}"
           oras copy --recursive "${CHART_STAGE_REPO}@${chart_digest}" \
             "${CHART_REPO}:${VERSION}"
           test "$(crane digest "${CHART_REPO}:${VERSION}")" = "$chart_digest"
@@ -273,7 +294,33 @@ jobs:
               "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
-      - name: Create GitHub release last
+      - name: Create and sign release completion manifest
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          IMAGE_REPO: ${{ steps.release.outputs.image_repo }}
+          BUNDLE_REPO: ${{ steps.release.outputs.bundle_repo }}
+          CHART_REPO: ${{ steps.release.outputs.chart_repo }}
+        run: |
+          set -euo pipefail
+          image_digest=$(cat "$RUNNER_TEMP/image.digest")
+          bundle_digest=$(cat "$RUNNER_TEMP/bundle.digest")
+          chart_digest=$(cat "$RUNNER_TEMP/chart.digest")
+          jq -n --arg version "$VERSION" --arg commit "$GITHUB_SHA" \
+            --arg image "${IMAGE_REPO}@${image_digest}" \
+            --arg bundle "${BUNDLE_REPO}@${bundle_digest}" \
+            --arg chart "${CHART_REPO}@${chart_digest}" \
+            '{schema_version:1,version:$version,commit:$commit,image:$image,bundle:$bundle,chart:$chart,complete:true}' \
+            > dist/release-manifest.json
+          cosign sign-blob --yes --output-signature dist/release-manifest.json.sig \
+            --output-certificate dist/release-manifest.json.pem dist/release-manifest.json
+          cosign verify-blob --signature dist/release-manifest.json.sig \
+            --certificate dist/release-manifest.json.pem \
+            --certificate-identity-regexp \
+              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            dist/release-manifest.json
+
+      - name: Create GitHub release completion marker last
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

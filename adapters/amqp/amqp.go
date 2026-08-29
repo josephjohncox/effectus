@@ -293,7 +293,10 @@ func (s *Source) GetSourceSchema() *adapters.Schema {
 
 // HealthCheck checks connection status.
 func (s *Source) HealthCheck() error {
-	if s.conn == nil || s.conn.IsClosed() {
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+	if conn == nil || conn.IsClosed() {
 		return fmt.Errorf("connection not initialized")
 	}
 	return nil
@@ -335,15 +338,12 @@ func (s *Source) processMessages(ctx context.Context, msgs <-chan amqp.Delivery,
 				}
 				continue
 			}
+			if !s.config.AutoAck {
+				fact.Acknowledge = amqpAcknowledgement(msg)
+			}
 			select {
 			case factChan <- fact:
 				s.metrics.RecordFactProcessed(s.config.SourceID, fact.SchemaName)
-				if !s.config.AutoAck {
-					if err := msg.Ack(false); err != nil {
-						s.metrics.RecordError(s.config.SourceID, "ack", err)
-						return
-					}
-				}
 			case <-ctx.Done():
 				if !s.config.AutoAck {
 					_ = msg.Nack(false, true)
@@ -351,6 +351,23 @@ func (s *Source) processMessages(ctx context.Context, msgs <-chan amqp.Delivery,
 				return
 			}
 		}
+	}
+}
+
+func amqpAcknowledgement(msg amqp.Delivery) func(context.Context) error {
+	var mu sync.Mutex
+	acknowledged := false
+	return func(context.Context) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if acknowledged {
+			return nil
+		}
+		if err := msg.Ack(false); err != nil {
+			return err
+		}
+		acknowledged = true
+		return nil
 	}
 }
 

@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -20,23 +23,24 @@ import (
 
 // CDCConfig holds MySQL CDC configuration.
 type CDCConfig struct {
-	SourceID      string            `json:"source_id" yaml:"source_id"`
-	Host          string            `json:"host" yaml:"host"`
-	Port          int               `json:"port" yaml:"port"`
-	User          string            `json:"user" yaml:"user"`
-	Password      string            `json:"password" yaml:"password"`
-	Flavor        string            `json:"flavor" yaml:"flavor"` // mysql or mariadb
-	ServerID      uint32            `json:"server_id" yaml:"server_id"`
-	Database      string            `json:"database" yaml:"database"`
-	Tables        []string          `json:"tables" yaml:"tables"`
-	Operations    []string          `json:"operations" yaml:"operations"`
-	SchemaMapping map[string]string `json:"schema_mapping" yaml:"schema_mapping"`
-	StartFile     string            `json:"start_file" yaml:"start_file"`
-	StartPos      uint32            `json:"start_pos" yaml:"start_pos"`
-	GTID          string            `json:"gtid" yaml:"gtid"`
-	DSN           string            `json:"dsn" yaml:"dsn"`
-	BufferSize    int               `json:"buffer_size" yaml:"buffer_size"`
-	Timeout       time.Duration     `json:"timeout" yaml:"timeout"`
+	SourceID       string            `json:"source_id" yaml:"source_id"`
+	Host           string            `json:"host" yaml:"host"`
+	Port           int               `json:"port" yaml:"port"`
+	User           string            `json:"user" yaml:"user"`
+	Password       string            `json:"password" yaml:"password"`
+	Flavor         string            `json:"flavor" yaml:"flavor"` // mysql or mariadb
+	ServerID       uint32            `json:"server_id" yaml:"server_id"`
+	Database       string            `json:"database" yaml:"database"`
+	Tables         []string          `json:"tables" yaml:"tables"`
+	Operations     []string          `json:"operations" yaml:"operations"`
+	SchemaMapping  map[string]string `json:"schema_mapping" yaml:"schema_mapping"`
+	StartFile      string            `json:"start_file" yaml:"start_file"`
+	StartPos       uint32            `json:"start_pos" yaml:"start_pos"`
+	GTID           string            `json:"gtid" yaml:"gtid"`
+	CheckpointPath string            `json:"checkpoint_path" yaml:"checkpoint_path"`
+	DSN            string            `json:"dsn" yaml:"dsn"`
+	BufferSize     int               `json:"buffer_size" yaml:"buffer_size"`
+	Timeout        time.Duration     `json:"timeout" yaml:"timeout"`
 }
 
 // CDCSource implements MySQL binlog streaming.
@@ -81,6 +85,9 @@ func NewCDCSource(config *CDCConfig) (*CDCSource, error) {
 	}
 	if config.User == "" {
 		return nil, fmt.Errorf("user is required")
+	}
+	if strings.TrimSpace(config.CheckpointPath) == "" {
+		return nil, fmt.Errorf("checkpoint_path is required for durable MySQL CDC recovery")
 	}
 	if config.Port == 0 {
 		config.Port = 3306
@@ -157,6 +164,11 @@ func (c *CDCSource) Start(ctx context.Context) error {
 		return fmt.Errorf("ping schema db: %w", err)
 	}
 	c.db = db
+	if err := c.initializeCheckpoint(ctx); err != nil {
+		db.Close()
+		c.db = nil
+		return err
+	}
 
 	cfg := replication.BinlogSyncerConfig{
 		ServerID: c.config.ServerID,
@@ -257,12 +269,15 @@ func (c *CDCSource) GetSourceSchema() *adapters.Schema {
 
 // HealthCheck checks connectivity.
 func (c *CDCSource) HealthCheck() error {
-	if c.db == nil {
+	c.mu.Lock()
+	db, workerCtx := c.db, c.ctx
+	c.mu.Unlock()
+	if db == nil || workerCtx == nil {
 		return fmt.Errorf("schema db not initialized")
 	}
-	ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(workerCtx, 5*time.Second)
 	defer cancel()
-	return c.db.PingContext(ctx)
+	return db.PingContext(ctx)
 }
 
 // GetMetadata returns source metadata.
@@ -294,18 +309,7 @@ func (c *CDCSource) startStreamer(ctx context.Context) (*replication.BinlogStrea
 
 	pos := mysql.Position{Name: c.config.StartFile, Pos: c.config.StartPos}
 	if pos.Name == "" {
-		status, err := c.masterStatus(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if c.config.GTID != "" {
-			gtidSet, err := mysql.ParseGTIDSet(c.config.Flavor, c.config.GTID)
-			if err != nil {
-				return nil, fmt.Errorf("parse gtid: %w", err)
-			}
-			return c.syncer.StartSyncGTID(gtidSet)
-		}
-		pos = status
+		return nil, fmt.Errorf("durable MySQL CDC checkpoint has no binlog coordinate")
 	}
 	c.currentBinlog = pos.Name
 	return c.syncer.StartSync(pos)
@@ -322,10 +326,105 @@ func (c *CDCSource) masterStatus(ctx context.Context) (mysql.Position, error) {
 	if err := row.Scan(&file, &position, &binlogDoDB, &binlogIgnoreDB, &gtidSet); err != nil {
 		return mysql.Position{}, err
 	}
-	if c.config.GTID == "" && gtidSet.Valid {
-		c.config.GTID = gtidSet.String
-	}
+	_ = gtidSet
 	return mysql.Position{Name: file, Pos: position}, nil
+}
+
+type cdcCheckpoint struct {
+	Binlog string `json:"binlog"`
+	Pos    uint32 `json:"pos"`
+	GTID   string `json:"gtid,omitempty"`
+}
+
+func (c *CDCSource) initializeCheckpoint(ctx context.Context) error {
+	payload, err := os.ReadFile(c.config.CheckpointPath)
+	if err == nil {
+		var checkpoint cdcCheckpoint
+		if err := json.Unmarshal(payload, &checkpoint); err != nil {
+			return fmt.Errorf("decode MySQL CDC checkpoint: %w", err)
+		}
+		if checkpoint.Binlog == "" && checkpoint.GTID == "" {
+			return fmt.Errorf("MySQL CDC checkpoint has no recovery coordinate")
+		}
+		c.config.StartFile, c.config.StartPos, c.config.GTID = checkpoint.Binlog, checkpoint.Pos, checkpoint.GTID
+		c.currentBinlog = checkpoint.Binlog
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return fmt.Errorf("read MySQL CDC checkpoint: %w", err)
+	}
+
+	checkpoint := cdcCheckpoint{Binlog: c.config.StartFile, Pos: c.config.StartPos, GTID: c.config.GTID}
+	if checkpoint.Binlog == "" {
+		position, statusErr := c.masterStatus(ctx)
+		if statusErr != nil {
+			return fmt.Errorf("initialize MySQL CDC checkpoint: %w", statusErr)
+		}
+		checkpoint.Binlog, checkpoint.Pos = position.Name, position.Pos
+	}
+	if err := c.persistCheckpoint(ctx, checkpoint); err != nil {
+		return err
+	}
+	c.config.StartFile, c.config.StartPos = checkpoint.Binlog, checkpoint.Pos
+	c.currentBinlog = checkpoint.Binlog
+	return nil
+}
+
+func (c *CDCSource) persistCheckpoint(ctx context.Context, checkpoint cdcCheckpoint) error {
+	if checkpoint.Binlog == "" || checkpoint.Pos == 0 {
+		return fmt.Errorf("MySQL CDC checkpoint requires a binlog file and position")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	directory := filepath.Dir(c.config.CheckpointPath)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return fmt.Errorf("create MySQL CDC checkpoint directory: %w", err)
+	}
+	payload, err := json.Marshal(checkpoint)
+	if err != nil {
+		return fmt.Errorf("encode MySQL CDC checkpoint: %w", err)
+	}
+	temporary, err := os.CreateTemp(directory, ".effectus-mysql-checkpoint-*")
+	if err != nil {
+		return fmt.Errorf("create MySQL CDC checkpoint: %w", err)
+	}
+	temporaryName := temporary.Name()
+	defer os.Remove(temporaryName)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("secure MySQL CDC checkpoint: %w", err)
+	}
+	written, err := temporary.Write(payload)
+	if err == nil && written != len(payload) {
+		err = io.ErrShortWrite
+	}
+	if err == nil {
+		err = temporary.Sync()
+	}
+	closeErr := temporary.Close()
+	if err != nil {
+		return fmt.Errorf("write MySQL CDC checkpoint: %w", err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close MySQL CDC checkpoint: %w", closeErr)
+	}
+	if err := os.Rename(temporaryName, c.config.CheckpointPath); err != nil {
+		return fmt.Errorf("replace MySQL CDC checkpoint: %w", err)
+	}
+	directoryHandle, err := os.Open(directory)
+	if err != nil {
+		return fmt.Errorf("open MySQL CDC checkpoint directory: %w", err)
+	}
+	syncErr := directoryHandle.Sync()
+	closeDirectoryErr := directoryHandle.Close()
+	if syncErr != nil {
+		return fmt.Errorf("sync MySQL CDC checkpoint directory: %w", syncErr)
+	}
+	if closeDirectoryErr != nil {
+		return fmt.Errorf("close MySQL CDC checkpoint directory: %w", closeDirectoryErr)
+	}
+	return nil
 }
 
 func (c *CDCSource) consumeEvents(ctx context.Context, streamer *replication.BinlogStreamer, factChan chan *adapters.TypedFact, done chan struct{}) {
@@ -350,7 +449,9 @@ func (c *CDCSource) consumeEvents(ctx context.Context, streamer *replication.Bin
 
 		switch event := ev.Event.(type) {
 		case *replication.RotateEvent:
+			c.mu.Lock()
 			c.currentBinlog = string(event.NextLogName)
+			c.mu.Unlock()
 			continue
 		}
 
@@ -387,43 +488,50 @@ func (c *CDCSource) handleRowsEvent(ctx context.Context, factChan chan<- *adapte
 	}
 
 	columns := c.getColumns(event.Table, schemaName, tableName)
-
+	type rowChange struct {
+		before map[string]interface{}
+		after  map[string]interface{}
+	}
+	var changes []rowChange
 	switch header.EventType {
 	case replication.WRITE_ROWS_EVENTv1, replication.WRITE_ROWS_EVENTv2:
 		for _, row := range event.Rows {
-			after := rowToMap(columns, row)
-			if err := c.emitChange(ctx, factChan, operation, schemaName, tableName, nil, after, header); err != nil {
-				return err
-			}
+			changes = append(changes, rowChange{after: rowToMap(columns, row)})
 		}
 	case replication.DELETE_ROWS_EVENTv1, replication.DELETE_ROWS_EVENTv2:
 		for _, row := range event.Rows {
-			before := rowToMap(columns, row)
-			if err := c.emitChange(ctx, factChan, operation, schemaName, tableName, before, nil, header); err != nil {
-				return err
-			}
+			changes = append(changes, rowChange{before: rowToMap(columns, row)})
 		}
 	case replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
 		for i := 0; i+1 < len(event.Rows); i += 2 {
-			before := rowToMap(columns, event.Rows[i])
-			after := rowToMap(columns, event.Rows[i+1])
-			if err := c.emitChange(ctx, factChan, operation, schemaName, tableName, before, after, header); err != nil {
-				return err
-			}
+			changes = append(changes, rowChange{before: rowToMap(columns, event.Rows[i]), after: rowToMap(columns, event.Rows[i+1])})
 		}
 	}
-
-	return nil
+	if len(changes) == 0 {
+		return nil
+	}
+	c.mu.Lock()
+	binlog := c.currentBinlog
+	c.mu.Unlock()
+	barrier := adapters.NewAcknowledgementBarrier(len(changes), func(ackCtx context.Context) error {
+		return c.persistCheckpoint(ackCtx, cdcCheckpoint{Binlog: binlog, Pos: header.LogPos})
+	})
+	for index, change := range changes {
+		if err := c.emitChange(ctx, factChan, operation, schemaName, tableName, change.before, change.after, header, binlog, barrier.Callback(index)); err != nil {
+			return err
+		}
+	}
+	return barrier.Wait(ctx)
 }
 
-func (c *CDCSource) emitChange(ctx context.Context, factChan chan<- *adapters.TypedFact, operation, schemaName, tableName string, before, after map[string]interface{}, header *replication.EventHeader) error {
+func (c *CDCSource) emitChange(ctx context.Context, factChan chan<- *adapters.TypedFact, operation, schemaName, tableName string, before, after map[string]interface{}, header *replication.EventHeader, binlog string, acknowledge func(context.Context) error) error {
 	change := &ChangeEvent{
 		Operation: operation,
 		Schema:    schemaName,
 		Table:     tableName,
 		Before:    before,
 		After:     after,
-		Binlog:    c.currentBinlog,
+		Binlog:    binlog,
 		Pos:       header.LogPos,
 		Timestamp: time.Unix(int64(header.Timestamp), 0).UTC(),
 	}
@@ -466,6 +574,7 @@ func (c *CDCSource) emitChange(ctx context.Context, factChan chan<- *adapters.Ty
 		RawData:       rawData,
 		Timestamp:     change.Timestamp,
 		SourceID:      c.config.SourceID,
+		Acknowledge:   acknowledge,
 		Metadata: map[string]string{
 			"mysql.operation": operation,
 			"mysql.schema":    schemaName,
@@ -669,6 +778,9 @@ func (f *CDCFactory) Create(config adapters.SourceConfig) (adapters.FactSource, 
 	if v, ok := config.Config["gtid"].(string); ok {
 		cdcConfig.GTID = v
 	}
+	if v, ok := config.Config["checkpoint_path"].(string); ok {
+		cdcConfig.CheckpointPath = v
+	}
 	if v, ok := config.Config["dsn"].(string); ok {
 		cdcConfig.DSN = v
 	}
@@ -690,6 +802,9 @@ func (f *CDCFactory) ValidateConfig(config adapters.SourceConfig) error {
 	}
 	if _, ok := config.Config["user"]; !ok {
 		return fmt.Errorf("user is required for mysql_cdc source")
+	}
+	if checkpoint, ok := config.Config["checkpoint_path"].(string); !ok || strings.TrimSpace(checkpoint) == "" {
+		return fmt.Errorf("checkpoint_path is required for mysql_cdc source")
 	}
 	return nil
 }
@@ -752,6 +867,10 @@ func (f *CDCFactory) GetConfigSchema() adapters.ConfigSchema {
 			"gtid": {
 				Type:        "string",
 				Description: "GTID set to start from",
+			},
+			"checkpoint_path": {
+				Type:        "string",
+				Description: "Durable local checkpoint file for acknowledged binlog coordinates",
 			},
 			"dsn": {
 				Type:        "string",

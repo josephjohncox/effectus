@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"time"
 
@@ -20,6 +21,14 @@ import (
 	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/effectus/effectus-go/unified"
 )
+
+func multiBundleAsset(relative string) string {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("locate multi-bundle example source")
+	}
+	return filepath.Join(filepath.Dir(source), filepath.FromSlash(relative))
+}
 
 // Facts implementation for this example.
 type exampleFacts struct {
@@ -62,8 +71,8 @@ func (e *loggingExecutor) Execute(ctx context.Context, args map[string]interface
 }
 
 func main() {
-	manifestPath := flag.String("manifest", "examples/multi_bundle_runtime/manifest.json", "Path to extension manifest")
-	factsPath := flag.String("facts", "examples/multi_bundle_runtime/facts.json", "Path to fact payload JSON")
+	manifestPath := flag.String("manifest", multiBundleAsset("manifest.json"), "Path to extension manifest")
+	factsPath := flag.String("facts", multiBundleAsset("facts.json"), "Path to fact payload JSON")
 	watch := flag.Bool("watch", false, "Watch manifest for changes and reload")
 	interval := flag.Duration("interval", 3*time.Second, "Watch interval")
 	flag.Parse()
@@ -148,6 +157,23 @@ func runOnce(ctx context.Context, manifestPath, factsPath string) error {
 	}
 
 	attachExecutors(verbRegistry)
+	for _, specification := range verbRegistry.GetAllVerbs() {
+		arguments := make(map[string]*types.Type, len(specification.ArgTypes))
+		for name, typeName := range specification.ArgTypes {
+			argumentType, parseErr := types.ParseTypeName(typeName)
+			if parseErr != nil {
+				return fmt.Errorf("parse verb %s argument %s: %w", specification.Name, name, parseErr)
+			}
+			arguments[name] = argumentType
+		}
+		returnType, parseErr := types.ParseTypeName(specification.ReturnType)
+		if parseErr != nil {
+			return fmt.Errorf("parse verb %s return type: %w", specification.Name, parseErr)
+		}
+		if err := typeSystem.RegisterVerbType(specification.Name, arguments, returnType); err != nil {
+			return fmt.Errorf("register verb %s for rule checking: %w", specification.Name, err)
+		}
+	}
 
 	comp := compiler.NewCompiler()
 	comp.GetTypeSystem().MergeTypeSystem(typeSystem)

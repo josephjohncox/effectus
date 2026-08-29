@@ -49,7 +49,8 @@ func main() {
 		SchemaMapping: map[string]string{
 			database + ".cdc_events": "example.cdc_event",
 		},
-		DSN: dsn,
+		DSN:            dsn,
+		CheckpointPath: envOrDefault("MYSQL_CHECKPOINT_PATH", "./out/mysql-cdc-checkpoint.json"),
 	})
 	if err != nil {
 		log.Fatalf("create source: %v", err)
@@ -74,6 +75,11 @@ func main() {
 	case fact := <-facts:
 		log.Printf("fact schema=%s source=%s", fact.SchemaName, fact.SourceID)
 		log.Printf("raw=%s", string(fact.RawData))
+		if fact.Acknowledge != nil {
+			if err := fact.Acknowledge(ctx); err != nil {
+				log.Fatalf("acknowledge fact: %v", err)
+			}
+		}
 	case <-ctx.Done():
 		log.Printf("timeout waiting for fact")
 	}

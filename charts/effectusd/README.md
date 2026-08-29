@@ -50,7 +50,7 @@ To upgrade the verifier, review its identity and trust-policy changes. Pin the n
 
 ## Singleton rollout contract
 
-- `image.repository` plus an immutable `image.digest`
+- `image.repository` plus an immutable `image.digest` (required by default)
 - `postgres.existingSecret` and `postgres.dsnKey` for the durable ledger
 - `postgres.pool.*` for the runtime connection budget
 - `migrations.existingSecret` for a separate DDL credential
@@ -62,7 +62,7 @@ To upgrade the verifier, review its identity and trust-policy changes. Pin the n
 - `facts.*` (store path, merge strategy, cache limits)
 - `initContainers`, `extraVolumes`, `extraVolumeMounts` for the verifier or sidecar data
 - `config.*` (mount a config map and pass `--config`)
-The chart sets one replica and the Recreate Deployment strategy. Do not use multiple replicas or a rolling strategy.
+The chart sets one replica and the Recreate Deployment strategy. Do not use multiple replicas or a rolling strategy. Mutable tags render only when `image.unsafeAllowTag=true`; this switch is for local development and is not a production contract.
 
 An upgrade stops the old pod before it starts the new pod. Plan for HTTP and gRPC downtime.
 

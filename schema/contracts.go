@@ -14,6 +14,8 @@ type FactApplication = ledger.FactApplication
 type DurableAdmission = ledger.DurableAdmission
 type ExecutionLease = ledger.ExecutionLease
 type ExecutionLedger = ledger.ExecutionLedger
+type RecoveryStats = ledger.RecoveryStats
+type RecoveryStatsReader = ledger.RecoveryStatsReader
 type AtomicAdmissionStore = ledger.AtomicAdmissionStore
 
 const (

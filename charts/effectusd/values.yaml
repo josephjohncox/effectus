@@ -2,6 +2,8 @@ image:
   repository: ghcr.io/josephjohncox/effectusd
   tag: ""
   digest: ""
+  # Development only. Production rendering requires an immutable digest.
+  unsafeAllowTag: false
   pullPolicy: IfNotPresent
 
 postgres:

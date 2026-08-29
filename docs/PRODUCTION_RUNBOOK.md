@@ -332,10 +332,18 @@ Approved actions are cause correction, dependency restoration, fence repair, or 
 
 Do not mark blocked work as completed. Do not delete it. Escalate an unknown external outcome before a replay.
 
+Run the repository restore harness before a release drill:
+
+```bash
+KAFKA_BROKERS=localhost:9092 just restore-drill
+```
+
+The harness creates an isolated restore database, validates migrations and relational integrity, compares blocked-state counts, archives non-PostgreSQL inputs, optionally exercises Kafka commit/restart reconciliation, and writes `out/restore-drill/evidence.md`. Set `RESTORE_INPUTS` to the environment's immutable chart values, ConfigMaps, Secret exports, certificates, verifier policy, extension inventory, and PVC export. Set `FACTS_PROJECTION_PATH` when the optional facts projection volume is enabled.
+
 ## Release failure cleanup
 
-Registry and GitHub publication cannot form one transaction. The release workflow uses staging references and creates the GitHub release last.
+Registry and GitHub publication cannot form one transaction. Before release, configure every production registry repository to reject tag mutation and verify that policy with a denied overwrite test. The workflow checks each destination again immediately before it writes, promotes verified digests, and creates a signed `release-manifest.json`. The GitHub release that contains this manifest is the sole completion marker.
 
-If promotion fails, keep the immutable digests and do not recreate the version tag. Remove only staging tags after you preserve logs and signatures.
+If promotion fails before the completion marker, treat the version as incomplete. Keep the immutable digests and do not overwrite or recreate any version tag. Remove only staging tags after you preserve logs and signatures.
 
-Investigate any missing signature, SBOM, provenance record, chart, bundle, or archive. Start a new patch version after correction.
+Investigate any missing signature, SBOM, provenance record, chart, bundle, or archive. Start a new patch version after correction. A release is consumable only when its signed completion manifest lists all three verified digest references.

@@ -36,11 +36,11 @@ func TestPollerBuildsDurableRescanPages(t *testing.T) {
 
 	p.cursor = pollCursor{timestamp: time.Unix(10, 0), tieBreak: int64(7), set: true}
 	query, args = p.buildQuery()
-	if !strings.Contains(query, `"created_at" > $2`) || !strings.Contains(query, `"id" > $3`) || !strings.Contains(query, "LIMIT $4") {
-		t.Fatalf("lower-bound query = %s", query)
+	if strings.Contains(query, `"created_at" >`) || !strings.Contains(query, `ORDER BY "created_at", "id" LIMIT $2`) {
+		t.Fatalf("durable rescan must not exclude delayed lower commits: %s", query)
 	}
-	if len(args) != 4 || args[2] != int64(7) {
-		t.Fatalf("lower-bound args = %#v", args)
+	if len(args) != 2 || args[0] != "test" || args[1] != 25 {
+		t.Fatalf("rescan args = %#v", args)
 	}
 }
 

@@ -16,13 +16,19 @@ type reloadSnapshotLoader struct {
 	source    []byte
 	executors []*reloadSnapshotExecutor
 }
-type reloadSnapshotExecutor struct{ closed atomic.Int32 }
+type reloadSnapshotExecutor struct {
+	closed   atomic.Int32
+	closeErr error
+}
 
 func (executor *reloadSnapshotExecutor) Execute(context.Context, map[string]any) (any, error) {
 	return nil, nil
 }
-func (executor *reloadSnapshotExecutor) Close() error { executor.closed.Add(1); return nil }
-func (extension *reloadSnapshotLoader) Name() string  { return "reload-snapshot" }
+func (executor *reloadSnapshotExecutor) Close() error {
+	executor.closed.Add(1)
+	return executor.closeErr
+}
+func (extension *reloadSnapshotLoader) Name() string { return "reload-snapshot" }
 func (extension *reloadSnapshotLoader) Load(_ context.Context, target loader.LoadTarget) error {
 	extension.mu.Lock()
 	defer extension.mu.Unlock()
@@ -66,6 +72,27 @@ func TestRetiredExtensionSnapshotWaitsForAcceptedExecution(t *testing.T) {
 	require.Zero(t, first.closed.Load())
 	_, err = runtime.Engine().Execute(t.Context(), ExecuteRequest{ResumeExecutionID: "old", WaitMode: WaitTerminal})
 	require.NoError(t, err)
+	require.Equal(t, int32(1), first.closed.Load())
+}
+
+func TestHotReloadPublicationSurvivesPreviousCloserFailure(t *testing.T) {
+	extension := &reloadSnapshotLoader{source: []byte(validWorkflowSource("1"))}
+	runtime := NewExecutionRuntime()
+	runtime.EnableLegacyExecutionForCompatibility()
+	runtime.RegisterExtensionLoader(extension)
+	require.NoError(t, runtime.CompileAndValidate(t.Context()))
+	extension.mu.Lock()
+	first := extension.executors[0]
+	first.closeErr = context.DeadlineExceeded
+	extension.source = []byte(validWorkflowSource("2"))
+	extension.mu.Unlock()
+
+	require.NoError(t, runtime.HotReload(t.Context()), "cleanup failure cannot reject a committed publication")
+	require.Equal(t, StateReady, runtime.GetRuntimeInfo().State)
+	require.False(t, runtime.activeGeneration.unit.ExtensionSnapshot.Closed())
+	handle, err := runtime.activeGeneration.unit.ExtensionSnapshot.Acquire()
+	require.NoError(t, err, "installed candidate must remain acquirable")
+	require.NoError(t, handle.Release())
 	require.Equal(t, int32(1), first.closed.Load())
 }
 

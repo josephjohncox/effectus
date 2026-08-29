@@ -210,7 +210,10 @@ func (s *Source) GetSourceSchema() *adapters.Schema {
 
 // HealthCheck checks connection status.
 func (s *Source) HealthCheck() error {
-	if s.conn == nil {
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+	if conn == nil {
 		return fmt.Errorf("connection not initialized")
 	}
 	return nil

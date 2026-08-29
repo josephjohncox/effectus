@@ -133,15 +133,13 @@ func TestPostgresExecutionRecoveryLeaseCAS(t *testing.T) {
 	_, created, err := store.AdmitExecutionAtomic(t.Context(), admission)
 	require.NoError(t, err)
 	require.True(t, created)
-	first, err := store.LeaseExecutions(t.Context(), "one", 1, 20*time.Millisecond)
+	first, err := store.LeaseExecution(t.Context(), executionID, "one", 20*time.Millisecond)
 	require.NoError(t, err)
-	require.Len(t, first, 1)
 	time.Sleep(40 * time.Millisecond)
-	second, err := store.LeaseExecutions(t.Context(), "two", 1, time.Second)
+	second, err := store.LeaseExecution(t.Context(), executionID, "two", time.Second)
 	require.NoError(t, err)
-	require.Len(t, second, 1)
-	require.ErrorIs(t, store.FinishExecutionLease(t.Context(), first[0], ExecutionCompleted, ""), ErrStaleExecutionLease)
-	require.NoError(t, store.FinishExecutionLease(t.Context(), second[0], ExecutionCompleted, ""))
+	require.ErrorIs(t, store.FinishExecutionLease(t.Context(), first, ExecutionCompleted, ""), ErrStaleExecutionLease)
+	require.NoError(t, store.FinishExecutionLease(t.Context(), second, ExecutionCompleted, ""))
 }
 
 func cleanupExecutionIntegration(t *testing.T, db *sql.DB, executionID, sagaID, generation string) {

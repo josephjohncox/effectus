@@ -4,7 +4,7 @@
   "registries": [
     {
       "name": "local",
-      "base": "./examples/multi_bundle_runtime/bundles",
+      "base": "./multi_bundle_runtime/bundles",
       "type": "file",
       "default": true
     }

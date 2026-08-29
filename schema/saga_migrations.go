@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pressly/goose/v3"
 )
@@ -27,8 +28,22 @@ func MigrateSagaV2(ctx context.Context, db *sql.DB) error {
 	}
 	defer lockConnection.Close()
 	const migrationLockID int64 = 0x4566666563747573
-	if _, err := lockConnection.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, migrationLockID); err != nil {
-		return fmt.Errorf("acquire saga migration lock: %w", err)
+	for {
+		var acquired bool
+		if err := lockConnection.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, migrationLockID).Scan(&acquired); err != nil {
+			return fmt.Errorf("acquire saga migration lock: %w", err)
+		}
+		if acquired {
+			break
+		}
+		// A blocking advisory-lock statement keeps a transaction snapshot alive.
+		// That snapshot can deadlock CREATE INDEX CONCURRENTLY in the lock holder.
+		// Poll only between completed statements so no waiting snapshot remains.
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("acquire saga migration lock: %w", ctx.Err())
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 	defer func() {
 		_, _ = lockConnection.ExecContext(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, migrationLockID)

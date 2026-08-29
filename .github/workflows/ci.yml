@@ -497,6 +497,12 @@ jobs:
             sleep 2
           done
 
+      - name: Apply durable migrations once
+        env:
+          EFFECTUS_POSTGRES_DSN: "postgres://effectus:effectus@localhost:55433/\
+            effectus_saga?sslmode=disable"
+        run: go run ./cmd/effectusd --database-migrations=apply
+
       - name: Saga integration tests
         env:
           DB_DSN: "postgres://effectus:effectus@localhost:55433/\
@@ -504,7 +510,7 @@ jobs:
           POSTGRES_DSN: "postgres://effectus:effectus@localhost:55433/\
             effectus_saga?sslmode=disable"
           REDIS_ADDR: localhost:56379
-        run: go test -tags=integration ./runtime ./schema ./cmd/effectusd
+        run: go test -p 1 -tags=integration ./runtime ./schema ./cmd/effectusd
 
       - name: Redis Streams adapter integration tests
         env:

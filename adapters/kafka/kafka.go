@@ -8,6 +8,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/segmentio/kafka-go"
@@ -36,6 +37,11 @@ type KafkaSource struct {
 	started   bool
 	runActive bool
 	unhealthy error
+
+	lastFetchedOffset   atomic.Int64
+	lastCommittedOffset atomic.Int64
+	highWatermark       atomic.Int64
+	commitHealthy       atomic.Bool
 }
 
 // Config holds Kafka source configuration
@@ -524,6 +530,8 @@ func (k *KafkaSource) run(ctx context.Context, handler Handler) (runErr error) {
 }
 
 func (k *KafkaSource) processMessage(ctx context.Context, message kafka.Message, committer recordCommitter, handler Handler) error {
+	k.lastFetchedOffset.Store(message.Offset)
+	k.highWatermark.Store(message.HighWaterMark)
 	deliveryID := DeliveryID(k.config.ClusterNamespace, message)
 	failures, err := k.attemptTracker.Attempts(ctx, deliveryID)
 	if err != nil {
@@ -647,7 +655,34 @@ func (k *KafkaSource) commitMessage(handlerContext context.Context, committer re
 		commitContext, cancel = context.WithTimeout(commitContext, k.config.CommitTimeout)
 		defer cancel()
 	}
-	return committer.Commit(commitContext, message)
+	if err := committer.Commit(commitContext, message); err != nil {
+		k.commitHealthy.Store(false)
+		return err
+	}
+	k.lastCommittedOffset.Store(message.Offset + 1)
+	k.commitHealthy.Store(true)
+	return nil
+}
+
+// ConsumerStatus is a nonblocking snapshot of the active Kafka boundary.
+type ConsumerStatus struct {
+	LastFetchedOffset   int64
+	LastCommittedOffset int64
+	HighWatermark       int64
+	Lag                 int64
+	CommitHealthy       bool
+}
+
+func (k *KafkaSource) ConsumerStatus() ConsumerStatus {
+	status := ConsumerStatus{
+		LastFetchedOffset: k.lastFetchedOffset.Load(), LastCommittedOffset: k.lastCommittedOffset.Load(),
+		HighWatermark: k.highWatermark.Load(), CommitHealthy: k.commitHealthy.Load(),
+	}
+	status.Lag = status.HighWatermark - status.LastCommittedOffset
+	if status.Lag < 0 {
+		status.Lag = 0
+	}
+	return status
 }
 
 // DeliveryID is stable across consumer restarts and group rebalances.

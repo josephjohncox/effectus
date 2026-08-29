@@ -83,6 +83,12 @@ func TestPostgresCDCIntegration(t *testing.T) {
 		if fact == nil {
 			t.Fatalf("expected fact")
 		}
+		if fact.Acknowledge == nil {
+			t.Fatalf("expected durable acknowledgement")
+		}
+		if err := fact.Acknowledge(ctx); err != nil {
+			t.Fatalf("acknowledge fact: %v", err)
+		}
 	case <-ctx.Done():
 		t.Fatalf("timeout waiting for fact")
 	}
@@ -141,7 +147,7 @@ func TestPostgresCDCDoesNotAdvanceSlotUnderBackpressureIntegration(t *testing.T)
 	}
 
 	// One fact fits in the output buffer. The second blocks the same WAL
-	// record, so confirmed_flush_lsn must not move yet.
+	// record, and neither is durably acknowledged, so the slot cannot move.
 	time.Sleep(200 * time.Millisecond)
 	var advanced bool
 	if err := db.QueryRow("SELECT confirmed_flush_lsn > $2::pg_lsn FROM pg_replication_slots WHERE slot_name=$1", slot, initial).Scan(&advanced); err != nil {
@@ -153,8 +159,11 @@ func TestPostgresCDCDoesNotAdvanceSlotUnderBackpressureIntegration(t *testing.T)
 	for i := 0; i < 2; i++ {
 		select {
 		case fact := <-facts:
-			if fact == nil {
-				t.Fatal("channel closed")
+			if fact == nil || fact.Acknowledge == nil {
+				t.Fatal("channel closed or acknowledgement missing")
+			}
+			if err := fact.Acknowledge(ctx); err != nil {
+				t.Fatalf("acknowledge CDC fact: %v", err)
 			}
 		case <-ctx.Done():
 			t.Fatal("timed out draining CDC facts")
@@ -176,8 +185,11 @@ func TestPostgresCDCDoesNotAdvanceSlotUnderBackpressureIntegration(t *testing.T)
 	}
 	select {
 	case fact := <-facts:
-		if fact == nil {
-			t.Fatal("channel closed before second batch")
+		if fact == nil || fact.Acknowledge == nil {
+			t.Fatal("channel closed before second batch or acknowledgement missing")
+		}
+		if err := fact.Acknowledge(ctx); err != nil {
+			t.Fatalf("acknowledge second batch: %v", err)
 		}
 	case <-ctx.Done():
 		t.Fatal("second independently committed batch was not emitted")
@@ -229,21 +241,24 @@ func TestPostgresPollerTupleCursorIntegration(t *testing.T) {
 	for len(blocked) != 1 {
 		time.Sleep(time.Millisecond)
 	}
-	for {
-		var processed int
-		if err := db.QueryRow("SELECT count(*) FROM " + pq.QuoteIdentifier(ledger) + " WHERE source_id = 'poller'").Scan(&processed); err != nil {
-			t.Fatal(err)
-		}
-		if processed == 1 {
-			break
-		}
-		time.Sleep(time.Millisecond)
+	var processed int
+	if err := db.QueryRow("SELECT count(*) FROM " + pq.QuoteIdentifier(ledger) + " WHERE source_id = 'poller'").Scan(&processed); err != nil {
+		t.Fatal(err)
+	}
+	if processed != 0 {
+		t.Fatalf("processed ledger advanced before acknowledgement: %d", processed)
 	}
 	cancel()
 	if err := <-done; err == nil {
 		t.Fatal("expected blocked poll to be canceled")
 	}
 	first := <-blocked
+	if first.Acknowledge == nil {
+		t.Fatal("poller fact has no durable acknowledgement")
+	}
+	if err := first.Acknowledge(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	var firstRow map[string]interface{}
 	if err := json.Unmarshal(first.RawData, &firstRow); err != nil {
 		t.Fatal(err)
@@ -253,14 +268,12 @@ func TestPostgresPollerTupleCursorIntegration(t *testing.T) {
 	}
 
 	remaining := make(chan *adapters.TypedFact, 10)
-	if err := poller.executePoll(t.Context(), remaining); err != nil {
+	received, err := executePollAcknowledged(t, poller, remaining, 4)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(remaining) != 4 {
-		t.Fatalf("remaining rows = %d, want 4", len(remaining))
-	}
-	for want := 2; want <= 5; want++ {
-		fact := <-remaining
+	for index, want := range []int{2, 3, 4, 5} {
+		fact := received[index]
 		var row map[string]interface{}
 		if err := json.Unmarshal(fact.RawData, &row); err != nil {
 			t.Fatal(err)
@@ -316,29 +329,46 @@ func TestPostgresPollerFindsDelayedLowerCommit(t *testing.T) {
 	defer poller.Stop(context.Background())
 
 	first := make(chan *adapters.TypedFact, 2)
-	if err := poller.executePoll(t.Context(), first); err != nil {
+	if _, err := executePollAcknowledged(t, poller, first, 1); err != nil {
 		t.Fatal(err)
-	}
-	if len(first) != 1 {
-		t.Fatalf("visible rows = %d, want higher committed row", len(first))
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 	second := make(chan *adapters.TypedFact, 2)
-	if err := poller.executePoll(t.Context(), second); err != nil {
+	received, err := executePollAcknowledged(t, poller, second, 1)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second) != 1 {
-		t.Fatalf("delayed rows = %d, want delayed lower row", len(second))
-	}
 	var row map[string]interface{}
-	if err := json.Unmarshal((<-second).RawData, &row); err != nil {
+	if err := json.Unmarshal(received[0].RawData, &row); err != nil {
 		t.Fatal(err)
 	}
 	if row["value"] != "lower" {
 		t.Fatalf("delayed value = %v", row["value"])
 	}
+}
+
+func executePollAcknowledged(t *testing.T, poller *PostgresPollerSource, out chan *adapters.TypedFact, count int) ([]*adapters.TypedFact, error) {
+	t.Helper()
+	errCh := make(chan error, 1)
+	go func() { errCh <- poller.executePoll(t.Context(), out) }()
+	facts := make([]*adapters.TypedFact, 0, count)
+	for index := 0; index < count; index++ {
+		select {
+		case fact := <-out:
+			if fact == nil || fact.Acknowledge == nil {
+				t.Fatalf("poller fact %d is nil or missing acknowledgement", index)
+			}
+			facts = append(facts, fact)
+			if err := fact.Acknowledge(t.Context()); err != nil {
+				t.Fatalf("acknowledge poller fact %d: %v", index, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for poller fact %d", index)
+		}
+	}
+	return facts, <-errCh
 }
 
 func waitForPostgres(ctx context.Context, db *sql.DB) error {

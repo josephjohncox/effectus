@@ -92,6 +92,23 @@ type ExtensionSnapshot struct {
 	closeMu   sync.Mutex
 }
 
+// NewResourceSnapshot creates snapshot ownership for resources reconstructed
+// from an immutable execution artifact.
+func NewResourceSnapshot(closers ...io.Closer) (*ExtensionSnapshot, error) {
+	snapshot := &ExtensionSnapshot{}
+	for _, closer := range closers {
+		if closer == nil {
+			_ = snapshot.Retire()
+			return nil, fmt.Errorf("resource snapshot closer is nil")
+		}
+		if err := snapshot.AttachCloser(closer); err != nil {
+			_ = snapshot.Retire()
+			return nil, err
+		}
+	}
+	return snapshot, nil
+}
+
 func (manager *ExtensionManager) Stage(ctx context.Context, options StageOptions) (*ExtensionSnapshot, error) {
 	if manager == nil {
 		return nil, fmt.Errorf("extension manager is required")

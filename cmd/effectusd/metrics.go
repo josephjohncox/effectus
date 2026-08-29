@@ -11,35 +11,44 @@ import (
 	"sync/atomic"
 	"time"
 
+	kafkaadapter "github.com/effectus/effectus-go/adapters/kafka"
 	effectusruntime "github.com/effectus/effectus-go/runtime"
 )
 
 type hotloadMetrics struct {
-	hotloadAttempts  uint64
-	hotloadFailures  uint64
-	ruleCompiles     uint64
-	listExecutions   uint64
-	flowExecutions   uint64
-	execFailures     uint64
-	verbExecutions   uint64
-	verbFailures     uint64
-	typecheckCount   uint64
-	typecheckSumNs   int64
-	typecheckBins    []uint64
-	engineExecutions uint64
-	engineErrors     uint64
-	recoveryErrors   uint64
-	recoveryBlocked  uint64
-	recoveryBacklog  int64
+	hotloadAttempts           uint64
+	hotloadFailures           uint64
+	ruleCompiles              uint64
+	listExecutions            uint64
+	flowExecutions            uint64
+	execFailures              uint64
+	verbExecutions            uint64
+	verbFailures              uint64
+	typecheckCount            uint64
+	typecheckSumNs            int64
+	typecheckBins             []uint64
+	engineExecutions          uint64
+	engineErrors              uint64
+	recoveryErrors            uint64
+	recoveryBlocked           uint64
+	recoveryBacklog           int64
+	recoveryBlockedCurrent    int64
+	recoveryOldestExecutionNs int64
+	recoveryOldestOutboxNs    int64
 }
 
 var typecheckBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5}
 
 var metrics = newHotloadMetrics()
 var metricsDatabase atomic.Pointer[sql.DB]
+var metricsKafkaSource atomic.Pointer[kafkaadapter.KafkaSource]
 
 func setMetricsDatabase(db *sql.DB) {
 	metricsDatabase.Store(db)
+}
+
+func setMetricsKafkaSource(source *kafkaadapter.KafkaSource) {
+	metricsKafkaSource.Store(source)
 }
 
 func newHotloadMetrics() *hotloadMetrics {
@@ -101,7 +110,10 @@ func (m *hotloadMetrics) ObserveExecution(result effectusruntime.ExecuteResult, 
 
 func (m *hotloadMetrics) ObserveRecovery(observation effectusruntime.RecoveryObservation) {
 	if observation.BacklogMeasured {
-		atomic.StoreInt64(&m.recoveryBacklog, int64(observation.Backlog))
+		atomic.StoreInt64(&m.recoveryBacklog, observation.Backlog)
+		atomic.StoreInt64(&m.recoveryBlockedCurrent, observation.Blocked)
+		atomic.StoreInt64(&m.recoveryOldestExecutionNs, observation.OldestExecutionAge.Nanoseconds())
+		atomic.StoreInt64(&m.recoveryOldestOutboxNs, observation.OldestOutboxAge.Nanoseconds())
 	}
 	if observation.Err != nil {
 		atomic.AddUint64(&m.recoveryErrors, 1)
@@ -124,10 +136,24 @@ func writeMetrics(w io.Writer) {
 	writeCounter(w, "effectusd_checked_execution_error_total", "Total checked engine errors", atomic.LoadUint64(&metrics.engineErrors))
 	writeCounter(w, "effectusd_recovery_error_total", "Total per-execution recovery errors", atomic.LoadUint64(&metrics.recoveryErrors))
 	writeCounter(w, "effectusd_recovery_blocked_total", "Total blocked recovery dispositions", atomic.LoadUint64(&metrics.recoveryBlocked))
-	fmt.Fprintf(w, "# TYPE effectusd_recovery_backlog gauge\neffectusd_recovery_backlog %d\n", atomic.LoadInt64(&metrics.recoveryBacklog))
+	writeGauge(w, "effectusd_recovery_backlog", "Current nonterminal execution population", atomic.LoadInt64(&metrics.recoveryBacklog))
+	writeGauge(w, "effectusd_recovery_blocked", "Current blocked execution population", atomic.LoadInt64(&metrics.recoveryBlockedCurrent))
+	writeFloatGauge(w, "effectusd_recovery_oldest_execution_age_seconds", "Age of the oldest nonterminal execution", time.Duration(atomic.LoadInt64(&metrics.recoveryOldestExecutionNs)).Seconds())
+	writeFloatGauge(w, "effectusd_outbox_oldest_dispatch_age_seconds", "Age of the oldest pending outbox dispatch", time.Duration(atomic.LoadInt64(&metrics.recoveryOldestOutboxNs)).Seconds())
 	count := atomic.LoadUint64(&metrics.typecheckCount)
 	sumNs := atomic.LoadInt64(&metrics.typecheckSumNs)
 	writeHistogram(w, "effectusd_rule_typecheck_duration_seconds", "Rule typecheck duration", count, sumNs, metrics.typecheckBins)
+	if source := metricsKafkaSource.Load(); source != nil {
+		status := source.ConsumerStatus()
+		writeGauge(w, "effectusd_kafka_consumer_lag", "Current Kafka high-watermark lag", status.Lag)
+		writeGauge(w, "effectusd_kafka_last_fetched_offset", "Last fetched Kafka offset", status.LastFetchedOffset)
+		writeGauge(w, "effectusd_kafka_last_committed_offset", "Next committed Kafka offset", status.LastCommittedOffset)
+		commitHealthy := int64(0)
+		if status.CommitHealthy {
+			commitHealthy = 1
+		}
+		writeGauge(w, "effectusd_kafka_commit_healthy", "Whether the last Kafka commit succeeded", commitHealthy)
+	}
 	if db := metricsDatabase.Load(); db != nil {
 		stats := db.Stats()
 		writeGauge(w, "effectusd_database_open_connections", "Open PostgreSQL connections", int64(stats.OpenConnections))
@@ -143,6 +169,12 @@ func writeGauge(w io.Writer, name, help string, value int64) {
 	fmt.Fprintf(w, "# HELP %s %s\n", name, help)
 	fmt.Fprintf(w, "# TYPE %s gauge\n", name)
 	fmt.Fprintf(w, "%s %d\n", name, value)
+}
+
+func writeFloatGauge(w io.Writer, name, help string, value float64) {
+	fmt.Fprintf(w, "# HELP %s %s\n", name, help)
+	fmt.Fprintf(w, "# TYPE %s gauge\n", name)
+	fmt.Fprintf(w, "%s %.9f\n", name, value)
 }
 
 func writeFloatCounter(w io.Writer, name, help string, value float64) {

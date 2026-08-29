@@ -1,5 +1,6 @@
 image:
   tag: "0.2.1"
+  unsafeAllowTag: true
 postgres:
   existingSecret: effectusd-postgres
 bundle:

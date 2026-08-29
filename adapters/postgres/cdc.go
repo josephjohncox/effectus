@@ -334,8 +334,8 @@ func (c *CDCSource) fetchChanges(ctx context.Context, pool *pgxpool.Pool, factCh
 		return fmt.Errorf("connection pool not initialized")
 	}
 
-	// Peeking is deliberately non-advancing. The slot is advanced below only
-	// after every fact from a WAL record has crossed the channel handoff.
+	// Peeking is deliberately non-advancing. The slot is advanced only after
+	// every fact from a WAL record reaches the caller's durable boundary.
 	rows, err := pool.Query(ctx,
 		"SELECT lsn, xid, data FROM pg_logical_slot_peek_changes($1, NULL, $2)",
 		c.config.SlotName,
@@ -380,7 +380,17 @@ func (c *CDCSource) fetchChanges(ctx context.Context, pool *pgxpool.Pool, factCh
 	rows.Close()
 
 	for _, record := range batch {
-		for _, fact := range record.facts {
+		if len(record.facts) == 0 {
+			if err := c.advanceSlot(ctx, pool, record.lsn); err != nil {
+				return err
+			}
+			continue
+		}
+		barrier := adapters.NewAcknowledgementBarrier(len(record.facts), func(ackCtx context.Context) error {
+			return c.advanceSlot(ackCtx, pool, record.lsn)
+		})
+		for index, fact := range record.facts {
+			fact.Acknowledge = barrier.Callback(index)
 			select {
 			case factChan <- fact:
 				c.metrics.RecordFactProcessed(c.config.SourceID, fact.SchemaName)
@@ -388,16 +398,23 @@ func (c *CDCSource) fetchChanges(ctx context.Context, pool *pgxpool.Pool, factCh
 				return ctx.Err()
 			}
 		}
-		if _, err := pool.Exec(ctx,
-			"SELECT pg_replication_slot_advance($1, $2::pg_lsn)",
-			c.config.SlotName, record.lsn,
-		); err != nil {
-			return fmt.Errorf("advance replication slot through %s: %w", record.lsn, err)
+		if err := barrier.Wait(ctx); err != nil {
+			return err
 		}
-		c.mu.Lock()
-		c.currentLSN = record.lsn
-		c.mu.Unlock()
 	}
+	return nil
+}
+
+func (c *CDCSource) advanceSlot(ctx context.Context, pool *pgxpool.Pool, lsn string) error {
+	if _, err := pool.Exec(ctx,
+		"SELECT pg_replication_slot_advance($1, $2::pg_lsn)",
+		c.config.SlotName, lsn,
+	); err != nil {
+		return fmt.Errorf("advance replication slot through %s: %w", lsn, err)
+	}
+	c.mu.Lock()
+	c.currentLSN = lsn
+	c.mu.Unlock()
 	return nil
 }
 

@@ -14,10 +14,12 @@ spec:
   selector:
     matchLabels:
       {{- include "effectusd.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
   template:
     metadata:
       labels:
         {{- include "effectusd.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: server
       annotations:
         effectus.dev/rollout-nonce: {{ .Values.rolloutNonce | quote }}
         {{- if .Values.config.enabled }}
@@ -38,8 +40,10 @@ spec:
         - name: effectusd
           {{- if .Values.image.digest }}
           image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"
+          {{- else if .Values.image.unsafeAllowTag }}
+          image: "{{ .Values.image.repository }}:{{ required "image.tag is required when image.unsafeAllowTag is true" .Values.image.tag }}"
           {{- else }}
-          image: "{{ .Values.image.repository }}:{{ required "image.tag or image.digest is required" .Values.image.tag }}"
+          {{- fail "image.digest is required; mutable image tags require image.unsafeAllowTag=true" }}
           {{- end }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
