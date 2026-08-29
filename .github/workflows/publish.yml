@@ -1,3 +1,7 @@
+# yamllint disable rule:line-length
+# yamllint disable rule:truthy
+# yamllint disable rule:comments
+---
 name: Publish
 
 on:
@@ -293,7 +297,23 @@ jobs:
           oras copy --recursive "${CHART_STAGE_REPO}@${chart_digest}" \
             "${CHART_REPO}:${VERSION}"
           test "$(crane digest "${CHART_REPO}:${VERSION}")" = "$chart_digest"
-          cosign verify "${CHART_REPO}@${chart_digest}" \
+          # Cosign signatures are repository-scoped. Sign the promoted chart in
+          # its final repository instead of assuming recursive copy relocates it.
+          chart_ref="${CHART_REPO}@${chart_digest}"
+          cosign sign --yes "$chart_ref"
+          cosign attest --yes --type slsaprovenance \
+            --predicate dist/release-provenance.json "$chart_ref"
+          cosign attest --yes --type cyclonedx \
+            --predicate dist/chart-sbom.cdx.json "$chart_ref"
+          cosign verify "$chart_ref" \
+            --certificate-identity-regexp \
+              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          cosign verify-attestation --type slsaprovenance "$chart_ref" \
+            --certificate-identity-regexp \
+              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          cosign verify-attestation --type cyclonedx "$chart_ref" \
             --certificate-identity-regexp \
               "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com

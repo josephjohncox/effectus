@@ -1,0 +1,311 @@
+# yamllint disable rule:line-length
+# yamllint disable rule:truthy
+# yamllint disable rule:comments
+---
+name: Recover Partial Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to recover, for example v0.2.1
+        required: true
+        type: string
+
+concurrency:
+  group: recover-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tools/vscode-extension/package-lock.json
+
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+        with:
+          version: v3.17.3
+
+      - name: Resolve and validate recovery coordinates
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          OWNER=${OWNER:-}
+          TAG=${TAG:-}
+          test -n "$OWNER"
+          printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
+          source_sha=$(git rev-parse HEAD)
+          test "$(git rev-parse "refs/tags/${TAG}^{commit}")" = "$source_sha"
+          version=${TAG#v}
+          test "$(awk '/^version:/ {print $2}' charts/effectusd/Chart.yaml)" = "$version"
+          test "$(node -p "require('./tools/vscode-extension/package.json').version")" = "$version"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub release already exists: $TAG" >&2
+            exit 1
+          fi
+          owner=$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')
+          {
+            echo "tag=$TAG"
+            echo "version=$version"
+            echo "source_sha=$source_sha"
+            echo "image_repo=ghcr.io/$owner/effectusd"
+            echo "bundle_repo=ghcr.io/$owner/bundles/flow-ui-demo"
+            echo "chart_repo=ghcr.io/$owner/helm/effectusd"
+            echo "chart_stage_repo=ghcr.io/$owner/helm-staging-${source_sha}/effectusd"
+            echo "original_identity=https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${TAG}"
+            echo "recovery_identity=https://github.com/${GITHUB_WORKFLOW_REF}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned recovery tools
+        run: |
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
+          go install github.com/sigstore/cosign/v2/cmd/cosign@v2.4.3
+          go install github.com/anchore/syft/cmd/syft@v1.22.0
+
+      - name: Build exact release assets
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          export SOURCE_DATE_EPOCH
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct)
+          mkdir -p dist
+          for target in \
+            linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            os=${target%/*}
+            arch=${target#*/}
+            suffix=""
+            archive="effectus-${VERSION}-${os}-${arch}.tar.gz"
+            if [ "$os" = windows ]; then
+              suffix=".exe"
+              archive="effectus-${VERSION}-${os}-${arch}.zip"
+            fi
+            work="dist/effectus-${os}-${arch}"
+            mkdir -p "$work"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -ldflags="-s -w -buildid=" \
+              -o "$work/effectusc$suffix" ./cmd/effectusc
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -ldflags="-s -w -buildid=" \
+              -o "$work/effectusd$suffix" ./cmd/effectusd
+            if [ "$os" = windows ]; then
+              (cd "$work" && zip -q "../$archive" ./*)
+            else
+              tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" \
+                --owner=0 --group=0 --numeric-owner -C "$work" \
+                -czf "dist/$archive" .
+            fi
+            rm -rf "$work"
+          done
+          go run ./cmd/effectusc bundle \
+            --name flow-ui-demo --version "$VERSION" \
+            --schema-dir examples/flow_ui_demo/schema \
+            --verb-dir examples/flow_ui_demo/verbs \
+            --verbschema examples/flow_ui_demo/schema/flow_verbs.json \
+            --rules-dir examples/flow_ui_demo/rules \
+            --output "dist/flow-ui-demo-${VERSION}.json"
+          helm package charts/effectusd --destination dist \
+            --version "$VERSION" --app-version "$VERSION"
+          docker build --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+            --tag effectus:release .
+
+      - name: Build VS Code extension
+        working-directory: tools/vscode-extension
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(node -p "require('./package.json').version")" = "$VERSION"
+          find . -maxdepth 1 -type f -name '*.vsix' -delete
+          npm ci
+          npm run package
+          mv "effectus-language-support-${VERSION}.vsix" ../../dist/
+
+      - name: Scan and describe recovered assets
+        env:
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          trivy="aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c"
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            "$trivy" image --scanners vuln --severity HIGH,CRITICAL \
+            --ignore-unfixed --exit-code 1 effectus:release
+          syft effectus:release -o cyclonedx-json=dist/image-sbom.cdx.json
+          syft "dir:charts/effectusd" \
+            -o cyclonedx-json=dist/chart-sbom.cdx.json
+          syft "file:dist/flow-ui-demo-${VERSION}.json" \
+            -o cyclonedx-json=dist/bundle-sbom.cdx.json
+          jq -n \
+            --arg buildType \
+              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/recover-release.yml" \
+            --arg builder "https://github.com/actions/runner" \
+            --arg uri "git+https://github.com/${GITHUB_REPOSITORY}@refs/tags/${TAG}" \
+            --arg sha "$SOURCE_SHA" \
+            '{buildType:$buildType,builder:{id:$builder},invocation:{configSource:{uri:$uri,digest:{sha1:$sha}}}}' \
+            > dist/release-provenance.json
+
+      - name: Sign local checksum manifest
+        env:
+          RECOVERY_IDENTITY: ${{ steps.release.outputs.recovery_identity }}
+        run: |
+          set -euo pipefail
+          (cd dist && find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' \
+            -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS)
+          (cd dist && sha256sum --check SHA256SUMS)
+          cosign sign-blob --yes \
+            --output-signature dist/SHA256SUMS.sig \
+            --output-certificate dist/SHA256SUMS.pem dist/SHA256SUMS
+          cosign verify-blob \
+            --certificate dist/SHA256SUMS.pem \
+            --signature dist/SHA256SUMS.sig \
+            --certificate-identity "$RECOVERY_IDENTITY" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            dist/SHA256SUMS
+
+      - name: Log in after local validation
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate promoted references and repair chart signatures
+        id: registry
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+          IMAGE_REPO: ${{ steps.release.outputs.image_repo }}
+          BUNDLE_REPO: ${{ steps.release.outputs.bundle_repo }}
+          CHART_REPO: ${{ steps.release.outputs.chart_repo }}
+          CHART_STAGE_REPO: ${{ steps.release.outputs.chart_stage_repo }}
+          ORIGINAL_IDENTITY: ${{ steps.release.outputs.original_identity }}
+          RECOVERY_IDENTITY: ${{ steps.release.outputs.recovery_identity }}
+        run: |
+          set -euo pipefail
+          issuer=https://token.actions.githubusercontent.com
+          image_stage="${IMAGE_REPO}:staging-${SOURCE_SHA}"
+          bundle_stage="${BUNDLE_REPO}:staging-${SOURCE_SHA}"
+          image_digest=$(crane digest "$image_stage")
+          bundle_digest=$(crane digest "$bundle_stage")
+          chart_digest=$(crane digest "${CHART_STAGE_REPO}:${VERSION}")
+          test "$(crane digest "${IMAGE_REPO}:${VERSION}")" = "$image_digest"
+          test "$(crane digest "${BUNDLE_REPO}:${VERSION}")" = "$bundle_digest"
+          test "$(crane digest "${CHART_REPO}:${VERSION}")" = "$chart_digest"
+          for ref in \
+            "${IMAGE_REPO}@${image_digest}" \
+            "${BUNDLE_REPO}@${bundle_digest}" \
+            "${CHART_STAGE_REPO}@${chart_digest}"; do
+            cosign verify "$ref" \
+              --certificate-identity "$ORIGINAL_IDENTITY" \
+              --certificate-oidc-issuer "$issuer"
+            cosign verify-attestation --type slsaprovenance "$ref" \
+              --certificate-identity "$ORIGINAL_IDENTITY" \
+              --certificate-oidc-issuer "$issuer"
+            cosign verify-attestation --type cyclonedx "$ref" \
+              --certificate-identity "$ORIGINAL_IDENTITY" \
+              --certificate-oidc-issuer "$issuer"
+          done
+          chart_ref="${CHART_REPO}@${chart_digest}"
+          if ! cosign verify "$chart_ref" \
+            --certificate-identity "$RECOVERY_IDENTITY" \
+            --certificate-oidc-issuer "$issuer" >/dev/null 2>&1; then
+            cosign sign --yes "$chart_ref"
+          fi
+          cosign attest --yes --type slsaprovenance \
+            --predicate dist/release-provenance.json "$chart_ref"
+          cosign attest --yes --type cyclonedx \
+            --predicate dist/chart-sbom.cdx.json "$chart_ref"
+          cosign verify "$chart_ref" \
+            --certificate-identity "$RECOVERY_IDENTITY" \
+            --certificate-oidc-issuer "$issuer"
+          cosign verify-attestation --type slsaprovenance "$chart_ref" \
+            --certificate-identity "$RECOVERY_IDENTITY" \
+            --certificate-oidc-issuer "$issuer"
+          cosign verify-attestation --type cyclonedx "$chart_ref" \
+            --certificate-identity "$RECOVERY_IDENTITY" \
+            --certificate-oidc-issuer "$issuer"
+          {
+            echo "image_digest=$image_digest"
+            echo "bundle_digest=$bundle_digest"
+            echo "chart_digest=$chart_digest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create and sign recovery completion manifest
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+          IMAGE_REPO: ${{ steps.release.outputs.image_repo }}
+          BUNDLE_REPO: ${{ steps.release.outputs.bundle_repo }}
+          CHART_REPO: ${{ steps.release.outputs.chart_repo }}
+          IMAGE_DIGEST: ${{ steps.registry.outputs.image_digest }}
+          BUNDLE_DIGEST: ${{ steps.registry.outputs.bundle_digest }}
+          CHART_DIGEST: ${{ steps.registry.outputs.chart_digest }}
+          RECOVERY_IDENTITY: ${{ steps.release.outputs.recovery_identity }}
+        run: |
+          set -euo pipefail
+          jq -n --arg version "$VERSION" --arg commit "$SOURCE_SHA" \
+            --arg image "${IMAGE_REPO}@${IMAGE_DIGEST}" \
+            --arg bundle "${BUNDLE_REPO}@${BUNDLE_DIGEST}" \
+            --arg chart "${CHART_REPO}@${CHART_DIGEST}" \
+            --arg recovery "$GITHUB_WORKFLOW_REF" \
+            '{schema_version:1,version:$version,commit:$commit,image:$image,bundle:$bundle,chart:$chart,complete:true,recovery_workflow:$recovery}' \
+            > dist/release-manifest.json
+          cosign sign-blob --yes \
+            --output-signature dist/release-manifest.json.sig \
+            --output-certificate dist/release-manifest.json.pem \
+            dist/release-manifest.json
+          cosign verify-blob \
+            --signature dist/release-manifest.json.sig \
+            --certificate dist/release-manifest.json.pem \
+            --certificate-identity "$RECOVERY_IDENTITY" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            dist/release-manifest.json
+
+      - name: Create GitHub release completion marker last
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub release appeared during recovery: $TAG" >&2
+            exit 1
+          fi
+          gh release create "$TAG" dist/* \
+            --verify-tag --notes-file "docs/releases/v${VERSION}.md" \
+            --title "Effectus $TAG"
