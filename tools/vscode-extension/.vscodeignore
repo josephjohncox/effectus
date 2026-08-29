@@ -1,10 +1,12 @@
 .eslint*
+.gitignore
 .github/**
 .vscode/**
 .vscode-test/**
+out/test/**
 **/*.map
 go.mod
 node_modules/.cache/**
 package-lock.json
 src/**
-tsconfig.json
+tsconfig*.json

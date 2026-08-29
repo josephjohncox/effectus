@@ -23,6 +23,7 @@ type runtimeConfig struct {
 	API           apiConfig                     `yaml:"api" json:"api"`
 	Facts         factsConfig                   `yaml:"facts" json:"facts"`
 	Saga          sagaConfig                    `yaml:"saga" json:"saga"`
+	Database      databaseConfig                `yaml:"database" json:"database"`
 	Verbs         verbConfig                    `yaml:"verbs" json:"verbs"`
 	Extensions    extensionConfig               `yaml:"extensions" json:"extensions"`
 	SchemaSources []adapters.SchemaSourceConfig `yaml:"schema_sources" json:"schema_sources"`
@@ -54,15 +55,18 @@ type grpcConfig struct {
 }
 
 type apiConfig struct {
-	Auth       string `yaml:"auth" json:"auth"`
-	Token      string `yaml:"token" json:"token"`
-	ReadToken  string `yaml:"read_token" json:"read_token"`
-	ACLFile    string `yaml:"acl_file" json:"acl_file"`
-	RateLimit  *int   `yaml:"rate_limit" json:"rate_limit"`
-	RateBurst  *int   `yaml:"rate_burst" json:"rate_burst"`
-	Hotload    *bool  `yaml:"hotload_rules" json:"hotload_rules"`
-	History    *int   `yaml:"rules_history" json:"rules_history"`
-	HistoryDir string `yaml:"rules_history_dir" json:"rules_history_dir"`
+	Auth              string `yaml:"auth" json:"auth"`
+	Token             string `yaml:"token" json:"token"`
+	ReadToken         string `yaml:"read_token" json:"read_token"`
+	ACLFile           string `yaml:"acl_file" json:"acl_file"`
+	RateLimit         *int   `yaml:"rate_limit" json:"rate_limit"`
+	RateBurst         *int   `yaml:"rate_burst" json:"rate_burst"`
+	Hotload           *bool  `yaml:"hotload_rules" json:"hotload_rules"`
+	History           *int   `yaml:"rules_history" json:"rules_history"`
+	HistoryDir        string `yaml:"rules_history_dir" json:"rules_history_dir"`
+	TrustedProxyCIDRs string `yaml:"trusted_proxy_cidrs" json:"trusted_proxy_cidrs"`
+	LimiterCapacity   *int   `yaml:"limiter_capacity" json:"limiter_capacity"`
+	LimiterIdleTTL    string `yaml:"limiter_idle_ttl" json:"limiter_idle_ttl"`
 }
 
 type factsConfig struct {
@@ -93,6 +97,19 @@ type kafkaConfig struct {
 	DLQMode          string   `yaml:"dlq_mode" json:"dlq_mode"`
 	PoisonAudit      string   `yaml:"poison_audit" json:"poison_audit"`
 	DeliveryLedger   string   `yaml:"delivery_ledger" json:"delivery_ledger"`
+}
+
+type databaseConfig struct {
+	DSN                string `yaml:"dsn" json:"dsn"`
+	Migrations         string `yaml:"migrations" json:"migrations"`
+	MaxOpen            *int   `yaml:"max_open" json:"max_open"`
+	MaxIdle            *int   `yaml:"max_idle" json:"max_idle"`
+	MaxLifetime        string `yaml:"max_lifetime" json:"max_lifetime"`
+	MaxIdleTime        string `yaml:"max_idle_time" json:"max_idle_time"`
+	MaxOpenConnections *int   `yaml:"max_open_connections" json:"max_open_connections"`
+	MaxIdleConnections *int   `yaml:"max_idle_connections" json:"max_idle_connections"`
+	ConnectionLifetime string `yaml:"connection_lifetime" json:"connection_lifetime"`
+	ConnectionIdleTime string `yaml:"connection_idle_time" json:"connection_idle_time"`
 }
 
 type sagaConfig struct {
@@ -175,6 +192,15 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 	if cfg == nil {
 		return nil
 	}
+	if cfg.Saga.Enabled != nil || cfg.Saga.Store != "" || cfg.Saga.Redis.Addr != "" || cfg.Saga.Redis.Password != "" || cfg.Saga.Redis.DB != nil || cfg.Saga.Redis.Prefix != "" || cfg.Saga.Redis.TTL != "" {
+		return fmt.Errorf("legacy saga/Redis settings are not supported; remove them and configure database.dsn for the required PostgreSQL durable runtime")
+	}
+	if len(cfg.Verbs.PluginDirs) != 0 {
+		return fmt.Errorf("verbs.plugin_dirs is not supported; use invocation-aware extension targets")
+	}
+	if cfg.Kafka.PoisonAudit != "" || cfg.Kafka.DeliveryLedger != "" {
+		return fmt.Errorf("kafka.poison_audit and kafka.delivery_ledger are no longer supported; remove them because PostgreSQL table effectus_kafka_deliveries is authoritative")
+	}
 
 	if cfg.Bundle.File != "" && !setFlags["bundle"] {
 		*bundleFile = cfg.Bundle.File
@@ -255,6 +281,19 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 	if cfg.API.HistoryDir != "" && !setFlags["rules-history-dir"] {
 		*rulesHistDir = cfg.API.HistoryDir
 	}
+	if cfg.API.TrustedProxyCIDRs != "" && !setFlags["trusted-proxy-cidrs"] {
+		*trustedProxyCIDRs = cfg.API.TrustedProxyCIDRs
+	}
+	if cfg.API.LimiterCapacity != nil && !setFlags["api-limiter-capacity"] {
+		*apiLimiterCapacity = *cfg.API.LimiterCapacity
+	}
+	if cfg.API.LimiterIdleTTL != "" && !setFlags["api-limiter-idle-ttl"] {
+		duration, err := time.ParseDuration(cfg.API.LimiterIdleTTL)
+		if err != nil {
+			return fmt.Errorf("api.limiter_idle_ttl: %w", err)
+		}
+		*apiLimiterIdleTTL = duration
+	}
 
 	if cfg.Facts.Store != "" && !setFlags["facts-store"] {
 		*factsStore = cfg.Facts.Store
@@ -282,40 +321,38 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 		*factsCacheNs = *cfg.Facts.Cache.MaxNamespaces
 	}
 
-	if cfg.Saga.Enabled != nil && !setFlags["saga"] {
-		*sagaEnabled = *cfg.Saga.Enabled
+	if cfg.Database.DSN != "" {
+		*postgresDSN = cfg.Database.DSN
+	} else if cfg.Saga.Postgres.DSN != "" {
+		*postgresDSN = cfg.Saga.Postgres.DSN
+		fmt.Fprintln(os.Stderr, "Warning: saga.postgres.dsn is deprecated; use database.dsn")
 	}
-	if cfg.Saga.Store != "" && !setFlags["saga-store"] {
-		*sagaStoreType = cfg.Saga.Store
+	if cfg.Database.Migrations != "" && !setFlags["database-migrations"] {
+		*databaseMigrations = cfg.Database.Migrations
 	}
-	if cfg.Saga.Redis.Addr != "" && !setFlags["saga-redis-addr"] {
-		*sagaRedisAddr = cfg.Saga.Redis.Addr
+	if cfg.Database.MaxOpen != nil && !setFlags["database-max-open"] {
+		*databaseMaxOpen = *cfg.Database.MaxOpen
 	}
-	if cfg.Saga.Redis.Password != "" && !setFlags["saga-redis-password"] {
-		*sagaRedisPass = cfg.Saga.Redis.Password
+	if cfg.Database.MaxIdle != nil && !setFlags["database-max-idle"] {
+		*databaseMaxIdle = *cfg.Database.MaxIdle
 	}
-	if cfg.Saga.Redis.DB != nil && !setFlags["saga-redis-db"] {
-		*sagaRedisDB = *cfg.Saga.Redis.DB
-	}
-	if cfg.Saga.Redis.Prefix != "" && !setFlags["saga-redis-prefix"] {
-		*sagaRedisPrefix = cfg.Saga.Redis.Prefix
-	}
-	if cfg.Saga.Redis.TTL != "" && !setFlags["saga-redis-ttl"] {
-		ttl, err := time.ParseDuration(cfg.Saga.Redis.TTL)
+	if cfg.Database.MaxLifetime != "" && !setFlags["database-max-lifetime"] {
+		duration, err := time.ParseDuration(cfg.Database.MaxLifetime)
 		if err != nil {
-			return fmt.Errorf("saga.redis.ttl: %w", err)
+			return fmt.Errorf("database.max_lifetime: %w", err)
 		}
-		*sagaRedisTTL = ttl
+		*databaseMaxLifetime = duration
 	}
-	if cfg.Saga.Postgres.DSN != "" && !setFlags["saga-postgres-dsn"] {
-		*sagaPgDSN = cfg.Saga.Postgres.DSN
+	if cfg.Database.MaxIdleTime != "" && !setFlags["database-max-idle-time"] {
+		duration, err := time.ParseDuration(cfg.Database.MaxIdleTime)
+		if err != nil {
+			return fmt.Errorf("database.max_idle_time: %w", err)
+		}
+		*databaseMaxIdleTime = duration
 	}
 
 	if len(cfg.Verbs.SpecDirs) > 0 && !setFlags["verb-dir"] {
 		*verbDir = strings.Join(cfg.Verbs.SpecDirs, ",")
-	}
-	if len(cfg.Verbs.PluginDirs) > 0 && !setFlags["plugin-dir"] {
-		*pluginDir = strings.Join(cfg.Verbs.PluginDirs, ",")
 	}
 	if cfg.Verbs.DuplicatePolicy != "" && !setFlags["verb-duplicate-policy"] {
 		*verbDuplicatePolicy = cfg.Verbs.DuplicatePolicy
@@ -392,11 +429,25 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 	if cfg.Kafka.DLQMode != "" && !setFlags["kafka-dlq-mode"] {
 		*kafkaDLQMode = cfg.Kafka.DLQMode
 	}
-	if cfg.Kafka.PoisonAudit != "" && !setFlags["kafka-poison-audit"] {
-		*kafkaPoisonAudit = cfg.Kafka.PoisonAudit
+	if cfg.Database.MaxOpenConnections != nil && !setFlags["db-max-open-connections"] {
+		*dbMaxOpen = *cfg.Database.MaxOpenConnections
 	}
-	if cfg.Kafka.DeliveryLedger != "" && !setFlags["kafka-delivery-ledger"] {
-		*kafkaDeliveryLedger = cfg.Kafka.DeliveryLedger
+	if cfg.Database.MaxIdleConnections != nil && !setFlags["db-max-idle-connections"] {
+		*dbMaxIdle = *cfg.Database.MaxIdleConnections
+	}
+	if cfg.Database.ConnectionLifetime != "" && !setFlags["db-connection-lifetime"] {
+		duration, err := time.ParseDuration(cfg.Database.ConnectionLifetime)
+		if err != nil {
+			return fmt.Errorf("database.connection_lifetime: %w", err)
+		}
+		*dbConnLifetime = duration
+	}
+	if cfg.Database.ConnectionIdleTime != "" && !setFlags["db-connection-idle-time"] {
+		duration, err := time.ParseDuration(cfg.Database.ConnectionIdleTime)
+		if err != nil {
+			return fmt.Errorf("database.connection_idle_time: %w", err)
+		}
+		*dbConnIdleTime = duration
 	}
 
 	return nil

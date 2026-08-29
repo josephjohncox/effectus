@@ -229,18 +229,28 @@ func (store *RedisOutboxStore) ClaimDispatch(ctx context.Context, options ClaimO
 		return nil, fmt.Errorf("claim owner and positive lease duration are required")
 	}
 	for retry := 0; retry < store.maxRetries; retry++ {
-		now, err := store.client.Time(ctx).Result()
-		if err != nil {
-			return nil, err
+		var sagaID string
+		if options.TargetDispatchID != "" {
+			var err error
+			sagaID, err = store.sagaForDispatch(ctx, options.TargetDispatchID)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			now, err := store.client.Time(ctx).Result()
+			if err != nil {
+				return nil, err
+			}
+			ids, err := store.client.ZRangeByScore(ctx, store.readyKey, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", now.UnixMilli()), Offset: 0, Count: 1}).Result()
+			if err != nil {
+				return nil, err
+			}
+			if len(ids) == 0 {
+				return nil, ErrNoDispatch
+			}
+			sagaID = ids[0]
 		}
-		ids, err := store.client.ZRangeByScore(ctx, store.readyKey, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", now.UnixMilli()), Offset: 0, Count: 1}).Result()
-		if err != nil {
-			return nil, err
-		}
-		if len(ids) == 0 {
-			return nil, ErrNoDispatch
-		}
-		value, err := store.mutateSaga(ctx, ids[0], func(memory *InMemoryOutboxStore) (any, error) { return memory.ClaimDispatch(ctx, options) })
+		value, err := store.mutateSaga(ctx, sagaID, func(memory *InMemoryOutboxStore) (any, error) { return memory.ClaimDispatch(ctx, options) })
 		if err == nil {
 			return value.(*Dispatch), nil
 		}

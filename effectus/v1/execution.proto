@@ -31,10 +31,11 @@ message ExecutionRequest {
   google.protobuf.Any facts = 3;
   // Typed facts for checked execution. New clients must use this field.
   google.protobuf.Struct typed_facts = 11;
+  // Only options.timeout_seconds is supported by effectusd.
   ExecutionOptions options = 4;
   string trace_id = 5;
-  // Schema validation options
-  SchemaValidation schema_validation = 6;
+  // Unsupported by effectusd. Preserved for wire compatibility.
+  SchemaValidation schema_validation = 6 [deprecated = true];
   string namespace = 7;
   string idempotency_key = 8;
   ExecutionWaitMode wait_mode = 9;
@@ -48,19 +49,20 @@ enum ExecutionWaitMode {
   EXECUTION_WAIT_MODE_TERMINAL = 2;
 }
 
-// ExecutionOptions provides options for rule execution
+// ExecutionOptions provides options for rule execution.
+// effectusd supports only timeout_seconds. Other fields are preserved for wire compatibility.
 message ExecutionOptions {
-  bool dry_run = 1;
-  int32 max_effects = 2;
+  bool dry_run = 1 [deprecated = true];
+  int32 max_effects = 2 [deprecated = true];
   int32 timeout_seconds = 3;
-  bool enable_tracing = 4;
-  repeated string capability_filter = 5;
-  // Buf-managed schema version constraints
-  string min_schema_version = 6;
-  string max_schema_version = 7;
+  bool enable_tracing = 4 [deprecated = true];
+  repeated string capability_filter = 5 [deprecated = true];
+  // Unsupported Buf-managed schema version constraints.
+  string min_schema_version = 6 [deprecated = true];
+  string max_schema_version = 7 [deprecated = true];
 }
 
-// SchemaValidation controls schema validation behavior
+// SchemaValidation is unsupported by effectusd and preserved for wire compatibility.
 message SchemaValidation {
   bool strict_mode = 1;
   bool allow_unknown_fields = 2;

@@ -6,10 +6,12 @@ Run with:
 
 ```bash
 EFFECTUS_API_TOKEN="..." EFFECTUS_API_READ_TOKEN="..." \
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
   effectusd --config effectusd.yaml \
   --oci-signature-verifier /usr/local/bin/effectus-verify-oci
 ```
+
+`EFFECTUS_SAGA_POSTGRES_DSN` and `saga.postgres.dsn` are warning-producing aliases for one compatibility window. New deployments must use `EFFECTUS_POSTGRES_DSN` or protected `database.dsn`.
 
 ## Example: Mixed HTTP + OCI verb sources
 
@@ -68,8 +70,8 @@ extensions:
   oci:
     - "ghcr.io/myorg/extension-bundles/payments@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-  # Optional: reload local extension manifests
-  reload_interval: "60s"
+  # The checked daemon requires immutable extensions. Reload is disabled.
+  reload_interval: "0s"
 
 verbs:
   duplicate_policy: "error" # error | replace | ignore
@@ -97,16 +99,18 @@ kafka:
   retry_initial: "1s"
   retry_max: "30s"
   poison_policy: "halt"
-  delivery_ledger: "/data/kafka-deliveries.jsonl"
 ```
 
-The durable delivery ledger increments the stable delivery attempt before each handler call. Attempt limits therefore survive rebalances and process restarts.
+PostgreSQL table `effectus_kafka_deliveries` is the sole daemon attempt and poison ledger.
+It records each failed handler call. Attempt limits survive rebalances and process restarts.
+Back up this table with the other `effectus_*` tables.
+The daemon rejects `delivery_ledger` and `poison_audit`. Remove these obsolete settings. PostgreSQL remains authoritative.
 The default poison policy leaves the failed offset uncommitted and stops the daemon.
-For `skip`, the same ledger records and deduplicates the poison acknowledgement.
+For `skip`, the PostgreSQL ledger records and deduplicates the poison acknowledgement.
 For `dlq`, set `dlq_topic` to a Kafka topic.
 Effectus waits for DLQ publication before it commits the source offset.
 
-Each message value uses this JSON shape:
+Each message value uses this JSON shape. `namespace` is the durable tenant identity; `universe` selects projection storage. HTTP compatibility uses `universe` as the namespace when `namespace` is omitted (or `default` when both are empty), but new clients should send both when the identities differ.
 
 ```json
 {
@@ -122,7 +126,7 @@ Each message value uses this JSON shape:
 
 ## Production deployment example
 
-Use this as a starting point for a checked deployment with persisted projections, ACLs, hotload, and metrics:
+Use this as a starting point for a checked deployment with persisted projections, ACLs, and metrics:
 
 ```yaml
 bundle:
@@ -139,7 +143,10 @@ api:
   acl_file: "/etc/effectus/acl.yaml"
   rate_limit: 300
   rate_burst: 120
-  hotload_rules: true
+  limiter_capacity: 10000
+  limiter_idle_ttl: "10m"
+  trusted_proxy_cidrs: "10.0.0.0/8"
+  hotload_rules: false
 
 facts:
   store: "file"
@@ -167,14 +174,21 @@ extensions:
     - "/etc/effectus/extensions"
   oci:
     - "ghcr.io/myorg/extension-bundles/payments@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-  reload_interval: "60s"
+
+database:
+  migrations: "validate"
+  max_open: 20
+  max_idle: 5
+  max_lifetime: "30m"
+  max_idle_time: "5m"
 
 verbs:
   duplicate_policy: "error"
   oci_warmup: true
   strict: true
 
-# Supply EFFECTUS_SAGA_POSTGRES_DSN from the secret manager.
+# Supply EFFECTUS_POSTGRES_DSN from the secret manager.
+# Run effectusd --database-migrations=apply with a DDL credential before normal startup.
 # The old saga.enabled mode is rejected; checked execution always uses V2.
 ```
 
@@ -225,15 +239,16 @@ Resolve the published digest, sign it under the deployment trust policy, and lis
 
 - CLI flags override config values when both are provided.
 - `/api/*` endpoints require a token; `/healthz` and `/readyz` are open by default.
-- Set `api.hotload_rules` to enable `/api/rules/validate` and `/api/rules/hotload` (UI rule editor + VS Code hot reload).
-- Production effectusd rejects Go plugin executors. Use immutable invocation-aware targets, or use plugins only in an explicitly trusted embedded library process.
-- Extension reload can re-read local `*.verbs.json` and `*.schema.json` files. An immutable OCI digest cannot change.
+- The checked daemon rejects `extensions.reload_interval` and `bundle.reload_interval` before it opens a database or listener.
+- Candidate validation is always available at `/api/rules/validate`. The daemon rejects `api.hotload_rules`. Deploy a new immutable digest for activation.
+- Production effectusd rejects Go plugin executors and explicitly supplied legacy saga or Redis settings. PostgreSQL is required for HTTP, gRPC, Kafka, and stream daemon transports.
+- Use `extensions.dirs` and `--extensions-dir` for local declarations. `verbs.spec_dirs` and `--verb-dir` are deprecated compatibility aliases.
 - Deploy a new OCI digest to publish another generation. Effectusd does not poll mutable OCI tags.
-- Schema sources load at startup. Set `extensions.reload_interval` only when a local or external source can return new declarations.
+- Schema sources and extension manifests load at startup. A change requires a pod replacement.
 - `verbs.duplicate_policy` controls how duplicate verb names are resolved; `verbs.oci_warmup` prefetches OCI verb bundles at startup.
 - `verbs.strict` controls runtime argument and return checks. The default is `true`. Use `false` only for unchecked development code.
 - `fixed_time` pins deterministic time for expression evaluation (useful for tests and canary runs).
-- Effectusd requires `EFFECTUS_SAGA_POSTGRES_DSN`. Redis remains available for tested library recovery scenarios but does not replace atomic PostgreSQL admission.
+- Effectusd requires `EFFECTUS_POSTGRES_DSN`. Redis remains available for tested library recovery scenarios but does not replace atomic PostgreSQL admission.
 
 ## External Schema Sources (Buf, SQL, Catalogs)
 
@@ -261,11 +276,11 @@ data:
   effectusd.yaml: |
     bundle:
       oci: "ghcr.io/myorg/bundles/fraud-demo@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      cache_dir: "/data/bundles"
     http:
       addr: ":8080"
     api:
       auth: "token"
-      token: "write-token"
 ```
 
 Deployment snippet:
@@ -278,7 +293,12 @@ containers:
       - "--config=/etc/effectus/effectusd.yaml"
       - "--oci-signature-verifier=/usr/local/bin/effectus-verify-oci"
     env:
-      - name: EFFECTUS_SAGA_POSTGRES_DSN
+      - name: EFFECTUS_API_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: effectusd-api
+            key: api-token
+      - name: EFFECTUS_POSTGRES_DSN
         valueFrom:
           secretKeyRef:
             name: effectus-postgres

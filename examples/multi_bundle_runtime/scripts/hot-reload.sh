@@ -7,7 +7,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 cp "$EXAMPLE_DIR/manifest.v1.json" "$EXAMPLE_DIR/manifest.json"
 
-(cd "$ROOT_DIR" && go run ./examples/multi_bundle_runtime --watch --interval 2s) &
+(cd "$ROOT_DIR" && go run ./multi_bundle_runtime --watch --interval 2s) &
 PID=$!
 
 trap 'kill $PID >/dev/null 2>&1 || true' EXIT

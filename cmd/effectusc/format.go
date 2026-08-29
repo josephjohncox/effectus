@@ -52,7 +52,9 @@ func newFormatCommand() *Command {
 				continue
 			}
 
-			if *write {
+			// --check is always read-only. Plain format retains its historical
+			// default of writing formatted content back to each input file.
+			if *write && !*check {
 				if err := os.WriteFile(filename, []byte(formatted), 0644); err != nil {
 					return fmt.Errorf("writing %s: %w", filename, err)
 				}

@@ -60,8 +60,9 @@ func normalizeStageOptions(options StageOptions) (StageOptions, error) {
 }
 
 type snapshotVerb struct {
-	spec     immutableVerbSpec
-	executor VerbExecutor
+	spec       immutableVerbSpec
+	executor   VerbExecutor
+	descriptor *ExecutorDescriptor
 }
 type snapshotData struct {
 	path  string
@@ -89,6 +90,23 @@ type ExtensionSnapshot struct {
 	retired   atomic.Bool
 	closed    atomic.Bool
 	closeMu   sync.Mutex
+}
+
+// NewResourceSnapshot creates snapshot ownership for resources reconstructed
+// from an immutable execution artifact.
+func NewResourceSnapshot(closers ...io.Closer) (*ExtensionSnapshot, error) {
+	snapshot := &ExtensionSnapshot{}
+	for _, closer := range closers {
+		if closer == nil {
+			_ = snapshot.Retire()
+			return nil, fmt.Errorf("resource snapshot closer is nil")
+		}
+		if err := snapshot.AttachCloser(closer); err != nil {
+			_ = snapshot.Retire()
+			return nil, err
+		}
+	}
+	return snapshot, nil
 }
 
 func (manager *ExtensionManager) Stage(ctx context.Context, options StageOptions) (*ExtensionSnapshot, error) {
@@ -148,6 +166,16 @@ func (snapshot *ExtensionSnapshot) Load(ctx context.Context, target LoadTarget) 
 	}
 	for _, item := range snapshot.verbs {
 		spec := item.spec.clone()
+		if item.descriptor != nil {
+			descriptorTarget, ok := target.(DescriptorLoadTarget)
+			if !ok {
+				return fmt.Errorf("load target cannot accept executor descriptor for %q", spec.GetName())
+			}
+			if err := descriptorTarget.RegisterVerbDescriptor(&spec, cloneExecutorDescriptor(*item.descriptor)); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := target.RegisterVerb(&spec, item.executor); err != nil {
 			return err
 		}
@@ -225,6 +253,8 @@ func (handle *ExtensionSnapshotHandle) Release() error {
 	return handle.snapshot.closeIfUnused()
 }
 
+// ExtensionSnapshotManager is retained for embedded compatibility.
+// Deprecated: ExecutionRuntime publishes the active snapshot with its checked generation.
 type ExtensionSnapshotManager struct {
 	active atomic.Pointer[ExtensionSnapshot]
 }
@@ -295,10 +325,54 @@ func (target *snapshotCaptureTarget) RegisterVerb(spec VerbSpec, executor VerbEx
 		return fmt.Errorf("extension verb %q is duplicated", immutable.name)
 	}
 	target.verbNames[immutable.name] = struct{}{}
-	target.verbs = append(target.verbs, snapshotVerb{immutable, executor})
+	target.verbs = append(target.verbs, snapshotVerb{spec: immutable, executor: executor})
 	target.captureCloser(executor)
 	return nil
 }
+func (target *snapshotCaptureTarget) RegisterVerbDescriptor(spec VerbSpec, descriptor ExecutorDescriptor) error {
+	if len(target.verbs) >= target.options.MaxVerbs {
+		return fmt.Errorf("extension verb limit exceeded")
+	}
+	immutable, err := captureImmutableVerbSpec(spec)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(descriptor.Type) == "" {
+		return fmt.Errorf("extension verb %q descriptor type is required", immutable.name)
+	}
+	descriptor.VerbName = immutable.name
+	descriptor = cloneExecutorDescriptor(descriptor)
+	if _, ok := target.verbNames[immutable.name]; ok {
+		return fmt.Errorf("extension verb %q is duplicated", immutable.name)
+	}
+	target.verbNames[immutable.name] = struct{}{}
+	target.verbs = append(target.verbs, snapshotVerb{spec: immutable, descriptor: &descriptor})
+	return nil
+}
+
+// AttachCloser adds a runtime-constructed resource to snapshot retirement.
+// It must be called before the snapshot is published or acquired.
+func (snapshot *ExtensionSnapshot) AttachCloser(closer io.Closer) error {
+	if snapshot == nil || closer == nil {
+		return fmt.Errorf("snapshot and closer are required")
+	}
+	snapshot.closeMu.Lock()
+	defer snapshot.closeMu.Unlock()
+	if snapshot.retired.Load() || snapshot.closed.Load() || snapshot.refs.Load() != 0 {
+		return fmt.Errorf("cannot attach a resource after snapshot publication")
+	}
+	snapshot.closers = append(snapshot.closers, closer)
+	return nil
+}
+
+func cloneExecutorDescriptor(descriptor ExecutorDescriptor) ExecutorDescriptor {
+	var config map[string]interface{}
+	if descriptor.Config != nil {
+		config, _ = cloneSnapshotValue(descriptor.Config).(map[string]interface{})
+	}
+	return ExecutorDescriptor{Type: descriptor.Type, VerbName: descriptor.VerbName, Config: config}
+}
+
 func (target *snapshotCaptureTarget) RegisterFunction(name string, implementation any) error {
 	if len(target.functions) >= target.options.MaxFunctions {
 		return fmt.Errorf("extension function limit exceeded")

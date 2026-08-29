@@ -29,7 +29,7 @@ func TestPostgresOutboxLeaseCASAndReplay(t *testing.T) {
 
 	_, err = storeOne.CreateSaga(ctx, CreateSagaRequest{
 		Namespace: "integration", SagaID: sagaID, ExecutionID: "execution-1",
-		PlanID: "plan-1", PlanDigest: "digest-1", Serial: true, allowUnstableIdentityForTest: true,
+		PlanID: "plan-1", PlanDigest: "digest-1", Serial: true, AllowUnstableIdentityForTest: true,
 	})
 	require.NoError(t, err)
 	dispatch, err := storeOne.EnqueueStep(ctx, EnqueueStepRequest{
@@ -46,13 +46,14 @@ func TestPostgresOutboxLeaseCASAndReplay(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, dispatch.ID, replayed.ID)
 
-	first, err := storeOne.ClaimDispatch(ctx, ClaimOptions{Owner: "one", LeaseDuration: 20 * time.Millisecond})
+	first, err := storeOne.ClaimDispatch(ctx, ClaimOptions{Owner: "one", LeaseDuration: 20 * time.Millisecond, TargetDispatchID: dispatch.ID})
 	require.NoError(t, err)
 	time.Sleep(40 * time.Millisecond)
-	second, err := storeTwo.ClaimDispatch(ctx, ClaimOptions{Owner: "two", LeaseDuration: time.Second})
+	second, err := storeTwo.ClaimDispatch(ctx, ClaimOptions{Owner: "two", LeaseDuration: time.Second, TargetDispatchID: dispatch.ID})
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), second.Attempt)
 	require.Equal(t, first.IdempotencyKey, second.IdempotencyKey)
+	require.Len(t, second.Fencing, 1)
 	err = storeOne.CompleteDispatch(ctx, Completion{
 		DispatchID: first.ID, Attempt: first.Attempt, LeaseToken: first.LeaseToken,
 		Outcome: invocation.OutcomeSuccess, Result: []byte(`null`),

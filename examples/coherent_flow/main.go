@@ -37,10 +37,7 @@ func (ebe *ExampleBusinessExecutor) Execute(ctx context.Context, args map[string
 		result["transactionId"] = "txn-12345"
 		result["confirmation"] = "Payment processed successfully"
 	case "SendNotification":
-		if to, ok := args["to"].(string); ok {
-			result["recipient"] = to
-			result["delivered"] = true
-		}
+		return true, nil
 	}
 
 	return result, nil
@@ -102,7 +99,7 @@ func createDemoExtensions() []loader.Loader {
 			Spec: &ExampleVerbSpec{
 				name:         "ProcessPayment",
 				description:  "Processes a payment transaction",
-				capabilities: []string{"write", "exclusive"},
+				capabilities: []string{"read", "write", "exclusive"},
 				resources: []ExampleResourceSpec{
 					{resource: "payment", capabilities: []string{"write"}},
 					{resource: "account", capabilities: []string{"read"}},
@@ -116,9 +113,23 @@ func createDemoExtensions() []loader.Loader {
 		},
 		{
 			Spec: &ExampleVerbSpec{
+				name:         "RefundPayment",
+				description:  "Refunds a payment transaction",
+				capabilities: []string{"write", "idempotent"},
+				resources: []ExampleResourceSpec{
+					{resource: "payment", capabilities: []string{"write"}},
+				},
+				argTypes:     map[string]string{"amount": "float", "account": "string"},
+				requiredArgs: []string{"amount", "account"},
+				returnType:   "PaymentResult",
+			},
+			Executor: &ExampleBusinessExecutor{Name: "RefundPayment"},
+		},
+		{
+			Spec: &ExampleVerbSpec{
 				name:         "SendNotification",
 				description:  "Sends notification to user",
-				capabilities: []string{"write", "idempotent"},
+				capabilities: []string{"create", "write", "idempotent"},
 				resources: []ExampleResourceSpec{
 					{resource: "notification", capabilities: []string{"create"}},
 				},
@@ -132,22 +143,22 @@ func createDemoExtensions() []loader.Loader {
 
 	// Static schema with functions and data
 	schemaLoader := loader.NewStaticSchemaLoader("business").
-		AddFunction("calculateFee", func(amount float64) float64 {
-			return amount * 0.029 // 2.9% processing fee
-		}).
-		AddFunction("formatCurrency", func(amount float64) string {
-			return fmt.Sprintf("$%.2f", amount)
-		}).
 		AddData("config.maxAmount", 10000.0).
 		AddData("config.currency", "USD").
 		AddData("config.feeRate", 0.029).
+		AddType("ValidationResult", loader.TypeDefinition{Name: "ValidationResult", Type: "object", Properties: map[string]interface{}{
+			"valid": map[string]interface{}{"type": "boolean"},
+		}}).
+		AddType("FraudResult", loader.TypeDefinition{Name: "FraudResult", Type: "object", Properties: map[string]interface{}{
+			"risk": map[string]interface{}{"type": "number"},
+		}}).
 		AddType("PaymentResult", loader.TypeDefinition{
 			Name: "PaymentResult",
 			Type: "object",
 			Properties: map[string]interface{}{
-				"success":       map[string]string{"type": "boolean"},
-				"transactionId": map[string]string{"type": "string"},
-				"amount":        map[string]string{"type": "number"},
+				"success":       map[string]interface{}{"type": "boolean"},
+				"transactionId": map[string]interface{}{"type": "string"},
+				"amount":        map[string]interface{}{"type": "number"},
 			},
 			Description: "Result of payment processing",
 		})
@@ -236,6 +247,7 @@ func main() {
 	// 1. Create execution runtime
 	fmt.Println("📋 Phase 1: Initialize Runtime")
 	rt := runtime.NewExecutionRuntime()
+	rt.EnableLegacyExecutionForCompatibility() // embedded example only; effectusd does not enable this path
 	fmt.Printf("   ✅ Runtime created in state: %s\n", rt.GetRuntimeInfo().State)
 	fmt.Println()
 

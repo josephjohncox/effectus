@@ -11,6 +11,35 @@ import (
 	"github.com/effectus/effectus-go/invocation"
 )
 
+func (store *PostgresOutboxStore) RecoveryStats(ctx context.Context) (RecoveryStats, error) {
+	var stats RecoveryStats
+	var oldestExecution, oldestOutbox sql.NullTime
+	err := store.db.QueryRowContext(ctx, `
+		SELECT
+			count(*) FILTER (WHERE state IN ('admitting','accepted','running')),
+			count(*) FILTER (WHERE state LIKE 'blocked_%'),
+			min(updated_at) FILTER (WHERE state IN ('admitting','accepted','running'))
+		FROM effectus_executions
+	`).Scan(&stats.Nonterminal, &stats.Blocked, &oldestExecution)
+	if err != nil {
+		return RecoveryStats{}, fmt.Errorf("read execution recovery statistics: %w", err)
+	}
+	if err := store.db.QueryRowContext(ctx, `
+		SELECT min(updated_at)
+		FROM effectus_saga_outbox
+		WHERE state NOT IN ('succeeded','failed_permanent')
+	`).Scan(&oldestOutbox); err != nil {
+		return RecoveryStats{}, fmt.Errorf("read outbox dispatch statistics: %w", err)
+	}
+	if oldestExecution.Valid {
+		stats.OldestNonterminal = oldestExecution.Time
+	}
+	if oldestOutbox.Valid {
+		stats.OldestOutbox = oldestOutbox.Time
+	}
+	return stats, nil
+}
+
 func (store *PostgresOutboxStore) PutArtifact(ctx context.Context, artifact ExecutionArtifact) error {
 	if err := validateExecutionArtifact(artifact); err != nil {
 		return err
@@ -194,6 +223,37 @@ func (store *PostgresOutboxStore) SetExecutionState(ctx context.Context, id stri
 		return ExecutionRecord{}, err
 	}
 	return store.GetExecution(ctx, id)
+}
+
+// LeaseExecution leases one known execution without contending with unrelated
+// recovery work. It is useful for targeted operator recovery and deterministic
+// integration checks.
+func (store *PostgresOutboxStore) LeaseExecution(ctx context.Context, executionID, owner string, duration time.Duration) (ExecutionLease, error) {
+	if executionID == "" || owner == "" || duration <= 0 {
+		return ExecutionLease{}, fmt.Errorf("execution ID, recovery owner, and positive lease duration are required")
+	}
+	token, err := executionLeaseToken()
+	if err != nil {
+		return ExecutionLease{}, err
+	}
+	lease := ExecutionLease{ExecutionID: executionID, Owner: owner, Token: token}
+	err = store.db.QueryRowContext(ctx, `
+		UPDATE effectus_executions
+		SET recovery_owner = $2, recovery_token = $3,
+		    recovery_deadline = now() + ($4 * interval '1 microsecond'),
+		    revision = revision + 1, updated_at = now()
+		WHERE execution_id = $1
+		  AND state NOT IN ('completed', 'failed', 'blocked_unknown', 'blocked_fence', 'blocked_dependency', 'blocked_compensation')
+		  AND (recovery_token IS NULL OR recovery_deadline <= now())
+		RETURNING recovery_deadline, revision
+	`, executionID, owner, token, duration.Microseconds()).Scan(&lease.Deadline, &lease.Revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ExecutionLease{}, ErrStaleExecutionLease
+	}
+	if err != nil {
+		return ExecutionLease{}, err
+	}
+	return lease, nil
 }
 
 func (store *PostgresOutboxStore) LeaseExecutions(ctx context.Context, owner string, limit int, duration time.Duration) ([]ExecutionLease, error) {

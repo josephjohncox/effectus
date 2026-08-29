@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 
 	"github.com/effectus/effectus-go/compiler"
 	"github.com/effectus/effectus-go/invocation"
 	"github.com/effectus/effectus-go/ir"
 	"github.com/effectus/effectus-go/loader"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/ledger"
 	"github.com/effectus/effectus-go/schema/verb"
 )
 
@@ -24,7 +25,7 @@ type artifactExecutorEntry struct {
 	ResolverDescriptor map[string]any `json:"resolver_descriptor"`
 }
 
-func (*ManifestArtifactResolver) ResolveArtifact(_ context.Context, artifact schema.ExecutionArtifact, checked *ir.Checked) (*compiler.CompiledUnit, error) {
+func (*ManifestArtifactResolver) ResolveArtifact(_ context.Context, artifact ledger.ExecutionArtifact, checked *ir.Checked) (*compiler.CompiledUnit, error) {
 	var environment ir.Environment
 	if err := json.Unmarshal(artifact.Environment, &environment); err != nil {
 		return nil, fmt.Errorf("decode checked environment: %w", err)
@@ -46,20 +47,36 @@ func (*ManifestArtifactResolver) ResolveArtifact(_ context.Context, artifact sch
 		}
 	}
 	specs := make(map[string]*compiler.CompiledVerbSpec, len(entries))
+	closers := make([]io.Closer, 0, len(entries))
+	closeResolved := func() {
+		for index := len(closers) - 1; index >= 0; index-- {
+			_ = closers[index].Close()
+		}
+	}
 	for _, entry := range entries {
 		contract, ok := environment.Verbs[entry.Name]
 		if !ok {
+			closeResolved()
 			return nil, fmt.Errorf("executor %q has no checked contract", entry.Name)
 		}
 		implementation, err := resolveInvocationDescriptor(entry.Name, entry.ResolverDescriptor)
 		if err != nil {
+			closeResolved()
 			return nil, err
+		}
+		if closer, ok := implementation.(io.Closer); ok {
+			closers = append(closers, closer)
 		}
 		strict := true
 		spec := &verb.Spec{Name: entry.Name, ArgTypes: contract.Arguments, RequiredArgs: contract.RequiredArgs, ReturnType: contract.ResultType, Inverse: contract.InverseVerb, Executor: implementation, StrictArgs: &strict, StrictReturn: &strict}
 		specs[entry.Name] = &compiler.CompiledVerbSpec{Spec: spec, ExecutorType: compiler.ExecutorLocal, ExecutorConfig: &compiler.LocalExecutorConfig{Implementation: implementation}, TypeSignature: &compiler.TypeSignature{InputTypes: contract.Arguments, OutputType: contract.ResultType}}
 	}
-	return &compiler.CompiledUnit{VerbSpecs: specs, Functions: map[string]*compiler.CompiledFunction{}, CheckedIR: checked, IREnvironment: environment, InitialData: functionEnvelope.InitialData}, nil
+	snapshot, err := loader.NewResourceSnapshot(closers...)
+	if err != nil {
+		closeResolved()
+		return nil, fmt.Errorf("own resolved executor resources: %w", err)
+	}
+	return &compiler.CompiledUnit{VerbSpecs: specs, Functions: map[string]*compiler.CompiledFunction{}, CheckedIR: checked, IREnvironment: environment, InitialData: functionEnvelope.InitialData, ExtensionSnapshot: snapshot, ExecutionOwnedSnapshot: true}, nil
 }
 
 func resolveInvocationDescriptor(name string, descriptor map[string]any) (verb.Executor, error) {

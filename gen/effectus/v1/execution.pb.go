@@ -254,10 +254,13 @@ type ExecutionRequest struct {
 	Version     string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
 	Facts       *anypb.Any             `protobuf:"bytes,3,opt,name=facts,proto3" json:"facts,omitempty"`
 	// Typed facts for checked execution. New clients must use this field.
-	TypedFacts *structpb.Struct  `protobuf:"bytes,11,opt,name=typed_facts,json=typedFacts,proto3" json:"typed_facts,omitempty"`
-	Options    *ExecutionOptions `protobuf:"bytes,4,opt,name=options,proto3" json:"options,omitempty"`
-	TraceId    string            `protobuf:"bytes,5,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
-	// Schema validation options
+	TypedFacts *structpb.Struct `protobuf:"bytes,11,opt,name=typed_facts,json=typedFacts,proto3" json:"typed_facts,omitempty"`
+	// Only options.timeout_seconds is supported by effectusd.
+	Options *ExecutionOptions `protobuf:"bytes,4,opt,name=options,proto3" json:"options,omitempty"`
+	TraceId string            `protobuf:"bytes,5,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
+	// Unsupported by effectusd. Preserved for wire compatibility.
+	//
+	// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
 	SchemaValidation *SchemaValidation `protobuf:"bytes,6,opt,name=schema_validation,json=schemaValidation,proto3" json:"schema_validation,omitempty"`
 	Namespace        string            `protobuf:"bytes,7,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	IdempotencyKey   string            `protobuf:"bytes,8,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
@@ -340,6 +343,7 @@ func (x *ExecutionRequest) GetTraceId() string {
 	return ""
 }
 
+// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
 func (x *ExecutionRequest) GetSchemaValidation() *SchemaValidation {
 	if x != nil {
 		return x.SchemaValidation
@@ -375,16 +379,24 @@ func (x *ExecutionRequest) GetGenerationDigest() string {
 	return ""
 }
 
-// ExecutionOptions provides options for rule execution
+// ExecutionOptions provides options for rule execution.
+// effectusd supports only timeout_seconds. Other fields are preserved for wire compatibility.
 type ExecutionOptions struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	DryRun           bool                   `protobuf:"varint,1,opt,name=dry_run,json=dryRun,proto3" json:"dry_run,omitempty"`
-	MaxEffects       int32                  `protobuf:"varint,2,opt,name=max_effects,json=maxEffects,proto3" json:"max_effects,omitempty"`
-	TimeoutSeconds   int32                  `protobuf:"varint,3,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
-	EnableTracing    bool                   `protobuf:"varint,4,opt,name=enable_tracing,json=enableTracing,proto3" json:"enable_tracing,omitempty"`
-	CapabilityFilter []string               `protobuf:"bytes,5,rep,name=capability_filter,json=capabilityFilter,proto3" json:"capability_filter,omitempty"`
-	// Buf-managed schema version constraints
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
+	DryRun bool `protobuf:"varint,1,opt,name=dry_run,json=dryRun,proto3" json:"dry_run,omitempty"`
+	// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
+	MaxEffects     int32 `protobuf:"varint,2,opt,name=max_effects,json=maxEffects,proto3" json:"max_effects,omitempty"`
+	TimeoutSeconds int32 `protobuf:"varint,3,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
+	EnableTracing bool `protobuf:"varint,4,opt,name=enable_tracing,json=enableTracing,proto3" json:"enable_tracing,omitempty"`
+	// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
+	CapabilityFilter []string `protobuf:"bytes,5,rep,name=capability_filter,json=capabilityFilter,proto3" json:"capability_filter,omitempty"`
+	// Unsupported Buf-managed schema version constraints.
+	//
+	// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
 	MinSchemaVersion string `protobuf:"bytes,6,opt,name=min_schema_version,json=minSchemaVersion,proto3" json:"min_schema_version,omitempty"`
+	// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
 	MaxSchemaVersion string `protobuf:"bytes,7,opt,name=max_schema_version,json=maxSchemaVersion,proto3" json:"max_schema_version,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
@@ -420,6 +432,7 @@ func (*ExecutionOptions) Descriptor() ([]byte, []int) {
 	return file_effectus_v1_execution_proto_rawDescGZIP(), []int{1}
 }
 
+// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
 func (x *ExecutionOptions) GetDryRun() bool {
 	if x != nil {
 		return x.DryRun
@@ -427,6 +440,7 @@ func (x *ExecutionOptions) GetDryRun() bool {
 	return false
 }
 
+// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
 func (x *ExecutionOptions) GetMaxEffects() int32 {
 	if x != nil {
 		return x.MaxEffects
@@ -441,6 +455,7 @@ func (x *ExecutionOptions) GetTimeoutSeconds() int32 {
 	return 0
 }
 
+// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
 func (x *ExecutionOptions) GetEnableTracing() bool {
 	if x != nil {
 		return x.EnableTracing
@@ -448,6 +463,7 @@ func (x *ExecutionOptions) GetEnableTracing() bool {
 	return false
 }
 
+// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
 func (x *ExecutionOptions) GetCapabilityFilter() []string {
 	if x != nil {
 		return x.CapabilityFilter
@@ -455,6 +471,7 @@ func (x *ExecutionOptions) GetCapabilityFilter() []string {
 	return nil
 }
 
+// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
 func (x *ExecutionOptions) GetMinSchemaVersion() string {
 	if x != nil {
 		return x.MinSchemaVersion
@@ -462,6 +479,7 @@ func (x *ExecutionOptions) GetMinSchemaVersion() string {
 	return ""
 }
 
+// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
 func (x *ExecutionOptions) GetMaxSchemaVersion() string {
 	if x != nil {
 		return x.MaxSchemaVersion
@@ -469,7 +487,7 @@ func (x *ExecutionOptions) GetMaxSchemaVersion() string {
 	return ""
 }
 
-// SchemaValidation controls schema validation behavior
+// SchemaValidation is unsupported by effectusd and preserved for wire compatibility.
 type SchemaValidation struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
 	StrictMode             bool                   `protobuf:"varint,1,opt,name=strict_mode,json=strictMode,proto3" json:"strict_mode,omitempty"`
@@ -2320,7 +2338,7 @@ var File_effectus_v1_execution_proto protoreflect.FileDescriptor
 
 const file_effectus_v1_execution_proto_rawDesc = "" +
 	"\n" +
-	"\x1beffectus/v1/execution.proto\x12\veffectus.v1\x1a\x18effectus/v1/common.proto\x1a\x19google/protobuf/any.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x86\x04\n" +
+	"\x1beffectus/v1/execution.proto\x12\veffectus.v1\x1a\x18effectus/v1/common.proto\x1a\x19google/protobuf/any.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x8a\x04\n" +
 	"\x10ExecutionRequest\x12!\n" +
 	"\fruleset_name\x18\x01 \x01(\tR\vrulesetName\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12*\n" +
@@ -2328,22 +2346,22 @@ const file_effectus_v1_execution_proto_rawDesc = "" +
 	"\vtyped_facts\x18\v \x01(\v2\x17.google.protobuf.StructR\n" +
 	"typedFacts\x127\n" +
 	"\aoptions\x18\x04 \x01(\v2\x1d.effectus.v1.ExecutionOptionsR\aoptions\x12\x19\n" +
-	"\btrace_id\x18\x05 \x01(\tR\atraceId\x12J\n" +
-	"\x11schema_validation\x18\x06 \x01(\v2\x1d.effectus.v1.SchemaValidationR\x10schemaValidation\x12\x1c\n" +
+	"\btrace_id\x18\x05 \x01(\tR\atraceId\x12N\n" +
+	"\x11schema_validation\x18\x06 \x01(\v2\x1d.effectus.v1.SchemaValidationB\x02\x18\x01R\x10schemaValidation\x12\x1c\n" +
 	"\tnamespace\x18\a \x01(\tR\tnamespace\x12'\n" +
 	"\x0fidempotency_key\x18\b \x01(\tR\x0eidempotencyKey\x12;\n" +
 	"\twait_mode\x18\t \x01(\x0e2\x1e.effectus.v1.ExecutionWaitModeR\bwaitMode\x12+\n" +
 	"\x11generation_digest\x18\n" +
-	" \x01(\tR\x10generationDigest\"\xa5\x02\n" +
-	"\x10ExecutionOptions\x12\x17\n" +
-	"\adry_run\x18\x01 \x01(\bR\x06dryRun\x12\x1f\n" +
-	"\vmax_effects\x18\x02 \x01(\x05R\n" +
+	" \x01(\tR\x10generationDigest\"\xbd\x02\n" +
+	"\x10ExecutionOptions\x12\x1b\n" +
+	"\adry_run\x18\x01 \x01(\bB\x02\x18\x01R\x06dryRun\x12#\n" +
+	"\vmax_effects\x18\x02 \x01(\x05B\x02\x18\x01R\n" +
 	"maxEffects\x12'\n" +
-	"\x0ftimeout_seconds\x18\x03 \x01(\x05R\x0etimeoutSeconds\x12%\n" +
-	"\x0eenable_tracing\x18\x04 \x01(\bR\renableTracing\x12+\n" +
-	"\x11capability_filter\x18\x05 \x03(\tR\x10capabilityFilter\x12,\n" +
-	"\x12min_schema_version\x18\x06 \x01(\tR\x10minSchemaVersion\x12,\n" +
-	"\x12max_schema_version\x18\a \x01(\tR\x10maxSchemaVersion\"\xc6\x01\n" +
+	"\x0ftimeout_seconds\x18\x03 \x01(\x05R\x0etimeoutSeconds\x12)\n" +
+	"\x0eenable_tracing\x18\x04 \x01(\bB\x02\x18\x01R\renableTracing\x12/\n" +
+	"\x11capability_filter\x18\x05 \x03(\tB\x02\x18\x01R\x10capabilityFilter\x120\n" +
+	"\x12min_schema_version\x18\x06 \x01(\tB\x02\x18\x01R\x10minSchemaVersion\x120\n" +
+	"\x12max_schema_version\x18\a \x01(\tB\x02\x18\x01R\x10maxSchemaVersion\"\xc6\x01\n" +
 	"\x10SchemaValidation\x12\x1f\n" +
 	"\vstrict_mode\x18\x01 \x01(\bR\n" +
 	"strictMode\x120\n" +

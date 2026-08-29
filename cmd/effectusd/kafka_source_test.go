@@ -5,12 +5,29 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	kafkaadapter "github.com/effectus/effectus-go/adapters/kafka"
 	effectusruntime "github.com/effectus/effectus-go/runtime"
 	segmentio "github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDaemonDatabasePoolConfiguration(t *testing.T) {
+	oldDSN, oldOpen, oldIdle, oldLifetime, oldIdleTime := *postgresDSN, *dbMaxOpen, *dbMaxIdle, *dbConnLifetime, *dbConnIdleTime
+	t.Cleanup(func() {
+		*postgresDSN, *dbMaxOpen, *dbMaxIdle, *dbConnLifetime, *dbConnIdleTime = oldDSN, oldOpen, oldIdle, oldLifetime, oldIdleTime
+	})
+	*postgresDSN, *dbMaxOpen, *dbMaxIdle = "postgres://unused", 7, 3
+	*dbConnLifetime, *dbConnIdleTime = time.Minute, 30*time.Second
+	require.NoError(t, validateDatabasePoolConfig())
+	db, err := openDaemonDatabase()
+	require.NoError(t, err)
+	defer db.Close()
+	require.Equal(t, 7, db.Stats().MaxOpenConnections)
+	*dbMaxIdle = 8
+	require.Error(t, validateDatabasePoolConfig())
+}
 
 func TestDecodeKafkaFactEnvelopeRejectsUnknownAndReservedFields(t *testing.T) {
 	_, err := decodeKafkaFactEnvelope([]byte(`{"facts":{"ready":true},"execution_id":"spoof"}`))

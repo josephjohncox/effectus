@@ -2,20 +2,22 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/ledger"
 )
 
 type RecoveryWorker struct {
 	Engine        *Engine
-	Store         schema.ExecutionLedger
+	Store         ledger.ExecutionLedger
 	Owner         string
 	BatchSize     int
 	LeaseDuration time.Duration
 	PollInterval  time.Duration
+	Observer      Observer
 }
 
 // Run polls until cancellation. Each poll is bounded by BatchSize.
@@ -58,25 +60,56 @@ func (worker *RecoveryWorker) RunOnce(ctx context.Context) (int, error) {
 	if leaseDuration <= 0 {
 		leaseDuration = 30 * time.Second
 	}
+	if reader, ok := worker.Store.(ledger.RecoveryStatsReader); ok {
+		stats, statsErr := reader.RecoveryStats(ctx)
+		if statsErr != nil {
+			worker.observe(RecoveryObservation{Err: statsErr})
+			return 0, fmt.Errorf("measure recovery backlog: %w", statsErr)
+		}
+		now := time.Now()
+		observation := RecoveryObservation{BacklogMeasured: true, Backlog: stats.Nonterminal, Blocked: stats.Blocked}
+		if !stats.OldestNonterminal.IsZero() {
+			observation.OldestExecutionAge = now.Sub(stats.OldestNonterminal)
+		}
+		if !stats.OldestOutbox.IsZero() {
+			observation.OldestOutboxAge = now.Sub(stats.OldestOutbox)
+		}
+		worker.observe(observation)
+	}
 	leases, err := worker.Store.LeaseExecutions(ctx, worker.Owner, batchSize, leaseDuration)
 	if err != nil {
+		worker.observe(RecoveryObservation{Err: err})
 		return 0, fmt.Errorf("lease recovery executions: %w", err)
 	}
 	if len(leases) > batchSize {
 		return 0, fmt.Errorf("recovery lease store returned %d executions, limit is %d", len(leases), batchSize)
 	}
-	var first error
 	processed := 0
 	for index := range leases {
 		if err := ctx.Err(); err != nil {
 			return processed, err
 		}
 		lease := leases[index]
-		_, executeErr := worker.Engine.Execute(ctx, ExecuteRequest{ResumeExecutionID: lease.ExecutionID, WaitMode: WaitTerminal, RecoveryLease: &lease})
-		if executeErr != nil && first == nil {
-			first = executeErr
-		}
+		result, executeErr := worker.Engine.Execute(ctx, ExecuteRequest{ResumeExecutionID: lease.ExecutionID, WaitMode: WaitTerminal, RecoveryLease: &lease})
 		processed++
+		if executeErr == nil {
+			worker.observe(RecoveryObservation{ExecutionID: lease.ExecutionID, State: result.State})
+			continue
+		}
+		observation := RecoveryObservation{ExecutionID: lease.ExecutionID, State: result.State, Err: executeErr}
+		worker.observe(observation)
+		if errors.Is(executeErr, ErrDurableDisposition) {
+			return processed, executeErr
+		}
+		// Terminal business failures and transient workflow/store errors are
+		// per-execution outcomes. Engine.Execute has durably terminalized or
+		// released the lease, so unrelated recovery work must continue.
 	}
-	return processed, first
+	return processed, nil
+}
+
+func (worker *RecoveryWorker) observe(observation RecoveryObservation) {
+	if worker != nil && worker.Observer != nil {
+		worker.Observer.ObserveRecovery(observation)
+	}
 }

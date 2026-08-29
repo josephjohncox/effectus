@@ -29,6 +29,7 @@ type extensionCandidateTarget struct {
 	types       map[string]loader.TypeDefinition
 	facts       map[string]string
 	functions   map[string]interface{}
+	descriptors map[string]loader.ExecutorDescriptor
 	initialData map[string]interface{}
 }
 
@@ -36,7 +37,7 @@ func newExtensionCandidateTarget(registry *schema.Registry, verbs *verb.Registry
 	return &extensionCandidateTarget{
 		delegate: schema.NewLoaderAdapter(registry, verbs),
 		types:    make(map[string]loader.TypeDefinition), facts: make(map[string]string),
-		functions: make(map[string]interface{}), initialData: make(map[string]interface{}),
+		functions: make(map[string]interface{}), descriptors: make(map[string]loader.ExecutorDescriptor), initialData: make(map[string]interface{}),
 	}
 }
 
@@ -49,6 +50,21 @@ func (target *extensionCandidateTarget) RegisterVerb(spec loader.VerbSpec, execu
 		return err
 	}
 	return target.delegate.RegisterVerb(captured, executor)
+}
+
+func (target *extensionCandidateTarget) RegisterVerbDescriptor(spec loader.VerbSpec, descriptor loader.ExecutorDescriptor) error {
+	captured, err := captureExtensionVerbSpec(spec)
+	if err != nil {
+		return err
+	}
+	if err := validateExtensionCapabilities(captured); err != nil {
+		return err
+	}
+	if _, duplicate := target.descriptors[captured.name]; duplicate {
+		return fmt.Errorf("extension verb descriptor %q is already registered", captured.name)
+	}
+	target.descriptors[captured.name] = descriptor
+	return target.delegate.RegisterVerbDescriptor(captured, descriptor)
 }
 
 type capturedExtensionVerbSpec struct {

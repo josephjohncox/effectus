@@ -1,8 +1,8 @@
 package main
 
 import (
+	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -87,26 +87,28 @@ func formatIssuesText(issues []lint.Issue) string {
 	return strings.Join(lines, "\n")
 }
 
-func loadVerbRegistry(files []string, verbose bool) *verb.Registry {
+func loadVerbRegistry(files []string, verbose bool) (*verb.Registry, error) {
 	if len(files) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	registry := verb.NewRegistry(nil)
-	for _, file := range files {
+	var failures []error
+	for _, file := range expandSchemaPaths(files) {
 		if verbose {
 			fmt.Printf("Loading verb registry from %s...\n", file)
 		}
 		if err := registry.LoadFromJSON(file); err != nil {
-			if verbose {
-				fmt.Fprintf(os.Stderr, "Warning: %s could not be loaded as verb registry (%v)\n", file, err)
-			}
+			failures = append(failures, fmt.Errorf("load verb schema %s: %w", file, err))
 		}
 	}
 
+	if err := errors.Join(failures...); err != nil {
+		return nil, err
+	}
 	if registry.Count() == 0 {
-		return nil
+		return nil, nil
 	}
 
-	return registry
+	return registry, nil
 }

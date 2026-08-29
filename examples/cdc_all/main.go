@@ -94,7 +94,8 @@ func main() {
 		SchemaMapping: map[string]string{
 			mysqlDatabase + ".cdc_events": "demo.mysql_event",
 		},
-		DSN: mysqlDSN,
+		DSN:            mysqlDSN,
+		CheckpointPath: envOrDefault("MYSQL_CHECKPOINT_PATH", "./out/mysql-cdc-checkpoint.json"),
 	})
 	if err != nil {
 		log.Fatalf("create mysql source: %v", err)
@@ -157,11 +158,21 @@ func main() {
 			if fact != nil {
 				pgCount++
 				log.Printf("postgres fact schema=%s raw=%s", fact.SchemaName, string(fact.RawData))
+				if fact.Acknowledge != nil {
+					if err := fact.Acknowledge(ctx); err != nil {
+						log.Fatalf("acknowledge postgres fact: %v", err)
+					}
+				}
 			}
 		case fact := <-mysqlFacts:
 			if fact != nil {
 				mysqlCount++
 				log.Printf("mysql fact schema=%s raw=%s", fact.SchemaName, string(fact.RawData))
+				if fact.Acknowledge != nil {
+					if err := fact.Acknowledge(ctx); err != nil {
+						log.Fatalf("acknowledge mysql fact: %v", err)
+					}
+				}
 			}
 		case fact := <-amqpFacts:
 			if fact != nil {

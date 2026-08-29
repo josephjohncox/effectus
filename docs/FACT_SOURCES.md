@@ -65,8 +65,8 @@ Use **schema providers** to load schemas directly from external systems at start
 
 `schema_sources.yaml` can include `sql_introspect` and `buf` providers (see `docs/RUNTIME_CONFIG.md` for examples).
 The `buf` provider can derive JSON schemas directly from proto descriptors if no `*.schema.json` files are present.
-If you still prefer pre-generated files, drop `*.schema.json` into `extensions.dirs` or OCI bundles and let the
-extension reload interval pick them up.
+If you prefer pre-generated files, put `*.schema.json` in `extensions.dirs` or an immutable OCI bundle.
+Replace the daemon pod when these files change.
 
 ### 5) Merge multiple sources into one facts provider
 Use namespaces + aliases for clean composition:
@@ -162,7 +162,10 @@ kafka:
 
 The default poison policy is `halt`.
 The daemon stops and leaves the poison offset uncommitted.
-Use `skip` only with a durable poison audit file.
+PostgreSQL is the sole daemon attempt and poison ledger.
+Use `skip` only when PostgreSQL records the poison acknowledgement and this behavior meets the operating policy.
+Deprecated file-ledger and poison-audit settings are rejected.
+Use `skip` only after you define a PostgreSQL poison-row recovery policy.
 Use `dlq` only with a configured DLQ topic.
 The adapter waits for DLQ publication before it commits the original offset.
 A crash between these operations can publish the DLQ record again.
@@ -186,11 +189,15 @@ The legacy `Start` and `Subscribe` channel API commits after local channel hando
 It does not provide end-to-end acknowledgement.
 Use `Run` for durable processing contracts.
 
+Effectusd stores delivery attempts and poison records in `effectus_kafka_deliveries`.
+Back up and retain this table with the execution ledger.
+
 Run the consumer-group integration harness against Kafka or Redpanda:
 
 ```bash
 KAFKA_BROKERS="localhost:9092" \
-  go test -tags=integration ./adapters/kafka -run TestKafkaConsumerGroupCommitAndRestart
+  go test -tags=integration ./adapters/kafka \
+    -run TestKafkaConsumerGroupCommitAndRestart -count=1
 ```
 
 ---

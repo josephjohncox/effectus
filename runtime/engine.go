@@ -10,12 +10,14 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/effectus/effectus-go/compiler"
 	"github.com/effectus/effectus-go/invocation"
 	"github.com/effectus/effectus-go/ir"
 	"github.com/effectus/effectus-go/loader"
 	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/ledger"
 )
 
 var (
@@ -24,7 +26,27 @@ var (
 	ErrIdentityConflict      = errors.New("engine admission identity conflict")
 	ErrGenerationMismatch    = errors.New("engine generation mismatch")
 	ErrBlockedDependency     = errors.New("execution blocked by missing dependency")
+	ErrDurableDisposition    = errors.New("durable execution disposition failed")
 )
+
+// Observer receives checked-runtime events without coupling the runtime to a
+// metrics implementation. Implementations must not block execution.
+type Observer interface {
+	ObserveExecution(ExecuteResult, error)
+	ObserveRecovery(RecoveryObservation)
+}
+
+// RecoveryObservation describes one bounded recovery poll or disposition.
+type RecoveryObservation struct {
+	BacklogMeasured    bool
+	Backlog            int64
+	Blocked            int64
+	OldestExecutionAge time.Duration
+	OldestOutboxAge    time.Duration
+	ExecutionID        string
+	State              string
+	Err                error
+}
 
 // WaitMode controls how far Execute drives the shared state machine.
 type WaitMode string
@@ -73,8 +95,9 @@ type Engine struct {
 
 	mu         sync.Mutex
 	executions map[string]*engineExecution
-	ledger     schema.ExecutionLedger
+	ledger     ledger.ExecutionLedger
 	resolver   ArtifactResolver
+	observer   Observer
 }
 
 type engineExecution struct {
@@ -105,8 +128,8 @@ func NewEngine(runtime *ExecutionRuntime) (*Engine, error) {
 
 // ConfigureLedger replaces the development ledger. Configure the same
 // PostgresOutboxStore as both workflow outbox and ledger to enable atomic admission.
-func (engine *Engine) ConfigureLedger(ledger schema.ExecutionLedger, resolver ArtifactResolver) error {
-	if engine == nil || ledger == nil {
+func (engine *Engine) ConfigureLedger(durableLedger ledger.ExecutionLedger, resolver ArtifactResolver) error {
+	if engine == nil || durableLedger == nil {
 		return fmt.Errorf("execution ledger is required")
 	}
 	engine.mu.Lock()
@@ -114,12 +137,59 @@ func (engine *Engine) ConfigureLedger(ledger schema.ExecutionLedger, resolver Ar
 	if len(engine.executions) != 0 {
 		return fmt.Errorf("execution ledger cannot change after admission")
 	}
-	engine.ledger, engine.resolver = ledger, resolver
+	engine.ledger, engine.resolver = durableLedger, resolver
 	return nil
 }
 
+// SetObserver installs an optional runtime observer.
+func (engine *Engine) SetObserver(observer Observer) {
+	if engine == nil {
+		return
+	}
+	engine.mu.Lock()
+	engine.observer = observer
+	engine.mu.Unlock()
+}
+
+// ActiveGeneration returns a copy of the checked runtime publication currently
+// used for new admissions, including its immutable bundle metadata.
+func (engine *Engine) ActiveGeneration() *ExecutionGeneration {
+	if engine == nil || engine.runtime == nil {
+		return nil
+	}
+	return engine.runtime.ActiveGeneration()
+}
+
+// ActiveGenerationDigest returns the checked engine generation currently used
+// for new admissions.
+func (engine *Engine) ActiveGenerationDigest() string {
+	generation := engine.ActiveGeneration()
+	if generation == nil {
+		return ""
+	}
+	return generation.GenerationDigest
+}
+
 // Execute enters the same state machine for new admissions and recovery.
-func (engine *Engine) Execute(ctx context.Context, request ExecuteRequest) (ExecuteResult, error) {
+func (engine *Engine) Execute(ctx context.Context, request ExecuteRequest) (result ExecuteResult, resultErr error) {
+	if engine != nil && engine.runtime != nil {
+		engine.runtime.executionMu.RLock()
+		defer engine.runtime.executionMu.RUnlock()
+		engine.runtime.mu.RLock()
+		closed := engine.runtime.state == StateClosing || engine.runtime.state == StateClosed
+		engine.runtime.mu.RUnlock()
+		if closed {
+			return ExecuteResult{}, fmt.Errorf("runtime is closed")
+		}
+		defer func() {
+			engine.mu.Lock()
+			observer := engine.observer
+			engine.mu.Unlock()
+			if observer != nil {
+				observer.ObserveExecution(result, resultErr)
+			}
+		}()
+	}
 	if engine == nil || engine.runtime == nil || engine.ledger == nil {
 		return ExecuteResult{}, fmt.Errorf("%w: engine is not configured", ErrInvalidExecuteRequest)
 	}
@@ -147,6 +217,11 @@ func (engine *Engine) Execute(ctx context.Context, request ExecuteRequest) (Exec
 	if err != nil {
 		if execution != nil && execution.record.State == schema.ExecutionBlockedDependency {
 			return engineResult(execution.record), err
+		}
+		if request.RecoveryLease != nil {
+			if releaseErr := engine.ledger.FinishExecutionLease(ctx, *request.RecoveryLease, "", err.Error()); releaseErr != nil {
+				return ExecuteResult{}, errors.Join(err, fmt.Errorf("%w: %v", ErrDurableDisposition, releaseErr))
+			}
 		}
 		return ExecuteResult{}, err
 	}
@@ -181,9 +256,12 @@ func (engine *Engine) Execute(ctx context.Context, request ExecuteRequest) (Exec
 	workflowErr := engine.runtime.executeCheckedWorkflowMode(ctx, execution.unit, execution.record.TenantNamespace,
 		execution.record.ExecutionID, execution.facts, execution.selected, request.WaitMode)
 	if workflowErr != nil {
-		state := engine.executionFailureState(ctx, execution)
+		state, dispositionErr := engine.executionFailureState(ctx, execution)
+		if dispositionErr != nil {
+			state = execution.record.State
+		}
 		if persistErr := engine.persistExecutionState(ctx, execution, state, workflowErr.Error(), request.RecoveryLease); persistErr != nil {
-			return engineResult(execution.record), errors.Join(workflowErr, persistErr)
+			return engineResult(execution.record), errors.Join(workflowErr, dispositionErr, fmt.Errorf("%w: %v", ErrDurableDisposition, persistErr))
 		}
 		if schema.IsTerminalExecutionState(execution.record.State) {
 			execution.releaseSnapshot()
@@ -246,11 +324,11 @@ func (engine *Engine) admit(ctx context.Context, admission *Admission) (*engineE
 		engine.runtime.mu.RUnlock()
 		return nil, false, false, fmt.Errorf("runtime not ready (state: %s)", state)
 	}
-	if engine.runtime.compiledUnit == nil || engine.runtime.compiledUnit.CheckedIR == nil {
+	if engine.runtime.activeGeneration == nil || engine.runtime.activeGeneration.unit == nil || engine.runtime.activeGeneration.unit.CheckedIR == nil {
 		engine.runtime.mu.RUnlock()
 		return nil, false, false, fmt.Errorf("no checked extension workflow is available")
 	}
-	unit := engine.runtime.compiledUnit
+	unit := engine.runtime.activeGeneration.unit
 	if engine.runtime.workflowStore == nil {
 		engine.runtime.mu.RUnlock()
 		return nil, false, false, fmt.Errorf("checked durable workflow outbox is not configured")
@@ -379,8 +457,13 @@ func (engine *Engine) loadExecutionRecord(ctx context.Context, record schema.Exe
 	engine.mu.Lock()
 	cached := engine.executions[record.ExecutionID]
 	engine.mu.Unlock()
-	if cached != nil && cached.record.GenerationDigest == record.GenerationDigest {
-		return cached, nil
+	if cached != nil {
+		cached.mu.Lock()
+		generationDigest := cached.record.GenerationDigest
+		cached.mu.Unlock()
+		if generationDigest == record.GenerationDigest {
+			return cached, nil
+		}
 	}
 	facts, err := decodeExecutionFacts(record.EffectiveFacts)
 	if err != nil {
@@ -421,7 +504,10 @@ func (engine *Engine) loadExecutionRecord(ctx context.Context, record schema.Exe
 	resolver := engine.resolver
 	if resolver == nil {
 		engine.runtime.mu.RLock()
-		current := engine.runtime.compiledUnit
+		var current *compiler.CompiledUnit
+		if engine.runtime.activeGeneration != nil {
+			current = engine.runtime.activeGeneration.unit
+		}
 		engine.runtime.mu.RUnlock()
 		if current != nil {
 			if currentArtifact, currentErr := executionArtifactForUnit(current); currentErr == nil && currentArtifact.GenerationDigest == record.GenerationDigest {
@@ -438,28 +524,40 @@ func (engine *Engine) loadExecutionRecord(ctx context.Context, record schema.Exe
 	if err != nil {
 		return engine.blockDependency(ctx, record, facts, selected, err)
 	}
+	var snapshotHandle *loader.ExtensionSnapshotHandle
+	if unit != nil && unit.ExtensionSnapshot != nil {
+		snapshotHandle, err = unit.ExtensionSnapshot.Acquire()
+		if err != nil {
+			return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("acquire resolved extension snapshot: %w", err))
+		}
+		if unit.ExecutionOwnedSnapshot {
+			if retireErr := unit.ExtensionSnapshot.Retire(); retireErr != nil {
+				_ = snapshotHandle.Release()
+				return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("retire execution-owned snapshot: %w", retireErr))
+			}
+		}
+	}
+	blockResolved := func(cause error) (*engineExecution, error) {
+		if snapshotHandle != nil {
+			_ = snapshotHandle.Release()
+		}
+		return engine.blockDependency(ctx, record, facts, selected, cause)
+	}
 	if unit == nil || unit.CheckedIR == nil || unit.CheckedIR.Digest() != checked.Digest() {
-		return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("resolver returned a mismatched checked generation"))
+		return blockResolved(fmt.Errorf("resolver returned a mismatched checked generation"))
 	}
 	resolvedArtifact, resolvedErr := executionArtifactForUnit(unit)
 	if resolvedErr != nil || resolvedArtifact.GenerationDigest != record.GenerationDigest {
-		return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("resolver executor/function manifest does not match pinned generation: %v", resolvedErr))
+		return blockResolved(fmt.Errorf("resolver executor/function manifest does not match pinned generation: %v", resolvedErr))
 	}
 	if err := engine.validateUnitExecutors(unit); err != nil {
-		return engine.blockDependency(ctx, record, facts, selected, err)
+		return blockResolved(err)
 	}
 	for _, plan := range checked.CloneArtifact().Plans {
 		for _, step := range plan.Steps {
 			if unit.VerbSpecs[step.Verb] == nil {
-				return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("verb contract %q is unavailable", step.Verb))
+				return blockResolved(fmt.Errorf("verb contract %q is unavailable", step.Verb))
 			}
-		}
-	}
-	var snapshotHandle *loader.ExtensionSnapshotHandle
-	if unit.ExtensionSnapshot != nil {
-		snapshotHandle, err = unit.ExtensionSnapshot.Acquire()
-		if err != nil {
-			return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("acquire resolved extension snapshot: %w", err))
 		}
 	}
 	execution := &engineExecution{record: record, facts: facts, selected: selected, unit: unit, snapshotHandle: snapshotHandle}
@@ -489,12 +587,16 @@ func (engine *Engine) blockDependency(ctx context.Context, record schema.Executi
 
 func (engine *Engine) persistExecutionState(ctx context.Context, execution *engineExecution, state schema.ExecutionState, message string, lease *schema.ExecutionLease) error {
 	if lease != nil {
-		if err := engine.ledger.FinishExecutionLease(ctx, *lease, state, message); err != nil {
-			return err
+		leaseState := state
+		if !schema.IsTerminalExecutionState(state) {
+			leaseState = "" // release the CAS lease without terminalizing recoverable work
+		}
+		if err := engine.ledger.FinishExecutionLease(ctx, *lease, leaseState, message); err != nil {
+			return fmt.Errorf("%w: %v", ErrDurableDisposition, err)
 		}
 		updated, err := engine.ledger.GetExecution(ctx, execution.record.ExecutionID)
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: reload execution after lease completion: %v", ErrDurableDisposition, err)
 		}
 		execution.record = updated
 		return nil
@@ -507,25 +609,29 @@ func (engine *Engine) persistExecutionState(ctx context.Context, execution *engi
 	return nil
 }
 
-func (engine *Engine) executionFailureState(ctx context.Context, execution *engineExecution) schema.ExecutionState {
-	state := schema.ExecutionFailed
+func (engine *Engine) executionFailureState(ctx context.Context, execution *engineExecution) (schema.ExecutionState, error) {
+	state := execution.record.State
 	for _, plan := range execution.record.Plans {
 		saga, err := engine.runtime.workflowStore.GetSaga(ctx, plan.SagaID)
 		if err != nil {
-			continue
+			return state, fmt.Errorf("read durable saga disposition %s: %w", plan.SagaID, err)
 		}
 		switch saga.State {
 		case schema.SagaBlockedUnknown:
-			return schema.ExecutionBlockedUnknown
+			return schema.ExecutionBlockedUnknown, nil
 		case schema.SagaBlockedFence:
-			return schema.ExecutionBlockedFence
+			return schema.ExecutionBlockedFence, nil
 		case schema.SagaBlockedDependency:
-			return schema.ExecutionBlockedDependency
+			return schema.ExecutionBlockedDependency, nil
 		case schema.SagaBlockedCompensation:
-			return schema.ExecutionBlockedCompensation
+			return schema.ExecutionBlockedCompensation, nil
+		case schema.SagaFailed, schema.SagaCompensated:
+			return schema.ExecutionFailed, nil
 		}
 	}
-	return state
+	// Running, compensating, queued, and unreadable work is recoverable. Never
+	// infer a terminal disposition from the transient error returned by a store.
+	return state, nil
 }
 
 func selectedExecutionHasSteps(execution *engineExecution) bool {

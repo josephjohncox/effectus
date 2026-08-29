@@ -17,6 +17,7 @@ import (
 	effectusv1 "github.com/effectus/effectus-go/gen/effectus/v1"
 	"github.com/effectus/effectus-go/invocation"
 	"github.com/effectus/effectus-go/schema"
+	"github.com/effectus/effectus-go/schema/workflow"
 )
 
 func (er *ExecutionRuntime) executeVerbOnUnit(ctx context.Context, unit *compiler.CompiledUnit, verbName string, args map[string]interface{}) (interface{}, error) {
@@ -49,7 +50,7 @@ func (er *ExecutionRuntime) executeVerbOnUnit(ctx context.Context, unit *compile
 type checkedWorkflowInvocationExecutor struct {
 	runtime *ExecutionRuntime
 	unit    *compiler.CompiledUnit
-	store   schema.OutboxStore
+	store   workflow.OutboxStore
 }
 
 func (executor checkedWorkflowInvocationExecutor) RetryUnknownOutcome(request invocation.Request) bool {
@@ -197,7 +198,7 @@ func (er *ExecutionRuntime) executeCheckedWorkflowMode(ctx context.Context, unit
 	return nil
 }
 
-func dispatchCheckedWorkflowStep(ctx context.Context, dispatcher *schema.Dispatcher, store schema.OutboxStore, dispatchID string) (*schema.Dispatch, error) {
+func dispatchCheckedWorkflowStep(ctx context.Context, dispatcher *schema.Dispatcher, store workflow.OutboxStore, dispatchID string) (*workflow.Dispatch, error) {
 	for {
 		current, err := store.GetDispatch(ctx, dispatchID)
 		if err != nil {
@@ -233,7 +234,7 @@ func dispatchCheckedWorkflowStep(ctx context.Context, dispatcher *schema.Dispatc
 	}
 }
 
-func driveCheckedCompensation(ctx context.Context, dispatcher *schema.Dispatcher, store schema.OutboxStore, sagaID string) error {
+func driveCheckedCompensation(ctx context.Context, dispatcher *schema.Dispatcher, store workflow.OutboxStore, sagaID string) error {
 	for {
 		saga, err := store.GetSaga(ctx, sagaID)
 		if err != nil {

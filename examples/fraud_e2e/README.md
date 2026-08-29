@@ -11,7 +11,7 @@ This example exercises Effectus end-to-end with a fraud workflow: list rules for
 
 ## Run
 ```bash
-go run ./examples/fraud_e2e
+cd examples && go run ./fraud_e2e
 ```
 
 Scripts (same flow, shorter commands):
@@ -25,12 +25,12 @@ Scripts (same flow, shorter commands):
 To run with mocked risk and notification services:
 ```bash
 docker compose -f examples/fraud_e2e/docker-compose.yml up -d --build
-RISK_URL=http://localhost:8081/cases NOTIFY_URL=http://localhost:8082/notify go run ./examples/fraud_e2e
+cd examples && RISK_URL=http://localhost:8081/cases NOTIFY_URL=http://localhost:8082/notify go run ./fraud_e2e
 ```
 
 To simulate a notification failure and see saga compensation (the mock returns 500):
 ```bash
-FAIL_NOTIFY=1 RISK_URL=http://localhost:8081/cases NOTIFY_URL=http://localhost:8082/notify go run ./examples/fraud_e2e
+cd examples && FAIL_NOTIFY=1 RISK_URL=http://localhost:8081/cases NOTIFY_URL=http://localhost:8082/notify go run ./fraud_e2e
 ```
 
 Expected behavior: `NotifyRisk` fails, and the flow compensates by invoking `UnfreezeAccount`.

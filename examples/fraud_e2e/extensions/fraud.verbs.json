@@ -1,0 +1,208 @@
+{
+  "name": "fraud-demo-verbs",
+  "version": "1.0.0",
+  "description": "Production-format verb declarations for the fraud demo",
+  "verbs": [
+    {
+      "name": "FlagFraud",
+      "description": "Flag a transaction for fraud review",
+      "capabilities": [
+        "write",
+        "create",
+        "exclusive"
+      ],
+      "resources": [
+        {
+          "resource": "fraud_case",
+          "capabilities": [
+            "write",
+            "create",
+            "exclusive"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "reason": "string"
+      },
+      "requiredArgs": [
+        "orderId",
+        "reason"
+      ],
+      "returnType": "bool",
+      "inverseVerb": "UnflagFraud",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      }
+    },
+    {
+      "name": "UnflagFraud",
+      "description": "Remove a fraud flag",
+      "capabilities": [
+        "write",
+        "delete",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "fraud_case",
+          "capabilities": [
+            "write",
+            "delete",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "reason": "string"
+      },
+      "requiredArgs": [
+        "orderId"
+      ],
+      "returnType": "bool",
+      "inverseVerb": "FlagFraud",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      }
+    },
+    {
+      "name": "NotifyRisk",
+      "description": "Notify risk operations",
+      "capabilities": [
+        "write",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "notification",
+          "capabilities": [
+            "write",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "channel": "string"
+      },
+      "requiredArgs": [
+        "orderId",
+        "channel"
+      ],
+      "returnType": "bool",
+      "inverseVerb": "UnnotifyRisk",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      }
+    },
+    {
+      "name": "UnnotifyRisk",
+      "description": "Withdraw a risk notification",
+      "capabilities": [
+        "write",
+        "delete",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "notification",
+          "capabilities": [
+            "write",
+            "delete",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "orderId": "string",
+        "channel": "string"
+      },
+      "requiredArgs": [
+        "orderId"
+      ],
+      "returnType": "bool",
+      "inverseVerb": "NotifyRisk",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      }
+    },
+    {
+      "name": "FreezeAccount",
+      "description": "Freeze an account due to risk",
+      "capabilities": [
+        "write",
+        "exclusive"
+      ],
+      "resources": [
+        {
+          "resource": "account",
+          "capabilities": [
+            "write",
+            "exclusive"
+          ]
+        }
+      ],
+      "argTypes": {
+        "accountId": "string",
+        "reason": "string"
+      },
+      "requiredArgs": [
+        "accountId",
+        "reason"
+      ],
+      "returnType": "bool",
+      "inverseVerb": "UnfreezeAccount",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      }
+    },
+    {
+      "name": "UnfreezeAccount",
+      "description": "Unfreeze a previously frozen account",
+      "capabilities": [
+        "write",
+        "idempotent"
+      ],
+      "resources": [
+        {
+          "resource": "account",
+          "capabilities": [
+            "write",
+            "idempotent"
+          ]
+        }
+      ],
+      "argTypes": {
+        "accountId": "string",
+        "reason": "string"
+      },
+      "requiredArgs": [
+        "accountId"
+      ],
+      "returnType": "bool",
+      "inverseVerb": "FreezeAccount",
+      "target": {
+        "type": "stream",
+        "config": {
+          "publisher": "stdout"
+        }
+      }
+    }
+  ]
+}

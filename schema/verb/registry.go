@@ -74,12 +74,14 @@ func (r *Registry) RegisterVerb(spec *Spec) error {
 		return fmt.Errorf("verb '%s' mutates state but has no inverse defined", spec.Name)
 	}
 
-	// Register the verb
-	r.verbs[spec.Name] = spec
+	// The registry owns an immutable copy of the contract. Executor identity is
+	// intentionally retained because executors are not part of the hash.
+	owned := cloneSpec(spec)
+	r.verbs[owned.Name] = owned
 	if r.sources == nil {
 		r.sources = make(map[string]SourceInfo)
 	}
-	r.sources[spec.Name] = inferVerbSource(spec)
+	r.sources[owned.Name] = inferVerbSource(owned)
 
 	// Invalidate the hash
 	r.verbHash = ""
@@ -100,14 +102,14 @@ func (r *Registry) Reset() {
 func (r *Registry) SetStrictArgs(value *bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.strictArgs = value
+	r.strictArgs = cloneBool(value)
 }
 
 // SetStrictReturn sets the registry-level strict return validation setting.
 func (r *Registry) SetStrictReturn(value *bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.strictReturn = value
+	r.strictReturn = cloneBool(value)
 }
 
 // SetRequireInverseForMutating enforces inverse verbs for mutating verbs.
@@ -121,14 +123,14 @@ func (r *Registry) SetRequireInverseForMutating(value bool) {
 func (r *Registry) StrictArgs() *bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.strictArgs
+	return cloneBool(r.strictArgs)
 }
 
 // StrictReturn returns the registry-level strict return setting.
 func (r *Registry) StrictReturn() *bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.strictReturn
+	return cloneBool(r.strictReturn)
 }
 
 // RequireInverseForMutating returns whether inverse enforcement is enabled.
@@ -144,7 +146,7 @@ func (r *Registry) GetVerb(name string) (*Spec, bool) {
 	defer r.mu.RUnlock()
 
 	spec, exists := r.verbs[name]
-	return spec, exists
+	return cloneSpec(spec), exists
 }
 
 // SetExecutor sets the executor for a registered verb
@@ -236,6 +238,8 @@ func (r *Registry) GetVerbHash() string {
 		Resources    ResourceSet       `json:"resources,omitempty"`
 		Inverse      string            `json:"inverse,omitempty"`
 		Description  string            `json:"description,omitempty"`
+		StrictArgs   *bool             `json:"strict_args,omitempty"`
+		StrictReturn *bool             `json:"strict_return,omitempty"`
 	}
 
 	verbInfos := make([]verbHashInfo, 0, len(r.verbs))
@@ -249,6 +253,8 @@ func (r *Registry) GetVerbHash() string {
 			Resources:    spec.Resources,
 			Inverse:      spec.Inverse,
 			Description:  spec.Description,
+			StrictArgs:   cloneBool(spec.StrictArgs),
+			StrictReturn: cloneBool(spec.StrictReturn),
 		})
 	}
 
@@ -278,7 +284,7 @@ func (r *Registry) GetAllVerbs() []*Spec {
 
 	verbs := make([]*Spec, 0, len(r.verbs))
 	for _, spec := range r.verbs {
-		verbs = append(verbs, spec)
+		verbs = append(verbs, cloneSpec(spec))
 	}
 
 	// Sort by name for consistent ordering

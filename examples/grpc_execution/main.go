@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"time"
@@ -17,7 +18,12 @@ import (
 // transport is suitable only for this local example; production clients must
 // use TLS credentials.
 func main() {
-	connection, err := grpc.NewClient("127.0.0.1:8081", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	address := flag.String("address", "127.0.0.1:8081", "effectusd gRPC address")
+	token := flag.String("token", "local-demo-token", "local demo bearer token")
+	ruleset := flag.String("ruleset", "orders", "ruleset name")
+	version := flag.String("version", "1.0.0", "ruleset version")
+	flag.Parse()
+	connection, err := grpc.NewClient(*address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -28,9 +34,9 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer local-demo-token"))
+	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+*token))
 	response, err := effectusv1.NewRulesetExecutionServiceClient(connection).ExecuteRuleset(ctx, &effectusv1.ExecutionRequest{
-		RulesetName: "orders", Version: "1.0.0", Namespace: "demo", IdempotencyKey: "order-42",
+		RulesetName: *ruleset, Version: *version, Namespace: "demo", IdempotencyKey: "order-42",
 		TypedFacts: facts, WaitMode: effectusv1.ExecutionWaitMode_EXECUTION_WAIT_MODE_TERMINAL,
 	})
 	if err != nil {

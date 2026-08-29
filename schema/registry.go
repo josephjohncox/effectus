@@ -158,7 +158,7 @@ func (r *Registry) CompileExpression(expression string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	env := r.buildEnvironment()
+	env := r.buildEnvironmentLocked()
 	program, err := expr.Compile(expression, expr.Env(env))
 	if err != nil {
 		return fmt.Errorf("compiling expression: %w", err)
@@ -181,7 +181,7 @@ func (r *Registry) EvaluateCompiled(expression string) (interface{}, error) {
 		r.mu.RLock()
 		program = r.programs[expression]
 	}
-	env := r.buildEnvironment()
+	env := r.buildEnvironmentLocked()
 	r.mu.RUnlock()
 
 	return expr.Run(program, env)
@@ -189,9 +189,7 @@ func (r *Registry) EvaluateCompiled(expression string) (interface{}, error) {
 
 // TypeCheckExpression validates an expression without evaluating it
 func (r *Registry) TypeCheckExpression(expression string) error {
-	r.mu.RLock()
-	env := r.buildEnvironment()
-	r.mu.RUnlock()
+	env := r.environmentSnapshot()
 
 	_, err := expr.Compile(expression, expr.Env(env), expr.AllowUndefinedVariables())
 	return err
@@ -356,9 +354,18 @@ func (r *Registry) LoadFromJSON(jsonData []byte) error {
 	return nil
 }
 
-// buildEnvironment creates the environment for expr evaluation
-func (r *Registry) buildEnvironment() map[string]interface{} {
-	env := make(map[string]interface{})
+// environmentSnapshot copies the expression environment while holding the
+// registry read lock. Callers can evaluate against the returned top-level map
+// without racing with Set or RegisterFunction.
+func (r *Registry) environmentSnapshot() map[string]interface{} {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.buildEnvironmentLocked()
+}
+
+// buildEnvironmentLocked creates an environment while the caller holds r.mu.
+func (r *Registry) buildEnvironmentLocked() map[string]interface{} {
+	env := make(map[string]interface{}, len(r.data)+len(r.functions))
 
 	// Add all data
 	for k, v := range r.data {
@@ -428,7 +435,7 @@ func (r *Registry) NewPredicate(expression string) (*Predicate, error) {
 			program:    program,
 		}, nil
 	}
-	env := r.buildEnvironment()
+	env := r.buildEnvironmentLocked()
 	r.mu.RUnlock()
 	program, err := expr.Compile(expression, expr.Env(env), expr.AllowUndefinedVariables())
 	if err != nil {
@@ -462,7 +469,7 @@ func (p *Predicate) EvaluateWithRegistry(registry *Registry) (bool, error) {
 	}
 
 	if p.program != nil {
-		result, err := expr.Run(p.program, registry.buildEnvironment())
+		result, err := expr.Run(p.program, registry.environmentSnapshot())
 		if err != nil {
 			return false, err
 		}

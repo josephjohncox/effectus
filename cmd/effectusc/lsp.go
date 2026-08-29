@@ -321,7 +321,10 @@ func (s *lspServer) checkText(uri string, text string) []lint.Issue {
 	}
 
 	schemaList := strings.Join(s.schemaFiles, ",")
-	facts, typeSystem := createEmptyFacts(schemaList, false)
+	facts, typeSystem, err := createEmptyFacts(schemaList, false)
+	if err != nil {
+		return []lint.Issue{issueFromError(path, err)}
+	}
 	compTS := comp.GetTypeSystem()
 	compTS.MergeTypeSystem(typeSystem)
 
@@ -336,7 +339,10 @@ func (s *lspServer) checkText(uri string, text string) []lint.Issue {
 		}
 	}
 
-	registry := loadVerbRegistry(s.verbSchemas, false)
+	registry, err := loadVerbRegistry(s.verbSchemas, false)
+	if err != nil {
+		return []lint.Issue{issueFromError(path, err)}
+	}
 	return lint.LintFileWithOptions(parsed, path, registry, lint.LintOptions{
 		UnsafeMode: s.unsafeMode,
 		VerbMode:   s.verbMode,
@@ -387,8 +393,8 @@ func (s *lspServer) loadKnownFacts() []string {
 }
 
 func (s *lspServer) loadKnownVerbs() []string {
-	registry := loadVerbRegistry(s.verbSchemas, false)
-	if registry == nil {
+	registry, err := loadVerbRegistry(s.verbSchemas, false)
+	if err != nil || registry == nil {
 		return nil
 	}
 

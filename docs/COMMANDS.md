@@ -35,7 +35,7 @@ Options:
 **Example:**
 
 ```bash
-effectusc parse rules/customer.eff rules/payment.eff --verbose
+effectusc parse --verbose rules/customer.eff rules/payment.eff
 ```
 
 #### typecheck
@@ -110,8 +110,10 @@ effectusc format [options] file1.eff [file2.effx ...]
 Options:
   --write   Write formatted output back to files (default: true)
   --stdout  Print formatted output to stdout
-  --check   Return non-zero exit code if files need formatting
+  --check   Return non-zero if files need formatting; never write files
 ```
+
+Plain `effectusc format` writes by default. `--check` is unconditionally read-only, even though `--write` defaults to true.
 
 **Example:**
 
@@ -189,7 +191,7 @@ effectusc facts --schema schemas/ rules/*.eff
 
 #### compile
 
-Compiles rule files into a unified specification.
+Compiles rule files into a checked IR protobuf artifact. The artifact is validated against the supplied schema and verb declarations.
 
 ```bash
 effectusc compile [options] file1.eff [file2.eff ...]
@@ -198,7 +200,7 @@ Options:
   --schema       Comma-separated list of schema files to load
   --schema-sources Path to schema sources config (YAML/JSON)
   --verbschema   Comma-separated list of verb schema files to load
-  --output       Output file for compiled spec (default: spec.json)
+  --output       Output file for checked IR (default: rules.effir)
   --verbose      Show detailed output
 ```
 
@@ -208,8 +210,16 @@ Options:
 effectusc compile \
   --schema schemas/ \
   --verbschema verbs/ \
-  --output customer-rules.json \
+  --output customer-rules.effir \
   rules/*.eff
+```
+
+#### migrate-workflows
+
+Converts one legacy JSON workflow manifest to `.effx` source. By default, the command prints the source.
+
+```bash
+effectusc migrate-workflows [--output workflow.effx] legacy-workflows.json
 ```
 
 #### bundle
@@ -309,7 +319,7 @@ effectusc capabilities \
 
 ## effectusd - Runtime Daemon
 
-The `effectusd` command compiles embedded `.eff` and `.effx` sources to checked IR and routes HTTP, Kafka, and generated gRPC requests through one durable execution engine. It requires PostgreSQL through `EFFECTUS_SAGA_POSTGRES_DSN`.
+The `effectusd` command compiles embedded `.eff` and `.effx` sources to checked IR and routes HTTP, Kafka, and generated gRPC requests through one durable execution engine. It requires PostgreSQL through `EFFECTUS_POSTGRES_DSN`.
 
 ### Usage
 
@@ -326,13 +336,13 @@ effectusd [options]
 --oci-ref          Digest-pinned OCI reference for a bundle
 --oci-cache-dir    Writable OCI cache directory
 --oci-signature-verifier Fixed verifier executable for OCI signatures
---plugin-dir       Rejected by production effectusd; compatibility only
 --extensions-dir   Directory containing extension manifests (*.verbs.json, *.schema.json)
+--verb-dir         Deprecated alias for --extensions-dir (emits a startup notice)
 --extensions-oci   OCI references for extension bundles (comma-separated)
---extensions-reload-interval Interval for reloading extension manifests (0 to disable)
+--extensions-reload-interval Rejected compatibility flag. Redeploy to change extensions.
 --schema-sources   Path to schema sources config (YAML/JSON)
 --config           Path to YAML/JSON config file
---reload-interval  Interval for local schema/extension reloads (default: disabled)
+--reload-interval  Rejected compatibility flag. Redeploy to change the bundle.
 --verb-duplicate-policy Duplicate verb policy (error, replace, ignore)
 --verb-oci-warmup  Warm OCI verb executors at startup
 --verb-strict      Validate verb arguments and return values (default: true)
@@ -341,9 +351,10 @@ effectusd [options]
 #### Runtime Configuration
 
 ```bash
---saga             Deprecated legacy mode; effectusd rejects this option
 --fixed-time       Fixed time for deterministic evaluation (RFC3339/RFC3339Nano)
 ```
+
+PostgreSQL is required for every daemon transport. Explicit legacy saga-store, Redis, and plugin settings are rejected with migration guidance; they are not runtime choices.
 
 #### Fact Sources
 
@@ -360,8 +371,6 @@ effectusd [options]
 --kafka-poison-policy     Poison policy: halt, skip, or dlq (default: halt)
 --kafka-dlq-topic         DLQ topic for the dlq policy
 --kafka-dlq-mode          Explicit DLQ delivery contract
---kafka-delivery-ledger   Deprecated; state is stored in PostgreSQL
---kafka-poison-audit      Deprecated; state is stored in PostgreSQL
 ```
 
 #### Server Configuration
@@ -377,10 +386,22 @@ effectusd [options]
 --grpc-max-execution-duration Maximum execution duration
 --grpc-max-concurrent Maximum concurrent executions
 --metrics-addr     Address to expose metrics (default: :9090)
---pprof-addr       Address to expose pprof (default: :6060)
+--shutdown-timeout Deadline for graceful shutdown and worker drain (default: 30s)
 ```
 
-Supply the PostgreSQL ledger DSN through `EFFECTUS_SAGA_POSTGRES_DSN`. The daemon rejects a DSN supplied on the command line because process arguments can expose secrets.
+Supply the PostgreSQL ledger DSN through `EFFECTUS_POSTGRES_DSN`. The daemon rejects a DSN supplied on the command line because process arguments can expose secrets.
+
+```bash
+--database-migrations      Migration mode: validate, validate-only, apply, or legacy-apply
+--database-max-open        Maximum open PostgreSQL connections
+--database-max-idle        Maximum idle PostgreSQL connections
+--database-max-lifetime    Maximum PostgreSQL connection lifetime
+--database-max-idle-time   Maximum PostgreSQL connection idle time
+--admin-prune-before       RFC3339 cutoff for terminal record pruning
+--admin-prune-batch-size   Maximum rows in a prune batch
+--admin-prune-dry-run      Report candidates without deletion
+--admin-prune-backup-verified Confirm a restore-verified backup before deletion
+```
 
 #### API Security + Rate Limits
 
@@ -391,7 +412,10 @@ Supply the PostgreSQL ledger DSN through `EFFECTUS_SAGA_POSTGRES_DSN`. The daemo
 --api-acl-file         Path to API ACL file (YAML/JSON)
 --api-rate-limit       Requests per minute per client (0 to disable)
 --api-rate-burst       Burst size (0 to use rate limit)
---rules-hotload        Enable /api/rules/validate and /api/rules/hotload
+--api-limiter-capacity Maximum active client limiter buckets
+--api-limiter-idle-ttl Idle time before a limiter bucket expires
+--trusted-proxy-cidrs  Proxy CIDRs trusted to supply X-Forwarded-For
+--rules-hotload        Rejected compatibility flag. Use /api/rules/validate without it.
 --rules-history        Number of hotload bundles to keep (0 to disable)
 --rules-history-dir    Directory for bundle history snapshots
 ```
@@ -421,14 +445,14 @@ Example ACL file: `docs/acl.example.yml`.
 #### Run with Local Bundle
 
 ```bash
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
   effectusd --bundle ./bundle.json --verbose
 ```
 
 #### Run with OCI Registry Bundle
 
 ```bash
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
   effectusd \
   --oci-ref ghcr.io/myorg/customer-rules@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   --oci-signature-verifier /usr/local/bin/effectus-verify-oci
@@ -446,7 +470,7 @@ OCI references are immutable and digest-pinned. Publish, sign, and deploy a new 
 
 ```bash
 EFFECTUS_API_TOKEN=devtoken \
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
   effectusd --bundle ./bundle.json --http-addr :8080
 # open http://localhost:8080/ui
 ```
@@ -463,10 +487,9 @@ curl -H 'Authorization: Bearer devtoken' http://localhost:8080/api/bundle > bund
 curl http://localhost:9090/metrics
 ```
 
-#### Hotload canary payload
+#### Candidate validation payload
 
-The hotload endpoints accept an optional `canary` block to run a dry-run diff
-between the current and staged bundle before swapping:
+The validation endpoint accepts an optional `canary` block to run a dry-run diff against the active bundle:
 
 ```json
 {
@@ -486,27 +509,24 @@ between the current and staged bundle before swapping:
 }
 ```
 
-Enable rule editing + hotload from the UI:
+Candidate validation is available without a mutation flag. Checked daemon activation and rollback remain fail-closed. Deploy a new immutable generation to apply changes.
+
+Post facts for a universe projection. Reuse the same `Idempotency-Key` and identical payload when retrying one logical request. Use a new key for a new submission.
 
 ```bash
-EFFECTUS_API_TOKEN=devtoken \
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
-  effectusd --bundle ./bundle.json --rules-hotload
-```
-
-Post facts for a universe snapshot:
-
-```bash
-curl -X POST http://localhost:8080/api/facts \
+curl --fail-with-body -X POST http://localhost:8080/api/facts \
   -H 'Authorization: Bearer devtoken' \
+  -H 'Idempotency-Key: customer-order-42-v1' \
   -H 'Content-Type: application/json' \
-  -d '{"universe":"prod","facts":{"customer":{"tier":"gold"},"order":{"total":120}}}'
+  -d '{"universe":"prod-projection","namespace":"tenant-a","facts":{"customer":{"tier":"gold"},"order":{"total":120}}}'
 ```
+
+`namespace` is the durable tenant identity used in admission and execution IDs. `universe` is the local projection key. For compatibility, omitting `namespace` uses `universe` as the namespace (or `default` when both are empty).
 
 #### Use Kafka as Fact Source
 
 ```bash
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
 effectusd \
   --bundle ./bundle.json \
   --fact-source kafka \
@@ -515,11 +535,11 @@ effectusd \
   --kafka-topic customer-events
 ```
 
-#### Full compatibility configuration
+#### Full production configuration
 
 ```bash
 EFFECTUS_API_TOKEN="..." \
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
 effectusd \
   --oci-ref ghcr.io/myorg/customer-rules@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   --oci-signature-verifier /usr/local/bin/effectus-verify-oci \
@@ -529,7 +549,6 @@ effectusd \
   --kafka-topic events \
   --http-addr :8080 \
   --metrics-addr :9090 \
-  --reload-interval 300s \
   --verbose
 ```
 
@@ -579,7 +598,7 @@ effectusc bundle \
 
 ```bash
 # Run the checked durable daemon
-EFFECTUS_SAGA_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
+EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
 effectusd \
   --oci-ref ghcr.io/myorg/my-rules@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   --oci-signature-verifier /usr/local/bin/effectus-verify-oci \
@@ -624,8 +643,7 @@ Effectusd reads these secrets from the environment:
 
 - `EFFECTUS_API_TOKEN`
 - `EFFECTUS_API_READ_TOKEN`
-- `EFFECTUS_SAGA_POSTGRES_DSN`
-- `EFFECTUS_SAGA_REDIS_PASSWORD` for library compatibility stores
+- `EFFECTUS_POSTGRES_DSN`
 
 The corresponding secret command-line flags are rejected because process arguments can expose their values.
 

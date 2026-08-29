@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -13,8 +12,6 @@ import (
 	"github.com/effectus/effectus-go"
 	"github.com/effectus/effectus-go/ast"
 	"github.com/effectus/effectus-go/compiler"
-	"github.com/effectus/effectus-go/flow"
-	"github.com/effectus/effectus-go/list"
 	"github.com/effectus/effectus-go/util"
 )
 
@@ -261,48 +258,19 @@ func dumpASTStructure(file *ast.File) {
 	dumper.DumpFile(file)
 }
 
-// compileFiles compiles multiple rule files using the appropriate compiler
+// compileFiles compiles multiple rule files using the public compatibility API.
 func compileFiles(filenames []string, verbose bool, dumpAST bool) {
-	// Group files by type
-	effFiles := []string{}
-	effxFiles := []string{}
-
-	for _, path := range filenames {
-		ext := filepath.Ext(path)
-		switch ext {
-		case ".eff":
-			effFiles = append(effFiles, path)
-		case ".effx":
-			effxFiles = append(effxFiles, path)
-		default:
-			fmt.Printf("Unsupported file extension for %s: %s (must be .eff or .effx)\n", path, ext)
-		}
-	}
-
-	// Check if we have valid files to compile
-	if len(effFiles) == 0 && len(effxFiles) == 0 {
-		fmt.Println("No valid files to compile")
-		os.Exit(1)
-	}
-
-	// Create a schema
-	schema := &SimpleSchema{}
-
-	// Compile all files and merge them
-	mergedSpec, err := compileAllFiles(effFiles, effxFiles, schema)
+	mergedSpec, err := compileProgram(filenames)
 	if err != nil {
 		fmt.Printf("Compilation error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Successfully compiled %d files!\n", len(effFiles)+len(effxFiles))
+	fmt.Printf("Successfully compiled %d files!\n", len(filenames))
 	fmt.Printf("Required facts: %v\n", mergedSpec.RequiredFacts())
 
 	if dumpAST && verbose {
-		// Create a compiler for parsing
 		comp := compiler.NewCompiler()
-
-		// Parse the files again to dump the AST
 		for _, filename := range filenames {
 			file, err := comp.ParseFile(filename)
 			if err == nil {
@@ -313,157 +281,20 @@ func compileFiles(filenames []string, verbose bool, dumpAST bool) {
 	}
 }
 
-// compileAllFiles compiles both list and flow style rule files and merges them into a single spec
-func compileAllFiles(effFiles, effxFiles []string, schema effectus.SchemaInfo) (effectus.Spec, error) {
-	var listSpec *list.Spec
-	var flowSpec *flow.Spec
-
-	// Compile list-style (.eff) files if any
-	if len(effFiles) > 0 {
-		listCompiler := &list.Compiler{}
-		var specs []effectus.Spec
-
-		for _, path := range effFiles {
-			spec, err := listCompiler.CompileFile(path, schema)
-			if err != nil {
-				return nil, fmt.Errorf("failed to compile %s: %w", path, err)
-			}
-			specs = append(specs, spec)
-		}
-
-		// Merge list specs
-		listSpec = mergeListSpecs(specs)
-	}
-
-	// Compile flow-style (.effx) files if any
-	if len(effxFiles) > 0 {
-		flowCompiler := &flow.Compiler{}
-
-		var specs []effectus.Spec
-		for _, path := range effxFiles {
-			spec, err := flowCompiler.CompileFile(path, schema)
-			if err != nil {
-				return nil, fmt.Errorf("failed to compile %s: %w", path, err)
-			}
-			specs = append(specs, spec)
-		}
-
-		// Merge flow specs
-		flowSpec = mergeFlowSpecs(specs)
-	}
-
-	combinedSpec := compiler.NewUnifiedSpec(listSpec, flowSpec, "unified")
-
-	return combinedSpec, nil
-}
-
-// mergeListSpecs merges multiple list specs into a single one
-func mergeListSpecs(specs []effectus.Spec) *list.Spec {
-	if len(specs) == 0 {
-		return nil
-	}
-
-	merged := &list.Spec{
-		Rules:     []*list.CompiledRule{},
-		FactPaths: []string{},
-	}
-
-	factPathSet := make(map[string]struct{})
-
-	for _, spec := range specs {
-		listSpec, ok := spec.(*list.Spec)
-		if !ok {
-			continue
-		}
-
-		// Add rules
-		merged.Rules = append(merged.Rules, listSpec.Rules...)
-
-		// Collect fact paths
-		for _, path := range listSpec.FactPaths {
-			factPathSet[path] = struct{}{}
-		}
-	}
-
-	// Extract unique fact paths
-	for path := range factPathSet {
-		merged.FactPaths = append(merged.FactPaths, path)
-	}
-
-	return merged
-}
-
-// mergeFlowSpecs merges multiple flow specs into a single one
-func mergeFlowSpecs(specs []effectus.Spec) *flow.Spec {
-	if len(specs) == 0 {
-		return nil
-	}
-
-	merged := &flow.Spec{
-		Flows:     []*flow.CompiledFlow{},
-		FactPaths: []string{},
-	}
-
-	factPathSet := make(map[string]struct{})
-
-	for _, spec := range specs {
-		flowSpec, ok := spec.(*flow.Spec)
-		if !ok {
-			continue
-		}
-
-		// Add flows
-		merged.Flows = append(merged.Flows, flowSpec.Flows...)
-
-		// Collect fact paths
-		for _, path := range flowSpec.FactPaths {
-			factPathSet[path] = struct{}{}
-		}
-	}
-
-	// Extract unique fact paths
-	for path := range factPathSet {
-		merged.FactPaths = append(merged.FactPaths, path)
-	}
-
-	return merged
+func compileProgram(filenames []string) (*compiler.CompiledSpec, error) {
+	comp := compiler.NewCompiler()
+	return comp.CompileUncheckedProgram(filenames, NewSimpleFacts(nil))
 }
 
 // runFiles compiles and executes multiple rule files
 func runFiles(filenames []string, verbose bool, execute bool, dumpAST bool) {
-	// First compile the files
-	effFiles := []string{}
-	effxFiles := []string{}
-
-	for _, path := range filenames {
-		ext := filepath.Ext(path)
-		switch ext {
-		case ".eff":
-			effFiles = append(effFiles, path)
-		case ".effx":
-			effxFiles = append(effxFiles, path)
-		default:
-			fmt.Printf("Unsupported file extension for %s: %s (must be .eff or .effx)\n", path, ext)
-		}
-	}
-
-	// Check if we have valid files to compile
-	if len(effFiles) == 0 && len(effxFiles) == 0 {
-		fmt.Println("No valid files to run")
-		os.Exit(1)
-	}
-
-	// Create a schema
-	schema := &SimpleSchema{}
-
-	// Compile all files and merge them
-	mergedSpec, err := compileAllFiles(effFiles, effxFiles, schema)
+	mergedSpec, err := compileProgram(filenames)
 	if err != nil {
 		fmt.Printf("Compilation error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Successfully compiled %d files!\n", len(effFiles)+len(effxFiles))
+	fmt.Printf("Successfully compiled %d files!\n", len(filenames))
 
 	if dumpAST {
 		// Create a compiler for parsing

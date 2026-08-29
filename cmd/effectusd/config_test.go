@@ -4,9 +4,20 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestValidateBundleArgumentsRejectsOCIReloadBeforeStartup(t *testing.T) {
+	err := validateBundleArguments("", "ghcr.io/acme/rules@sha256:digest", time.Minute)
+	require.EqualError(t, err, "--reload-interval cannot poll an immutable OCI reference; publish and deploy a new digest instead")
+}
+
+func TestApplyRuntimeConfigRejectsLegacyStoresAndPlugins(t *testing.T) {
+	require.ErrorContains(t, applyRuntimeConfig(&runtimeConfig{Saga: sagaConfig{Store: "redis"}}, map[string]bool{}), "legacy saga/Redis")
+	require.ErrorContains(t, applyRuntimeConfig(&runtimeConfig{Verbs: verbConfig{PluginDirs: []string{"plugins"}}}, map[string]bool{}), "plugin_dirs")
+}
 
 func TestLoadRuntimeConfigRejectsUnknownFields(t *testing.T) {
 	for _, test := range []struct {
@@ -49,6 +60,38 @@ kafka:
 	require.Equal(t, "effectusd-production", config.Kafka.ConsumerGroup)
 	require.Equal(t, "dlq", config.Kafka.PoisonPolicy)
 	require.Equal(t, "facts.dlq", config.Kafka.DLQTopic)
+}
+
+func TestRuntimeConfigRejectsDeprecatedKafkaFileLedgers(t *testing.T) {
+	config := &runtimeConfig{Kafka: kafkaConfig{DeliveryLedger: "/data/ignored.jsonl", PoisonAudit: "/data/poison.jsonl"}}
+	require.ErrorContains(t, applyRuntimeConfig(config, nil), "no longer supported")
+}
+
+func TestRuntimeConfigUsesCanonicalDatabaseDSN(t *testing.T) {
+	original := *postgresDSN
+	t.Cleanup(func() { *postgresDSN = original })
+	*postgresDSN = ""
+	require.NoError(t, applyRuntimeConfig(&runtimeConfig{Database: databaseConfig{DSN: "postgres://canonical"}}, nil))
+	require.Equal(t, "postgres://canonical", *postgresDSN)
+}
+
+func TestLoadRuntimeConfigReadsDatabasePoolAndMigrationSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+database:
+  migrations: validate
+  max_open: 24
+  max_idle: 6
+  max_lifetime: 20m
+  max_idle_time: 4m
+`), 0o600))
+	config, err := loadRuntimeConfig(path)
+	require.NoError(t, err)
+	require.Equal(t, "validate", config.Database.Migrations)
+	require.Equal(t, 24, *config.Database.MaxOpen)
+	require.Equal(t, 6, *config.Database.MaxIdle)
+	require.Equal(t, "20m", config.Database.MaxLifetime)
+	require.Equal(t, "4m", config.Database.MaxIdleTime)
 }
 
 func TestLoadRuntimeConfigReadsGeneratedGRPCServiceSettings(t *testing.T) {

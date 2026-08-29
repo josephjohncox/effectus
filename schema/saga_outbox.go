@@ -1,16 +1,15 @@
 package schema
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/effectus/effectus-go/invocation"
 )
@@ -24,192 +23,8 @@ var (
 	ErrOptimisticConflict = errors.New("optimistic persistence conflict")
 )
 
-// SagaState is the durable V2 saga state.
-type SagaState string
-
-const (
-	SagaRunning             SagaState = "running"
-	SagaCompleted           SagaState = "completed"
-	SagaCompensating        SagaState = "compensating"
-	SagaCompensated         SagaState = "compensated"
-	SagaFailed              SagaState = "failed"
-	SagaBlockedUnknown      SagaState = "blocked_unknown"
-	SagaBlockedDependency   SagaState = "blocked_dependency"
-	SagaBlockedFence        SagaState = "blocked_fence"
-	SagaBlockedCompensation SagaState = "blocked_compensation"
-)
-
-// DispatchState is the durable V2 outbox state.
-type DispatchState string
-
-const (
-	DispatchQueued          DispatchState = "queued"
-	DispatchInFlight        DispatchState = "in_flight"
-	DispatchSucceeded       DispatchState = "succeeded"
-	DispatchRetryWait       DispatchState = "retry_wait"
-	DispatchFailedPermanent DispatchState = "failed_permanent"
-	DispatchBlockedUnknown  DispatchState = "blocked_unknown"
-	DispatchBlockedFence    DispatchState = "blocked_fence"
-)
-
-// StepState records forward and compensation progress for one checked step.
-type StepState string
-
-const (
-	StepPending     StepState = "pending"
-	StepSucceeded   StepState = "succeeded"
-	StepFailed      StepState = "failed"
-	StepCompensated StepState = "compensated"
-)
-
-// FencingRequirement names one resource that needs an external fence.
-type FencingRequirement struct {
-	Authority string `json:"authority"`
-	Resource  string `json:"resource"`
-}
-
-// SagaInstance binds durable work to one checked plan and execution.
-type SagaInstance struct {
-	Namespace   string
-	SagaID      string
-	ExecutionID string
-	PlanID      string
-	PlanDigest  string
-	State       SagaState
-	Serial      bool
-	Revision    uint64
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-}
-
-// CreateSagaRequest contains immutable saga identity fields.
-type CreateSagaRequest struct {
-	Namespace   string
-	SagaID      string
-	ExecutionID string
-	PlanID      string
-	PlanDigest  string
-	Serial      bool
-
-	allowUnstableIdentityForTest bool
-}
-
-// EnqueueStepRequest atomically records a logical checked step and its forward dispatch.
-type EnqueueStepRequest struct {
-	SagaID                string
-	EffectID              string
-	Sequence              int
-	Verb                  string
-	ContractHash          string
-	Arguments             map[string]any
-	CompensationVerb      string
-	CompensationContract  string
-	CompensationArguments map[string]any
-	Fencing               []FencingRequirement
-}
-
-// SagaStep is the immutable logical step plus its durable progress.
-type SagaStep struct {
-	SagaID                   string
-	EffectID                 string
-	Sequence                 int
-	Verb                     string
-	ContractHash             string
-	Arguments                json.RawMessage
-	ArgumentHash             string
-	CompensationVerb         string
-	CompensationContract     string
-	CompensationArguments    json.RawMessage
-	CompensationArgumentHash string
-	Fencing                  []FencingRequirement
-	State                    StepState
-	Result                   json.RawMessage
-}
-
-// Dispatch is one durable forward or compensation intent.
-type Dispatch struct {
-	ID             string
-	SagaID         string
-	EffectID       string
-	Sequence       int
-	Direction      invocation.Direction
-	Verb           string
-	ContractHash   string
-	Arguments      json.RawMessage
-	ArgumentHash   string
-	IdempotencyKey string
-	State          DispatchState
-	Attempt        uint64
-	LeaseOwner     string
-	LeaseToken     string
-	LeaseDeadline  time.Time
-	NextAttemptAt  time.Time
-	Fencing        []FencingRequirement
-	FencingGrants  []invocation.FencingGrant
-	LastOutcome    invocation.OutcomeClass
-	LastError      string
-	Result         json.RawMessage
-	Revision       uint64
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-}
-
-// ClaimOptions controls one outbox claim operation.
-type ClaimOptions struct {
-	Owner            string
-	LeaseDuration    time.Duration
-	Now              time.Time
-	TargetDispatchID string
-}
-
-// Completion resolves only the current attempt and random lease token.
-type Completion struct {
-	DispatchID    string
-	Attempt       uint64
-	LeaseToken    string
-	Outcome       invocation.OutcomeClass
-	Result        json.RawMessage
-	Error         string
-	NextAttemptAt time.Time
-	Exhausted     bool
-	Now           time.Time
-}
-
-// DispatchAttempt is the immutable audit record for one leased attempt.
-type DispatchAttempt struct {
-	DispatchID    string
-	Attempt       uint64
-	LeaseOwner    string
-	LeaseToken    string
-	LeaseDeadline time.Time
-	FencingGrants []invocation.FencingGrant
-	Outcome       invocation.OutcomeClass
-	Error         string
-	StartedAt     time.Time
-	CompletedAt   time.Time
-}
-
-// OutboxStore is the V2 saga/outbox persistence contract.
-// UnknownOutcomeRetryPolicy is implemented only by bindings that guarantee
-// sink deduplication for the supplied idempotency key. Unknown outcomes block
-// immediately when the invocation executor does not implement this interface.
-type UnknownOutcomeRetryPolicy interface {
-	RetryUnknownOutcome(invocation.Request) bool
-}
-
-type OutboxStore interface {
-	CreateSaga(context.Context, CreateSagaRequest) (*SagaInstance, error)
-	EnqueueStep(context.Context, EnqueueStepRequest) (*Dispatch, error)
-	ClaimDispatch(context.Context, ClaimOptions) (*Dispatch, error)
-	SaveFencingGrants(context.Context, string, uint64, string, []invocation.FencingGrant) error
-	CompleteDispatch(context.Context, Completion) error
-	CompleteSaga(context.Context, string) error
-	GetSaga(context.Context, string) (*SagaInstance, error)
-	GetDispatch(context.Context, string) (*Dispatch, error)
-	ListDispatches(context.Context, string) ([]*Dispatch, error)
-	ListAttempts(context.Context, string) ([]DispatchAttempt, error)
-}
-
+// Durable workflow contracts live in schema/workflow. Compatibility aliases
+// remain in contracts.go during the package-boundary migration.
 // StableAdmissionID scopes a transport idempotency key to its checked ruleset.
 func StableAdmissionID(namespace, deliveryID, ruleset, version string) string {
 	return hashIdentity(namespace, deliveryID, ruleset, version)
@@ -265,7 +80,8 @@ func validateSagaRequest(request CreateSagaRequest) error {
 	if !request.Serial {
 		return fmt.Errorf("non-serial durable sagas are not supported until late-success compensation is atomic")
 	}
-	if !request.allowUnstableIdentityForTest && request.SagaID != StableSagaID(request.ExecutionID, request.PlanID) {
+	testOverride := request.AllowUnstableIdentityForTest && strings.HasSuffix(os.Args[0], ".test")
+	if !testOverride && request.SagaID != StableSagaID(request.ExecutionID, request.PlanID) {
 		return fmt.Errorf("%w: saga ID must equal StableSagaID(execution_id, plan_id)", ErrIdentityConflict)
 	}
 	for name, value := range map[string]string{

@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -65,27 +67,29 @@ var (
 	ociRef                   = flag.String("oci-ref", "", "OCI reference for bundle (e.g., ghcr.io/user/bundle:v1)")
 	ociCacheDir              = flag.String("oci-cache-dir", "./bundles", "Writable directory for OCI bundle cache")
 	ociSignatureVerifier     = flag.String("oci-signature-verifier", "", "Fixed executable used to verify an OCI reference and digest")
-	pluginDir                = flag.String("plugin-dir", "", "Directory containing verb plugins")
-	verbDir                  = flag.String("verb-dir", "", "Directory containing JSON verb specs")
+	verbDir                  = flag.String("verb-dir", "", "Deprecated alias for --extensions-dir")
 	verbDuplicatePolicy      = flag.String("verb-duplicate-policy", "error", "Duplicate verb policy (error, replace, ignore)")
 	verbOCIWarmup            = flag.Bool("verb-oci-warmup", false, "Warm OCI verb executors at startup")
 	verbStrict               = flag.Bool("verb-strict", true, "Validate verb arguments and return values")
 	extensionsDir            = flag.String("extensions-dir", "", "Directory containing extension manifests (*.verbs.json, *.schema.json)")
 	extensionsOCI            = flag.String("extensions-oci", "", "OCI references for extension bundles (comma-separated)")
-	extensionsReloadInterval = flag.Duration("extensions-reload-interval", 0, "Interval for reloading extension manifests (0 to disable)")
+	extensionsReloadInterval = flag.Duration("extensions-reload-interval", 0, "Deprecated; checked execution requires immutable redeployment")
 	schemaSourcesFile        = flag.String("schema-sources", "", "Path to schema sources config (YAML/JSON)")
-	reloadInterval           = flag.Duration("reload-interval", 0, "Interval for reloading local schema and extension sources (immutable OCI bundles cannot be polled)")
+	reloadInterval           = flag.Duration("reload-interval", 0, "Deprecated; checked execution requires immutable redeployment")
 	shutdownTimeout          = flag.Duration("shutdown-timeout", 30*time.Second, "Deadline for graceful shutdown and queue drain")
+	migrateOnly              = flag.Bool("migrate-only", false, "Apply PostgreSQL schema migrations and exit")
+	databaseMigrations       = flag.String("database-migrations", "validate", "Database migration mode (validate, validate-only, apply, legacy-apply)")
+	databaseMaxOpen          = flag.Int("database-max-open", 20, "Maximum open PostgreSQL connections")
+	databaseMaxIdle          = flag.Int("database-max-idle", 5, "Maximum idle PostgreSQL connections")
+	databaseMaxLifetime      = flag.Duration("database-max-lifetime", 30*time.Minute, "Maximum PostgreSQL connection lifetime")
+	databaseMaxIdleTime      = flag.Duration("database-max-idle-time", 5*time.Minute, "Maximum PostgreSQL connection idle time")
+	adminPruneBefore         = flag.String("admin-prune-before", "", "Prune terminal durable records updated before this RFC3339 cutoff, then exit")
+	adminPruneBatchSize      = flag.Int("admin-prune-batch-size", 100, "Maximum terminal executions and poison records to prune")
+	adminPruneDryRun         = flag.Bool("admin-prune-dry-run", true, "Report prune candidates without deleting them")
+	adminPruneBackupVerified = flag.Bool("admin-prune-backup-verified", false, "Confirm a restorable backup before destructive pruning")
 
-	// Runtime flags
-	sagaEnabled     = flag.Bool("saga", false, "Deprecated legacy saga mode (rejected by effectusd; use checked durable workflow runtime)")
-	sagaStoreType   = flag.String("saga-store", "memory", "Saga store (memory, redis, postgres)")
-	sagaRedisAddr   = flag.String("saga-redis-addr", "localhost:6379", "Redis address for saga store")
-	sagaRedisPass   = flag.String("saga-redis-password", "", "Redis password for saga store")
-	sagaRedisDB     = flag.Int("saga-redis-db", 0, "Redis DB for saga store")
-	sagaRedisPrefix = flag.String("saga-redis-prefix", "", "Redis key prefix for saga store")
-	sagaRedisTTL    = flag.Duration("saga-redis-ttl", 0, "TTL for saga keys (0 to disable)")
-	sagaPgDSN       = flag.String("saga-postgres-dsn", "", "Postgres DSN for saga store")
+	// PostgreSQL is the daemon's only durable storage authority.
+	postgresDSN = new(string)
 
 	// Determinism
 	fixedTime = flag.String("fixed-time", "", "Fixed time for deterministic evaluation (RFC3339 or RFC3339Nano)")
@@ -121,21 +125,28 @@ var (
 	grpcMaxConcurrent = flag.Int("grpc-max-concurrent", 128, "Maximum concurrent gRPC executions")
 
 	// API auth + rate limit flags
-	apiAuthMode   = flag.String("api-auth", "token", "API auth mode (token, disabled)")
-	apiToken      = flag.String("api-token", "", "Write token for /api endpoints (comma-separated)")
-	apiReadToken  = flag.String("api-read-token", "", "Read-only token for /api endpoints (comma-separated)")
-	apiACLFile    = flag.String("api-acl-file", "", "Path to API ACL file (YAML/JSON)")
-	apiRateLimit  = flag.Int("api-rate-limit", 120, "API requests per minute per client (0 to disable)")
-	apiRateBurst  = flag.Int("api-rate-burst", 60, "API burst size (0 to use rate limit)")
-	rulesHotload  = flag.Bool("rules-hotload", false, "Enable /api/rules/validate and /api/rules/hotload")
-	rulesHistory  = flag.Int("rules-history", 5, "Number of hotload bundles to keep in memory/on disk")
-	rulesHistDir  = flag.String("rules-history-dir", "./out/rules_history", "Directory for bundle history snapshots")
-	factsStore    = flag.String("facts-store", "file", "Facts store (file, memory)")
-	factsPath     = flag.String("facts-path", "./data/facts.json", "Facts store path (file store)")
-	factsMergeDef = flag.String("facts-merge-default", "last", "Default merge strategy (first, last, error)")
-	factsCache    = flag.String("facts-cache-policy", "none", "Facts cache policy (none, lru)")
-	factsCacheMax = flag.Int("facts-cache-max-universes", 0, "Max universes to keep in cache (0 for unlimited)")
-	factsCacheNs  = flag.Int("facts-cache-max-namespaces", 0, "Max namespaces per universe to keep (0 for unlimited)")
+	apiAuthMode        = flag.String("api-auth", "token", "API auth mode (token, disabled)")
+	apiToken           = flag.String("api-token", "", "Rejected compatibility argument; use EFFECTUS_API_TOKEN or protected config")
+	apiReadToken       = flag.String("api-read-token", "", "Rejected compatibility argument; use EFFECTUS_API_READ_TOKEN or protected config")
+	apiACLFile         = flag.String("api-acl-file", "", "Path to API ACL file (YAML/JSON)")
+	apiRateLimit       = flag.Int("api-rate-limit", 120, "API requests per minute per client (0 to disable)")
+	apiRateBurst       = flag.Int("api-rate-burst", 60, "API burst size (0 to use rate limit)")
+	apiLimiterCapacity = flag.Int("api-limiter-capacity", 10000, "Maximum active API client limiter buckets")
+	apiLimiterIdleTTL  = flag.Duration("api-limiter-idle-ttl", 10*time.Minute, "Idle TTL for API client limiter buckets")
+	trustedProxyCIDRs  = flag.String("trusted-proxy-cidrs", "", "Comma-separated proxy CIDRs trusted to supply X-Forwarded-For")
+	dbMaxOpen          = databaseMaxOpen
+	dbMaxIdle          = databaseMaxIdle
+	dbConnLifetime     = databaseMaxLifetime
+	dbConnIdleTime     = databaseMaxIdleTime
+	rulesHotload       = flag.Bool("rules-hotload", false, "Rejected compatibility argument; /api/rules/validate is always available")
+	rulesHistory       = flag.Int("rules-history", 5, "Number of hotload bundles to keep in memory/on disk")
+	rulesHistDir       = flag.String("rules-history-dir", "./out/rules_history", "Directory for bundle history snapshots")
+	factsStore         = flag.String("facts-store", "file", "Facts store (file, memory)")
+	factsPath          = flag.String("facts-path", "./data/facts.json", "Facts store path (file store)")
+	factsMergeDef      = flag.String("facts-merge-default", "last", "Default merge strategy (first, last, error)")
+	factsCache         = flag.String("facts-cache-policy", "none", "Facts cache policy (none, lru)")
+	factsCacheMax      = flag.Int("facts-cache-max-universes", 0, "Max universes to keep in cache (0 for unlimited)")
+	factsCacheNs       = flag.Int("facts-cache-max-namespaces", 0, "Max namespaces per universe to keep (0 for unlimited)")
 
 	// Debug flags
 	verbose = flag.Bool("verbose", false, "Enable verbose logging")
@@ -144,8 +155,24 @@ var (
 var factsMergeNs namespaceStrategyFlag
 var schemaSources []adapters.SchemaSourceConfig
 
+func registerCustomFlags() {
+	if flag.CommandLine.Lookup("facts-merge-namespace") == nil {
+		flag.Var(&factsMergeNs, "facts-merge-namespace", "Namespace-specific merge strategy (namespace=first|last|error)")
+	}
+	if flag.CommandLine.Lookup("db-max-open-connections") == nil {
+		flag.IntVar(databaseMaxOpen, "db-max-open-connections", *databaseMaxOpen, "Deprecated alias for --database-max-open")
+		flag.IntVar(databaseMaxIdle, "db-max-idle-connections", *databaseMaxIdle, "Deprecated alias for --database-max-idle")
+		flag.DurationVar(databaseMaxLifetime, "db-connection-lifetime", *databaseMaxLifetime, "Deprecated alias for --database-max-lifetime")
+		flag.DurationVar(databaseMaxIdleTime, "db-connection-idle-time", *databaseMaxIdleTime, "Deprecated alias for --database-max-idle-time")
+	}
+}
+
 func main() {
-	flag.Var(&factsMergeNs, "facts-merge-namespace", "Namespace-specific merge strategy (namespace=first|last|error)")
+	registerCustomFlags()
+	if err := rejectRemovedDaemonArgs(os.Args[1:]); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 	flag.Parse()
 
 	setFlags := map[string]bool{}
@@ -153,7 +180,12 @@ func main() {
 		setFlags[f.Name] = true
 	})
 
-	for _, secretFlag := range []string{"api-token", "api-read-token", "saga-redis-password", "saga-postgres-dsn"} {
+	if strings.TrimSpace(os.Getenv("EFFECTUS_SAGA_REDIS_PASSWORD")) != "" {
+		fmt.Fprintln(os.Stderr, "Error: EFFECTUS_SAGA_REDIS_PASSWORD is a legacy Redis setting and is not supported; remove it and configure PostgreSQL with EFFECTUS_POSTGRES_DSN")
+		os.Exit(1)
+	}
+
+	for _, secretFlag := range []string{"api-token", "api-read-token"} {
 		if setFlags[secretFlag] {
 			fmt.Fprintf(os.Stderr, "--%s is rejected because command arguments expose secrets; use environment variables or a protected config file\n", secretFlag)
 			os.Exit(1)
@@ -189,11 +221,40 @@ func main() {
 	if *apiReadToken == "" {
 		*apiReadToken = os.Getenv("EFFECTUS_API_READ_TOKEN")
 	}
-	if *sagaRedisPass == "" {
-		*sagaRedisPass = os.Getenv("EFFECTUS_SAGA_REDIS_PASSWORD")
+	if *postgresDSN == "" {
+		*postgresDSN = os.Getenv("EFFECTUS_POSTGRES_DSN")
 	}
-	if *sagaPgDSN == "" {
-		*sagaPgDSN = os.Getenv("EFFECTUS_SAGA_POSTGRES_DSN")
+	if *postgresDSN == "" && strings.TrimSpace(os.Getenv("EFFECTUS_SAGA_POSTGRES_DSN")) != "" {
+		*postgresDSN = os.Getenv("EFFECTUS_SAGA_POSTGRES_DSN")
+		fmt.Fprintln(os.Stderr, "Warning: EFFECTUS_SAGA_POSTGRES_DSN is deprecated; use EFFECTUS_POSTGRES_DSN")
+	}
+
+	if strings.TrimSpace(*kafkaDeliveryLedger) != "" || strings.TrimSpace(*kafkaPoisonAudit) != "" {
+		fmt.Fprintln(os.Stderr, "Error: --kafka-delivery-ledger and --kafka-poison-audit are no longer supported; remove them because PostgreSQL table effectus_kafka_deliveries is authoritative")
+		os.Exit(1)
+	}
+	if err := validateDatabasePoolConfig(); err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid database pool configuration: %v\n", err)
+		os.Exit(1)
+	}
+	if *migrateOnly {
+		*databaseMigrations = "apply"
+	}
+
+	if err := validateDatabaseSettings(databaseSettingsFromFlags()); err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid database configuration: %v\n", err)
+		os.Exit(1)
+	}
+	if err := rejectCheckedRuntimeMutation(*rulesHotload, *reloadInterval, *extensionsReloadInterval); err != nil {
+		fmt.Fprintf(os.Stderr, "Unsafe checked-runtime configuration: %v\n", err)
+		os.Exit(1)
+	}
+	if handled, err := runDatabaseAdminCommand(context.Background()); handled {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Database administration failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	if strings.TrimSpace(*schemaSourcesFile) != "" {
@@ -217,14 +278,15 @@ func main() {
 		}
 	}
 
-	if *bundleFile == "" && *ociRef == "" {
-		fmt.Fprintln(os.Stderr, "Either -bundle or -oci-ref must be specified")
-		flag.PrintDefaults()
+	if err := validateBundleArguments(*bundleFile, *ociRef, *reloadInterval); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		if *bundleFile == "" && *ociRef == "" {
+			flag.PrintDefaults()
+		}
 		os.Exit(1)
 	}
-	if *bundleFile != "" && *ociRef != "" {
-		fmt.Fprintln(os.Stderr, "Use either -bundle or -oci-ref, not both")
-		os.Exit(1)
+	if strings.TrimSpace(*verbDir) != "" {
+		fmt.Fprintln(os.Stderr, "Notice: --verb-dir/verbs.spec_dirs is deprecated; use --extensions-dir/extensions.dirs")
 	}
 
 	// Create context with cancellation
@@ -295,12 +357,12 @@ func main() {
 		os.Exit(1)
 	}
 	extensionDirs := splitCommaList(*extensionsDir)
-	if strings.TrimSpace(*pluginDir) != "" {
-		fmt.Fprintln(os.Stderr, "--plugin-dir is not supported by production effectusd; use immutable invocation-aware extension targets")
-		os.Exit(1)
-	}
 	for _, directory := range splitCommaList(*verbDir) {
 		if directory != "" {
+			if err := validateLegacyVerbDirAlias(directory); err != nil {
+				fmt.Fprintf(os.Stderr, "Invalid --verb-dir alias: %v\n", err)
+				os.Exit(1)
+			}
 			extensionDirs = append(extensionDirs, directory)
 		}
 	}
@@ -310,26 +372,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Verify verb hash
-	if verbReg.Count() > 0 {
-		currentVerbHash := verbReg.GetVerbHash()
-		if currentVerbHash != bundle.VerbHash {
-			fmt.Fprintf(os.Stderr, "Warning: verb hash mismatch\n")
-			fmt.Fprintf(os.Stderr, "  Bundle hash: %s\n", bundle.VerbHash)
-			fmt.Fprintf(os.Stderr, "  Current hash: %s\n", currentVerbHash)
-			// In production, you might want to fail here
-		}
+	// Verify the active contract before starting listeners or execution engines.
+	if err := validateBundleVerbHash(bundle.VerbHash, verbReg); err != nil {
+		fmt.Fprintf(os.Stderr, "Verb contract admission failed: %v\n", err)
+		os.Exit(1)
 	}
 
 	if bundle.ListSpec != nil || bundle.FlowSpec != nil {
 		fmt.Fprintln(os.Stderr, "Bundle contains in-memory legacy specifications; effectusd accepts embedded .eff or .effx RuleSources only.")
 		os.Exit(1)
 	}
-	if *sagaEnabled {
-		fmt.Fprintln(os.Stderr, "--saga is rejected: the legacy daemon executor does not use the V2 outbox. Use runtime.ExecuteWorkflowWithIdentity with a configured durable outbox.")
-		os.Exit(1)
-	}
-
 	var sagaStore schema.SagaStore
 	var capSystem *capability.CapabilitySystem
 
@@ -375,14 +427,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	limiter := newRateLimiter(*apiRateLimit, *apiRateBurst)
+	limiter := newRateLimiterWithBounds(*apiRateLimit, *apiRateBurst, *apiLimiterCapacity, *apiLimiterIdleTTL)
+	trustedProxies, err := parseTrustedProxyCIDRs(*trustedProxyCIDRs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error configuring trusted proxies: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Create a WaitGroup to synchronize goroutines
 	var wg sync.WaitGroup
 
 	factCh := make(chan factEnvelope, 32)
 	history := newBundleHistory(*rulesHistory, *rulesHistDir)
-	state := newServerState(bundle, factCh, store, storeConfig, auth, limiter, acl, typeSystem, schemaSources, verbReg, *rulesHotload, history, *sagaEnabled, sagaStore, capSystem)
+	state := newServerState(bundle, factCh, store, storeConfig, auth, limiter, acl, typeSystem, schemaSources, verbReg, *rulesHotload, history, false, sagaStore, capSystem)
+	state.SetTrustedProxies(trustedProxies)
 	state.recordBundleHistory(bundle, "startup")
 
 	if err := validateFactSource(); err != nil {
@@ -404,6 +462,12 @@ func main() {
 			os.Exit(1)
 		}
 		state.SetCheckedEngine(execution.Engine())
+		if *reloadInterval > 0 || *extensionsReloadInterval > 0 {
+			_ = executionDB.Close()
+			_ = execution.Close()
+			fmt.Fprintln(os.Stderr, "checked execution engine requires immutable deployment; schema, extension, and bundle reload intervals must be disabled")
+			os.Exit(1)
+		}
 		recoveryWorker, err = newDaemonRecoveryWorker(execution, executionDB)
 		if err != nil {
 			_ = executionDB.Close()
@@ -422,6 +486,7 @@ func main() {
 			os.Exit(1)
 		}
 		state.SetKafkaSource(kafkaSource)
+		setMetricsKafkaSource(kafkaSource)
 	}
 	if strings.TrimSpace(*grpcAddr) != "" {
 		grpcExecutionServer, err = configureDaemonGRPCServer(execution, bundle)
@@ -439,8 +504,25 @@ func main() {
 	}
 	if execution != nil {
 		defer execution.Close()
+		execution.Engine().SetObserver(metrics)
+	}
+	if recoveryWorker != nil {
+		recoveryWorker.Observer = metrics
+	}
+	if executionDB != nil {
+		setMetricsDatabase(executionDB)
+		state.SetDatabase(executionDB)
 	}
 
+	var metricsServer *http.Server
+	var metricsListener net.Listener
+	if *metricsAddr != "" {
+		metricsServer, metricsListener, err = newMetricsServer(*metricsAddr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error starting metrics listener: %v\n", err)
+			os.Exit(1)
+		}
+	}
 	httpServer, httpListener, err := newHTTPServer(*httpAddr, state)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting HTTP server: %v\n", err)
@@ -455,83 +537,14 @@ func main() {
 		}
 	}()
 
-	// Start metrics server
-	if *metricsAddr != "" {
+	// The listener was pre-bound so a metrics bind failure cannot leave a ready pod.
+	if metricsServer != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			startMetricsServer(ctx, *metricsAddr)
-		}()
-	}
-
-	// Add hot-reloading if OCI reference is provided
-	if *ociRef != "" && *reloadInterval > 0 {
-		fmt.Fprintln(os.Stderr, "--reload-interval cannot poll an immutable OCI digest; publish and deploy a new digest instead")
-		cancel()
-	}
-
-	extReloadInterval := *extensionsReloadInterval
-	if extReloadInterval == 0 && *reloadInterval > 0 && (len(extensionDirs) > 0 || len(extensionOCIs) > 0) {
-		extReloadInterval = *reloadInterval
-	}
-	if extReloadInterval > 0 && (len(extensionDirs) > 0 || len(extensionOCIs) > 0) {
-		if *verbose {
-			fmt.Printf("Enabling extension reload every %s\n", extReloadInterval)
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ticker := time.NewTicker(extReloadInterval)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					if *verbose {
-						fmt.Println("Reloading extension manifests...")
-					}
-					var reloadErr error
-					if execution != nil {
-						reloadErr = execution.HotReload(ctx)
-					} else {
-						reloadErr = reloadVerbsAndExtensions(state, extensionDirs, extensionOCIs)
-					}
-					if reloadErr != nil {
-						fmt.Fprintf(os.Stderr, "Error reloading extensions: %v\n", reloadErr)
-					}
-				}
-			}
-		}()
-	}
-
-	schemaReloadInterval := *extensionsReloadInterval
-	if schemaReloadInterval == 0 && *reloadInterval > 0 && len(schemaSources) > 0 {
-		schemaReloadInterval = *reloadInterval
-	}
-	if schemaReloadInterval > 0 && len(schemaSources) > 0 {
-		if *verbose {
-			fmt.Printf("Enabling schema source reload every %s\n", schemaReloadInterval)
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ticker := time.NewTicker(schemaReloadInterval)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					if *verbose {
-						fmt.Println("Reloading schema sources...")
-					}
-					if err := reloadSchemaSources(ctx, state, schemaSources, *verbose); err != nil {
-						fmt.Fprintf(os.Stderr, "Error reloading schema sources: %v\n", err)
-					}
-				}
+			if err := serveMetricsServer(ctx, metricsServer, metricsListener); err != nil && ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "Metrics server error: %v\n", err)
+				cancel()
 			}
 		}()
 	}
@@ -586,6 +599,9 @@ func main() {
 			fmt.Println("Shutting down, stopping admission...")
 			shutdownCtx, stopShutdown := context.WithTimeout(context.WithoutCancel(ctx), *shutdownTimeout)
 			defer stopShutdown()
+			if err := shutdownHTTPServer(shutdownCtx, httpServer); err != nil {
+				fmt.Fprintf(os.Stderr, "HTTP shutdown error: %v\n", err)
+			}
 			workersDone := make(chan struct{})
 			go func() {
 				wg.Wait()
@@ -689,33 +705,6 @@ func loadVerbsAndExtensions(verbReg *verb.Registry, extensionDirs []string, exte
 
 	verbReg.Reset()
 
-	if *verbDir != "" && *pluginDir != "" {
-		return fmt.Errorf("use either -verb-dir or -plugin-dir, not both")
-	}
-
-	if *verbDir != "" {
-		for _, dir := range splitCommaList(*verbDir) {
-			if dir == "" {
-				continue
-			}
-			if *verbose {
-				fmt.Printf("Loading verb specs from directory: %s\n", dir)
-			}
-			if err := verbReg.RegisterDirectory(dir); err != nil {
-				return fmt.Errorf("loading verb specs from %s: %w", dir, err)
-			}
-		}
-	}
-
-	if *pluginDir != "" {
-		if *verbose {
-			fmt.Printf("Loading verb plugins from directory: %s\n", *pluginDir)
-		}
-		if err := verbReg.LoadPlugins(*pluginDir); err != nil {
-			return fmt.Errorf("loading verb plugins: %w", err)
-		}
-	}
-
 	hasExtensions := len(extensionDirs) > 0 || len(extensionOCIs) > 0
 	if hasExtensions {
 		if *verbose {
@@ -762,6 +751,62 @@ func loadVerbsAndExtensions(verbReg *verb.Registry, extensionDirs []string, exte
 	return nil
 }
 
+func validateBundleVerbHash(bundleHash string, registry *verb.Registry) error {
+	if strings.TrimSpace(bundleHash) == "" {
+		return fmt.Errorf("bundle verb_hash is missing")
+	}
+	if registry == nil {
+		return fmt.Errorf("active verb registry is missing")
+	}
+	currentHash := registry.GetVerbHash()
+	if currentHash != bundleHash {
+		return fmt.Errorf("verb_hash mismatch: bundle=%s active=%s", bundleHash, currentHash)
+	}
+	return nil
+}
+
+func validateBundleArguments(bundle, oci string, reload time.Duration) error {
+	if bundle == "" && oci == "" {
+		return fmt.Errorf("either -bundle or -oci-ref must be specified")
+	}
+	if bundle != "" && oci != "" {
+		return fmt.Errorf("use either -bundle or -oci-ref, not both")
+	}
+	if oci != "" && reload > 0 {
+		return fmt.Errorf("--reload-interval cannot poll an immutable OCI reference; publish and deploy a new digest instead")
+	}
+	return nil
+}
+
+func rejectRemovedDaemonArgs(arguments []string) error {
+	legacy := []string{"--saga", "--saga-store", "--saga-redis-addr", "--saga-redis-password", "--saga-redis-db", "--saga-redis-prefix", "--saga-redis-ttl", "--saga-postgres-dsn", "--plugin-dir"}
+	for _, argument := range arguments {
+		name := strings.SplitN(argument, "=", 2)[0]
+		for _, removed := range legacy {
+			if name == removed {
+				return fmt.Errorf("%s is not supported by effectusd; use EFFECTUS_POSTGRES_DSN and declarative extensions", removed)
+			}
+		}
+	}
+	return nil
+}
+
+func validateLegacyVerbDirAlias(directory string) error {
+	return filepath.Walk(directory, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() || strings.ToLower(filepath.Ext(path)) != ".json" {
+			return nil
+		}
+		lower := strings.ToLower(path)
+		if !strings.HasSuffix(lower, ".verbs.json") && !strings.HasSuffix(lower, ".schema.json") {
+			return fmt.Errorf("legacy verb manifest %q is not an extension manifest; rename or migrate it to *.verbs.json and use --extensions-dir", path)
+		}
+		return nil
+	})
+}
+
 func splitCommaList(value string) []string {
 	parts := strings.Split(value, ",")
 	results := make([]string, 0, len(parts))
@@ -797,8 +842,8 @@ func validateFactSource() error {
 		if err := kafkaadapter.ValidateConfig(daemonKafkaConfig()); err != nil {
 			return err
 		}
-		if strings.TrimSpace(*sagaPgDSN) == "" {
-			return fmt.Errorf("Kafka requires --saga-postgres-dsn for durable engine admission")
+		if strings.TrimSpace(*postgresDSN) == "" {
+			return fmt.Errorf("Kafka requires EFFECTUS_POSTGRES_DSN or protected database.dsn for durable engine admission")
 		}
 		return nil
 	default:

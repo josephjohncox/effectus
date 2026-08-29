@@ -40,6 +40,8 @@ type FactSource interface {
 
 `TypedFact` carries a schema name, a protobuf message, the original bytes, source metadata, and tracing identifiers.
 
+Some sources set `TypedFact.Acknowledge`. Call it only after the fact reaches the configured durable processing boundary. An uncalled callback leaves the source record available for redelivery.
+
 This interface does not provide durable admission by itself. An embedding application must connect accepted facts to the execution engine.
 
 ## Production HTTP admission
@@ -86,6 +88,19 @@ It rejects protobuf input because no descriptor-backed decoder is configured. Th
 
 PostgreSQL logical decoding requires an installed output plugin, such as `wal2json`.
 
+Incremental PostgreSQL polling requires a globally unique tie-break column and a durable processed-key ledger. Create the configured ledger before the poller starts:
+
+```sql
+CREATE TABLE effectus_poller_processed (
+    source_id text NOT NULL,
+    record_key text NOT NULL,
+    processed_at timestamptz NOT NULL,
+    PRIMARY KEY (source_id, record_key)
+);
+```
+
+Set `processed_ledger_table` to this table. The poller rescans source rows and excludes durable processed keys. This prevents delayed lower commits from being skipped.
+
 MySQL CDC requires binlog access and a replication-capable account.
 
 Both adapters depend on database retention and privilege policy. Review those settings before production use.
@@ -113,10 +128,31 @@ Run unit tests:
 go test ./adapters/...
 ```
 
-Run integration tests only with the required external services:
+Run the PostgreSQL CDC tests:
 
 ```bash
-go test -tags=integration ./adapters/...
+docker compose -f examples/cdc_stack/docker-compose.yml up -d
+POSTGRES_DSN='postgres://effectus:effectus@localhost:5432/effectus_cdc?sslmode=disable' \
+  go test -race -tags=integration ./adapters/postgres
 ```
 
-See the [examples index](../examples/README.md) for local service stacks.
+Run the Redis Streams tests:
+
+```bash
+docker compose -f examples/saga_stack/docker-compose.yml up -d
+REDIS_ADDR=localhost:56379 go test -race -tags=integration ./adapters/redis
+```
+
+Run the S3 tests:
+
+```bash
+docker compose -f examples/warehouse_sources/devstack/docker-compose.yml \
+  up -d minio minio-mc
+S3_ENDPOINT=http://localhost:9000 S3_REGION=us-east-1 S3_BUCKET=exports \
+  S3_ACCESS_KEY=minioadmin S3_SECRET_KEY=minioadmin \
+  go test -race -tags=integration ./adapters/s3
+```
+
+Stop each service stack with `docker compose down -v` after the tests.
+
+See the [examples index](../examples/README.md) for more local service stacks.

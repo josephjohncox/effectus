@@ -51,8 +51,8 @@ func main() {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: effectusc <command> [options]")
 		fmt.Fprintln(os.Stderr, "Available commands:")
-		for name, cmd := range commands {
-			fmt.Fprintf(os.Stderr, "  %s\t%s\n", name, cmd.Description)
+		for _, name := range sortedCommandNames() {
+			fmt.Fprintf(os.Stderr, "  %s\t%s\n", name, commands[name].Description)
 		}
 		flag.PrintDefaults()
 		os.Exit(1)
@@ -64,8 +64,8 @@ func main() {
 	if !ok {
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmdName)
 		fmt.Fprintln(os.Stderr, "Available commands:")
-		for name, cmd := range commands {
-			fmt.Fprintf(os.Stderr, "  %s\t%s\n", name, cmd.Description)
+		for _, name := range sortedCommandNames() {
+			fmt.Fprintf(os.Stderr, "  %s\t%s\n", name, commands[name].Description)
 		}
 		os.Exit(1)
 	}
@@ -78,6 +78,15 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func sortedCommandNames() []string {
+	names := make([]string, 0, len(commands))
+	for name := range commands {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func defineCommands() {
@@ -128,15 +137,21 @@ func defineCommands() {
 		}
 
 		// Create facts for type checking
-		facts, typeSystem := createEmptyFacts(*tcSchemaFiles, *tcVerbose)
+		facts, typeSystem, err := createEmptyFacts(*tcSchemaFiles, *tcVerbose)
+		if err != nil {
+			failures = append(failures, err)
+		}
 		if strings.TrimSpace(*tcSchemaSources) != "" {
 			sources, err := schemasources.LoadFromFile(*tcSchemaSources)
 			if err != nil {
-				return err
+				failures = append(failures, err)
+			} else if err := schemasources.Apply(context.Background(), typeSystem, sources, *tcVerbose); err != nil {
+				failures = append(failures, err)
 			}
-			if err := schemasources.Apply(context.Background(), typeSystem, sources, *tcVerbose); err != nil {
-				return err
-			}
+		}
+
+		if err := errors.Join(failures...); err != nil {
+			return err
 		}
 
 		// Get the compiler's type checker and merge our type system with it
@@ -193,7 +208,7 @@ func defineCommands() {
 	cSchemaFiles := compileCmd.FlagSet.String("schema", "", "Comma-separated list of schema files to load")
 	cSchemaSources := compileCmd.FlagSet.String("schema-sources", "", "Path to schema sources config (YAML/JSON)")
 	cVerbSchemas := compileCmd.FlagSet.String("verbschema", "", "Comma-separated list of verb schema files to load")
-	cOutput := compileCmd.FlagSet.String("output", "spec.json", "Output file for compiled spec")
+	cOutput := compileCmd.FlagSet.String("output", "rules.effir", "Output file for checked IR artifact")
 	cVerbose := compileCmd.FlagSet.Bool("verbose", false, "Show detailed output")
 
 	compileCmd.Run = func() error {
@@ -207,66 +222,41 @@ func defineCommands() {
 			fmt.Printf("Compiling %d file(s)\n", len(files))
 		}
 
-		// Create a compiler
-		comp := compiler.NewCompiler()
+		verbFiles := splitCommaList(*cVerbSchemas)
+		registry, verbErr := loadVerbRegistry(verbFiles, *cVerbose)
 
-		// Load verb schemas if provided
-		if *cVerbSchemas != "" {
-			files := strings.Split(*cVerbSchemas, ",")
-			for _, file := range files {
-				if *cVerbose {
-					fmt.Printf("Loading verb schemas from %s...\n", file)
-				}
-				err := comp.LoadVerbSpecs(file)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error loading verb schema file %s: %v\n", file, err)
-					continue
-				}
-			}
-		}
-
-		// Create facts for compilation
-		facts, typeSystem := createEmptyFacts(*cSchemaFiles, *cVerbose)
+		// Create declarations for checked compilation. Load every explicit input
+		// before returning so users receive all path failures in one invocation.
+		_, typeSystem, schemaErr := createEmptyFacts(*cSchemaFiles, *cVerbose)
+		var sourceErr error
 		if strings.TrimSpace(*cSchemaSources) != "" {
-			sources, err := schemasources.LoadFromFile(*cSchemaSources)
+			schemaSourceDeclarations, err := schemasources.LoadFromFile(*cSchemaSources)
 			if err != nil {
-				return err
-			}
-			if err := schemasources.Apply(context.Background(), typeSystem, sources, *cVerbose); err != nil {
-				return err
+				sourceErr = err
+			} else if err := schemasources.Apply(context.Background(), typeSystem, schemaSourceDeclarations, *cVerbose); err != nil {
+				sourceErr = err
 			}
 		}
+		if err := errors.Join(verbErr, schemaErr, sourceErr); err != nil {
+			return err
+		}
 
-		// Get the compiler's type checker and merge our type system with it
-		typeChecker := comp.GetTypeSystem()
-		typeChecker.MergeTypeSystem(typeSystem)
-
-		// Compile all files into a unified spec
-		spec, err := comp.ParseAndCompileFiles(files, facts)
+		environment, err := compiler.BuildIREnvironment(typeSystem, registry)
+		if err != nil {
+			return err
+		}
+		sources, err := compiler.LoadSources(files)
+		if err != nil {
+			return err
+		}
+		checked, err := compiler.CompileChecked(context.Background(), sources, environment, compiler.CompileOptions{})
 		if err != nil {
 			return fmt.Errorf("compiling files: %w", err)
 		}
+		artifactBytes := checked.Marshal()
 
-		// Display information about the compiled spec
 		fmt.Println("Compilation successful!")
-		fmt.Printf("Required facts: %v\n", spec.RequiredFacts())
-
-		// If we have a unified spec, show more details
-		if unifiedSpec, ok := spec.(interface{ GetStats() map[string]int }); ok {
-			stats := unifiedSpec.GetStats()
-			fmt.Println("\nSpec details:")
-			for key, value := range stats {
-				fmt.Printf("- %s: %d\n", key, value)
-			}
-		}
-
-		// Save the spec to file
-		specJSON, err := json.MarshalIndent(spec, "", "  ")
-		if err != nil {
-			return fmt.Errorf("marshaling spec: %w", err)
-		}
-
-		if err := os.WriteFile(*cOutput, specJSON, 0644); err != nil {
+		if err := os.WriteFile(*cOutput, artifactBytes, 0644); err != nil {
 			return fmt.Errorf("writing spec to %s: %w", *cOutput, err)
 		}
 
@@ -365,7 +355,10 @@ func defineCommands() {
 				var registry *verb.Registry
 				if *bVerbDir != "" {
 					verbFiles := expandSchemaPaths([]string{*bVerbDir})
-					registry = loadVerbRegistry(verbFiles, *bVerbose)
+					registry, err = loadVerbRegistry(verbFiles, *bVerbose)
+					if err != nil {
+						return err
+					}
 				}
 
 				if verbMode != lint.VerbIgnore && registry == nil {
@@ -375,7 +368,6 @@ func defineCommands() {
 				issues, hadWarn, hadError, err := runCheck(runCheckOptions{
 					files:       ruleFiles,
 					schemaFiles: *bSchemaDir,
-					verbSchemas: splitCommaList(*bVerbSchemas),
 					registry:    registry,
 					lintOptions: lint.LintOptions{
 						UnsafeMode: unsafeMode,
@@ -600,10 +592,11 @@ func outputReport(report string, output string) {
 }
 
 // createEmptyFacts creates an empty set of facts for type checking
-func createEmptyFacts(schemaFiles string, verbose bool) (*testFacts, *types.TypeSystem) {
+func createEmptyFacts(schemaFiles string, verbose bool) (*testFacts, *types.TypeSystem, error) {
 	// Create a new type system
 	typeSystem := types.NewTypeSystem()
 
+	var failures []error
 	// Load schema files if provided
 	if schemaFiles != "" {
 		files := expandSchemaPaths(strings.Split(schemaFiles, ","))
@@ -613,8 +606,7 @@ func createEmptyFacts(schemaFiles string, verbose bool) (*testFacts, *types.Type
 			}
 			if err := typeSystem.LoadSchemaFile(file); err != nil {
 				if jsonErr := typeSystem.LoadJSONSchemaFile(file); jsonErr != nil {
-					fmt.Fprintf(os.Stderr, "Error loading schema file %s: %v\n", file, err)
-					continue
+					failures = append(failures, fmt.Errorf("load schema %s: %w", file, errors.Join(err, jsonErr)))
 				}
 			}
 		}
@@ -641,7 +633,7 @@ func createEmptyFacts(schemaFiles string, verbose bool) (*testFacts, *types.Type
 	registry := pathutil.NewRegistry()
 	registry.Register("", provider) // Register at root
 
-	return &testFacts{factRegistry: registry, schema: schemaInfo}, typeSystem
+	return &testFacts{factRegistry: registry, schema: schemaInfo}, typeSystem, errors.Join(failures...)
 }
 
 func expandSchemaPaths(paths []string) []string {
@@ -824,7 +816,7 @@ func newMigrateWorkflowsCommand() *Command {
 	command.Run = func() error {
 		arguments := command.FlagSet.Args()
 		if len(arguments) != 1 {
-			return fmt.Errorf("migrate-workflows requires exactly one legacy verb manifest")
+			return fmt.Errorf("migrate-workflows requires exactly one legacy workflow manifest")
 		}
 		data, err := os.ReadFile(arguments[0])
 		if err != nil {

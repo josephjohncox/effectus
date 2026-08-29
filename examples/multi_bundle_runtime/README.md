@@ -7,10 +7,10 @@ The watch mode swaps local bundle versions when the manifest changes. This is a 
 ## Run Once
 
 ```bash
-go run ./examples/multi_bundle_runtime
+cd examples && go run ./multi_bundle_runtime
 ```
 
-Run from the repository root so the relative registry path in the manifest resolves correctly.
+Run the command as shown from the repository root. The example resolves its assets from its source directory.
 
 ## Hot Reload Demo
 

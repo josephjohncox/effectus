@@ -3,9 +3,10 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_call:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -62,6 +63,13 @@ jobs:
           buf generate --template buf.gen.go.yaml
           git diff --exit-code -- gen
 
+      - name: Execute documentation contracts
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes protobuf-compiler
+          cargo install just --locked --version 1.38.0
+          just test-docs
+
   sql:
     runs-on: ubuntu-latest
     steps:
@@ -92,7 +100,8 @@ jobs:
           python -m pip install sqlfluff==3.5.0
           sqlfluff lint --dialect postgres \
             schema/migrations/10002_execution_ledger.sql \
-            schema/migrations/10003_kafka_delivery_ledger.sql
+            schema/migrations/10003_kafka_delivery_ledger.sql \
+            schema/migrations/10004_retention_indexes.sql
 
   dependency-audit:
     runs-on: ubuntu-latest
@@ -150,19 +159,42 @@ jobs:
           buf generate
           git diff --exit-code -- gen
 
-      - name: Build all example modules
+      - name: Install pinned just
+        run: cargo install just --locked --version 1.38.0
+
+      - name: Test all example modules through the repository recipe
+        run: just test-examples
+
+  kafka-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install pinned just
+        run: cargo install just --locked --version 1.38.0
+      - name: Start pinned Redpanda service
         run: |
-          set -e
-          for module in \
-            examples \
-            examples/buf_integration \
-            examples/business_facts \
-            examples/business_verbs \
-            examples/coherent_flow \
-            examples/extension_system \
-            examples/fraud_e2e/mocks; do
-            (cd "$module" && go test ./...)
+          image="docker.redpanda.com/redpandadata/redpanda:v24.2.10@sha256:6d627e3ebdc05438d1e8e3b55695ac1a7a0f79e7d5ca90b3b0f12dc984633e83"
+          docker run -d --name redpanda -p 9092:9092 "$image" redpanda start \
+            --overprovisioned --smp 1 --memory 512M --reserve-memory 0M \
+            --node-id 0 --check=false --kafka-addr 0.0.0.0:9092 \
+            --advertise-kafka-addr 127.0.0.1:9092
+          for _ in $(seq 1 60); do
+            docker exec redpanda rpk cluster health \
+              >/dev/null 2>&1 && exit 0
+            sleep 2
           done
+          docker logs redpanda
+          exit 1
+      - name: Run Kafka commit and restart harness
+        env:
+          KAFKA_BROKERS: localhost:9092
+        run: just test-kafka-integration
 
   vscode:
     runs-on: ubuntu-latest
@@ -189,6 +221,9 @@ jobs:
       - name: Compile and lint extension
         run: npm run compile && npm run lint
 
+      - name: Activate packaged VSIX and invoke contributed commands
+        run: xvfb-run -a npm run test:package
+
   container-audit:
     runs-on: ubuntu-latest
     steps:
@@ -197,6 +232,27 @@ jobs:
 
       - name: Build production image
         run: docker build -t effectus:audit .
+
+      - name: Verify normalized rootfs reproducibility
+        run: |
+          set -euo pipefail
+          epoch=$(git show -s --format=%ct)
+          docker build --no-cache --build-arg SOURCE_DATE_EPOCH="$epoch" \
+            -t effectus:audit-rebuild .
+          for image in audit audit-rebuild; do
+            root="$RUNNER_TEMP/rootfs-$image"
+            mkdir -p "$root"
+            container=$(docker create "effectus:$image")
+            docker export "$container" | tar -xf - -C "$root"
+            docker rm "$container"
+            (
+              cd "$root"
+              find . -printf '%y %m %U %G %p\n' | LC_ALL=C sort
+              find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+            ) > "$RUNNER_TEMP/$image.rootfs"
+          done
+          diff -u "$RUNNER_TEMP/audit.rootfs" \
+            "$RUNNER_TEMP/audit-rebuild.rootfs"
 
       - name: Scan fixed high and critical findings
         run: |
@@ -253,6 +309,110 @@ jobs:
             --ignore-unfixed --exit-code 1 \
             "effectus/${{ matrix.name }}:audit"
 
+  release-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Validate workflows and release preflight failures
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          actionlint .github/workflows/ci.yml .github/workflows/publish.yml
+          .github/scripts/release-preflight_test.sh
+          if grep -Eq 'workflow_dispatch|--clobber|--generate-notes' .github/workflows/publish.yml; then
+            echo "unsafe release workflow path detected" >&2
+            exit 1
+          fi
+          grep -Fq -- '--notes-file' .github/workflows/publish.yml
+          grep -Fq -- 'docs/releases/v' .github/workflows/publish.yml
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+        with:
+          version: v3.17.3
+      - name: Install pinned chart tools
+        run: |
+          cargo install just --locked --version 1.38.0
+          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
+      - name: Run the chart recipe and validate contract fixtures
+        run: |
+          set -euo pipefail
+          just test-helm
+          image="ghcr.io/yannh/kubeconform:v0.6.7@sha256:0925177fb05b44ce18574076141b5c3d83235e1904d3f952182ac99ddc45762c"
+          docker pull "$image"
+          for file in charts/effectusd/test-values/*.yaml; do
+            helm lint charts/effectusd -f "$file"
+            helm template effectusd charts/effectusd -f "$file" |
+              docker run --rm -i "$image" -strict -summary
+          done
+          render=$(mktemp)
+          helm template effectusd charts/effectusd \
+            -f charts/effectusd/test-values/configmap.yaml > "$render"
+          grep -q 'type: Recreate' "$render"
+          grep -q 'replicas: 1' "$render"
+          grep -q -- '--http-addr=:8080' "$render"
+          grep -q -- '--metrics-addr=:9090' "$render"
+          grep -q -- '--oci-cache-dir=/data/bundles' "$render"
+          grep -q 'effectus.dev/rollout-nonce: "configmap-contract"' "$render"
+          grep -q 'requests:' "$render"
+          grep -q 'limits:' "$render"
+          if helm template effectusd charts/effectusd \
+            -f charts/effectusd/test-values/oci-tag.yaml \
+            --set migrations.enabled=true \
+            --set migrations.existingSecret=effectusd-postgres >/dev/null 2>&1; then
+            echo "migration and runtime Secrets must differ" >&2
+            exit 1
+          fi
+
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Race-sensitive runtime and adapter tests
+        run: >-
+          go test -race ./runtime ./schema ./cmd/effectusd
+          ./adapters/postgres ./adapters/amqp ./adapters/mysql ./adapters/grpc
+
+  formal:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install pinned TLC and Just
+        run: |
+          set -euo pipefail
+          cargo install just --version 1.38.0 --locked
+          curl --fail --location --output /tmp/tla2tools.jar \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
+          echo "eabd140a70f49eb9305a3bd3f3df944eddf87e5a90d329789085f8953a80533a  /tmp/tla2tools.jar" | sha256sum --check
+          printf '#!/bin/sh\nexec java -cp /tmp/tla2tools.jar tlc2.TLC "$@"\n' |
+            sudo tee /usr/local/bin/tlc >/dev/null
+          sudo chmod 0755 /usr/local/bin/tlc
+      - name: Model checks
+        run: just formal-check
+
   integration:
     runs-on: ubuntu-latest
     steps:
@@ -271,21 +431,21 @@ jobs:
       - name: Wait for services
         run: |
           set -e
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if docker compose -f examples/cdc_stack/docker-compose.yml \
               exec -T postgres pg_isready -U effectus >/dev/null 2>&1; then
               break
             fi
             sleep 2
           done
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if docker compose -f examples/cdc_stack/docker-compose.yml \
               exec -T mysql mysqladmin ping -proot >/dev/null 2>&1; then
               break
             fi
             sleep 2
           done
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if docker compose -f examples/cdc_stack/docker-compose.yml \
               exec -T rabbitmq rabbitmq-diagnostics -q ping \
               >/dev/null 2>&1; then
@@ -305,7 +465,7 @@ jobs:
           MYSQL_DATABASE: effectus_cdc
           MYSQL_DSN: >-
             effectus:effectus@tcp(localhost:3306)/effectus_cdc?parseTime=true
-        run: go test -tags=integration ./adapters/postgres ./adapters/mysql
+        run: go test -race -tags=integration ./adapters/postgres ./adapters/mysql
 
       - name: Stop CDC stack
         if: always()
@@ -329,20 +489,26 @@ jobs:
       - name: Wait for services
         run: |
           set -e
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if docker compose -f examples/saga_stack/docker-compose.yml \
               exec -T postgres pg_isready -U effectus >/dev/null 2>&1; then
               break
             fi
             sleep 2
           done
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if docker compose -f examples/saga_stack/docker-compose.yml \
               exec -T redis redis-cli ping >/dev/null 2>&1; then
               break
             fi
             sleep 2
           done
+
+      - name: Apply durable migrations once
+        env:
+          EFFECTUS_POSTGRES_DSN: "postgres://effectus:effectus@localhost:55433/\
+            effectus_saga?sslmode=disable"
+        run: go run ./cmd/effectusd --database-migrations=apply
 
       - name: Saga integration tests
         env:
@@ -351,8 +517,70 @@ jobs:
           POSTGRES_DSN: "postgres://effectus:effectus@localhost:55433/\
             effectus_saga?sslmode=disable"
           REDIS_ADDR: localhost:56379
-        run: go test -tags=integration ./cmd/effectusd ./schema
+        run: go test -p 1 -tags=integration ./runtime ./schema ./cmd/effectusd
+
+      - name: Redis Streams adapter integration tests
+        env:
+          REDIS_ADDR: localhost:56379
+        run: go test -race -tags=integration ./adapters/redis
 
       - name: Stop saga stack
         if: always()
         run: docker compose -f examples/saga_stack/docker-compose.yml down -v
+
+  runtime-race:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Race-enabled runtime checks
+        run: go test -race ./runtime ./schema ./schema/verb ./cmd/effectusd
+
+  s3-adapter:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Start MinIO
+        run: >-
+          docker compose -f examples/warehouse_sources/devstack/docker-compose.yml
+          up -d minio minio-mc
+
+      - name: Wait for MinIO
+        run: |
+          set -e
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://localhost:9000/minio/health/live \
+              >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+
+      - name: S3 adapter integration tests
+        env:
+          S3_ENDPOINT: http://localhost:9000
+          S3_REGION: us-east-1
+          S3_BUCKET: exports
+          S3_ACCESS_KEY: minioadmin
+          S3_SECRET_KEY: minioadmin
+        run: go test -race -tags=integration ./adapters/s3
+
+      - name: Stop MinIO
+        if: always()
+        run: >-
+          docker compose -f examples/warehouse_sources/devstack/docker-compose.yml
+          down -v

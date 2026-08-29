@@ -17,7 +17,10 @@ import (
 	"testing"
 
 	"github.com/effectus/effectus-go/adapters"
+	"github.com/effectus/effectus-go/loader"
 	"github.com/effectus/effectus-go/pathutil"
+	effectusruntime "github.com/effectus/effectus-go/runtime"
+	"github.com/effectus/effectus-go/schema"
 	"github.com/effectus/effectus-go/schema/types"
 	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/effectus/effectus-go/unified"
@@ -72,6 +75,8 @@ func TestIngestFactsReturnsQueueFull(t *testing.T) {
 	require.False(t, mutated, "a rejected request must not mutate fact state")
 }
 
+// TestHandleFactsReportsBackpressure covers the compatibility-only embedded
+// queue. Production effectusd installs the checked durable engine.
 func TestHandleFactsReportsBackpressure(t *testing.T) {
 	queue := make(chan factEnvelope, 1)
 	queue <- factEnvelope{Universe: "occupied"}
@@ -86,6 +91,7 @@ func TestHandleFactsReportsBackpressure(t *testing.T) {
 	require.Contains(t, response.Body.String(), "fact execution queue is full")
 }
 
+// TestHandleFactsEnqueuesAcceptedWork covers the compatibility-only embedded queue.
 func TestHandleFactsEnqueuesAcceptedWork(t *testing.T) {
 	queue := make(chan factEnvelope, 1)
 	state := &serverState{factCh: queue}
@@ -100,6 +106,110 @@ func TestHandleFactsEnqueuesAcceptedWork(t *testing.T) {
 	require.Equal(t, "default", envelope.Universe)
 	require.False(t, envelope.Received.IsZero())
 	require.Equal(t, true, envelope.Facts["ready"])
+}
+
+func TestStatusReportsDistinctBundleAndEngineDigests(t *testing.T) {
+	execution := effectusruntime.NewExecutionRuntime()
+	execution.EnableLegacyExecutionForCompatibility()
+	require.NoError(t, execution.ConfigureGenerationMetadata(effectusruntime.GenerationMetadata{BundleDigest: "bundle-digest"}))
+	execution.RegisterExtensionLoader(loader.NewStaticSourceLoader("handler", "handler.effx", []byte(`flow "empty" priority 1 { when {} steps {} }`)))
+	require.NoError(t, execution.CompileAndValidate(t.Context()))
+	t.Cleanup(func() { require.NoError(t, execution.Close()) })
+	state := newServerState(&unified.Bundle{Name: "orders", Version: "1"}, nil, nil, factStoreConfig{}, apiAuth{mode: "disabled"}, nil, nil, nil, nil, nil, false, nil, false, nil, nil)
+	artifactDigest := state.generation.bundleDigest
+	state.SetCheckedEngine(execution.Engine())
+	response := httptest.NewRecorder()
+	state.handleStatus(response, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	require.Equal(t, http.StatusOK, response.Code)
+	var status statusResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &status))
+	require.Equal(t, artifactDigest, status.ArtifactDigest)
+	require.Equal(t, "bundle-digest", status.BundleDigest)
+	require.Equal(t, "bundle-digest", status.BundleGenerationDigest)
+	require.NotEmpty(t, status.EngineGenerationDigest)
+	require.NotEqual(t, status.BundleDigest, status.EngineGenerationDigest)
+}
+
+func TestHandleFactsCheckedIdempotencyAndNamespace(t *testing.T) {
+	execution := newCheckedHandlerRuntime(t)
+	store := newMemoryFactStore(factStoreConfig{})
+	state := newServerState(&unified.Bundle{Name: "orders", Version: "1"}, nil, store, factStoreConfig{}, apiAuth{mode: "disabled"}, nil, nil, nil, nil, nil, false, nil, false, nil, nil)
+	state.SetCheckedEngine(execution.Engine())
+
+	post := func(key, body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/api/facts", strings.NewReader(body))
+		if key != "" {
+			request.Header.Set("Idempotency-Key", key)
+		}
+		response := httptest.NewRecorder()
+		state.handleFacts(response, request)
+		return response
+	}
+
+	missing := post("", `{"universe":"projection","namespace":"tenant-a","facts":{"ready":true}}`)
+	require.Equal(t, http.StatusBadRequest, missing.Code)
+
+	first := post("request-1", `{"universe":"projection","namespace":"tenant-a","facts":{"ready":true}}`)
+	require.Equal(t, http.StatusAccepted, first.Code, first.Body.String())
+	var firstBody map[string]string
+	require.NoError(t, json.Unmarshal(first.Body.Bytes(), &firstBody))
+	require.Equal(t, schema.StableExecutionID("tenant-a", "request-1", "orders", "1"), firstBody["execution_id"])
+
+	replay := post("request-1", `{"universe":"projection","namespace":"tenant-a","facts":{"ready":true}}`)
+	require.Equal(t, http.StatusAccepted, replay.Code, replay.Body.String())
+	var replayBody map[string]string
+	require.NoError(t, json.Unmarshal(replay.Body.Bytes(), &replayBody))
+	require.Equal(t, firstBody["execution_id"], replayBody["execution_id"])
+
+	conflict := post("request-1", `{"universe":"projection","namespace":"tenant-a","facts":{"ready":false}}`)
+	require.Equal(t, http.StatusConflict, conflict.Code)
+	facts, ok := store.Snapshot("projection")
+	require.True(t, ok)
+	require.Equal(t, true, facts["ready"])
+	_, tenantProjection := store.Snapshot("tenant-a")
+	require.False(t, tenantProjection, "namespace must not replace the projection universe")
+
+	fallback := post("request-2", `{"universe":"legacy-tenant","facts":{"ready":true}}`)
+	require.Equal(t, http.StatusAccepted, fallback.Code, fallback.Body.String())
+}
+
+type projectionFailStore struct{}
+
+func (projectionFailStore) Update(string, map[string]interface{}) error {
+	return errors.New("projection unavailable")
+}
+func (projectionFailStore) Snapshot(string) (map[string]interface{}, bool) { return nil, false }
+func (projectionFailStore) Summaries() []universeSummary                   { return nil }
+func (projectionFailStore) StoreType() string                              { return "failing" }
+
+func TestHandleFactsCheckedProjectionFailureAfterAcceptance(t *testing.T) {
+	execution := newCheckedHandlerRuntime(t)
+	state := newServerState(&unified.Bundle{Name: "orders", Version: "1"}, nil, projectionFailStore{}, factStoreConfig{}, apiAuth{mode: "disabled"}, nil, nil, nil, nil, nil, false, nil, false, nil, nil)
+	state.SetCheckedEngine(execution.Engine())
+	request := httptest.NewRequest(http.MethodPost, "/api/facts", strings.NewReader(`{"universe":"projection","namespace":"tenant-a","facts":{"ready":true}}`))
+	request.Header.Set("Idempotency-Key", "projection-failure")
+	response := httptest.NewRecorder()
+	state.handleFacts(response, request)
+	require.Equal(t, http.StatusInternalServerError, response.Code)
+	require.Contains(t, response.Body.String(), "accepted but local projection failed")
+
+	// The same durable request remains a replay even though the projection failed.
+	retry := httptest.NewRequest(http.MethodPost, "/api/facts", strings.NewReader(`{"universe":"projection","namespace":"tenant-a","facts":{"ready":true}}`))
+	retry.Header.Set("Idempotency-Key", "projection-failure")
+	retryResponse := httptest.NewRecorder()
+	state.handleFacts(retryResponse, retry)
+	require.Equal(t, http.StatusInternalServerError, retryResponse.Code)
+}
+
+func newCheckedHandlerRuntime(t *testing.T) *effectusruntime.ExecutionRuntime {
+	t.Helper()
+	execution := effectusruntime.NewExecutionRuntime()
+	execution.EnableLegacyExecutionForCompatibility()
+	execution.RegisterExtensionLoader(loader.NewStaticSourceLoader("handler", "handler.effx", []byte(`flow "empty" priority 1 { when {} steps {} }`)))
+	require.NoError(t, execution.CompileAndValidate(t.Context()))
+	require.NoError(t, execution.ConfigureDurableWorkflowExecution(schema.NewInMemoryOutboxStore(), nil, schema.DispatcherOptions{Owner: "handler-test"}))
+	t.Cleanup(func() { require.NoError(t, execution.Close()) })
+	return execution
 }
 
 func TestExecutionSnapshotKeepsBundleAndTypesCoherent(t *testing.T) {
@@ -252,7 +362,7 @@ func TestValidateFactSourceAcceptsKafkaAndRejectsUnsupportedContracts(t *testing
 	originalCluster := *kafkaClusterNamespace
 	originalContract := *kafkaAckContract
 	originalLedger := *kafkaDeliveryLedger
-	originalDSN := *sagaPgDSN
+	originalDSN := *postgresDSN
 	t.Cleanup(func() {
 		*factSource = originalSource
 		*kafkaBrokers = originalBrokers
@@ -261,7 +371,7 @@ func TestValidateFactSourceAcceptsKafkaAndRejectsUnsupportedContracts(t *testing
 		*kafkaClusterNamespace = originalCluster
 		*kafkaAckContract = originalContract
 		*kafkaDeliveryLedger = originalLedger
-		*sagaPgDSN = originalDSN
+		*postgresDSN = originalDSN
 	})
 
 	*factSource = "http"
@@ -274,7 +384,7 @@ func TestValidateFactSourceAcceptsKafkaAndRejectsUnsupportedContracts(t *testing
 	*kafkaClusterNamespace = "test"
 	*kafkaAckContract = "completed_processing"
 	*kafkaDeliveryLedger = filepath.Join(t.TempDir(), "deliveries.jsonl")
-	*sagaPgDSN = "postgres://configured"
+	*postgresDSN = "postgres://configured"
 	require.NoError(t, validateFactSource())
 
 	*kafkaAckContract = "durable_acceptance"

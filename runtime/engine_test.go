@@ -3,12 +3,55 @@ package runtime
 import (
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/effectus/effectus-go/loader"
 	"github.com/effectus/effectus-go/schema"
 	"github.com/stretchr/testify/require"
 )
+
+type recordingRuntimeObserver struct{ executions atomic.Int32 }
+
+func (observer *recordingRuntimeObserver) ObserveExecution(ExecuteResult, error) {
+	observer.executions.Add(1)
+}
+func (*recordingRuntimeObserver) ObserveRecovery(RecoveryObservation) {}
+
+func TestLoadExecutionRecordLocksCachedGenerationIdentity(t *testing.T) {
+	engine := &Engine{executions: map[string]*engineExecution{}}
+	execution := &engineExecution{record: schema.ExecutionRecord{ExecutionID: "same", GenerationDigest: "generation"}}
+	engine.executions["same"] = execution
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		for index := 0; index < 1000; index++ {
+			execution.mu.Lock()
+			execution.record.GenerationDigest = "generation"
+			execution.mu.Unlock()
+		}
+	}()
+	go func() {
+		defer workers.Done()
+		for index := 0; index < 1000; index++ {
+			loaded, err := engine.loadExecutionRecord(t.Context(), schema.ExecutionRecord{ExecutionID: "same", GenerationDigest: "generation"}, nil)
+			require.NoError(t, err)
+			require.Same(t, execution, loaded)
+		}
+	}()
+	workers.Wait()
+}
+
+func TestEngineObserverReceivesCheckedExecution(t *testing.T) {
+	runtime := newEngineTestRuntime(t, loader.NewStaticSourceLoader("workflow", "workflow.effx", []byte(validWorkflowSource("1"))))
+	observer := new(recordingRuntimeObserver)
+	runtime.Engine().SetObserver(observer)
+	_, err := runtime.Engine().Execute(t.Context(), ExecuteRequest{Admission: &Admission{ExecutionID: "observed", AdmissionID: "observed-delivery", TenantNamespace: "tenant", Ruleset: "orders", Version: "1", Facts: map[string]any{"id": "one"}}, WaitMode: WaitAccepted})
+	require.NoError(t, err)
+	require.Equal(t, int32(1), observer.executions.Load())
+}
 
 func TestEngineExecuteAcceptedResumeAndIdentityConflict(t *testing.T) {
 	runtime := newEngineTestRuntime(t, loader.NewStaticSourceLoader("workflow", "workflow.effx", []byte(validWorkflowSource("1"))))

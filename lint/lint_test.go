@@ -2,6 +2,7 @@ package lint
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/effectus/effectus-go/ast"
@@ -210,7 +211,11 @@ flow "BindNoReturn" priority 1 {
 func parseTempRuleFile(t *testing.T, content string) *ast.File {
 	t.Helper()
 
-	file, err := os.CreateTemp("", "effectus-lint-*.eff")
+	pattern := "effectus-lint-*.eff"
+	if strings.HasPrefix(strings.TrimSpace(content), "flow ") {
+		pattern = "effectus-lint-*.effx"
+	}
+	file, err := os.CreateTemp("", pattern)
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}

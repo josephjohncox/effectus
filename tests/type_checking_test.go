@@ -2,6 +2,7 @@ package tests
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/effectus/effectus-go"
@@ -339,8 +340,11 @@ func createTestFacts(ts *types.TypeSystem) *TestFacts {
 
 // Helper functions for file handling
 func createTempRuleFile(t *testing.T, content string) string {
-	// Create a temporary file
-	tempFile, err := os.CreateTemp("", "effectus-test-*.eff")
+	pattern := "effectus-test-*.eff"
+	if strings.HasPrefix(strings.TrimSpace(content), "flow ") {
+		pattern = "effectus-test-*.effx"
+	}
+	tempFile, err := os.CreateTemp("", pattern)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}

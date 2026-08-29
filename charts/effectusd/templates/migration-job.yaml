@@ -1,0 +1,50 @@
+{{- if .Values.migrations.enabled }}
+{{- if eq .Values.migrations.existingSecret .Values.postgres.existingSecret }}
+{{- fail "migrations.existingSecret must differ from postgres.existingSecret so the application does not receive DDL credentials" }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "effectusd.fullname" . }}-migrate
+  labels:
+    {{- include "effectusd.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "effectusd.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          {{- if .Values.image.digest }}
+          image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"
+          {{- else if .Values.image.unsafeAllowTag }}
+          image: "{{ .Values.image.repository }}:{{ required "image.tag is required when image.unsafeAllowTag is true" .Values.image.tag }}"
+          {{- else }}
+          {{- fail "image.digest is required; mutable image tags require image.unsafeAllowTag=true" }}
+          {{- end }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          args:
+            - "--database-migrations=apply"
+            - "--database-max-open=2"
+            - "--database-max-idle=1"
+          env:
+            - name: EFFECTUS_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "migrations.existingSecret is required when migrations.enabled is true and must be distinct from postgres.existingSecret" .Values.migrations.existingSecret }}
+                  key: {{ .Values.migrations.dsnKey }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+{{- end }}

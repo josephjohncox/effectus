@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/effectus/effectus-go/compiler"
 	effectusv1 "github.com/effectus/effectus-go/gen/effectus/v1"
 	"github.com/effectus/effectus-go/schema"
 	"google.golang.org/grpc"
@@ -118,7 +119,10 @@ func (service *EngineExecutionService) ExecuteRuleset(ctx context.Context, reque
 
 func (service *EngineExecutionService) activeGenerationDigest() (string, error) {
 	service.Engine.runtime.mu.RLock()
-	unit := service.Engine.runtime.compiledUnit
+	var unit *compiler.CompiledUnit
+	if service.Engine.runtime.activeGeneration != nil {
+		unit = service.Engine.runtime.activeGeneration.unit
+	}
 	service.Engine.runtime.mu.RUnlock()
 	if unit == nil || unit.CheckedIR == nil {
 		return "", fmt.Errorf("no checked generation")
@@ -134,11 +138,26 @@ func validateExecutionOptions(options *effectusv1.ExecutionOptions) error {
 	if options == nil {
 		return nil
 	}
-	if options.DryRun || options.MaxEffects != 0 || options.EnableTracing || len(options.CapabilityFilter) != 0 || options.MinSchemaVersion != "" || options.MaxSchemaVersion != "" {
-		return fmt.Errorf("unsupported execution options")
+	if options.DryRun {
+		return fmt.Errorf("options.dry_run is not supported")
+	}
+	if options.MaxEffects != 0 {
+		return fmt.Errorf("options.max_effects is not supported")
+	}
+	if options.EnableTracing {
+		return fmt.Errorf("options.enable_tracing is not supported")
+	}
+	if len(options.CapabilityFilter) != 0 {
+		return fmt.Errorf("options.capability_filter is not supported")
+	}
+	if options.MinSchemaVersion != "" {
+		return fmt.Errorf("options.min_schema_version is not supported")
+	}
+	if options.MaxSchemaVersion != "" {
+		return fmt.Errorf("options.max_schema_version is not supported")
 	}
 	if options.TimeoutSeconds < 0 {
-		return fmt.Errorf("timeout_seconds must not be negative")
+		return fmt.Errorf("options.timeout_seconds must not be negative")
 	}
 	return nil
 }

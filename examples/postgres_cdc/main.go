@@ -66,6 +66,11 @@ func main() {
 	case fact := <-facts:
 		log.Printf("fact schema=%s source=%s", fact.SchemaName, fact.SourceID)
 		log.Printf("raw=%s", string(fact.RawData))
+		if fact.Acknowledge != nil {
+			if err := fact.Acknowledge(ctx); err != nil {
+				log.Fatalf("acknowledge fact: %v", err)
+			}
+		}
 	case <-ctx.Done():
 		log.Printf("timeout waiting for fact")
 	}

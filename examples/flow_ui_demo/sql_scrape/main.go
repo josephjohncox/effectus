@@ -92,17 +92,21 @@ func main() {
 			if updated > 0 && updated <= lastUpdated {
 				continue
 			}
-			if updated > 0 {
-				lastUpdated = updated
-			}
 
 			facts := mapRowToFacts(row)
 			if len(facts) == 0 {
 				continue
 			}
-			if err := postFacts(ctx, client, effectusURL, token, facts); err != nil {
+			orderID := toString(row["order_id"])
+			idempotencyKey := fmt.Sprintf("sql-scrape:%s:%d", orderID, updated)
+			if err := postFacts(ctx, client, effectusURL, token, idempotencyKey, facts); err != nil {
+				// Do not advance lastUpdated. A retry of this source row reuses the
+				// same key and payload.
 				log.Printf("post facts error: %v", err)
 			} else {
+				if updated > 0 {
+					lastUpdated = updated
+				}
 				log.Printf("ingested SQL scrape facts (updated_at_epoch=%d)", updated)
 			}
 		}
@@ -159,7 +163,7 @@ func currentEpoch(updated interface{}) int64 {
 	return time.Now().Unix()
 }
 
-func postFacts(ctx context.Context, client *http.Client, baseURL, token string, facts map[string]interface{}) error {
+func postFacts(ctx context.Context, client *http.Client, baseURL, token, idempotencyKey string, facts map[string]interface{}) error {
 	payload := map[string]interface{}{
 		"universe": "default",
 		"facts":    facts,
@@ -173,6 +177,7 @@ func postFacts(ctx context.Context, client *http.Client, baseURL, token string, 
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", idempotencyKey)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

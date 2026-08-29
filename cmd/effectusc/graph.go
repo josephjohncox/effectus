@@ -33,7 +33,10 @@ func newGraphCommand() *Command {
 			return fmt.Errorf("no input files specified")
 		}
 
-		facts, typeSystem := createEmptyFacts(*schemaFiles, *verbose)
+		facts, typeSystem, err := createEmptyFacts(*schemaFiles, *verbose)
+		if err != nil {
+			return err
+		}
 		if strings.TrimSpace(*schemaSources) != "" {
 			sources, err := schemasources.LoadFromFile(*schemaSources)
 			if err != nil {

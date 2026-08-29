@@ -49,6 +49,8 @@ type Source struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	running  bool
+	stopping bool
+	done     chan struct{}
 	mappings map[string]adapters.FactMapping
 	mu       sync.Mutex
 }
@@ -83,7 +85,6 @@ func NewSource(config *Config, mappings []adapters.FactMapping) (*Source, error)
 		config.ExchangeType = "topic"
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
 	mappingMap := make(map[string]adapters.FactMapping)
 	for _, m := range mappings {
 		mappingMap[m.SourceKey] = m
@@ -92,20 +93,26 @@ func NewSource(config *Config, mappings []adapters.FactMapping) (*Source, error)
 	return &Source{
 		config:   config,
 		metrics:  adapters.GetGlobalMetrics(),
-		ctx:      ctx,
-		cancel:   cancel,
 		mappings: mappingMap,
 	}, nil
 }
 
 // Subscribe starts consuming messages.
 func (s *Source) Subscribe(ctx context.Context, factTypes []string) (<-chan *adapters.TypedFact, error) {
-	s.factChan = make(chan *adapters.TypedFact, s.config.BufferSize)
+	s.mu.Lock()
+	if s.running {
+		ch := s.factChan
+		s.mu.Unlock()
+		return ch, nil
+	}
+	s.mu.Unlock()
 	if err := s.Start(ctx); err != nil {
-		close(s.factChan)
 		return nil, err
 	}
-	return s.factChan, nil
+	s.mu.Lock()
+	ch := s.factChan
+	s.mu.Unlock()
+	return ch, nil
 }
 
 // Start connects and begins consumption.
@@ -194,11 +201,16 @@ func (s *Source) Start(ctx context.Context) error {
 		return err
 	}
 
+	s.ctx, s.cancel = context.WithCancel(ctx)
 	s.conn = conn
 	s.channel = channel
+	s.factChan = make(chan *adapters.TypedFact, s.config.BufferSize)
+	s.done = make(chan struct{})
 	s.running = true
+	s.stopping = false
+	factChan, done, workerCtx := s.factChan, s.done, s.ctx
 
-	go s.processMessages(msgs)
+	go s.processMessages(workerCtx, msgs, factChan, done)
 
 	log.Printf("AMQP source %s started (queue=%s)", s.config.SourceID, s.config.Queue)
 	return nil
@@ -207,23 +219,62 @@ func (s *Source) Start(ctx context.Context) error {
 // Stop stops consumption and closes connection.
 func (s *Source) Stop(ctx context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	done := s.done
 	if !s.running {
+		s.mu.Unlock()
+		return waitForStop(ctx, done)
+	}
+	if s.stopping {
+		s.mu.Unlock()
+		if err := waitForStop(ctx, done); err != nil {
+			return err
+		}
+		s.finishStop(done)
 		return nil
 	}
-	s.cancel()
-	s.running = false
-	if s.channel != nil {
-		s.channel.Close()
+	s.stopping = true
+	cancel, channel, conn := s.cancel, s.channel, s.conn
+	s.mu.Unlock()
+	cancel()
+	if channel != nil {
+		_ = channel.Close()
 	}
-	if s.conn != nil {
-		s.conn.Close()
+	if conn != nil {
+		_ = conn.Close()
 	}
-	if s.factChan != nil {
-		close(s.factChan)
+	if err := waitForStop(ctx, done); err != nil {
+		go func() { <-done; s.finishStop(done) }()
+		return err
 	}
+	s.finishStop(done)
 	log.Printf("AMQP source %s stopped", s.config.SourceID)
 	return nil
+}
+
+func waitForStop(ctx context.Context, done <-chan struct{}) error {
+	if done == nil {
+		return nil
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Source) finishStop(done <-chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.done != done {
+		return
+	}
+	s.running = false
+	s.stopping = false
+	s.conn = nil
+	s.channel = nil
+	s.ctx = nil
+	s.cancel = nil
 }
 
 // GetSourceSchema returns schema metadata.
@@ -242,7 +293,10 @@ func (s *Source) GetSourceSchema() *adapters.Schema {
 
 // HealthCheck checks connection status.
 func (s *Source) HealthCheck() error {
-	if s.conn == nil || s.conn.IsClosed() {
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+	if conn == nil || conn.IsClosed() {
 		return fmt.Errorf("connection not initialized")
 	}
 	return nil
@@ -265,10 +319,12 @@ func (s *Source) GetMetadata() adapters.SourceMetadata {
 	}
 }
 
-func (s *Source) processMessages(msgs <-chan amqp.Delivery) {
+func (s *Source) processMessages(ctx context.Context, msgs <-chan amqp.Delivery, factChan chan *adapters.TypedFact, done chan struct{}) {
+	defer close(done)
+	defer close(factChan)
 	for {
 		select {
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			return
 		case msg, ok := <-msgs:
 			if !ok {
@@ -278,25 +334,40 @@ func (s *Source) processMessages(msgs <-chan amqp.Delivery) {
 			if err != nil {
 				s.metrics.RecordError(s.config.SourceID, "decode", err)
 				if !s.config.AutoAck {
-					msg.Nack(false, false)
+					_ = msg.Nack(false, true)
 				}
 				continue
 			}
+			if !s.config.AutoAck {
+				fact.Acknowledge = amqpAcknowledgement(msg)
+			}
 			select {
-			case s.factChan <- fact:
+			case factChan <- fact:
 				s.metrics.RecordFactProcessed(s.config.SourceID, fact.SchemaName)
+			case <-ctx.Done():
 				if !s.config.AutoAck {
-					msg.Ack(false)
+					_ = msg.Nack(false, true)
 				}
-			case <-s.ctx.Done():
 				return
-			default:
-				s.metrics.RecordError(s.config.SourceID, "channel_full", fmt.Errorf("fact channel full"))
-				if !s.config.AutoAck {
-					msg.Nack(false, true)
-				}
 			}
 		}
+	}
+}
+
+func amqpAcknowledgement(msg amqp.Delivery) func(context.Context) error {
+	var mu sync.Mutex
+	acknowledged := false
+	return func(context.Context) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if acknowledged {
+			return nil
+		}
+		if err := msg.Ack(false); err != nil {
+			return err
+		}
+		acknowledged = true
+		return nil
 	}
 }
 

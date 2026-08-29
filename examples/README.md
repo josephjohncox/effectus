@@ -2,16 +2,15 @@
 
 The examples module contains library examples, daemon clients, and local service stacks.
 
-Run commands from the `examples` directory unless a section says otherwise.
+Run commands from the repository root unless a section says otherwise.
 
-## Build all Go examples
+## Test all Go examples
 
 ```bash
-go test ./...
-go vet ./...
+just test-examples
 ```
 
-The examples have their own `go.mod`. Keep it tidy when you change an example.
+This recipe tests the parent examples module and all six nested Go modules. A parent-module `go test ./...` does not enter nested modules.
 
 ## Rule and compiler examples
 
@@ -56,11 +55,13 @@ CDC examples require database privileges, retention settings, and output plugins
 
 ## Durable workflow stack
 
-Start PostgreSQL and Redis for saga integration work:
+Start the PostgreSQL durable runtime store:
 
 ```bash
-docker compose -f saga_stack/docker-compose.yml up -d
+just setup-db
 ```
+
+This starts only PostgreSQL from `saga_stack/docker-compose.yml` and waits with `pg_isready`.
 
 Stop the stack and delete its volumes:
 
@@ -83,10 +84,15 @@ Read [Warehouse Sources](warehouse_sources/README.md) before you start the local
 
 From the repository root, run:
 
+For a cold-start proof that starts PostgreSQL, launches the checked daemon, and verifies idempotent replay, run:
+
 ```bash
-just ui-demo
-just ui-flow-demo
+just ui-demo-smoke
 ```
+
+For interactive sessions, use `just ui-demo` or `just ui-flow-demo` after `just setup-db`.
+Use `just ui-flow-demo-smoke` to prove flow readiness, baseline ingestion, and the stream script.
+Use `just grpc-execution-smoke` for the generated gRPC client and daemon journey.
 
 ## Production differences
 

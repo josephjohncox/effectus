@@ -213,7 +213,8 @@ func (generation *Generation) closeIfUnused() error {
 	return first
 }
 
-// GenerationManager atomically publishes exactly one active generation.
+// GenerationManager is retained for embedded compatibility tests.
+// Deprecated: ExecutionRuntime owns the production generation publication.
 type GenerationManager struct{ active atomic.Pointer[Generation] }
 
 func (manager *GenerationManager) Publish(generation *Generation) error {

@@ -9,7 +9,10 @@ It is not the production execution engine. Use `runtime.Engine` for durable chec
 `BasicFacts` provides path-based access to a copied data snapshot and its type system.
 
 ```go
-facts := common.NewBasicFacts(data, typeSystem)
+facts, err := common.TryNewBasicFacts(data, typeSystem)
+if err != nil {
+    return err
+}
 value, exists := facts.Get("order.customer.id")
 ```
 

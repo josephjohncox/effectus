@@ -1,9 +1,10 @@
 # Effectus Development Commands
 
 # Variables
-DB_DSN := env_var_or_default("DB_DSN", "postgres://effectus:effectus@localhost/effectus_dev?sslmode=disable")
+DB_DSN := env_var_or_default("DB_DSN", "postgres://effectus:effectus@localhost:55433/effectus_saga?sslmode=disable")
 MIGRATIONS_DIR := "migrations"
-DOCKER_COMPOSE := "docker-compose -f docker-compose.yml"
+DOCKER_COMPOSE := "docker compose -f examples/saga_stack/docker-compose.yml"
+UI_SMOKE_COMPOSE := "COMPOSE_PROJECT_NAME=effectus-ui-demo-smoke docker compose -f examples/saga_stack/docker-compose.yml"
 WAREHOUSE_DEVSTACK := "examples/warehouse_sources/devstack"
 CDC_STACK := "examples/cdc_stack"
 SAGA_STACK := "examples/saga_stack"
@@ -11,6 +12,7 @@ UI_DEMO_RULES := "examples/fraud_e2e/rules"
 UI_DEMO_SCHEMA := "examples/fraud_e2e/schema"
 UI_DEMO_VERBS := "examples/fraud_e2e/schema/fraud_verbs.json"
 UI_DEMO_VERB_DIR := "examples/fraud_e2e/verbs"
+UI_DEMO_EXTENSIONS := "examples/fraud_e2e/extensions"
 UI_DEMO_BUNDLE := "out/ui_demo/bundle.json"
 UI_DEMO_FACTS := "examples/fraud_e2e/data/facts_payload.json"
 UI_DEMO_TOKEN := "demo-token"
@@ -18,13 +20,14 @@ UI_FLOW_DEMO_RULES := "examples/flow_ui_demo/rules"
 UI_FLOW_DEMO_SCHEMA := "examples/flow_ui_demo/schema"
 UI_FLOW_DEMO_VERBS := "examples/flow_ui_demo/schema/flow_verbs.json"
 UI_FLOW_DEMO_VERB_DIR := "examples/flow_ui_demo/verbs"
+UI_FLOW_DEMO_EXTENSIONS := "examples/flow_ui_demo/extensions"
 UI_FLOW_DEMO_BUNDLE := "out/flow_ui_demo/bundle.json"
 UI_FLOW_DEMO_FACTS := "examples/flow_ui_demo/data/facts_payload.json"
 UI_FLOW_DEMO_STREAM := "examples/flow_ui_demo/scripts/stream_facts.sh"
 UI_FLOW_DEMO_TOKEN := "flow-demo-token"
 UI_FLOW_SQL_STACK := "examples/flow_ui_demo/sql_scrape"
 UI_FLOW_SQL_DSN := "postgres://effectus:effectus@localhost:55432/effectus_ui_demo?sslmode=disable"
-SAGA_POSTGRES_DSN := "postgres://effectus:effectus@localhost:55433/effectus_saga?sslmode=disable"
+DAEMON_POSTGRES_DSN := "postgres://effectus:effectus@localhost:55433/effectus_saga?sslmode=disable"
 SAGA_REDIS_ADDR := "localhost:56379"
 
 # Default recipe
@@ -34,10 +37,16 @@ default:
 # Install development dependencies
 install:
 	go mod download
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-	# Install buf if not present
-	command -v buf >/dev/null 2>&1 || curl -sSL https://github.com/bufbuild/buf/releases/latest/download/buf-$(uname -s)-$(uname -m) -o /usr/local/bin/buf && chmod +x /usr/local/bin/buf
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.0
+	go install github.com/bufbuild/buf/cmd/buf@v1.50.0
+	just check-protobuf-tools
+
+# Verify the generation toolchain matches CI.
+check-protobuf-tools:
+	@protoc-gen-go --version | grep -F 'v1.36.11'
+	@protoc-gen-go-grpc --version | grep -F '1.6.0'
+	@buf --version | grep -Fx '1.50.0'
 
 # Install SQL tooling (sqlc and goose)
 install-sql-tools:
@@ -117,11 +126,18 @@ buf-push:
 
 # Setup development database with Docker
 setup-db:
-	@echo "Starting PostgreSQL with Docker..."
+	@echo "Starting saga-stack PostgreSQL with Docker..."
 	{{DOCKER_COMPOSE}} up -d postgres
-	@echo "Waiting for database to be ready..."
-	sleep 5
-	@echo "OK Database ready"
+	@echo "Waiting for PostgreSQL on port 55433..."
+	@for attempt in $(seq 1 60); do \
+		{{DOCKER_COMPOSE}} exec -T postgres pg_isready -U effectus -d effectus_saga >/dev/null 2>&1 && exit 0; \
+		sleep 1; \
+	done; echo "ERROR PostgreSQL did not become ready"; exit 1
+	@echo "OK Database ready: {{DAEMON_POSTGRES_DSN}}"
+
+# Run an isolated PostgreSQL restore drill and write evidence under out/restore-drill.
+restore-drill: setup-db
+	EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' ./scripts/restore-drill.sh
 
 # Setup test database
 setup-test-db:
@@ -186,15 +202,96 @@ migrate-fresh:
 	cd runtime && goose -dir {{MIGRATIONS_DIR}} postgres "{{DB_DSN}}" up
 	@echo "OK Fresh migration complete"
 
-# Run integration tests with database
-test-integration: setup-test-db
-	@echo "Running integration tests..."
-	DB_DSN="postgres://effectus:effectus@localhost/effectus_test?sslmode=disable" go test -v -tags=integration ./runtime/...
+# Run all service-specific integration tests. Required variables must be set.
+test-integration: test-integration-postgres test-integration-redis test-integration-cdc test-integration-kafka test-integration-s3
+
+# Run PostgreSQL integration tests.
+test-integration-postgres:
+	@test -n "${DB_DSN:-}" || { echo "ERROR DB_DSN is required"; exit 1; }
+	EFFECTUS_POSTGRES_DSN="$DB_DSN" go run ./cmd/effectusd --database-migrations=apply
+	DB_DSN="$DB_DSN" POSTGRES_DSN="${POSTGRES_DSN:-$DB_DSN}" go test -p 1 -v -tags=integration ./runtime/... ./schema ./cmd/effectusd
+
+# Run Redis integration tests.
+test-integration-redis:
+	@test -n "${REDIS_ADDR:-}" || { echo "ERROR REDIS_ADDR is required"; exit 1; }
+	REDIS_ADDR="$REDIS_ADDR" go test -v -tags=integration ./schema ./adapters/redis
+
+# Run Kafka integration tests.
+test-integration-kafka:
+	@test -n "${KAFKA_BROKERS:-}" || { echo "ERROR KAFKA_BROKERS is required"; exit 1; }
+	KAFKA_BROKERS="$KAFKA_BROKERS" go test -v -tags=integration ./adapters/kafka -run '^TestKafkaConsumerGroupCommitAndRestart$' -count=1
+
+# Run S3 adapter integration tests.
+test-integration-s3:
+	@test -n "${S3_ENDPOINT:-}" || { echo "ERROR S3_ENDPOINT is required"; exit 1; }
+	@test -n "${S3_BUCKET:-}" || { echo "ERROR S3_BUCKET is required"; exit 1; }
+	S3_ENDPOINT="$S3_ENDPOINT" S3_BUCKET="$S3_BUCKET" S3_REGION="${S3_REGION:-us-east-1}" \
+		S3_ACCESS_KEY="${S3_ACCESS_KEY:-}" S3_SECRET_KEY="${S3_SECRET_KEY:-}" \
+		go test -v -tags=integration ./adapters/s3
+
+# Execute published snippets and command/reference contracts.
+test-docs:
+	@set -eu; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT; \
+	cp examples/fraud_e2e/rules/fraud_rules.eff "$tmp/rule.eff"; \
+	go run ./cmd/effectusc parse --verbose "$tmp/rule.eff" >/dev/null; \
+	go run ./cmd/effectusc format --stdout "$tmp/rule.eff" >/dev/null; \
+	go run ./cmd/effectusc bundle --name flow-ui-demo --version 1.0.0 \
+		--schema-dir examples/flow_ui_demo/schema --verb-dir examples/flow_ui_demo/verbs \
+		--verbschema examples/flow_ui_demo/schema/flow_verbs.json --rules-dir examples/flow_ui_demo/rules \
+		--output "$tmp/bundle.json"; test -s "$tmp/bundle.json"; \
+	go test ./cmd/effectusc -run 'TestDocumentedCompilerCommands|TestFormatCheckDoesNotWrite'; \
+	go test ./cmd/effectusd -run TestDocumentedDaemonFlags; \
+	(cd examples && go test ./grpc_execution); \
+	buf generate --path effectus --path runtime --template buf.gen.python.yaml --output "$tmp/python"; \
+	python3 -m venv "$tmp/venv"; "$tmp/venv/bin/pip" --quiet install protobuf==5.29.3; \
+	PYTHONPATH="$tmp/python" "$tmp/venv/bin/python" docs/tests/python_typed_facts.py; \
+	! grep -R -n -F 'token: "write-token"' docs/RUNTIME_CONFIG.md charts/effectusd/README.md; \
+	! grep -R -n -E 'delivery_ledger:|poison_audit:|--pprof-addr|--saga-postgres-dsn' docs README.md examples/README.md
+
+# Run every Go example module. Keep this list synchronized with CI.
+test-examples:
+	@set -eu; for module in \
+		examples \
+		examples/buf_integration \
+		examples/business_facts \
+		examples/business_verbs \
+		examples/coherent_flow \
+		examples/extension_system \
+		examples/fraud_e2e/mocks; do \
+		echo "==> $module"; (cd "$module" && go test ./...); \
+	done; \
+	(cd examples/coherent_flow && go run .); \
+	(cd examples && go run ./fraud_e2e); \
+	(cd examples && go run ./multi_bundle_runtime)
+
+# Render and validate all supported Helm deployment fixtures.
+test-helm:
+	@set -eu; command -v helm >/dev/null; command -v kubeconform >/dev/null; \
+	helm lint charts/effectusd -f charts/effectusd/ci/oci-values.yaml; \
+	for fixture in oci config grpc-tls persistence; do \
+		values=charts/effectusd/ci/$fixture-values.yaml; \
+		helm template effectusd charts/effectusd -f "$values" > "/tmp/effectusd-$fixture.yaml"; \
+		kubeconform -strict -summary "/tmp/effectusd-$fixture.yaml"; \
+	done; \
+	grep -F -- '--oci-cache-dir=/data/bundles' /tmp/effectusd-config.yaml
+
+# KAFKA_BROKERS must name a real broker; this recipe must never silently skip.
+test-kafka-integration:
+	@set -eu; test -n "${KAFKA_BROKERS:-}" || { echo "ERROR KAFKA_BROKERS is required"; exit 1; }; \
+	KAFKA_BROKERS="$KAFKA_BROKERS" go test -v -count=1 -tags=integration ./adapters/kafka -run '^TestKafkaConsumerGroupCommitAndRestart$'
+
+# Run CDC adapter integration suites against explicit service endpoints.
+test-integration-cdc:
+	@test -n "$${POSTGRES_DSN:-}" || { echo "ERROR POSTGRES_DSN is required"; exit 1; }
+	@test -n "$${MYSQL_DSN:-}" || { echo "ERROR MYSQL_DSN is required"; exit 1; }
+	POSTGRES_DSN="$${POSTGRES_DSN}" MYSQL_DSN="$${MYSQL_DSN}" \
+		go test -v -tags=integration ./adapters/postgres ./adapters/mysql
+
 
 # === UI Demo ===
 
 # Build a demo bundle (fraud rules) and start the status UI/runtime.
-ui-demo:
+ui-demo: setup-db
 	@mkdir -p out/ui_demo
 	go run ./cmd/effectusc bundle \
 		--name fraud-ui-demo \
@@ -204,13 +301,15 @@ ui-demo:
 		--verbschema {{UI_DEMO_VERBS}} \
 		--rules-dir {{UI_DEMO_RULES}} \
 		--output {{UI_DEMO_BUNDLE}}
+	EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' go run ./cmd/effectusd --database-migrations=apply
 	@echo "Starting effectusd UI..."
 	@echo "Token: {{UI_DEMO_TOKEN}}"
 	@echo "Open http://localhost:8080/ui"
 	@echo ""
 	@echo "Example ingest (new facts):"
-	@echo "curl -X POST http://localhost:8080/api/facts \\"
+	@echo "curl --fail-with-body -X POST http://localhost:8080/api/facts \\"
 	@echo "  -H \"Authorization: Bearer {{UI_DEMO_TOKEN}}\" \\"
+	@echo "  -H \"Idempotency-Key: fraud-demo-seed-v1\" \\"
 	@echo "  -H \"Content-Type: application/json\" \\"
 	@echo "  -d @{{UI_DEMO_FACTS}}"
 	@echo ""
@@ -219,21 +318,73 @@ ui-demo:
 	@echo "  -H \"Authorization: Bearer {{UI_DEMO_TOKEN}}\" \\"
 	@echo "  -H \"Content-Type: application/json\" \\"
 	@echo "  -d '{\"universe\":\"default\",\"mode\":\"both\",\"use_stored\":true}'"
-	go run ./cmd/effectusd \
+	EFFECTUS_API_TOKEN={{UI_DEMO_TOKEN}} EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' go run ./cmd/effectusd \
 		--bundle {{UI_DEMO_BUNDLE}} \
 		--http-addr :8080 \
-		--api-token {{UI_DEMO_TOKEN}} \
-		--rules-hotload \
-		--verb-dir {{UI_DEMO_VERB_DIR}} \
+		--extensions-dir {{UI_DEMO_EXTENSIONS}} \
 		--facts-store file \
 		--facts-path out/ui_demo/facts.json
 
 # Seed the demo facts into the running UI instance.
 ui-demo-seed:
-	curl -X POST http://localhost:8080/api/facts \
+	curl --fail-with-body -X POST http://localhost:8080/api/facts \
 		-H "Authorization: Bearer {{UI_DEMO_TOKEN}}" \
+		-H "Idempotency-Key: fraud-demo-seed-v1" \
 		-H "Content-Type: application/json" \
 		-d @{{UI_DEMO_FACTS}}
+
+# Cold-start PostgreSQL and the checked UI path, then prove durable HTTP replay.
+ui-demo-smoke:
+	@set -eu; pid=''; \
+	trap 'test -z "$pid" || { kill "$pid" >/dev/null 2>&1 || true; wait "$pid" >/dev/null 2>&1 || true; }; {{UI_SMOKE_COMPOSE}} down -v >/dev/null 2>&1 || true' EXIT INT TERM; \
+	{{UI_SMOKE_COMPOSE}} down -v >/dev/null 2>&1 || true; COMPOSE_PROJECT_NAME=effectus-ui-demo-smoke just setup-db; \
+	mkdir -p out/ui_demo; \
+	go run ./cmd/effectusc bundle --name fraud-ui-demo --version 1.0.0 \
+		--schema-dir {{UI_DEMO_SCHEMA}} --verb-dir {{UI_DEMO_VERB_DIR}} \
+		--verbschema {{UI_DEMO_VERBS}} --rules-dir {{UI_DEMO_RULES}} --output {{UI_DEMO_BUNDLE}}; \
+	go build -o out/ui_demo/effectusd ./cmd/effectusd; \
+	EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' out/ui_demo/effectusd --database-migrations=apply; \
+	EFFECTUS_API_TOKEN={{UI_DEMO_TOKEN}} EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' \
+		out/ui_demo/effectusd --bundle {{UI_DEMO_BUNDLE}} --http-addr 127.0.0.1:18080 \
+		--metrics-addr '' --extensions-dir {{UI_DEMO_EXTENSIONS}} --facts-store memory \
+		>out/ui_demo/effectusd.log 2>&1 & pid=$!; \
+	for attempt in $(seq 1 90); do curl --fail --silent http://127.0.0.1:18080/readyz >/dev/null && break; \
+		kill -0 $pid 2>/dev/null || { cat out/ui_demo/effectusd.log; exit 1; }; sleep 1; done; \
+	curl --fail --silent http://127.0.0.1:18080/readyz >/dev/null; \
+	! grep -q 'verb hash mismatch' out/ui_demo/effectusd.log; \
+	first=$(curl --fail-with-body --silent -X POST http://127.0.0.1:18080/api/facts \
+		-H 'Authorization: Bearer {{UI_DEMO_TOKEN}}' -H 'Idempotency-Key: ui-smoke-v1' \
+		-H 'Content-Type: application/json' -d @{{UI_DEMO_FACTS}}); \
+	second=$(curl --fail-with-body --silent -X POST http://127.0.0.1:18080/api/facts \
+		-H 'Authorization: Bearer {{UI_DEMO_TOKEN}}' -H 'Idempotency-Key: ui-smoke-v1' \
+		-H 'Content-Type: application/json' -d @{{UI_DEMO_FACTS}}); \
+	FIRST="$first" SECOND="$second" python3 -c 'import json,os; a=json.loads(os.environ["FIRST"]); b=json.loads(os.environ["SECOND"]); assert a["execution_id"] == b["execution_id"]'; \
+	status=$(curl --silent --output out/ui_demo/conflict.json --write-out '%{http_code}' -X POST http://127.0.0.1:18080/api/facts \
+		-H 'Authorization: Bearer {{UI_DEMO_TOKEN}}' -H 'Idempotency-Key: ui-smoke-v1' \
+		-H 'Content-Type: application/json' -d '{"universe":"demo","facts":{"transaction":{"id":"changed"}}}'); \
+	test "$status" = 409; echo "OK checked UI cold-start and replay smoke passed"
+
+# Start a complete local generated-gRPC execution path.
+grpc-execution-smoke:
+	@set -eu; pid=''; \
+	trap 'test -z "$pid" || { kill "$pid" >/dev/null 2>&1 || true; wait "$pid" >/dev/null 2>&1 || true; }; {{UI_SMOKE_COMPOSE}} down -v >/dev/null 2>&1 || true' EXIT INT TERM; \
+	{{UI_SMOKE_COMPOSE}} down -v >/dev/null 2>&1 || true; COMPOSE_PROJECT_NAME=effectus-ui-demo-smoke just setup-db; \
+	mkdir -p out/grpc_execution; \
+	go run ./cmd/effectusc bundle --name flow-ui-demo --version 1.0.0 \
+		--schema-dir {{UI_FLOW_DEMO_SCHEMA}} --verb-dir {{UI_FLOW_DEMO_VERB_DIR}} \
+		--verbschema {{UI_FLOW_DEMO_VERBS}} --rules-dir {{UI_FLOW_DEMO_RULES}} --output out/grpc_execution/bundle.json; \
+	go build -o out/grpc_execution/effectusd ./cmd/effectusd; \
+	EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' out/grpc_execution/effectusd --database-migrations=apply; \
+	EFFECTUS_API_TOKEN={{UI_FLOW_DEMO_TOKEN}} EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' \
+		out/grpc_execution/effectusd --bundle out/grpc_execution/bundle.json --http-addr 127.0.0.1:18082 \
+		--grpc-addr 127.0.0.1:18081 --grpc-allow-insecure --metrics-addr '' \
+		--extensions-dir {{UI_FLOW_DEMO_EXTENSIONS}} --facts-store memory \
+		>out/grpc_execution/effectusd.log 2>&1 & pid=$!; \
+	for attempt in $(seq 1 90); do curl --fail --silent http://127.0.0.1:18082/readyz >/dev/null && break; \
+		kill -0 $pid 2>/dev/null || { cat out/grpc_execution/effectusd.log; exit 1; }; sleep 1; done; \
+	curl --fail --silent http://127.0.0.1:18082/readyz >/dev/null; \
+	(cd examples && go run ./grpc_execution --address 127.0.0.1:18081 --token {{UI_FLOW_DEMO_TOKEN}} --ruleset flow-ui-demo --version 1.0.0); \
+	echo "OK generated gRPC execution smoke passed"
 
 # Open the demo UI in a browser (macOS/Linux).
 ui-demo-open:
@@ -249,7 +400,7 @@ ui-demo-down:
 # === UI Flow Demo ===
 
 # Build a flow-heavy demo bundle and start the status UI/runtime.
-ui-flow-demo:
+ui-flow-demo: setup-db
 	@mkdir -p out/flow_ui_demo
 	go run ./cmd/effectusc bundle \
 		--name flow-ui-demo \
@@ -265,8 +416,9 @@ ui-flow-demo:
 	@echo "Saga compensation enabled (inverse verbs in {{UI_FLOW_DEMO_VERB_DIR}})"
 	@echo ""
 	@echo "Example ingest (baseline facts):"
-	@echo "curl -X POST http://localhost:8080/api/facts \\"
+	@echo "curl --fail-with-body -X POST http://localhost:8080/api/facts \\"
 	@echo "  -H \"Authorization: Bearer {{UI_FLOW_DEMO_TOKEN}}\" \\"
+	@echo "  -H \"Idempotency-Key: flow-demo-seed-v1\" \\"
 	@echo "  -H \"Content-Type: application/json\" \\"
 	@echo "  -d @{{UI_FLOW_DEMO_FACTS}}"
 	@echo ""
@@ -283,20 +435,42 @@ ui-flow-demo:
 	@echo "just ui-flow-demo-sql-up"
 	@echo "just ui-flow-demo-sql-scrape"
 	@echo "just ui-flow-demo-sql-bump  # insert a new row"
-	go run ./cmd/effectusd \
+	EFFECTUS_API_TOKEN={{UI_FLOW_DEMO_TOKEN}} EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' go run ./cmd/effectusd \
 		--bundle {{UI_FLOW_DEMO_BUNDLE}} \
 		--http-addr :8080 \
-		--api-token {{UI_FLOW_DEMO_TOKEN}} \
-		--rules-hotload \
-		--verb-dir {{UI_FLOW_DEMO_VERB_DIR}} \
-		--saga \
+		--extensions-dir {{UI_FLOW_DEMO_EXTENSIONS}} \
 		--facts-store file \
 		--facts-path out/flow_ui_demo/facts.json
 
+# Cold-start and execute the documented flow UI ingest and stream journey.
+ui-flow-demo-smoke:
+	@set -eu; pid=''; \
+	trap 'test -z "$pid" || { kill "$pid" >/dev/null 2>&1 || true; wait "$pid" >/dev/null 2>&1 || true; }; {{UI_SMOKE_COMPOSE}} down -v >/dev/null 2>&1 || true' EXIT INT TERM; \
+	{{UI_SMOKE_COMPOSE}} down -v >/dev/null 2>&1 || true; COMPOSE_PROJECT_NAME=effectus-ui-demo-smoke just setup-db; \
+	mkdir -p out/flow_ui_demo; \
+	go run ./cmd/effectusc bundle --name flow-ui-demo --version 1.0.0 \
+		--schema-dir {{UI_FLOW_DEMO_SCHEMA}} --verb-dir {{UI_FLOW_DEMO_VERB_DIR}} \
+		--verbschema {{UI_FLOW_DEMO_VERBS}} --rules-dir {{UI_FLOW_DEMO_RULES}} --output {{UI_FLOW_DEMO_BUNDLE}}; \
+	go build -o out/flow_ui_demo/effectusd ./cmd/effectusd; \
+	EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' out/flow_ui_demo/effectusd --database-migrations=apply; \
+	EFFECTUS_API_TOKEN={{UI_FLOW_DEMO_TOKEN}} EFFECTUS_POSTGRES_DSN='{{DAEMON_POSTGRES_DSN}}' \
+		out/flow_ui_demo/effectusd --bundle {{UI_FLOW_DEMO_BUNDLE}} --http-addr 127.0.0.1:18084 \
+		--metrics-addr '' --extensions-dir {{UI_FLOW_DEMO_EXTENSIONS}} --facts-store memory \
+		>out/flow_ui_demo/effectusd.log 2>&1 & pid=$!; \
+	for attempt in $(seq 1 90); do curl --fail --silent http://127.0.0.1:18084/readyz >/dev/null && break; \
+		kill -0 $pid 2>/dev/null || { cat out/flow_ui_demo/effectusd.log; exit 1; }; sleep 1; done; \
+	curl --fail --silent http://127.0.0.1:18084/readyz >/dev/null; \
+	curl --fail-with-body --silent -X POST http://127.0.0.1:18084/api/facts \
+		-H 'Authorization: Bearer {{UI_FLOW_DEMO_TOKEN}}' -H 'Idempotency-Key: flow-demo-seed-v1' \
+		-H 'Content-Type: application/json' -d @{{UI_FLOW_DEMO_FACTS}} >/dev/null; \
+	EFFECTUS_URL=http://127.0.0.1:18084 EFFECTUS_TOKEN={{UI_FLOW_DEMO_TOKEN}} {{UI_FLOW_DEMO_STREAM}}; \
+	echo "OK flow UI readiness, seed, and stream smoke passed"
+
 # Seed the flow demo facts into the running UI instance.
 ui-flow-demo-seed:
-	curl -X POST http://localhost:8080/api/facts \
+	curl --fail-with-body -X POST http://localhost:8080/api/facts \
 		-H "Authorization: Bearer {{UI_FLOW_DEMO_TOKEN}}" \
+		-H "Idempotency-Key: flow-demo-seed-v1" \
 		-H "Content-Type: application/json" \
 		-d @{{UI_FLOW_DEMO_FACTS}}
 
@@ -359,7 +533,8 @@ sql-lint:
 	@command -v sqlfluff >/dev/null 2>&1 || { echo "ERROR sqlfluff is required. Install sqlfluff 3.5.0"; exit 1; }
 	sqlfluff lint --dialect postgres \
 		schema/migrations/10002_execution_ledger.sql \
-		schema/migrations/10003_kafka_delivery_ledger.sql
+		schema/migrations/10003_kafka_delivery_ledger.sql \
+		schema/migrations/10004_retention_indexes.sql
 
 # Format SQL files (requires sqlfluff)
 sql-format:
@@ -433,7 +608,7 @@ saga-logs:
 	docker compose -f {{SAGA_STACK}}/docker-compose.yml logs -f
 
 saga-test:
-	POSTGRES_DSN="{{SAGA_POSTGRES_DSN}}" REDIS_ADDR="{{SAGA_REDIS_ADDR}}" go test -v -tags=integration ./cmd/effectusd
+	POSTGRES_DSN="{{DAEMON_POSTGRES_DSN}}" REDIS_ADDR="{{SAGA_REDIS_ADDR}}" go test -v -tags=integration ./cmd/effectusd
 
 # Clean generated SQL files
 sql-clean:
@@ -578,9 +753,9 @@ example-coherent-flow:
 example-extension-system:
 	cd examples/extension_system && go run main.go
 
-# Run the gRPC execution example
+# Run the complete generated gRPC execution example.
 example-grpc-execution:
-	cd examples/grpc_execution && go run main.go
+	just grpc-execution-smoke
 
 # Run the modern SQL usage example
 example-modern-sql:

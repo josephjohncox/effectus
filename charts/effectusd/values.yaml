@@ -2,11 +2,24 @@ image:
   repository: ghcr.io/josephjohncox/effectusd
   tag: ""
   digest: ""
+  # Development only. Production rendering requires an immutable digest.
+  unsafeAllowTag: false
   pullPolicy: IfNotPresent
 
 postgres:
   existingSecret: ""
   dsnKey: "dsn"
+  pool:
+    maxOpen: 20
+    maxIdle: 5
+    maxLifetime: "30m"
+    maxIdleTime: "5m"
+
+migrations:
+  enabled: false
+  existingSecret: ""
+  dsnKey: "dsn"
+  backoffLimit: 2
 
 grpc:
   enabled: false
@@ -16,14 +29,13 @@ grpc:
   keyKey: "tls.key"
   maxReceiveBytes: 4194304
   maxSendBytes: 4194304
-  maxConcurrent: 128
+  maxConcurrent: 32
 
 
 bundle:
   ociRef: ""
   cacheDir: "/data/bundles"
   signatureVerifier: ""
-  reloadInterval: "0s"
 
 api:
   authMode: "token"
@@ -33,6 +45,9 @@ api:
   aclFile: ""
   rateLimit: 120
   rateBurst: 60
+  limiterCapacity: 10000
+  limiterIdleTTL: "10m"
+  trustedProxyCIDRs: ""
 
 facts:
   store: "memory"
@@ -55,7 +70,13 @@ service:
   metricsPort: 9090
   grpcPort: 9091
 
-resources: {}
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 1
+    memory: 512Mi
 
 podSecurityContext:
   runAsNonRoot: true
@@ -73,7 +94,13 @@ containerSecurityContext:
     drop:
       - ALL
 
-terminationGracePeriodSeconds: 30
+# Must exceed shutdownTimeout to leave time for SIGTERM delivery and forced cleanup.
+shutdownTimeout: "30s"
+terminationGracePeriodSeconds: 45
+
+# Change this value after externally managed Secret or gRPC TLS updates.
+rolloutNonce: ""
+podAnnotations: {}
 
 initContainers: []
 extraVolumes: []

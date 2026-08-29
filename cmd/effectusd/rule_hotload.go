@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -98,11 +99,8 @@ func (s *serverState) handleRuleValidate(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !s.rulesOn {
-		writeJSONError(w, http.StatusForbidden, "rule hotload disabled")
-		return
-	}
-
+	// Candidate validation does not publish a runtime generation and remains
+	// available when checked execution activation is disabled.
 	req, err := decodeRuleHotloadRequest(r)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
@@ -174,6 +172,13 @@ func (s *serverState) handleRuleRollback(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusForbidden, "rule hotload disabled")
 		return
 	}
+	s.mu.RLock()
+	checkedEngine := s.checkedEngine
+	s.mu.RUnlock()
+	if checkedEngine != nil {
+		writeJSONError(w, http.StatusConflict, errCheckedEngineMutation.Error())
+		return
+	}
 	if s.history == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "bundle history not configured")
 		return
@@ -230,6 +235,14 @@ func decodeRuleHotloadRequest(r *http.Request) (ruleHotloadRequest, error) {
 }
 
 func (s *serverState) evaluateRuleHotload(req ruleHotloadRequest, apply bool) ruleCheckResponse {
+	if apply {
+		s.mu.RLock()
+		checkedEngine := s.checkedEngine
+		s.mu.RUnlock()
+		if checkedEngine != nil {
+			return ruleCheckResponse{OK: false, Applied: false, Conflict: true, Diagnostics: []ruleDiagnostic{{Severity: lint.SeverityError, Message: errCheckedEngineMutation.Error(), Line: 1, Column: 1}}}
+		}
+	}
 	files, replace, err := normalizeRuleHotloadRequest(req)
 	if err != nil {
 		return ruleCheckResponse{
@@ -285,6 +298,34 @@ func (s *serverState) evaluateRuleHotload(req ruleHotloadRequest, apply bool) ru
 			Diagnostics: diagnostics,
 			SourceDiff:  sourceDiff,
 		}
+	}
+
+	// Validation attests the same callback-free compiler boundary used by the
+	// daemon. Legacy lowering below exists only for embedded canary summaries.
+	var checkedErr error
+	if generation.verbs != nil {
+		environment, err := compiler.BuildIREnvironment(typeSystem, generation.verbs)
+		checkedErr = err
+		if err == nil {
+			checkedSources := make([]compiler.Source, 0, len(sources))
+			for index, source := range sources {
+				path := strings.TrimSpace(source.Path)
+				format := normalizeRuleFormat(source.Format, path)
+				if path == "" {
+					path = fmt.Sprintf("rule-%d.%s", index+1, format)
+				} else if filepath.Ext(path) == "" {
+					path += "." + format
+				}
+				checkedSources = append(checkedSources, compiler.Source{Path: path, Content: []byte(source.Content)})
+			}
+			_, checkedErr = compiler.CompileChecked(context.Background(), checkedSources, environment, compiler.CompileOptions{})
+		}
+	}
+	if checkedErr != nil {
+		if apply {
+			recordHotloadFailure()
+		}
+		return ruleCheckResponse{OK: false, Diagnostics: append(diagnostics, ruleDiagnostic{Severity: lint.SeverityError, Message: checkedErr.Error(), Line: 1, Column: 1}), SourceDiff: sourceDiff}
 	}
 
 	var staged *unified.Bundle

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -60,25 +62,28 @@ const (
 )
 
 type serverState struct {
-	mu            sync.RWMutex
-	generation    *runtimeGeneration
-	phase         processPhase
-	startedAt     time.Time
-	sources       []adapters.SchemaSourceConfig
-	rulesOn       bool
-	history       *bundleHistory
-	sagaOn        bool
-	sagaStore     schema.SagaStore
-	capSystem     *capability.CapabilitySystem
-	factStore     factStore
-	factConfig    factStoreConfig
-	factCh        chan<- factEnvelope
-	auth          apiAuth
-	limiter       *rateLimiter
-	acl           *aclMatcher
-	kafkaReady    interface{ Ready() error }
-	grpcReady     interface{ Ready() error }
-	checkedEngine *effectusruntime.Engine
+	mu                   sync.RWMutex
+	generation           *runtimeGeneration
+	phase                processPhase
+	startedAt            time.Time
+	sources              []adapters.SchemaSourceConfig
+	rulesOn              bool
+	history              *bundleHistory
+	sagaOn               bool
+	sagaStore            schema.SagaStore
+	capSystem            *capability.CapabilitySystem
+	factStore            factStore
+	factConfig           factStoreConfig
+	factCh               chan<- factEnvelope
+	auth                 apiAuth
+	limiter              *rateLimiter
+	acl                  *aclMatcher
+	kafkaReady           interface{ Ready() error }
+	grpcReady            interface{ Ready() error }
+	checkedEngine        *effectusruntime.Engine
+	database             *sql.DB
+	databaseFailureSince time.Time
+	trustedProxies       []netip.Prefix
 }
 
 func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store factStore, config factStoreConfig, auth apiAuth, limiter *rateLimiter, acl *aclMatcher, typeSystem *types.TypeSystem, sources []adapters.SchemaSourceConfig, verbReg *verb.Registry, rulesHotload bool, history *bundleHistory, sagaEnabled bool, sagaStore schema.SagaStore, capSystem *capability.CapabilitySystem) *serverState {
@@ -105,6 +110,19 @@ func newServerState(bundle *unified.Bundle, factCh chan<- factEnvelope, store fa
 func (s *serverState) SetCheckedEngine(engine *effectusruntime.Engine) {
 	s.mu.Lock()
 	s.checkedEngine = engine
+	s.mu.Unlock()
+}
+
+func (s *serverState) SetDatabase(database *sql.DB) {
+	s.mu.Lock()
+	s.database = database
+	s.databaseFailureSince = time.Time{}
+	s.mu.Unlock()
+}
+
+func (s *serverState) SetTrustedProxies(prefixes []netip.Prefix) {
+	s.mu.Lock()
+	s.trustedProxies = append([]netip.Prefix(nil), prefixes...)
 	s.mu.Unlock()
 }
 
@@ -191,7 +209,11 @@ func (s *serverState) SetVerbRegistry(verbRegistry *verb.Registry) {
 	s.generation = s.buildGeneration(s.generation.id+1, s.generation.bundle, s.generation.schemaTypes, verbRegistry)
 }
 
-var errGenerationConflict = errors.New("runtime generation changed while preparing candidate")
+var (
+	errGenerationConflict     = errors.New("runtime generation changed while preparing candidate")
+	errCheckedEngineMutation  = errors.New("checked execution engine is installed; generation mutation requires an immutable redeployment")
+	errCheckedEngineImmutable = errCheckedEngineMutation
+)
 
 func (s *serverState) ActivateGeneration(bundle *unified.Bundle, typeSystem *types.TypeSystem, verbRegistry *verb.Registry, expected uint64) error {
 	if bundle == nil || typeSystem == nil || verbRegistry == nil {
@@ -199,6 +221,9 @@ func (s *serverState) ActivateGeneration(bundle *unified.Bundle, typeSystem *typ
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.checkedEngine != nil {
+		return errCheckedEngineMutation
+	}
 	if s.generation.id != expected {
 		return errGenerationConflict
 	}
@@ -209,6 +234,9 @@ func (s *serverState) ActivateGeneration(bundle *unified.Bundle, typeSystem *typ
 func (s *serverState) ActivateBundle(bundle *unified.Bundle, expected uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.checkedEngine != nil {
+		return errCheckedEngineMutation
+	}
 	if s.generation.id != expected {
 		return errGenerationConflict
 	}
@@ -222,6 +250,9 @@ func (s *serverState) ActivateTypeSystem(typeSystem *types.TypeSystem, expected 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.checkedEngine != nil {
+		return errCheckedEngineMutation
+	}
 	if s.generation.id != expected {
 		return errGenerationConflict
 	}
@@ -235,6 +266,9 @@ func (s *serverState) ActivateVerbRegistry(verbRegistry *verb.Registry, expected
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.checkedEngine != nil {
+		return errCheckedEngineMutation
+	}
 	if s.generation.id != expected {
 		return errGenerationConflict
 	}
@@ -384,10 +418,13 @@ func extractToken(r *http.Request) string {
 }
 
 type rateLimiter struct {
-	mu     sync.Mutex
-	rate   float64
-	burst  float64
-	bucket map[string]*rateBucket
+	mu       sync.Mutex
+	rate     float64
+	burst    float64
+	bucket   map[string]*rateBucket
+	capacity int
+	idleTTL  time.Duration
+	now      func() time.Time
 }
 
 type rateBucket struct {
@@ -396,29 +433,50 @@ type rateBucket struct {
 }
 
 func newRateLimiter(requestsPerMinute int, burst int) *rateLimiter {
+	return newRateLimiterWithBounds(requestsPerMinute, burst, 10000, 10*time.Minute)
+}
+
+func newRateLimiterWithBounds(requestsPerMinute, burst, capacity int, idleTTL time.Duration) *rateLimiter {
 	if requestsPerMinute <= 0 {
 		return nil
 	}
 	if burst <= 0 {
 		burst = requestsPerMinute
 	}
-	return &rateLimiter{
-		rate:   float64(requestsPerMinute) / 60.0,
-		burst:  float64(burst),
-		bucket: make(map[string]*rateBucket),
+	if capacity <= 0 {
+		capacity = 10000
 	}
+	if idleTTL <= 0 {
+		idleTTL = 10 * time.Minute
+	}
+	return &rateLimiter{rate: float64(requestsPerMinute) / 60.0, burst: float64(burst), bucket: make(map[string]*rateBucket), capacity: capacity, idleTTL: idleTTL, now: time.Now}
 }
 
 func (rl *rateLimiter) Allow(key string) bool {
 	if rl == nil {
 		return true
 	}
-	now := time.Now()
+	now := rl.now()
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
+	for existing, bucket := range rl.bucket {
+		if now.Sub(bucket.last) >= rl.idleTTL {
+			delete(rl.bucket, existing)
+		}
+	}
 	bucket, ok := rl.bucket[key]
 	if !ok {
+		if len(rl.bucket) >= rl.capacity {
+			oldestKey := ""
+			var oldest time.Time
+			for existing, candidate := range rl.bucket {
+				if oldestKey == "" || candidate.last.Before(oldest) || (candidate.last.Equal(oldest) && existing < oldestKey) {
+					oldestKey, oldest = existing, candidate.last
+				}
+			}
+			delete(rl.bucket, oldestKey)
+		}
 		rl.bucket[key] = &rateBucket{tokens: rl.burst - 1, last: now}
 		return true
 	}
@@ -446,12 +504,6 @@ func (s *serverState) withAPIMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if s.limiter != nil && !s.limiter.Allow(clientKey(r)) {
-			setResponseRole(w, "rate_limited")
-			writeJSONError(w, http.StatusTooManyRequests, "rate limit exceeded")
-			return
-		}
-
 		required := requiredRoleFor(r)
 		if s.acl != nil {
 			required = s.acl.requiredRole(r, required)
@@ -464,6 +516,12 @@ func (s *serverState) withAPIMiddleware(next http.Handler) http.Handler {
 			}
 			setResponseRole(w, "forbidden")
 			writeJSONError(w, http.StatusForbidden, "insufficient permissions")
+			return
+		}
+		// Authenticate before allocating caller-controlled limiter state.
+		if s.limiter != nil && !s.limiter.Allow(s.clientKey(r)) {
+			setResponseRole(w, "rate_limited")
+			writeJSONError(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}
 
@@ -497,23 +555,71 @@ func roleLabel(role apiRole) string {
 	}
 }
 
-func clientKey(r *http.Request) string {
+func (s *serverState) clientKey(r *http.Request) string {
 	if r == nil {
 		return "unknown"
 	}
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		parts := strings.Split(forwarded, ",")
-		if len(parts) > 0 {
-			return strings.TrimSpace(parts[0])
+	peer, ok := remoteIP(r.RemoteAddr)
+	if !ok {
+		return r.RemoteAddr
+	}
+	s.mu.RLock()
+	trusted := append([]netip.Prefix(nil), s.trustedProxies...)
+	s.mu.RUnlock()
+	if !containsPrefix(trusted, peer) {
+		return peer.String()
+	}
+	forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
+	if forwarded == "" {
+		return peer.String()
+	}
+	parts := strings.Split(forwarded, ",")
+	hops := make([]netip.Addr, len(parts))
+	for index, raw := range parts {
+		addr, err := netip.ParseAddr(strings.TrimSpace(raw))
+		if err != nil {
+			return peer.String() // malformed chains are never partially trusted
+		}
+		hops[index] = addr.Unmap()
+	}
+	candidate := peer
+	for index := len(hops) - 1; index >= 0 && containsPrefix(trusted, candidate); index-- {
+		candidate = hops[index]
+	}
+	return candidate.String()
+}
+
+func remoteIP(value string) (netip.Addr, bool) {
+	if address, err := netip.ParseAddrPort(value); err == nil {
+		return address.Addr().Unmap(), true
+	}
+	address, err := netip.ParseAddr(value)
+	return address.Unmap(), err == nil
+}
+
+func containsPrefix(prefixes []netip.Prefix, address netip.Addr) bool {
+	for _, prefix := range prefixes {
+		if prefix.Contains(address) {
+			return true
 		}
 	}
-	host := r.RemoteAddr
-	if strings.Contains(host, ":") {
-		if h, _, err := net.SplitHostPort(host); err == nil {
-			return h
+	return false
+}
+
+func parseTrustedProxyCIDRs(raw string) ([]netip.Prefix, error) {
+	var result []netip.Prefix
+	for _, value := range strings.Split(raw, ",") {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
 		}
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted proxy CIDR %q: %w", value, err)
+		}
+		result = append(result, prefix.Masked())
 	}
-	return host
+	return result, nil
 }
 
 func buildAPIAuth(mode, writeTokens, readTokens string) (apiAuth, error) {
@@ -612,17 +718,21 @@ func newHTTPServer(addr string, state *serverState) (*http.Server, net.Listener,
 	return server, listener, nil
 }
 
-func serveHTTPServer(ctx context.Context, server *http.Server, listener net.Listener) error {
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
-	}()
-
+func serveHTTPServer(_ context.Context, server *http.Server, listener net.Listener) error {
 	fmt.Printf("Starting HTTP server on %s\n", listener.Addr())
 	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("serve HTTP API: %w", err)
+	}
+	return nil
+}
+
+func shutdownHTTPServer(ctx context.Context, server *http.Server) error {
+	if server == nil {
+		return nil
+	}
+	if err := server.Shutdown(ctx); err != nil {
+		_ = server.Close()
+		return fmt.Errorf("drain HTTP handlers: %w", err)
 	}
 	return nil
 }
@@ -1168,24 +1278,27 @@ func factConfigSummary(config factStoreConfig) *factStoreConfigSummary {
 }
 
 type statusResponse struct {
-	GenerationID     uint64                  `json:"generation_id"`
-	ArtifactDigest   string                  `json:"artifact_digest"`
-	Phase            processPhase            `json:"phase"`
-	Bundle           *bundleSummary          `json:"bundle"`
-	Counts           bundleCounts            `json:"counts"`
-	StartedAt        time.Time               `json:"started_at"`
-	LastReload       time.Time               `json:"last_reload"`
-	UptimeSec        int64                   `json:"uptime_sec"`
-	Universes        []universeSummary       `json:"universes"`
-	RequiredFact     []string                `json:"required_facts"`
-	FactStore        string                  `json:"fact_store"`
-	FactStoreConfig  *factStoreConfigSummary `json:"fact_store_config,omitempty"`
-	VerbCount        int                     `json:"verb_count"`
-	FactCount        int                     `json:"fact_count"`
-	BundleFactCount  int                     `json:"bundle_fact_count"`
-	RuntimeFactCount int                     `json:"runtime_fact_count"`
-	RulesHotload     bool                    `json:"rules_hotload"`
-	SchemaSources    []schemaSourceSummary   `json:"schema_sources,omitempty"`
+	GenerationID           uint64                  `json:"generation_id"`
+	ArtifactDigest         string                  `json:"artifact_digest"`
+	BundleDigest           string                  `json:"bundle_digest"`
+	BundleGenerationDigest string                  `json:"bundle_generation_digest"`
+	EngineGenerationDigest string                  `json:"engine_generation_digest,omitempty"`
+	Phase                  processPhase            `json:"phase"`
+	Bundle                 *bundleSummary          `json:"bundle"`
+	Counts                 bundleCounts            `json:"counts"`
+	StartedAt              time.Time               `json:"started_at"`
+	LastReload             time.Time               `json:"last_reload"`
+	UptimeSec              int64                   `json:"uptime_sec"`
+	Universes              []universeSummary       `json:"universes"`
+	RequiredFact           []string                `json:"required_facts"`
+	FactStore              string                  `json:"fact_store"`
+	FactStoreConfig        *factStoreConfigSummary `json:"fact_store_config,omitempty"`
+	VerbCount              int                     `json:"verb_count"`
+	FactCount              int                     `json:"fact_count"`
+	BundleFactCount        int                     `json:"bundle_fact_count"`
+	RuntimeFactCount       int                     `json:"runtime_fact_count"`
+	RulesHotload           bool                    `json:"rules_hotload"`
+	SchemaSources          []schemaSourceSummary   `json:"schema_sources,omitempty"`
 }
 
 type schemaSourceSummary struct {
@@ -1259,12 +1372,28 @@ func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
 		return
 	}
+	s.mu.RLock()
+	engine := s.checkedEngine
+	s.mu.RUnlock()
+	engineDigest := ""
+	bundleDigest := generation.bundleDigest
+	if engine != nil {
+		if publication := engine.ActiveGeneration(); publication != nil {
+			engineDigest = publication.GenerationDigest
+			if publication.BundleDigest != "" {
+				bundleDigest = publication.BundleDigest
+			}
+		}
+	}
 	runtimeFacts := summarizeRuntimeFacts(generation.schemaTypes)
 	combinedFacts := mergeFactTypeSummaries(runtimeFacts, bundle.FactTypes)
 	resp := statusResponse{
-		GenerationID:   generation.id,
-		ArtifactDigest: generation.bundleDigest,
-		Phase:          phase,
+		GenerationID:           generation.id,
+		ArtifactDigest:         generation.bundleDigest,
+		BundleDigest:           bundleDigest,
+		BundleGenerationDigest: bundleDigest,
+		EngineGenerationDigest: engineDigest,
+		Phase:                  phase,
 		Bundle: &bundleSummary{
 			Name:        bundle.Name,
 			Version:     bundle.Version,
@@ -1572,8 +1701,26 @@ func (s *serverState) handleReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.RLock()
-	kafkaReady, grpcReady := s.kafkaReady, s.grpcReady
+	kafkaReady, grpcReady, database := s.kafkaReady, s.grpcReady, s.database
 	s.mu.RUnlock()
+	if database != nil {
+		probeCtx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
+		err := database.PingContext(probeCtx)
+		cancel()
+		now := time.Now()
+		s.mu.Lock()
+		if err == nil {
+			s.databaseFailureSince = time.Time{}
+		} else if s.databaseFailureSince.IsZero() {
+			s.databaseFailureSince = now
+		}
+		failedSince := s.databaseFailureSince
+		s.mu.Unlock()
+		if err != nil && now.Sub(failedSince) >= 5*time.Second {
+			writeJSONError(w, http.StatusServiceUnavailable, fmt.Sprintf("PostgreSQL durability boundary is not ready: %v", err))
+			return
+		}
+	}
 	if kafkaReady != nil {
 		if err := kafkaReady.Ready(); err != nil {
 			writeJSONError(w, http.StatusServiceUnavailable, fmt.Sprintf("Kafka consumer is not ready: %v", err))
@@ -1594,8 +1741,9 @@ func (s *serverState) handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 type factIngestRequest struct {
-	Universe string                 `json:"universe"`
-	Facts    map[string]interface{} `json:"facts"`
+	Universe  string                 `json:"universe"`
+	Namespace string                 `json:"namespace,omitempty"`
+	Facts     map[string]interface{} `json:"facts"`
 }
 
 func (s *serverState) handleFacts(w http.ResponseWriter, r *http.Request) {
@@ -1635,21 +1783,31 @@ func (s *serverState) handleFacts(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusServiceUnavailable, "checked execution generation is unavailable")
 			return
 		}
-		namespace := strings.TrimSpace(req.Universe)
+		// Namespace identifies the tenant for durable admission. Universe is
+		// only the local projection key. Callers that omit namespace retain the
+		// pre-0.2 behavior where universe served both roles.
+		namespace := strings.TrimSpace(req.Namespace)
+		if namespace == "" {
+			namespace = strings.TrimSpace(req.Universe)
+		}
 		if namespace == "" {
 			namespace = "default"
+		}
+		universe := strings.TrimSpace(req.Universe)
+		if universe == "" {
+			universe = "default"
 		}
 		ruleset := generation.bundle.Name
 		version := generation.bundle.Version
 		executionID := schema.StableExecutionID(namespace, key, ruleset, version)
 		admissionID := schema.StableAdmissionID(namespace, key, ruleset, version)
-		result, err := engine.Execute(r.Context(), effectusruntime.ExecuteRequest{Admission: &effectusruntime.Admission{ExecutionID: executionID, AdmissionID: admissionID, TenantNamespace: namespace, Ruleset: ruleset, Version: version, Facts: req.Facts}, WaitMode: effectusruntime.WaitAccepted})
+		result, err := engine.Execute(r.Context(), effectusruntime.ExecuteRequest{Admission: &effectusruntime.Admission{ExecutionID: executionID, AdmissionID: admissionID, TenantNamespace: namespace, Ruleset: ruleset, Version: version, Facts: req.Facts, ExpectedGenerationDigest: engine.ActiveGenerationDigest()}, WaitMode: effectusruntime.WaitAccepted})
 		if err != nil {
 			writeJSONError(w, http.StatusConflict, err.Error())
 			return
 		}
 		if s.factStore != nil {
-			if err := s.factStore.Update(namespace, req.Facts); err != nil {
+			if err := s.factStore.Update(universe, req.Facts); err != nil {
 				writeJSONError(w, http.StatusInternalServerError, "facts were accepted but local projection failed")
 				return
 			}
@@ -2276,8 +2434,19 @@ const uiHTML = `<!doctype html>
       <h2>Playground</h2>
       <div class="stack">
         <div>
-          <label>Universe (optional)</label>
+          <label>Universe (optional projection key)</label>
           <input id="universe" placeholder="default" />
+        </div>
+        <div>
+          <label>Namespace (optional tenant identity; defaults to universe)</label>
+          <input id="namespace" placeholder="default" />
+        </div>
+        <div>
+          <label>Idempotency key (reuse this key when retrying the same submission)</label>
+          <div class="row">
+            <input id="idempotency-key" readonly />
+            <button class="secondary" onclick="newFactSubmission()">New submission</button>
+          </div>
         </div>
         <div>
           <label>Mode</label>
@@ -2627,26 +2796,21 @@ const uiHTML = `<!doctype html>
       URL.revokeObjectURL(url);
     }
 
-    const setRuleHotloadState = (enabled) => {
-      hotloadEnabled = !!enabled;
+    const setRuleHotloadState = () => {
+      hotloadEnabled = false;
       const status = document.getElementById("rule-hotload-status");
       const note = document.getElementById("rule-hotload-note");
       const typecheckBtn = document.getElementById("rule-validate-btn");
       const hotloadBtn = document.getElementById("rule-hotload-btn");
       const historyStatus = document.getElementById("rule-history-status");
-      const statusText = enabled ? "hotload enabled" : "hotload disabled";
       if (status) {
-        status.textContent = statusText;
-        status.className = "pill " + (enabled ? "good" : "bad");
+        status.textContent = "candidate validation available";
+        status.className = "pill good";
       }
-      if (note) {
-        note.textContent = enabled
-          ? "Typecheck and hot-load rules against the active schema + verbs."
-          : "Enable with --rules-hotload (or api.hotload_rules in config) to use the editor.";
-      }
-      if (typecheckBtn) typecheckBtn.disabled = !enabled;
-      if (hotloadBtn) hotloadBtn.disabled = !enabled;
-      if (historyStatus) historyStatus.textContent = enabled ? "idle" : "disabled";
+      if (note) note.textContent = "Validate candidates against the active schema and verbs. Redeploy to activate a candidate.";
+      if (typecheckBtn) typecheckBtn.disabled = false;
+      if (hotloadBtn) hotloadBtn.disabled = true;
+      if (historyStatus) historyStatus.textContent = "immutable";
     };
 
     const highlightRuleLine = (line) => {
@@ -3101,9 +3265,25 @@ const uiHTML = `<!doctype html>
       }
     }
 
+    const generateIdempotencyKey = () => {
+      if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+        return globalThis.crypto.randomUUID();
+      }
+      return "ui-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+    };
+
+    function newFactSubmission() {
+      document.getElementById("idempotency-key").value = generateIdempotencyKey();
+      document.getElementById("dry-run-status").textContent = "New submission";
+    }
+
     async function ingestFacts() {
       const factsText = document.getElementById("facts").value.trim();
       const universe = document.getElementById("universe").value.trim();
+      const namespace = document.getElementById("namespace").value.trim();
+      const keyEl = document.getElementById("idempotency-key");
+      const idempotencyKey = keyEl.value || generateIdempotencyKey();
+      keyEl.value = idempotencyKey;
       const statusEl = document.getElementById("dry-run-status");
       if (!factsText) {
         statusEl.textContent = "Add facts JSON first";
@@ -3120,8 +3300,11 @@ const uiHTML = `<!doctype html>
       try {
         await fetchJSON("/api/facts", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ universe: universe, facts: facts })
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": idempotencyKey
+          },
+          body: JSON.stringify({ universe: universe, namespace: namespace, facts: facts })
         });
         const select = document.getElementById("facts-universe");
         if (select && universe) {
@@ -3290,6 +3473,7 @@ const uiHTML = `<!doctype html>
     if (ruleEditor) {
       ruleEditor.addEventListener("input", () => updateRulePreview());
     }
+    newFactSubmission();
     updateRulePreview();
     renderRuleDiffs([]);
     renderCanary(null);

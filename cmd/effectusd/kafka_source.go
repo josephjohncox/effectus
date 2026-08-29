@@ -37,10 +37,23 @@ func (handler kafkaFactHandler) Handle(ctx context.Context, delivery kafkaadapte
 }
 
 func configureDaemonExecutionEngine(ctx context.Context, bundle *unified.Bundle, extensionDirs, extensionOCIs []string) (*effectusruntime.ExecutionRuntime, *sql.DB, error) {
-	if strings.TrimSpace(*sagaPgDSN) == "" {
-		return nil, nil, fmt.Errorf("checked transport execution requires --saga-postgres-dsn for the durable admission ledger")
+	if strings.TrimSpace(*postgresDSN) == "" {
+		return nil, nil, fmt.Errorf("checked transport execution requires EFFECTUS_POSTGRES_DSN or protected database.dsn configuration")
 	}
 	execution := effectusruntime.NewExecutionRuntime()
+	metadata := effectusruntime.GenerationMetadata{Ruleset: "default", Version: "active"}
+	if bundle != nil {
+		metadata.Ruleset = bundle.Name
+		metadata.Version = bundle.Version
+		digest, err := unified.BundleDigest(bundle)
+		if err != nil {
+			return nil, nil, fmt.Errorf("compute bundle generation metadata: %w", err)
+		}
+		metadata.BundleDigest = digest
+	}
+	if err := execution.ConfigureGenerationMetadata(metadata); err != nil {
+		return nil, nil, err
+	}
 	for _, directory := range extensionDirs {
 		loaders, err := loader.LoadFromDirectory(directory)
 		if err != nil {
@@ -81,7 +94,7 @@ func configureDaemonExecutionEngine(ctx context.Context, bundle *unified.Bundle,
 	if execution.GetRuntimeInfo().PlanCount == 0 {
 		return nil, nil, fmt.Errorf("checked transport execution requires at least one canonical .eff or .effx plan")
 	}
-	db, err := sql.Open("postgres", *sagaPgDSN)
+	db, err := openDaemonDatabase()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -92,9 +105,20 @@ func configureDaemonExecutionEngine(ctx context.Context, bundle *unified.Bundle,
 	if err := db.PingContext(ctx); err != nil {
 		return closeOnError(fmt.Errorf("connect Kafka execution ledger: %w", err))
 	}
-	if err := schema.MigrateSagaV2(ctx, db); err != nil {
-		return closeOnError(fmt.Errorf("migrate Kafka execution ledger: %w", err))
+	switch strings.ToLower(strings.TrimSpace(*databaseMigrations)) {
+	case "validate":
+		if err := schema.ValidateSagaV2(ctx, db); err != nil {
+			return closeOnError(fmt.Errorf("validate durable database migrations: %w", err))
+		}
+	case "legacy-apply":
+		fmt.Fprintln(os.Stderr, "Warning: --database-migrations=legacy-apply grants DDL to the application; use the migration Job and validate mode")
+		if err := schema.MigrateSagaV2(ctx, db); err != nil {
+			return closeOnError(fmt.Errorf("apply durable database migrations: %w", err))
+		}
+	default:
+		return closeOnError(fmt.Errorf("database migration mode %q cannot start the daemon", *databaseMigrations))
 	}
+	setMetricsDatabase(db)
 	store, err := schema.NewPostgresOutboxStore(db)
 	if err != nil {
 		return closeOnError(err)
@@ -110,6 +134,13 @@ func configureDaemonExecutionEngine(ctx context.Context, bundle *unified.Bundle,
 		return closeOnError(err)
 	}
 	return execution, db, nil
+}
+
+func validateDatabasePoolConfig() error {
+	if *dbMaxOpen <= 0 || *dbMaxIdle < 0 || *dbMaxIdle > *dbMaxOpen || *dbConnLifetime < 0 || *dbConnIdleTime < 0 {
+		return fmt.Errorf("max-open must be positive, max-idle must be between zero and max-open, and durations must not be negative")
+	}
+	return nil
 }
 
 func decodeKafkaFactEnvelope(data []byte) (factEnvelope, error) {

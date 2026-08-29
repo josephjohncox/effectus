@@ -26,7 +26,7 @@ func createOutboxSaga(t *testing.T, store OutboxStore, sagaID string) {
 	t.Helper()
 	_, err := store.CreateSaga(t.Context(), CreateSagaRequest{
 		Namespace: "test", SagaID: sagaID, ExecutionID: "execution-1",
-		PlanID: "plan-1", PlanDigest: "plan-digest", Serial: true, allowUnstableIdentityForTest: true,
+		PlanID: "plan-1", PlanDigest: "plan-digest", Serial: true, AllowUnstableIdentityForTest: true,
 	})
 	require.NoError(t, err)
 }
@@ -252,7 +252,7 @@ func TestOutboxIdentityConflictAndTerminalReopen(t *testing.T) {
 	require.ErrorIs(t, err, ErrTerminalSaga)
 	_, err = store.CreateSaga(t.Context(), CreateSagaRequest{
 		Namespace: "changed", SagaID: "saga-replay", ExecutionID: "execution-1",
-		PlanID: "plan-1", PlanDigest: "plan-digest", Serial: true, allowUnstableIdentityForTest: true,
+		PlanID: "plan-1", PlanDigest: "plan-digest", Serial: true, AllowUnstableIdentityForTest: true,
 	})
 	require.ErrorIs(t, err, ErrIdentityConflict)
 }

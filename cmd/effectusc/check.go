@@ -3,11 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
-	"os"
 	"strings"
 
+	"github.com/effectus/effectus-go/ast"
 	"github.com/effectus/effectus-go/compiler"
 	"github.com/effectus/effectus-go/internal/schemasources"
 	"github.com/effectus/effectus-go/lint"
@@ -45,12 +46,13 @@ func newCheckCommand() *Command {
 			return err
 		}
 
+		registry, declarationErr := loadVerbRegistry(splitCommaList(*verbSchemas), *verbose)
 		issues, hadWarn, hadError, err := runCheck(runCheckOptions{
-			files:         files,
-			schemaFiles:   *schemaFiles,
-			schemaSources: strings.TrimSpace(*schemaSources),
-			verbSchemas:   splitCommaList(*verbSchemas),
-			registry:      loadVerbRegistry(splitCommaList(*verbSchemas), *verbose),
+			files:          files,
+			schemaFiles:    *schemaFiles,
+			schemaSources:  strings.TrimSpace(*schemaSources),
+			registry:       registry,
+			declarationErr: declarationErr,
 			lintOptions: lint.LintOptions{
 				UnsafeMode: mode,
 				VerbMode:   verbPolicy,
@@ -87,13 +89,13 @@ func newCheckCommand() *Command {
 }
 
 type runCheckOptions struct {
-	files         []string
-	schemaFiles   string
-	schemaSources string
-	verbSchemas   []string
-	registry      *verb.Registry
-	lintOptions   lint.LintOptions
-	verbose       bool
+	files          []string
+	schemaFiles    string
+	schemaSources  string
+	registry       *verb.Registry
+	declarationErr error
+	lintOptions    lint.LintOptions
+	verbose        bool
 }
 
 func runCheck(opts runCheckOptions) ([]lint.Issue, bool, bool, error) {
@@ -101,47 +103,35 @@ func runCheck(opts runCheckOptions) ([]lint.Issue, bool, bool, error) {
 		return nil, false, false, nil
 	}
 
-	comp := compiler.NewCompiler()
-
-	for _, file := range opts.verbSchemas {
-		if opts.verbose {
-			fmt.Printf("Loading verb schemas from %s...\n", file)
-		}
-		if err := comp.LoadVerbSpecs(file); err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading verb schema file %s: %v\n", file, err)
-		}
-	}
-
-	facts, typeSystem := createEmptyFacts(opts.schemaFiles, opts.verbose)
+	_, typeSystem, schemaErr := createEmptyFacts(opts.schemaFiles, opts.verbose)
+	var sourceErr error
 	if strings.TrimSpace(opts.schemaSources) != "" {
-		sources, err := schemasources.LoadFromFile(opts.schemaSources)
+		declarations, err := schemasources.LoadFromFile(opts.schemaSources)
 		if err != nil {
-			return nil, false, false, err
-		}
-		if err := schemasources.Apply(context.Background(), typeSystem, sources, opts.verbose); err != nil {
-			return nil, false, false, err
+			sourceErr = err
+		} else if err := schemasources.Apply(context.Background(), typeSystem, declarations, opts.verbose); err != nil {
+			sourceErr = err
 		}
 	}
-	compTS := comp.GetTypeSystem()
-	compTS.MergeTypeSystem(typeSystem)
-
+	if err := errors.Join(opts.declarationErr, schemaErr, sourceErr); err != nil {
+		return nil, false, false, err
+	}
+	environment, err := compiler.BuildIREnvironment(typeSystem, opts.registry)
+	if err != nil {
+		return nil, false, false, err
+	}
+	sources, err := compiler.LoadSources(opts.files)
+	if err != nil {
+		return nil, false, false, err
+	}
 	issues := make([]lint.Issue, 0)
 	hadWarn := false
 	hadError := false
-
-	for _, filename := range opts.files {
+	compileOptions := compiler.CompileOptions{InspectSource: func(path string, parsed *ast.File) {
 		if opts.verbose {
-			fmt.Printf("Checking %s...\n", filename)
+			fmt.Printf("Checking %s...\n", path)
 		}
-
-		parsed, err := comp.ParseAndTypeCheck(filename, facts)
-		if err != nil {
-			hadError = true
-			issues = append(issues, issueFromError(filename, err))
-			continue
-		}
-
-		fileIssues := lint.LintFileWithOptions(parsed, filename, opts.registry, opts.lintOptions)
+		fileIssues := lint.LintFileWithOptions(parsed, path, opts.registry, opts.lintOptions)
 		for _, issue := range fileIssues {
 			if issue.Severity == "warning" {
 				hadWarn = true
@@ -151,6 +141,10 @@ func runCheck(opts runCheckOptions) ([]lint.Issue, bool, bool, error) {
 			}
 		}
 		issues = append(issues, fileIssues...)
+	}}
+	if _, err := compiler.CompileChecked(context.Background(), sources, environment, compileOptions); err != nil {
+		issues = append(issues, issueFromError("", err))
+		hadError = true
 	}
 
 	return issues, hadWarn, hadError, nil
