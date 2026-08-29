@@ -323,7 +323,9 @@ jobs:
       - name: Create GitHub release completion marker last
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
           gh release create "$GITHUB_REF_NAME" dist/* \
-            --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+            --verify-tag --notes-file "docs/releases/v${VERSION}.md" \
+            --title "Effectus $GITHUB_REF_NAME"

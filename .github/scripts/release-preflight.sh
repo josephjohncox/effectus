@@ -21,6 +21,28 @@ if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(
   echo "release version is not semantic: $version" >&2
   exit 1
 fi
+
+chart_version=$(awk '$1 == "version:" { print $2; exit }' charts/effectusd/Chart.yaml)
+chart_app_version=$(awk '$1 == "appVersion:" { gsub(/"/, "", $2); print $2; exit }' charts/effectusd/Chart.yaml)
+if [ "$chart_version" != "$version" ] || [ "$chart_app_version" != "$version" ]; then
+  echo "Helm chart version does not match release version $version" >&2
+  exit 1
+fi
+if ! node -e '
+  const expected = process.argv[1];
+  const manifest = require("./tools/vscode-extension/package.json");
+  const lock = require("./tools/vscode-extension/package-lock.json");
+  if (manifest.version !== expected || lock.version !== expected || lock.packages[""].version !== expected) process.exit(1);
+' "$version"; then
+  echo "VS Code package versions do not match release version $version" >&2
+  exit 1
+fi
+notes="docs/releases/v${version}.md"
+if [ ! -s "$notes" ]; then
+  echo "release notes are missing: $notes" >&2
+  exit 1
+fi
+
 if [ "$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")" != "$(git rev-parse HEAD)" ]; then
   echo "checked out SHA does not match the release tag" >&2
   exit 1

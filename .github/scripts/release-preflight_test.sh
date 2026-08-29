@@ -28,22 +28,30 @@ exit 1
 EOF
 chmod +x "$temp/crane"
 
+version=$(awk '$1 == "version:" { print $2; exit }' charts/effectusd/Chart.yaml)
+
 if PATH="$temp:$PATH" GITHUB_REF_TYPE=branch GITHUB_REF_NAME=main \
-  "$script_dir/release-preflight.sh" 1.2.3 image bundle chart >/dev/null 2>&1; then
+  "$script_dir/release-preflight.sh" "$version" image bundle chart >/dev/null 2>&1; then
   echo "untagged source passed preflight" >&2
   exit 1
 fi
 
-PATH="$temp:$PATH" GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v1.2.3 \
-  "$script_dir/release-preflight.sh" 1.2.3 image bundle chart
+if PATH="$temp:$PATH" GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v9.9.9 \
+  "$script_dir/release-preflight.sh" 9.9.9 image bundle chart >/dev/null 2>&1; then
+  echo "mismatched first-party versions passed preflight" >&2
+  exit 1
+fi
+
+PATH="$temp:$PATH" GITHUB_REF_TYPE=tag GITHUB_REF_NAME="v$version" \
+  "$script_dir/release-preflight.sh" "$version" image bundle chart
 
 cat >"$temp/crane" <<'EOF'
 #!/bin/sh
 echo sha256:existing
 EOF
 chmod +x "$temp/crane"
-if PATH="$temp:$PATH" GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v1.2.3 \
-  "$script_dir/release-preflight.sh" 1.2.3 image bundle chart >/dev/null 2>&1; then
+if PATH="$temp:$PATH" GITHUB_REF_TYPE=tag GITHUB_REF_NAME="v$version" \
+  "$script_dir/release-preflight.sh" "$version" image bundle chart >/dev/null 2>&1; then
   echo "existing version passed preflight" >&2
   exit 1
 fi

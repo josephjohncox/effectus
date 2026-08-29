@@ -323,7 +323,8 @@ jobs:
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
           actionlint .github/workflows/ci.yml .github/workflows/publish.yml
           .github/scripts/release-preflight_test.sh
-          ! grep -Eq 'workflow_dispatch|--clobber' .github/workflows/publish.yml
+          ! grep -Eq 'workflow_dispatch|--clobber|--generate-notes' .github/workflows/publish.yml
+          grep -Fq -- '--notes-file "docs/releases/v${VERSION}.md"' .github/workflows/publish.yml
 
   helm:
     runs-on: ubuntu-latest
