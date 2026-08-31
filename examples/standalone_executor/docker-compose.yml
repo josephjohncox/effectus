@@ -73,7 +73,7 @@ services:
       - /data:mode=1777
     volumes:
       - ../../out/standalone_executor/bundle.json:/config/bundle.json:ro
-      - ./extensions:/config/extensions:ro
+      - ../../out/standalone_executor/extensions:/config/extensions:ro
 
 volumes:
   postgres-data:

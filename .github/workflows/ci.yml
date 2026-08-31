@@ -195,6 +195,9 @@ jobs:
           cache: true
 
       - name: Run standalone daemon and business executor
+        env:
+          EFFECTUS_API_TOKEN: ci-api-token
+          EXECUTOR_TOKEN: ci-executor-token
         run: examples/standalone_executor/scripts/run.sh
 
       - name: Stop standalone demo

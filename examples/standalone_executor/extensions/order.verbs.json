@@ -24,7 +24,7 @@
           "method": "POST",
           "timeout": "5s",
           "allowPrivateNetwork": true,
-          "headers": {"X-Demo-Token": "local-example-only"}
+          "headers": {"X-Demo-Token": "__EXECUTOR_TOKEN__"}
         }
       }
     },
@@ -49,7 +49,7 @@
           "method": "POST",
           "timeout": "5s",
           "allowPrivateNetwork": true,
-          "headers": {"X-Demo-Token": "local-example-only"}
+          "headers": {"X-Demo-Token": "__EXECUTOR_TOKEN__"}
         }
       }
     }

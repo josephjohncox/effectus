@@ -17,6 +17,16 @@ Run this command from the repository root:
 examples/standalone_executor/scripts/run.sh
 ```
 
+Override both demonstration tokens when required:
+
+```bash
+EFFECTUS_API_TOKEN='api-token' \
+EXECUTOR_TOKEN='executor-token' \
+  examples/standalone_executor/scripts/run.sh
+```
+
+The script renders the executor token into a generated extension manifest under `out/standalone_executor`. The source manifest contains a non-secret placeholder.
+
 The script performs these actions:
 
 1. Builds a checked order-review bundle.

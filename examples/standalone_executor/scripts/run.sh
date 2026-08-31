@@ -6,6 +6,7 @@ EXAMPLE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$EXAMPLE_DIR/../.." && pwd)"
 COMPOSE=(docker compose -f "$EXAMPLE_DIR/docker-compose.yml")
 BUNDLE="$ROOT_DIR/out/standalone_executor/bundle.json"
+RUNTIME_EXTENSIONS="$ROOT_DIR/out/standalone_executor/extensions"
 EFFECTUS_TOKEN="${EFFECTUS_API_TOKEN:-effectus-demo-token}"
 EXECUTOR_DEMO_TOKEN="${EXECUTOR_TOKEN:-local-example-only}"
 
@@ -17,6 +18,36 @@ for command in docker go curl python3; do
 done
 
 mkdir -p "$(dirname "$BUNDLE")"
+rm -rf "$RUNTIME_EXTENSIONS"
+mkdir -p "$RUNTIME_EXTENSIONS"
+EXECUTOR_DEMO_TOKEN="$EXECUTOR_DEMO_TOKEN" python3 - \
+  "$EXAMPLE_DIR/extensions" "$RUNTIME_EXTENSIONS" <<'PY'
+import json
+import os
+import shutil
+import sys
+from pathlib import Path
+
+source_dir = Path(sys.argv[1])
+target_dir = Path(sys.argv[2])
+token = os.environ["EXECUTOR_DEMO_TOKEN"]
+replacements = 0
+for source in sorted(source_dir.glob("*.json")):
+    target = target_dir / source.name
+    if source.name != "order.verbs.json":
+        shutil.copyfile(source, target)
+        continue
+    payload = json.loads(source.read_text())
+    for verb in payload["verbs"]:
+        headers = verb["target"]["config"].get("headers", {})
+        if headers.get("X-Demo-Token") != "__EXECUTOR_TOKEN__":
+            raise SystemExit(f"unexpected executor token template in {source}")
+        headers["X-Demo-Token"] = token
+        replacements += 1
+    target.write_text(json.dumps(payload, indent=2) + "\n")
+if replacements != 2:
+    raise SystemExit(f"expected two executor token replacements, got {replacements}")
+PY
 (
   cd "$ROOT_DIR"
   go run ./cmd/effectusc bundle \
