@@ -68,8 +68,8 @@ fi
 
 ready=0
 for _ in $(seq 1 90); do
-  if curl --fail --silent http://127.0.0.1:18080/readyz >/dev/null \
-    && curl --fail --silent http://127.0.0.1:8090/healthz >/dev/null; then
+  if curl --fail --silent http://127.0.0.1:18080/readyz >/dev/null &&
+    curl --fail --silent http://127.0.0.1:8090/healthz >/dev/null; then
     ready=1
     break
   fi
@@ -107,13 +107,12 @@ for _ in $(seq 1 60); do
   state="$(curl --fail --silent \
     --header "X-Demo-Token: $EXECUTOR_DEMO_TOKEN" \
     http://127.0.0.1:8090/reviews)"
-  if STATE="$state" python3 - <<'PY'
+  if STATE="$state" python3 - <<'PY'; then
 import json
 import os
 
 raise SystemExit(0 if len(json.loads(os.environ["STATE"])["reviews"]) == 1 else 1)
 PY
-  then
     break
   fi
   sleep 1
