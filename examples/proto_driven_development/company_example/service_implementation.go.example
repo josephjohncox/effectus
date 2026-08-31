@@ -12,7 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	// Generated from the example proto files.
-	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/josephjohncox/effectus/schema/verb"
 	verbsv1 "github.com/effectus/examples/proto_driven_development/company_example/gen/go/acme/v1/verbs"
 )
 

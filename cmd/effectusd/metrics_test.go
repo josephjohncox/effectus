@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	effectusruntime "github.com/effectus/effectus-go/runtime"
+	effectusruntime "github.com/josephjohncox/effectus/runtime"
 	"github.com/stretchr/testify/require"
 )
 

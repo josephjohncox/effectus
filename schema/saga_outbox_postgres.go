@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/effectus/effectus-go/invocation"
+	"github.com/josephjohncox/effectus/invocation"
 )
 
 // PostgresOutboxStore implements the V2 saga protocol. It never creates or

@@ -3,8 +3,8 @@ package common
 import (
 	"testing"
 
-	"github.com/effectus/effectus-go/pathutil"
-	"github.com/effectus/effectus-go/schema/types"
+	"github.com/josephjohncox/effectus/pathutil"
+	"github.com/josephjohncox/effectus/schema/types"
 	"github.com/stretchr/testify/require"
 )
 

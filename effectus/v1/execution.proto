@@ -7,7 +7,7 @@ import "google/protobuf/any.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1";
+option go_package = "github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1";
 
 // RulesetExecutionService provides the core gRPC interface for rule execution
 service RulesetExecutionService {

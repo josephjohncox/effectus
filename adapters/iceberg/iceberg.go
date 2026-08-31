@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/effectus/effectus-go/adapters"
-	sqladapter "github.com/effectus/effectus-go/adapters/sql"
+	"github.com/josephjohncox/effectus/adapters"
+	sqladapter "github.com/josephjohncox/effectus/adapters/sql"
 )
 
 // Source implements an Iceberg fact source by delegating to the SQL adapter.
@@ -129,7 +129,8 @@ func (s *Source) Stop(ctx context.Context) error {
 
 // Subscribe delegates to the SQL source.
 func (s *Source) Subscribe(ctx context.Context, factTypes []string) (<-chan *adapters.TypedFact, error) {
-	return s.delegate.Subscribe(ctx, factTypes)
+	facts, err := s.delegate.Subscribe(ctx, factTypes)
+	return facts, err
 }
 
 // GetSourceSchema returns schema metadata.

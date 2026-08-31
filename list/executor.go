@@ -5,11 +5,11 @@ import (
 	"context"
 	"fmt"
 
-	eff "github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/common"
-	"github.com/effectus/effectus-go/flow"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/capability"
+	eff "github.com/josephjohncox/effectus"
+	"github.com/josephjohncox/effectus/common"
+	"github.com/josephjohncox/effectus/flow"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/capability"
 )
 
 // ExecutorOption defines an option for configuring the executor

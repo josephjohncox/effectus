@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/effectus/effectus-go/pathutil"
+	"github.com/josephjohncox/effectus/pathutil"
 )
 
 // Example struct type

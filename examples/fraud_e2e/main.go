@@ -12,15 +12,15 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/compiler"
-	"github.com/effectus/effectus-go/flow"
-	"github.com/effectus/effectus-go/list"
-	"github.com/effectus/effectus-go/pathutil"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/capability"
-	"github.com/effectus/effectus-go/schema/types"
-	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/josephjohncox/effectus"
+	"github.com/josephjohncox/effectus/compiler"
+	"github.com/josephjohncox/effectus/flow"
+	"github.com/josephjohncox/effectus/list"
+	"github.com/josephjohncox/effectus/pathutil"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/capability"
+	"github.com/josephjohncox/effectus/schema/types"
+	"github.com/josephjohncox/effectus/schema/verb"
 )
 
 var (
@@ -33,7 +33,7 @@ var (
 func fraudAsset(relative string) string {
 	_, source, _, ok := runtime.Caller(0)
 	if !ok {
-		panic("locate fraud example source")
+		return filepath.FromSlash(relative)
 	}
 	return filepath.Join(filepath.Dir(source), filepath.FromSlash(relative))
 }
@@ -351,13 +351,13 @@ func runListRules(ctx context.Context, facts *exampleFacts, ts *types.TypeSystem
 
 	file, err := comp.ParseAndTypeCheck(rulesFile, facts)
 	if err != nil {
-		return err
+		return fmt.Errorf("parse fraud list rules: %w", err)
 	}
 
 	listCompiler := &list.Compiler{}
 	specAny, err := listCompiler.CompileParsedFile(file, rulesFile, facts.Schema())
 	if err != nil {
-		return err
+		return fmt.Errorf("compile fraud list rules: %w", err)
 	}
 
 	spec := specAny.(*list.Spec)
@@ -373,13 +373,13 @@ func runFraudFlow(ctx context.Context, facts *exampleFacts, ts *types.TypeSystem
 
 	file, err := comp.ParseAndTypeCheck(flowFile, facts)
 	if err != nil {
-		return err
+		return fmt.Errorf("parse fraud flow: %w", err)
 	}
 
 	flowCompiler := &flow.Compiler{}
 	specAny, err := flowCompiler.CompileParsedFile(file, flowFile, facts.Schema())
 	if err != nil {
-		return err
+		return fmt.Errorf("compile fraud flow: %w", err)
 	}
 
 	spec := specAny.(*flow.Spec)

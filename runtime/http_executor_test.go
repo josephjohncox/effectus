@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/effectus/effectus-go/compiler"
+	"github.com/josephjohncox/effectus/compiler"
 	"github.com/stretchr/testify/require"
 )
 

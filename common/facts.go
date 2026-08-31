@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/effectus/effectus-go/schema/types"
+	"github.com/josephjohncox/effectus/schema/types"
 	"github.com/tidwall/gjson"
 )
 

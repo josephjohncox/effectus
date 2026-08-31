@@ -475,7 +475,7 @@ const file_effectus_v1_common_proto_rawDesc = "" +
 	"\x13FIELD_TYPE_SFIXED32\x10\x0f\x12\x17\n" +
 	"\x13FIELD_TYPE_SFIXED64\x10\x10\x12\x15\n" +
 	"\x11FIELD_TYPE_SINT32\x10\x11\x12\x15\n" +
-	"\x11FIELD_TYPE_SINT64\x10\x12B<Z:github.com/effectus/effectus-go/gen/effectus/v1;effectusv1b\x06proto3"
+	"\x11FIELD_TYPE_SINT64\x10\x12B>Z<github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1b\x06proto3"
 
 var (
 	file_effectus_v1_common_proto_rawDescOnce sync.Once

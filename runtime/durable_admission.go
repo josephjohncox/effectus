@@ -11,12 +11,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/effectus/effectus-go/compiler"
-	effectusv1 "github.com/effectus/effectus-go/gen/effectus/v1"
-	"github.com/effectus/effectus-go/invocation"
-	"github.com/effectus/effectus-go/ir"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/ledger"
+	"github.com/josephjohncox/effectus/compiler"
+	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
+	"github.com/josephjohncox/effectus/invocation"
+	"github.com/josephjohncox/effectus/ir"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/ledger"
 )
 
 // ArtifactResolver reconstructs invocation-aware executor instances from an
@@ -47,11 +47,10 @@ func buildDurableAdmission(ctx context.Context, unit *compiler.CompiledUnit, adm
 	}
 	switch mergePolicy {
 	case "merge":
-		for path, value := range admission.Facts {
-			effectiveFacts[path] = value
-		}
+		mergeWorkflowFactOverrides(effectiveFacts, admission.Facts)
 	case "replace":
-		effectiveFacts = cloneWorkflowFacts(admission.Facts)
+		effectiveFacts = make(map[string]interface{}, len(admission.Facts))
+		mergeWorkflowFactOverrides(effectiveFacts, admission.Facts)
 	default:
 		return schema.DurableAdmission{}, nil, nil, fmt.Errorf("unsupported fact merge policy %q", mergePolicy)
 	}

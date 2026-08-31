@@ -14,9 +14,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/effectus/effectus-go/compiler"
-	"github.com/effectus/effectus-go/lint"
-	"github.com/effectus/effectus-go/schema/types"
+	"github.com/josephjohncox/effectus/compiler"
+	"github.com/josephjohncox/effectus/lint"
+	"github.com/josephjohncox/effectus/schema/types"
 )
 
 type lspServer struct {

@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-redis/redis/v8"
 
-	"github.com/effectus/effectus-go/adapters"
+	"github.com/josephjohncox/effectus/adapters"
 )
 
 // RedisStreamsSource consumes events from Redis Streams.

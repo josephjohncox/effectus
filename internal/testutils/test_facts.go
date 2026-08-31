@@ -1,7 +1,7 @@
 package testutils
 
 import (
-	"github.com/effectus/effectus-go"
+	"github.com/josephjohncox/effectus"
 )
 
 // TestSchemaInfo is a simple schema implementation for testing

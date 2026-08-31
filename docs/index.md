@@ -37,13 +37,13 @@ Read [Runtime Guarantees](GUARANTEES.md) before a production deployment.
 
     [:octicons-arrow-right-24: Getting started](GETTING_STARTED.md)
 
-- :material-code-braces:{ .lg .middle } **Learn the rule model**
+- :material-connection:{ .lg .middle } **Choose an integration model**
 
     ---
 
-    Learn facts, verbs, effects, list rules, flow rules, and capabilities.
+    Embed the checked Go runtime or deploy `effectusd` with business executors.
 
-    [:octicons-arrow-right-24: Basics](BASICS.md)
+    [:octicons-arrow-right-24: Integration guide](INTEGRATION.md)
 
 - :material-console:{ .lg .middle } **Build and inspect bundles**
 
@@ -91,6 +91,7 @@ Unsupported production paths fail with explicit errors. Compatibility APIs do no
 
 | Task | Document |
 | --- | --- |
+| Choose library or daemon mode | [Integration guide](INTEGRATION.md) |
 | Configure `effectusd` | [Runtime configuration](RUNTIME_CONFIG.md) |
 | Integrate a client | [gRPC execution](GRPC_EXECUTION.md) and [client examples](CLIENT_EXAMPLES.md) |
 | Add a source | [Fact sources](FACT_SOURCES.md) |

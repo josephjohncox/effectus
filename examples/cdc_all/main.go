@@ -15,10 +15,10 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 
-	"github.com/effectus/effectus-go/adapters"
-	_ "github.com/effectus/effectus-go/adapters/amqp"
-	"github.com/effectus/effectus-go/adapters/mysql"
-	"github.com/effectus/effectus-go/adapters/postgres"
+	"github.com/josephjohncox/effectus/adapters"
+	_ "github.com/josephjohncox/effectus/adapters/amqp"
+	"github.com/josephjohncox/effectus/adapters/mysql"
+	"github.com/josephjohncox/effectus/adapters/postgres"
 )
 
 func main() {

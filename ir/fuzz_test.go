@@ -3,7 +3,7 @@ package ir_test
 import (
 	"testing"
 
-	"github.com/effectus/effectus-go/ir"
+	"github.com/josephjohncox/effectus/ir"
 )
 
 func FuzzParse(f *testing.F) {

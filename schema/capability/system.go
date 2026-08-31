@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/invocation"
-	"github.com/effectus/effectus-go/schema/fencing"
-	"github.com/effectus/effectus-go/schema/types"
+	"github.com/josephjohncox/effectus"
+	"github.com/josephjohncox/effectus/invocation"
+	"github.com/josephjohncox/effectus/schema/fencing"
+	"github.com/josephjohncox/effectus/schema/types"
 )
 
 // CapabilitySystem provides comprehensive capability-based protection

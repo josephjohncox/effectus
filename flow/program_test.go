@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/effectus/effectus-go"
+	"github.com/josephjohncox/effectus"
 )
 
 // Mock executor for testing

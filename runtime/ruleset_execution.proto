@@ -5,7 +5,7 @@ package effectus.runtime;
 import "google/protobuf/any.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/effectus/effectus-go/runtime";
+option go_package = "github.com/josephjohncox/effectus/runtime";
 
 // RulesetExecutionService is the deprecated pre-v1 compatibility API.
 // New clients must use effectus.v1.RulesetExecutionService.

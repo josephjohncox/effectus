@@ -3,7 +3,7 @@ package tests
 import (
 	"testing"
 
-	"github.com/effectus/effectus-go/schema"
+	"github.com/josephjohncox/effectus/schema"
 )
 
 // TestStandalone verifies the schema registry can be created properly

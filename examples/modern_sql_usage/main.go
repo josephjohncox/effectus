@@ -6,8 +6,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/effectus/effectus-go/runtime"
 	"github.com/google/uuid"
+	"github.com/josephjohncox/effectus/runtime"
 )
 
 func main() {

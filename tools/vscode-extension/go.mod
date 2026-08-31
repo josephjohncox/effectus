@@ -1,4 +1,4 @@
-module github.com/effectus/effectus-go/tools/vscode-extension
+module github.com/josephjohncox/effectus/tools/vscode-extension
 
 go 1.25.0
 

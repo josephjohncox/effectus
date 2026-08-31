@@ -15,13 +15,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/effectus/effectus-go/compiler"
-	"github.com/effectus/effectus-go/loader"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/fencing"
-	"github.com/effectus/effectus-go/schema/ledger"
-	"github.com/effectus/effectus-go/schema/verb"
-	"github.com/effectus/effectus-go/schema/workflow"
+	"github.com/josephjohncox/effectus/compiler"
+	"github.com/josephjohncox/effectus/loader"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/fencing"
+	"github.com/josephjohncox/effectus/schema/ledger"
+	"github.com/josephjohncox/effectus/schema/verb"
+	"github.com/josephjohncox/effectus/schema/workflow"
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -58,6 +58,13 @@ type GenerationMetadata struct {
 	Ruleset      string `json:"ruleset"`
 	Version      string `json:"version"`
 	BundleDigest string `json:"bundle_digest,omitempty"`
+}
+
+// CompileOptions controls how a checked generation is published.
+type CompileOptions struct {
+	// DiscardInitialData retains inferred fact types but removes loader values
+	// before publication. Use this for type samples that are not runtime defaults.
+	DiscardInitialData bool
 }
 
 // ExecutionGeneration is the sole published production generation. Its unit
@@ -290,8 +297,14 @@ func (er *ExecutionRuntime) RegisterExecutorFactory(executorType compiler.Execut
 	er.executors[executorType] = factory
 }
 
-// CompileAndValidate loads extensions, compiles them, and validates everything
+// CompileAndValidate loads extensions, compiles them, and validates everything.
 func (er *ExecutionRuntime) CompileAndValidate(ctx context.Context) error {
+	return er.CompileAndValidateWithOptions(ctx, CompileOptions{})
+}
+
+// CompileAndValidateWithOptions loads, checks, and publishes one generation
+// with the requested publication policy.
+func (er *ExecutionRuntime) CompileAndValidateWithOptions(ctx context.Context, options CompileOptions) error {
 	er.compileMu.Lock()
 	defer er.compileMu.Unlock()
 
@@ -321,6 +334,9 @@ func (er *ExecutionRuntime) CompileAndValidate(ctx context.Context) error {
 		_ = snapshot.Retire()
 		er.markInitialCompilationFailed(hasActiveGeneration)
 		return fmt.Errorf("compilation errors: %v", result.Errors)
+	}
+	if options.DiscardInitialData {
+		result.CompiledUnit.InitialData = make(map[string]interface{})
 	}
 	if err := er.publishGeneration(result.CompiledUnit, snapshot, expected); err != nil {
 		_ = snapshot.Retire()

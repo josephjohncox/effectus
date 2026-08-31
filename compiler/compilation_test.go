@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/effectus/effectus-go/loader"
+	"github.com/josephjohncox/effectus/loader"
 	"github.com/stretchr/testify/require"
 )
 

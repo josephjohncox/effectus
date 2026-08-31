@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/effectus/effectus-go/invocation"
+	"github.com/josephjohncox/effectus/invocation"
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"

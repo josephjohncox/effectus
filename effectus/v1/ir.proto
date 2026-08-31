@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package effectus.v1;
 
-option go_package = "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1";
+option go_package = "github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1";
 
 // RuleArtifact is the portable, callback-free execution representation.
 message RuleArtifact {

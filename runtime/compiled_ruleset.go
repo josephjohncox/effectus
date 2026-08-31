@@ -1,6 +1,6 @@
 package runtime
 
-import "github.com/effectus/effectus-go/compiler"
+import "github.com/josephjohncox/effectus/compiler"
 
 // CompiledRuleset is retained as the storage representation used by legacy
 // ruleset persistence. It is not a gRPC method-registration API.

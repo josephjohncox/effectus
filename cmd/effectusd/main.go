@@ -16,17 +16,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/effectus/effectus-go/adapters"
-	kafkaadapter "github.com/effectus/effectus-go/adapters/kafka"
-	"github.com/effectus/effectus-go/internal/schemasources"
-	"github.com/effectus/effectus-go/loader"
-	"github.com/effectus/effectus-go/pathutil"
-	effectusruntime "github.com/effectus/effectus-go/runtime"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/capability"
-	"github.com/effectus/effectus-go/schema/types"
-	"github.com/effectus/effectus-go/schema/verb"
-	"github.com/effectus/effectus-go/unified"
+	"github.com/josephjohncox/effectus/adapters"
+	kafkaadapter "github.com/josephjohncox/effectus/adapters/kafka"
+	"github.com/josephjohncox/effectus/internal/schemasources"
+	"github.com/josephjohncox/effectus/loader"
+	"github.com/josephjohncox/effectus/pathutil"
+	effectusruntime "github.com/josephjohncox/effectus/runtime"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/capability"
+	"github.com/josephjohncox/effectus/schema/types"
+	"github.com/josephjohncox/effectus/schema/verb"
+	"github.com/josephjohncox/effectus/unified"
 )
 
 type namespaceStrategyFlag struct {

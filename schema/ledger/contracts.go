@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/effectus/effectus-go/schema/workflow"
+	"github.com/josephjohncox/effectus/schema/workflow"
 )
 
 type ExecutionState string

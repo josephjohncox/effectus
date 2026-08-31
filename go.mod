@@ -1,4 +1,4 @@
-module github.com/effectus/effectus-go
+module github.com/josephjohncox/effectus
 
 go 1.25.0
 

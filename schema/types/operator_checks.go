@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/effectus/effectus-go/ast"
+	"github.com/josephjohncox/effectus/ast"
 )
 
 // Facts interface for type checking

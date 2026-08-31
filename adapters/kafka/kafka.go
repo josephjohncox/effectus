@@ -15,7 +15,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/effectus/effectus-go/adapters"
+	"github.com/josephjohncox/effectus/adapters"
 )
 
 // KafkaSource implements the FactSource interface for Kafka

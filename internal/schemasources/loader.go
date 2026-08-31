@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/effectus/effectus-go/adapters"
-	"github.com/effectus/effectus-go/schema/types"
+	"github.com/josephjohncox/effectus/adapters"
+	"github.com/josephjohncox/effectus/schema/types"
 	"gopkg.in/yaml.v3"
 )
 

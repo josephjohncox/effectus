@@ -2,7 +2,7 @@
 package common
 
 import (
-	"github.com/effectus/effectus-go/schema/types"
+	"github.com/josephjohncox/effectus/schema/types"
 )
 
 // ResolutionResult contains the result of path resolution

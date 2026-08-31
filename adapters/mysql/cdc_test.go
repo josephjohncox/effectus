@@ -7,7 +7,7 @@ import (
 
 	"github.com/go-mysql-org/go-mysql/replication"
 
-	"github.com/effectus/effectus-go/adapters"
+	"github.com/josephjohncox/effectus/adapters"
 )
 
 func TestDurableCheckpointResumesAcknowledgedCoordinate(t *testing.T) {

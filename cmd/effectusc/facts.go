@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/effectus/effectus-go/analysis"
-	"github.com/effectus/effectus-go/compiler"
-	"github.com/effectus/effectus-go/internal/schemasources"
+	"github.com/josephjohncox/effectus/analysis"
+	"github.com/josephjohncox/effectus/compiler"
+	"github.com/josephjohncox/effectus/internal/schemasources"
 )
 
 type factsReport struct {

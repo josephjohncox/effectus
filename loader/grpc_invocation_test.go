@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/effectus/effectus-go/invocation"
+	"github.com/josephjohncox/effectus/invocation"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"

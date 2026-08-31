@@ -17,6 +17,7 @@ nav:
       - System intent: SYSTEM_INTENT.md
       - Glossary: GLOSSARY.md
   - Build and integrate:
+      - Integration models: INTEGRATION.md
       - CLI reference: COMMANDS.md
       - gRPC execution: GRPC_EXECUTION.md
       - Client examples: CLIENT_EXAMPLES.md

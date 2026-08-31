@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/compiler"
-	"github.com/effectus/effectus-go/internal/schemasources"
-	"github.com/effectus/effectus-go/lint"
-	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/josephjohncox/effectus/ast"
+	"github.com/josephjohncox/effectus/compiler"
+	"github.com/josephjohncox/effectus/internal/schemasources"
+	"github.com/josephjohncox/effectus/lint"
+	"github.com/josephjohncox/effectus/schema/verb"
 )
 
 func newCheckCommand() *Command {

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	effectusv1 "github.com/effectus/effectus-go/gen/effectus/v1"
-	"github.com/effectus/effectus-go/loader"
-	"github.com/effectus/effectus-go/schema"
+	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
+	"github.com/josephjohncox/effectus/loader"
+	"github.com/josephjohncox/effectus/schema"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

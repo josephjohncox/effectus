@@ -9,7 +9,7 @@ import (
 
 	goredis "github.com/go-redis/redis/v8"
 
-	"github.com/effectus/effectus-go/adapters"
+	"github.com/josephjohncox/effectus/adapters"
 )
 
 func TestAcknowledgeRetriesCheckedXACK(t *testing.T) {

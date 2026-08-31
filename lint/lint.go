@@ -5,12 +5,12 @@ import (
 	"strings"
 
 	"github.com/alecthomas/participle/v2/lexer"
-	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/schema/types"
-	"github.com/effectus/effectus-go/schema/verb"
 	"github.com/expr-lang/expr"
 	exprast "github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/parser"
+	"github.com/josephjohncox/effectus/ast"
+	"github.com/josephjohncox/effectus/schema/types"
+	"github.com/josephjohncox/effectus/schema/verb"
 )
 
 const (

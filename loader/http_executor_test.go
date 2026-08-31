@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/effectus/effectus-go/invocation"
+	"github.com/josephjohncox/effectus/invocation"
 	"github.com/stretchr/testify/require"
 )
 

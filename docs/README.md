@@ -5,11 +5,12 @@ Read the [published documentation](https://josephjohncox.github.io/effectus/) or
 ## Start here
 
 1. Complete [Getting Started](GETTING_STARTED.md) to run the checked HTTP path.
-2. Read [Basics](BASICS.md) for facts, rules, flows, verbs, and effects.
-3. Read [Architecture](ARCHITECTURE.md) for the production data path.
-4. Read [Runtime Guarantees](GUARANTEES.md) for implemented guarantees and limits.
-5. Read [System Intent](SYSTEM_INTENT.md) for the design criteria.
-6. Use the [Glossary](GLOSSARY.md) for shared terms.
+2. Read [Integration Guide](INTEGRATION.md) to choose embedded or standalone mode.
+3. Read [Basics](BASICS.md) for facts, rules, flows, verbs, and effects.
+4. Read [Architecture](ARCHITECTURE.md) for the production data path.
+5. Read [Runtime Guarantees](GUARANTEES.md) for implemented guarantees and limits.
+6. Read [System Intent](SYSTEM_INTENT.md) for the design criteria.
+7. Use the [Glossary](GLOSSARY.md) for shared terms.
 
 ## Build and use rules
 

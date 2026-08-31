@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/effectus/effectus-go/invocation"
 	"github.com/go-redis/redis/v8"
+	"github.com/josephjohncox/effectus/invocation"
 )
 
 const (
@@ -99,14 +99,14 @@ func NewRedisOutboxStore(options RedisOutboxStoreOptions) (*RedisOutboxStore, er
 	legacy, err := client.Exists(ctx, store.legacyKey).Result()
 	if err != nil {
 		_ = client.Close()
-		return nil, err
+		return nil, fmt.Errorf("inspect legacy Redis outbox: %w", err)
 	}
 	marker, markerErr := client.Get(ctx, store.markerKey).Result()
 	if errors.Is(markerErr, redis.Nil) {
 		marker = ""
 	} else if markerErr != nil {
 		_ = client.Close()
-		return nil, markerErr
+		return nil, fmt.Errorf("read Redis outbox marker: %w", markerErr)
 	}
 	if legacy != 0 && marker != redisNormalizedMarker {
 		_ = client.Close()
@@ -115,7 +115,7 @@ func NewRedisOutboxStore(options RedisOutboxStoreOptions) (*RedisOutboxStore, er
 	if marker == "" {
 		if err := client.SetNX(ctx, store.markerKey, redisNormalizedMarker, 0).Err(); err != nil {
 			_ = client.Close()
-			return nil, err
+			return nil, fmt.Errorf("write Redis outbox marker: %w", err)
 		}
 	}
 	return store, nil

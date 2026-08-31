@@ -2584,7 +2584,7 @@ const file_effectus_v1_execution_proto_rawDesc = "" +
 	"\x11UnregisterRuleset\x12%.effectus.v1.UnregisterRulesetRequest\x1a&.effectus.v1.UnregisterRulesetResponse\x12P\n" +
 	"\x0fStreamExecution\x12\x1d.effectus.v1.ExecutionRequest\x1a\x1c.effectus.v1.ExecutionUpdate0\x01\x12Y\n" +
 	"\x0eValidateSchema\x12\".effectus.v1.ValidateSchemaRequest\x1a#.effectus.v1.ValidateSchemaResponse\x12Y\n" +
-	"\x10GetSchemaVersion\x12!.effectus.v1.SchemaVersionRequest\x1a\".effectus.v1.SchemaVersionResponseB<Z:github.com/effectus/effectus-go/gen/effectus/v1;effectusv1b\x06proto3"
+	"\x10GetSchemaVersion\x12!.effectus.v1.SchemaVersionRequest\x1a\".effectus.v1.SchemaVersionResponseB>Z<github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1b\x06proto3"
 
 var (
 	file_effectus_v1_execution_proto_rawDescOnce sync.Once

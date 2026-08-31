@@ -7,7 +7,7 @@ import (
 	"sort"
 
 	"github.com/alecthomas/participle/v2"
-	"github.com/effectus/effectus-go/ast"
+	"github.com/josephjohncox/effectus/ast"
 )
 
 // parsedSource is the normalized, in-memory result of the compiler front end.

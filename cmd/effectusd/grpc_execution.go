@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	effectusruntime "github.com/effectus/effectus-go/runtime"
-	"github.com/effectus/effectus-go/unified"
+	effectusruntime "github.com/josephjohncox/effectus/runtime"
+	"github.com/josephjohncox/effectus/unified"
 )
 
 func configureDaemonGRPCServer(execution *effectusruntime.ExecutionRuntime, bundle *unified.Bundle) (*effectusruntime.RulesetExecutionServer, error) {

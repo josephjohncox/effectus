@@ -2830,7 +2830,7 @@ const file_effectus_v1_verbs_proto_rawDesc = "" +
 	"\x12ListVerbInterfaces\x12&.effectus.v1.ListVerbInterfacesRequest\x1a'.effectus.v1.ListVerbInterfacesResponse\x12_\n" +
 	"\x10ValidateVerbCall\x12$.effectus.v1.ValidateVerbCallRequest\x1a%.effectus.v1.ValidateVerbCallResponse\x12\x80\x01\n" +
 	"\x1bCheckInterfaceCompatibility\x12/.effectus.v1.CheckInterfaceCompatibilityRequest\x1a0.effectus.v1.CheckInterfaceCompatibilityResponse\x12_\n" +
-	"\x10GenerateVerbCode\x12$.effectus.v1.GenerateVerbCodeRequest\x1a%.effectus.v1.GenerateVerbCodeResponseB<Z:github.com/effectus/effectus-go/gen/effectus/v1;effectusv1b\x06proto3"
+	"\x10GenerateVerbCode\x12$.effectus.v1.GenerateVerbCodeRequest\x1a%.effectus.v1.GenerateVerbCodeResponseB>Z<github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1b\x06proto3"
 
 var (
 	file_effectus_v1_verbs_proto_rawDescOnce sync.Once

@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/effectus/effectus-go/loader"
-	effectusruntime "github.com/effectus/effectus-go/runtime"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/unified"
+	"github.com/josephjohncox/effectus/loader"
+	effectusruntime "github.com/josephjohncox/effectus/runtime"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/unified"
 	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )

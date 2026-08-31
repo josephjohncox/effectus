@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/effectus/effectus-go/invocation"
+	"github.com/josephjohncox/effectus/invocation"
 )
 
 type SagaState string

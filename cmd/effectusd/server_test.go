@@ -16,14 +16,14 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/effectus/effectus-go/adapters"
-	"github.com/effectus/effectus-go/loader"
-	"github.com/effectus/effectus-go/pathutil"
-	effectusruntime "github.com/effectus/effectus-go/runtime"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/types"
-	"github.com/effectus/effectus-go/schema/verb"
-	"github.com/effectus/effectus-go/unified"
+	"github.com/josephjohncox/effectus/adapters"
+	"github.com/josephjohncox/effectus/loader"
+	"github.com/josephjohncox/effectus/pathutil"
+	effectusruntime "github.com/josephjohncox/effectus/runtime"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/types"
+	"github.com/josephjohncox/effectus/schema/verb"
+	"github.com/josephjohncox/effectus/unified"
 	"github.com/stretchr/testify/require"
 )
 

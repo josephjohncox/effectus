@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/effectus/effectus-go/compiler"
-	"github.com/effectus/effectus-go/invocation"
-	"github.com/effectus/effectus-go/ir"
-	"github.com/effectus/effectus-go/loader"
-	"github.com/effectus/effectus-go/schema/ledger"
-	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/josephjohncox/effectus/compiler"
+	"github.com/josephjohncox/effectus/invocation"
+	"github.com/josephjohncox/effectus/ir"
+	"github.com/josephjohncox/effectus/loader"
+	"github.com/josephjohncox/effectus/schema/ledger"
+	"github.com/josephjohncox/effectus/schema/verb"
 )
 
 // ManifestArtifactResolver reconstructs invocation-aware adapters only from

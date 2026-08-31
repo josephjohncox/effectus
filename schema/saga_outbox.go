@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/effectus/effectus-go/invocation"
+	"github.com/josephjohncox/effectus/invocation"
 )
 
 var (

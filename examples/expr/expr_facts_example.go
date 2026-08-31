@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/effectus/effectus-go/pathutil"
+	"github.com/josephjohncox/effectus/pathutil"
 )
 
 func main() {

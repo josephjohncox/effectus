@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+FROM golang:1.25.13-alpine@sha256:1e0126852075c9c60731c8ba49088448b91f63e2aed97ca9d1a9791622a05946 AS builder
+
+WORKDIR /src
+COPY go.mod go.sum ./
+COPY examples/go.mod examples/go.sum ./examples/
+RUN cd examples && go mod download
+COPY . .
+RUN cd examples && CGO_ENABLED=0 go build -trimpath \
+  -ldflags="-s -w -buildid=" \
+  -o /out/business-executor ./standalone_executor/executor
+
+FROM scratch
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /out/business-executor /usr/local/bin/business-executor
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+USER 10001:10001
+ENTRYPOINT ["/usr/local/bin/business-executor"]

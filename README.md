@@ -42,6 +42,25 @@ export PATH="$PWD/bin:$PATH"
 
 Follow the [checked walkthrough](https://josephjohncox.github.io/effectus/GETTING_STARTED/) to start PostgreSQL, compile a bundle, run `effectusd`, and submit facts.
 
+## Integrate Effectus
+
+Use the `embedded` package when a Go service must run checked rules in process. Use `effectusd` for durable cross-service workflows.
+
+Run the embedded order example:
+
+```bash
+cd examples
+go run ./embedded_orders
+```
+
+Run the standalone daemon and business executor stack:
+
+```bash
+examples/standalone_executor/scripts/run.sh
+```
+
+Read the [Integration Guide](docs/INTEGRATION.md) for both deployment models and the HTTP executor contract.
+
 ## Compile rules
 
 Define fact types and verb contracts, then write a rule:
@@ -101,15 +120,16 @@ Deploy a new digest to publish a new generation. Effectusd does not poll mutable
 
 Production effectusd supports checked HTTP, gRPC, stream, Kafka, and OCI-resolved executors. It rejects in-process Go plugins.
 
-A trusted Go application can embed Effectus and register static executors. This compatibility path is outside the daemon isolation boundary.
+A Go application can use the checked `embedded` facade with invocation-aware handlers. Its default ledger and outbox are process-local.
 
-Read [Extension System](docs/EXTENSION_SYSTEM.md) for manifest formats and security requirements.
+Read the [Integration Guide](docs/INTEGRATION.md) for library mode. Read [Extension System](docs/EXTENSION_SYSTEM.md) for daemon executor targets.
 
 ## Documentation
 
 Read the [published documentation](https://josephjohncox.github.io/effectus/) or browse the Markdown files in this repository.
 
 - [Getting started](https://josephjohncox.github.io/effectus/GETTING_STARTED/)
+- [Integration guide](docs/INTEGRATION.md)
 - [Basics](docs/BASICS.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Runtime guarantees](docs/GUARANTEES.md)

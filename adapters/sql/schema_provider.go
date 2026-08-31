@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/effectus/effectus-go/adapters"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/josephjohncox/effectus/adapters"
 	_ "github.com/lib/pq"
 )
 

@@ -9,15 +9,16 @@ import (
 	"math"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
-	"github.com/effectus/effectus-go/common"
-	"github.com/effectus/effectus-go/compiler"
-	effectusv1 "github.com/effectus/effectus-go/gen/effectus/v1"
-	"github.com/effectus/effectus-go/invocation"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/workflow"
+	"github.com/josephjohncox/effectus/common"
+	"github.com/josephjohncox/effectus/compiler"
+	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
+	"github.com/josephjohncox/effectus/invocation"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/workflow"
 )
 
 func (er *ExecutionRuntime) executeVerbOnUnit(ctx context.Context, unit *compiler.CompiledUnit, verbName string, args map[string]interface{}) (interface{}, error) {
@@ -97,9 +98,7 @@ func (executor checkedWorkflowInvocationExecutor) Invoke(ctx context.Context, re
 
 func (er *ExecutionRuntime) executeCheckedWorkflowMode(ctx context.Context, unit *compiler.CompiledUnit, namespace, executionID string, facts map[string]interface{}, selectedPlanIDs map[string]struct{}, waitMode WaitMode) error {
 	resolvedFacts := cloneWorkflowFacts(unit.InitialData)
-	for path, value := range facts {
-		resolvedFacts[path] = value
-	}
+	mergeWorkflowFactOverrides(resolvedFacts, facts)
 	artifact := unit.CheckedIR.CloneArtifact()
 	dispatcherOptions := er.workflowOptions
 	dispatcherOptions.RequestID = executionID
@@ -665,11 +664,54 @@ func cloneWorkflowFacts(facts map[string]interface{}) map[string]interface{} {
 	return clone
 }
 
+// mergeWorkflowFactOverrides applies nested values before explicit dotted
+// paths. An explicit dotted path therefore wins a collision deterministically.
+func mergeWorkflowFactOverrides(target, overrides map[string]interface{}) {
+	for _, path := range orderedWorkflowFactKeys(overrides) {
+		value := overrides[path]
+		target[path] = value
+		flattenWorkflowFact(target, path, value)
+	}
+}
+
+func flattenWorkflowFact(target map[string]interface{}, prefix string, value interface{}) {
+	object, ok := value.(map[string]interface{})
+	if !ok {
+		return
+	}
+	for _, key := range orderedWorkflowFactKeys(object) {
+		child := object[key]
+		path := key
+		if prefix != "" {
+			path = prefix + "." + key
+		}
+		target[path] = child
+		flattenWorkflowFact(target, path, child)
+	}
+}
+
+func orderedWorkflowFactKeys(object map[string]interface{}) []string {
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(left, right int) bool {
+		leftDotted := strings.Contains(keys[left], ".")
+		rightDotted := strings.Contains(keys[right], ".")
+		if leftDotted != rightDotted {
+			return !leftDotted
+		}
+		return keys[left] < keys[right]
+	})
+	return keys
+}
+
 func lookupWorkflowFact(facts map[string]interface{}, path string) (interface{}, bool) {
 	if value, exists := facts[path]; exists {
 		return value, true
 	}
 	current := interface{}(facts)
+	nested := true
 	for start := 0; start < len(path); {
 		end := start
 		for end < len(path) && path[end] != '.' {
@@ -677,15 +719,20 @@ func lookupWorkflowFact(facts map[string]interface{}, path string) (interface{},
 		}
 		object, ok := current.(map[string]interface{})
 		if !ok {
-			return nil, false
+			nested = false
+			break
 		}
 		current, ok = object[path[start:end]]
 		if !ok {
-			return nil, false
+			nested = false
+			break
 		}
 		start = end + 1
 	}
-	return current, true
+	if nested {
+		return current, true
+	}
+	return nil, false
 }
 
 func checkedLiteralValue(literal *effectusv1.Literal) (interface{}, error) {

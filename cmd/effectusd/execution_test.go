@@ -5,11 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/capability"
-	"github.com/effectus/effectus-go/schema/types"
-	"github.com/effectus/effectus-go/schema/verb"
-	"github.com/effectus/effectus-go/unified"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/capability"
+	"github.com/josephjohncox/effectus/schema/types"
+	"github.com/josephjohncox/effectus/schema/verb"
+	"github.com/josephjohncox/effectus/unified"
 	"github.com/stretchr/testify/require"
 )
 

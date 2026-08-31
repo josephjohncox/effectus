@@ -625,7 +625,7 @@ const file_effectus_v1_facts_proto_rawDesc = "" +
 	"\rGetFactSchema\x12!.effectus.v1.GetFactSchemaRequest\x1a\".effectus.v1.GetFactSchemaResponse\x12\\\n" +
 	"\x0fListFactSchemas\x12#.effectus.v1.ListFactSchemasRequest\x1a$.effectus.v1.ListFactSchemasResponse\x12_\n" +
 	"\x10ValidateFactData\x12$.effectus.v1.ValidateFactDataRequest\x1a%.effectus.v1.ValidateFactDataResponse\x12e\n" +
-	"\x12CheckCompatibility\x12&.effectus.v1.CheckCompatibilityRequest\x1a'.effectus.v1.CheckCompatibilityResponseB<Z:github.com/effectus/effectus-go/gen/effectus/v1;effectusv1b\x06proto3"
+	"\x12CheckCompatibility\x12&.effectus.v1.CheckCompatibilityRequest\x1a'.effectus.v1.CheckCompatibilityResponseB>Z<github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1b\x06proto3"
 
 var (
 	file_effectus_v1_facts_proto_rawDescOnce sync.Once

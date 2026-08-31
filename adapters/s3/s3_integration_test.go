@@ -16,7 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/effectus/effectus-go/adapters"
+	"github.com/josephjohncox/effectus/adapters"
 )
 
 func minioClient(t *testing.T) (*awss3.Client, string) {

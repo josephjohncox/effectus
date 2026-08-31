@@ -4,10 +4,10 @@ import (
 	"testing"
 	"time"
 
-	effectus "github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/invocation"
-	"github.com/effectus/effectus-go/schema/fencing"
-	"github.com/effectus/effectus-go/schema/types"
+	effectus "github.com/josephjohncox/effectus"
+	"github.com/josephjohncox/effectus/invocation"
+	"github.com/josephjohncox/effectus/schema/fencing"
+	"github.com/josephjohncox/effectus/schema/types"
 	"github.com/stretchr/testify/require"
 )
 

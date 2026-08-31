@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/common"
+	"github.com/josephjohncox/effectus/ast"
+	"github.com/josephjohncox/effectus/common"
 )
 
 func TestCompileLiteral(t *testing.T) {

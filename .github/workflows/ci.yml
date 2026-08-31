@@ -61,7 +61,7 @@ jobs:
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.0
           git update-ref refs/heads/buf-breaking-main refs/remotes/origin/main
-          buf breaking --against '.git#branch=buf-breaking-main'
+          scripts/check-buf-breaking.sh '.git#branch=buf-breaking-main'
           buf generate --template buf.gen.go.yaml
           git diff --exit-code -- gen
 
@@ -166,6 +166,43 @@ jobs:
 
       - name: Test all example modules through the repository recipe
         run: just test-examples
+
+      - name: Run embedded checked-runtime example
+        working-directory: examples
+        run: go run ./embedded_orders
+
+      - name: Compile standalone business-executor bundle
+        run: |
+          mkdir -p out/standalone_executor
+          go run ./cmd/effectusc bundle \
+            --name order-review --version 1.0.0 \
+            --schema-dir examples/standalone_executor/schema \
+            --verb-dir examples/standalone_executor/verbs \
+            --verbschema examples/standalone_executor/schema/order_verbs.json \
+            --rules-dir examples/standalone_executor/rules \
+            --output out/standalone_executor/bundle.json
+
+  standalone-demo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run standalone daemon and business executor
+        env:
+          EFFECTUS_API_TOKEN: ci-api-token
+          EXECUTOR_TOKEN: ci-executor-token
+        run: examples/standalone_executor/scripts/run.sh
+
+      - name: Stop standalone demo
+        if: always()
+        run: examples/standalone_executor/scripts/down.sh
 
   kafka-integration:
     runs-on: ubuntu-latest
@@ -293,14 +330,24 @@ jobs:
             context: examples/warehouse_sources/devstack/minio
           - name: minio-mc
             context: examples/warehouse_sources/devstack/minio-mc
+          - name: business-executor
+            context: .
+            dockerfile: examples/standalone_executor/Dockerfile
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Build example image
-        run: >-
-          docker build -t "effectus/${{ matrix.name }}:audit"
-          "${{ matrix.context }}"
+        env:
+          DOCKERFILE: ${{ matrix.dockerfile }}
+        run: |
+          args=()
+          if [ -n "$DOCKERFILE" ]; then
+            args+=(--file "$DOCKERFILE")
+          fi
+          docker build "${args[@]}" \
+            -t "effectus/${{ matrix.name }}:audit" \
+            "${{ matrix.context }}"
 
       - name: Scan fixed high and critical findings
         run: |

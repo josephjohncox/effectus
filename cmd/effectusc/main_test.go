@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/effectus/effectus-go/compiler"
-	"github.com/effectus/effectus-go/ir"
-	"github.com/effectus/effectus-go/schema/types"
+	"github.com/josephjohncox/effectus/compiler"
+	"github.com/josephjohncox/effectus/ir"
+	"github.com/josephjohncox/effectus/schema/types"
 	"github.com/stretchr/testify/require"
 )
 

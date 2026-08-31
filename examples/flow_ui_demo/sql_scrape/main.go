@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/effectus/effectus-go/adapters"
-	_ "github.com/effectus/effectus-go/adapters/sql"
+	"github.com/josephjohncox/effectus/adapters"
+	_ "github.com/josephjohncox/effectus/adapters/sql"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 

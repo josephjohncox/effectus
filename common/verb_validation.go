@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/effectus/effectus-go/schema/types"
-	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/josephjohncox/effectus/schema/types"
+	"github.com/josephjohncox/effectus/schema/verb"
 )
 
 type verbRegistryStrictness interface {

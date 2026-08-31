@@ -1809,7 +1809,7 @@ const file_effectus_v1_ir_proto_rawDesc = "" +
 	"\x1cFENCING_REQUIREMENT_REQUIRED\x10\x02*<\n" +
 	"\tNullValue\x12\x1a\n" +
 	"\x16NULL_VALUE_UNSPECIFIED\x10\x00\x12\x13\n" +
-	"\x0fNULL_VALUE_NULL\x10\x01B<Z:github.com/effectus/effectus-go/gen/effectus/v1;effectusv1b\x06proto3"
+	"\x0fNULL_VALUE_NULL\x10\x01B>Z<github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1b\x06proto3"
 
 var (
 	file_effectus_v1_ir_proto_rawDescOnce sync.Once

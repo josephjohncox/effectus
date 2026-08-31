@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	effectusv1 "github.com/effectus/effectus-go/gen/effectus/v1"
-	"github.com/effectus/effectus-go/unified"
+	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
+	"github.com/josephjohncox/effectus/unified"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"

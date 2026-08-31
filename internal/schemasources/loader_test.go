@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/effectus/effectus-go/adapters"
-	"github.com/effectus/effectus-go/schema/types"
+	"github.com/josephjohncox/effectus/adapters"
+	"github.com/josephjohncox/effectus/schema/types"
 )
 
 type testSchemaFactory struct{}

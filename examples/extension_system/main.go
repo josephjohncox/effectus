@@ -7,9 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/effectus/effectus-go/loader"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/josephjohncox/effectus/loader"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/verb"
 )
 
 // === Static Extension Example ===

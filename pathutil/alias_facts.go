@@ -3,7 +3,7 @@ package pathutil
 import (
 	"strings"
 
-	"github.com/effectus/effectus-go"
+	"github.com/josephjohncox/effectus"
 )
 
 // AliasedFacts resolves namespace aliases before delegating to the base facts.

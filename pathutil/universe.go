@@ -3,7 +3,7 @@ package pathutil
 import (
 	"sort"
 
-	"github.com/effectus/effectus-go"
+	"github.com/josephjohncox/effectus"
 )
 
 // UniverseRegistry groups fact providers by universe and namespace.

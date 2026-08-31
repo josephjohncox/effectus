@@ -8,8 +8,8 @@ import (
 	"io"
 	"strings"
 
-	effectusruntime "github.com/effectus/effectus-go/runtime"
-	"github.com/effectus/effectus-go/schema"
+	effectusruntime "github.com/josephjohncox/effectus/runtime"
+	"github.com/josephjohncox/effectus/schema"
 )
 
 // ExecuteEngine is the shared runtime.Engine surface used by Kafka.

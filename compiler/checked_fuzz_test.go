@@ -3,7 +3,7 @@ package compiler
 import (
 	"testing"
 
-	"github.com/effectus/effectus-go/ir"
+	"github.com/josephjohncox/effectus/ir"
 )
 
 func FuzzCompileChecked(f *testing.F) {

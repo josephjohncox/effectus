@@ -19,6 +19,7 @@ lint:
   allow_comment_ignores: true
 build:
   excludes:
+    - .pi/
     - examples/
     - tests/
     - tools/vscode-extension/node_modules/

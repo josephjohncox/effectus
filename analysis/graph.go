@@ -4,8 +4,8 @@ import (
 	"regexp"
 	"sort"
 
-	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/josephjohncox/effectus/ast"
+	"github.com/josephjohncox/effectus/schema"
 )
 
 // Edge represents a dependency edge in the graph.

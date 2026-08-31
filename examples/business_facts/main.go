@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/effectus/effectus-go/pathutil"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/josephjohncox/effectus/pathutil"
+	"github.com/josephjohncox/effectus/schema"
 )
 
 // Example business data structures

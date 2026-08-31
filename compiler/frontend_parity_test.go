@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/ir"
+	"github.com/josephjohncox/effectus/ast"
+	"github.com/josephjohncox/effectus/ir"
 	"github.com/stretchr/testify/require"
 )
 

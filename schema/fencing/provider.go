@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/effectus/effectus-go/invocation"
+	"github.com/josephjohncox/effectus/invocation"
 )
 
 var (

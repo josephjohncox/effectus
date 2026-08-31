@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/effectus/effectus-go/invocation"
+	"github.com/josephjohncox/effectus/invocation"
 )
 
 // PostgresProvider issues durable monotonic tokens from V2 migration tables.

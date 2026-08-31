@@ -6,8 +6,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/effectus/effectus-go/loader"
-	"github.com/effectus/effectus-go/runtime"
+	"github.com/josephjohncox/effectus/loader"
+	"github.com/josephjohncox/effectus/runtime"
 )
 
 // ExampleBusinessExecutor demonstrates a business-specific executor

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/effectus/effectus-go/schema/ledger"
+	"github.com/josephjohncox/effectus/schema/ledger"
 )
 
 type RecoveryWorker struct {
