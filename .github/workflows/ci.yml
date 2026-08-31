@@ -61,7 +61,7 @@ jobs:
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.0
           git update-ref refs/heads/buf-breaking-main refs/remotes/origin/main
-          buf breaking --against '.git#branch=buf-breaking-main'
+          scripts/check-buf-breaking.sh '.git#branch=buf-breaking-main'
           buf generate --template buf.gen.go.yaml
           git diff --exit-code -- gen
 

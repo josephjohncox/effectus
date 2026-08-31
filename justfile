@@ -116,7 +116,7 @@ buf-build:
 
 # Check for breaking changes
 buf-breaking:
-	buf breaking --against '.git#branch=main'
+	scripts/check-buf-breaking.sh '.git#branch=main'
 
 # Push to buf registry (requires authentication)
 buf-push:
