@@ -3,7 +3,7 @@ package verb
 import (
 	"testing"
 
-	"github.com/effectus/effectus-go/schema/types"
+	"github.com/josephjohncox/effectus/schema/types"
 	"github.com/stretchr/testify/require"
 )
 

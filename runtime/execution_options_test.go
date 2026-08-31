@@ -3,7 +3,7 @@ package runtime
 import (
 	"testing"
 
-	effectusv1 "github.com/effectus/effectus-go/gen/effectus/v1"
+	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"

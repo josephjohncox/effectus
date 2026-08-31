@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/josephjohncox/effectus/schema/verb"
 )
 
 // BusinessVerbExecutor is an example executor for business operations

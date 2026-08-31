@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/effectus/effectus-go/schema"
+	"github.com/josephjohncox/effectus/schema"
 )
 
 type databaseSettings struct {

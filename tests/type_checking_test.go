@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/compiler"
-	"github.com/effectus/effectus-go/schema/types"
+	"github.com/josephjohncox/effectus"
+	"github.com/josephjohncox/effectus/compiler"
+	"github.com/josephjohncox/effectus/schema/types"
 	"github.com/stretchr/testify/assert"
 )
 

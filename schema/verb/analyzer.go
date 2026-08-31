@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/effectus/effectus-go/ast"
+	"github.com/josephjohncox/effectus/ast"
 )
 
 // AnalyzerVerbRegistry defines the interface needed by the analyzer.

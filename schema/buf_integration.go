@@ -469,7 +469,7 @@ package effectus.v1.verbs;
 import "google/protobuf/any.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/effectus/effectus-go/gen/effectus/v1/verbs;verbsv1";
+option go_package = "github.com/josephjohncox/effectus/gen/effectus/v1/verbs;verbsv1";
 
 `)
 
@@ -523,7 +523,7 @@ package effectus.v1.facts;
 import "google/protobuf/any.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/effectus/effectus-go/gen/effectus/v1/facts;factsv1";
+option go_package = "github.com/josephjohncox/effectus/gen/effectus/v1/facts;factsv1";
 
 `)
 

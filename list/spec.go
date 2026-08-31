@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/common"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/capability"
-	"github.com/effectus/effectus-go/schema/types"
+	"github.com/josephjohncox/effectus"
+	"github.com/josephjohncox/effectus/common"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/capability"
+	"github.com/josephjohncox/effectus/schema/types"
 )
 
 // Effect represents a verb to be executed along with its arguments

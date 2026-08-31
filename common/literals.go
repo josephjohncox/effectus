@@ -3,7 +3,7 @@ package common
 import (
 	"strconv"
 
-	"github.com/effectus/effectus-go/ast"
+	"github.com/josephjohncox/effectus/ast"
 )
 
 // CompileLiteral converts an AST literal to a runtime value

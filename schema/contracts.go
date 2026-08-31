@@ -1,8 +1,8 @@
 package schema
 
 import (
-	"github.com/effectus/effectus-go/schema/ledger"
-	"github.com/effectus/effectus-go/schema/workflow"
+	"github.com/josephjohncox/effectus/schema/ledger"
+	"github.com/josephjohncox/effectus/schema/workflow"
 )
 
 // Execution-ledger compatibility aliases. New runtime code imports schema/ledger.

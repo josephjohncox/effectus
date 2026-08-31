@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/effectus/effectus-go/invocation"
+	"github.com/josephjohncox/effectus/invocation"
 )
 
 // InMemoryOutboxStore implements the V2 protocol for tests and single-process

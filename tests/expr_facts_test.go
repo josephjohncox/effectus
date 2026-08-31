@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/effectus/effectus-go/pathutil"
+	"github.com/josephjohncox/effectus/pathutil"
 	"github.com/expr-lang/expr"
 	"github.com/stretchr/testify/assert"
 )

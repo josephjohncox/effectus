@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/effectus/effectus-go/ast"
+	"github.com/josephjohncox/effectus/ast"
 )
 
 // ASTDumper dumps AST structures to a writer

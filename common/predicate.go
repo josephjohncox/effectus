@@ -1,7 +1,7 @@
 package common
 
 import (
-	"github.com/effectus/effectus-go/pathutil"
+	"github.com/josephjohncox/effectus/pathutil"
 )
 
 // Predicate represents a compiled condition on facts

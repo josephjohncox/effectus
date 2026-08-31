@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/effectus/effectus-go/adapters"
+	"github.com/josephjohncox/effectus/adapters"
 )
 
 func TestPostgresCDCIntegration(t *testing.T) {

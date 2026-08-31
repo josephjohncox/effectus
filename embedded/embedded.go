@@ -9,10 +9,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/effectus/effectus-go/invocation"
-	"github.com/effectus/effectus-go/loader"
-	effectusruntime "github.com/effectus/effectus-go/runtime"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/josephjohncox/effectus/invocation"
+	"github.com/josephjohncox/effectus/loader"
+	effectusruntime "github.com/josephjohncox/effectus/runtime"
+	"github.com/josephjohncox/effectus/schema"
 )
 
 // HandlerFunc executes one checked verb with Effectus invocation metadata.

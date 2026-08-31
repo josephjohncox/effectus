@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	kafkaadapter "github.com/effectus/effectus-go/adapters/kafka"
-	effectusruntime "github.com/effectus/effectus-go/runtime"
+	kafkaadapter "github.com/josephjohncox/effectus/adapters/kafka"
+	effectusruntime "github.com/josephjohncox/effectus/runtime"
 )
 
 type hotloadMetrics struct {

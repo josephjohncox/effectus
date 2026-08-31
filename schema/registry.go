@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/schema/types"
+	"github.com/josephjohncox/effectus"
+	"github.com/josephjohncox/effectus/schema/types"
 	"github.com/expr-lang/expr"
 	exprast "github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/parser"

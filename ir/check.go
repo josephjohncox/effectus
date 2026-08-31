@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	effectusv1 "github.com/effectus/effectus-go/gen/effectus/v1"
+	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )

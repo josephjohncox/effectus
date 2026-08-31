@@ -9,9 +9,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/effectus/effectus-go/adapters"
+	"github.com/josephjohncox/effectus/adapters"
 	// Auto-register adapters
-	_ "github.com/effectus/effectus-go/adapters/http"
+	_ "github.com/josephjohncox/effectus/adapters/http"
 )
 
 func main() {

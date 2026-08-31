@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	effectus "github.com/effectus/effectus-go"
+	effectus "github.com/josephjohncox/effectus"
 	"github.com/stretchr/testify/require"
 )
 

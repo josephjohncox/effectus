@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/common"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/josephjohncox/effectus"
+	"github.com/josephjohncox/effectus/ast"
+	"github.com/josephjohncox/effectus/common"
+	"github.com/josephjohncox/effectus/schema"
 )
 
 // Compiler implements the Compiler interface for flow-style rules

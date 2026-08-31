@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/effectus/effectus-go/compiler"
-	"github.com/effectus/effectus-go/invocation"
-	"github.com/effectus/effectus-go/loader"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/josephjohncox/effectus/compiler"
+	"github.com/josephjohncox/effectus/invocation"
+	"github.com/josephjohncox/effectus/loader"
+	"github.com/josephjohncox/effectus/schema"
 	"github.com/stretchr/testify/require"
 )
 

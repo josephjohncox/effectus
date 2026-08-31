@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/effectus/effectus-go/adapters"
-	sqladapter "github.com/effectus/effectus-go/adapters/sql"
+	"github.com/josephjohncox/effectus/adapters"
+	sqladapter "github.com/josephjohncox/effectus/adapters/sql"
 )
 
 // Source implements an Iceberg fact source by delegating to the SQL adapter.

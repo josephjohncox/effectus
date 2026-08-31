@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/josephjohncox/effectus/ast"
+	"github.com/josephjohncox/effectus/schema"
 )
 
 // TestFactsImpl and TestSchemaInfo are no longer needed as we're using testutils package

@@ -5,9 +5,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/pathutil"
-	"github.com/effectus/effectus-go/schema/types"
+	"github.com/josephjohncox/effectus"
+	"github.com/josephjohncox/effectus/pathutil"
+	"github.com/josephjohncox/effectus/schema/types"
 )
 
 // SimpleFacts adapter for testing

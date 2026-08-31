@@ -7,7 +7,7 @@ import (
 
 	rabbit "github.com/rabbitmq/amqp091-go"
 
-	"github.com/effectus/effectus-go/adapters"
+	"github.com/josephjohncox/effectus/adapters"
 )
 
 type testAcknowledger struct{ acknowledgements int }

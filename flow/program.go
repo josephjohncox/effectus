@@ -3,7 +3,7 @@ package flow
 import (
 	"context"
 
-	"github.com/effectus/effectus-go"
+	"github.com/josephjohncox/effectus"
 )
 
 // ProgramTag identifies the type of program node

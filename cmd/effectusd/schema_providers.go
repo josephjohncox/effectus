@@ -1,6 +1,6 @@
 package main
 
 import (
-	_ "github.com/effectus/effectus-go/adapters/bufschema"
-	_ "github.com/effectus/effectus-go/adapters/sql"
+	_ "github.com/josephjohncox/effectus/adapters/bufschema"
+	_ "github.com/josephjohncox/effectus/adapters/sql"
 )

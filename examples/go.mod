@@ -5,7 +5,7 @@ go 1.25.0
 toolchain go1.25.13
 
 require (
-	github.com/effectus/effectus-go v0.0.0
+	github.com/josephjohncox/effectus v0.0.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
@@ -86,4 +86,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/effectus/effectus-go => ..
+replace github.com/josephjohncox/effectus => ..

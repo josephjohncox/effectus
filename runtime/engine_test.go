@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/effectus/effectus-go/loader"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/josephjohncox/effectus/loader"
+	"github.com/josephjohncox/effectus/schema"
 	"github.com/stretchr/testify/require"
 )
 

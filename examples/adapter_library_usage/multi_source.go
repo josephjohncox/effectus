@@ -9,10 +9,10 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/effectus/effectus-go/adapters"
-	_ "github.com/effectus/effectus-go/adapters/files"
-	_ "github.com/effectus/effectus-go/adapters/postgres"
-	_ "github.com/effectus/effectus-go/adapters/redis"
+	"github.com/josephjohncox/effectus/adapters"
+	_ "github.com/josephjohncox/effectus/adapters/files"
+	_ "github.com/josephjohncox/effectus/adapters/postgres"
+	_ "github.com/josephjohncox/effectus/adapters/redis"
 )
 
 func runMultiSourceExample() {

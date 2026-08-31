@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/effectus/effectus-go/schema"
+	"github.com/josephjohncox/effectus/schema"
 )
 
 func main() {

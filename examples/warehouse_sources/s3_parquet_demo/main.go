@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/effectus/effectus-go/adapters"
-	_ "github.com/effectus/effectus-go/adapters/s3"
+	"github.com/josephjohncox/effectus/adapters"
+	_ "github.com/josephjohncox/effectus/adapters/s3"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 

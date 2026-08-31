@@ -4,7 +4,7 @@ package effectus.v1;
 
 import "google/protobuf/any.proto";
 
-option go_package = "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1";
+option go_package = "github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1";
 
 // Schema represents a Buf-managed protobuf schema
 message Schema {

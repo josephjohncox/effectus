@@ -10,7 +10,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
-	"github.com/effectus/effectus-go/adapters/mysql"
+	"github.com/josephjohncox/effectus/adapters/mysql"
 )
 
 func main() {

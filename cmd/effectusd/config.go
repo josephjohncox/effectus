@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/effectus/effectus-go/adapters"
+	"github.com/josephjohncox/effectus/adapters"
 	"gopkg.in/yaml.v3"
 )
 

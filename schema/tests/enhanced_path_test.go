@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/effectus/effectus-go/pathutil"
+	"github.com/josephjohncox/effectus/pathutil"
 )
 
 func TestPathParsing(t *testing.T) {

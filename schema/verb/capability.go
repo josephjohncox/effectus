@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/effectus/effectus-go/schema/types"
+	"github.com/josephjohncox/effectus/schema/types"
 )
 
 // Capability represents a capability flag for a verb

@@ -5,13 +5,13 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/effectus/effectus-go/compiler"
-	"github.com/effectus/effectus-go/flow"
-	"github.com/effectus/effectus-go/pathutil"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/capability"
-	"github.com/effectus/effectus-go/schema/types"
-	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/josephjohncox/effectus/compiler"
+	"github.com/josephjohncox/effectus/flow"
+	"github.com/josephjohncox/effectus/pathutil"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/capability"
+	"github.com/josephjohncox/effectus/schema/types"
+	"github.com/josephjohncox/effectus/schema/verb"
 	"github.com/stretchr/testify/assert"
 )
 

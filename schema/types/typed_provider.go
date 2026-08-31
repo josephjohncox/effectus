@@ -1,7 +1,7 @@
 package types
 
 import (
-	"github.com/effectus/effectus-go"
+	"github.com/josephjohncox/effectus"
 )
 
 // FactProvider represents a simple interface for retrieving facts

@@ -11,12 +11,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/effectus/effectus-go/compiler"
-	effectusv1 "github.com/effectus/effectus-go/gen/effectus/v1"
-	"github.com/effectus/effectus-go/invocation"
-	"github.com/effectus/effectus-go/ir"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/ledger"
+	"github.com/josephjohncox/effectus/compiler"
+	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
+	"github.com/josephjohncox/effectus/invocation"
+	"github.com/josephjohncox/effectus/ir"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/ledger"
 )
 
 // ArtifactResolver reconstructs invocation-aware executor instances from an

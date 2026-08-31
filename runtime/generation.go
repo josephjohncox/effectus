@@ -11,8 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/effectus/effectus-go/invocation"
-	"github.com/effectus/effectus-go/ir"
+	"github.com/josephjohncox/effectus/invocation"
+	"github.com/josephjohncox/effectus/ir"
 )
 
 // ExecutorDescriptor is the immutable resolver input for one verb binding.

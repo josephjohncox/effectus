@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/effectus/effectus-go/executorhttp"
+	"github.com/josephjohncox/effectus/executorhttp"
 	_ "github.com/lib/pq"
 )
 

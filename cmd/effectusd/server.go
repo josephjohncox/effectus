@@ -21,14 +21,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/effectus/effectus-go/adapters"
-	"github.com/effectus/effectus-go/pathutil"
-	effectusruntime "github.com/effectus/effectus-go/runtime"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/capability"
-	"github.com/effectus/effectus-go/schema/types"
-	"github.com/effectus/effectus-go/schema/verb"
-	"github.com/effectus/effectus-go/unified"
+	"github.com/josephjohncox/effectus/adapters"
+	"github.com/josephjohncox/effectus/pathutil"
+	effectusruntime "github.com/josephjohncox/effectus/runtime"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/capability"
+	"github.com/josephjohncox/effectus/schema/types"
+	"github.com/josephjohncox/effectus/schema/verb"
+	"github.com/josephjohncox/effectus/unified"
 )
 
 type factEnvelope struct {

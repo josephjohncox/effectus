@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/effectus/effectus-go/compiler"
-	"github.com/effectus/effectus-go/ir"
+	"github.com/josephjohncox/effectus/compiler"
+	"github.com/josephjohncox/effectus/ir"
 	"github.com/stretchr/testify/require"
 )
 

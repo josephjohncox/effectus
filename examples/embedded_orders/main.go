@@ -8,8 +8,8 @@ import (
 	"log"
 	"sync"
 
-	"github.com/effectus/effectus-go/embedded"
-	"github.com/effectus/effectus-go/invocation"
+	"github.com/josephjohncox/effectus/embedded"
+	"github.com/josephjohncox/effectus/invocation"
 )
 
 //go:embed rules/order_review.eff

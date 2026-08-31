@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/alecthomas/participle/v2/lexer"
-	"github.com/effectus/effectus-go/lint"
-	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/josephjohncox/effectus/lint"
+	"github.com/josephjohncox/effectus/schema/verb"
 )
 
 var positionPattern = regexp.MustCompile(`:(\d+):(\d+)`)

@@ -13,8 +13,8 @@ import (
 
 	"archive/tar"
 
-	"github.com/effectus/effectus-go/internal/safetar"
-	"github.com/effectus/effectus-go/loader"
+	"github.com/josephjohncox/effectus/internal/safetar"
+	"github.com/josephjohncox/effectus/loader"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/empty"

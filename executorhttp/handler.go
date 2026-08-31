@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/effectus/effectus-go/invocation"
+	"github.com/josephjohncox/effectus/invocation"
 )
 
 const defaultMaxRequestBytes int64 = 1 << 20

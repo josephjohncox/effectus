@@ -7,8 +7,8 @@ import (
 	"os"
 	"testing"
 
-	kafkaadapter "github.com/effectus/effectus-go/adapters/kafka"
-	"github.com/effectus/effectus-go/schema"
+	kafkaadapter "github.com/josephjohncox/effectus/adapters/kafka"
+	"github.com/josephjohncox/effectus/schema"
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	segmentio "github.com/segmentio/kafka-go"

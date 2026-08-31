@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/effectus/effectus-go/common"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/josephjohncox/effectus/common"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/verb"
 	"github.com/stretchr/testify/require"
 )
 

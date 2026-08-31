@@ -21,7 +21,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/effectus/effectus-go/adapters"
+	"github.com/josephjohncox/effectus/adapters"
 )
 
 type s3API interface {

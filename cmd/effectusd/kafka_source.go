@@ -14,12 +14,12 @@ import (
 	"sync"
 	"time"
 
-	kafkaadapter "github.com/effectus/effectus-go/adapters/kafka"
-	"github.com/effectus/effectus-go/loader"
-	effectusruntime "github.com/effectus/effectus-go/runtime"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/fencing"
-	"github.com/effectus/effectus-go/unified"
+	kafkaadapter "github.com/josephjohncox/effectus/adapters/kafka"
+	"github.com/josephjohncox/effectus/loader"
+	effectusruntime "github.com/josephjohncox/effectus/runtime"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/fencing"
+	"github.com/josephjohncox/effectus/unified"
 	_ "github.com/lib/pq"
 )
 

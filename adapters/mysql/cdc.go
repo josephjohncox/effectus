@@ -18,7 +18,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/effectus/effectus-go/adapters"
+	"github.com/josephjohncox/effectus/adapters"
 )
 
 // CDCConfig holds MySQL CDC configuration.

@@ -19,9 +19,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/effectus/effectus-go/internal/safetar"
-	"github.com/effectus/effectus-go/invocation"
-	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/josephjohncox/effectus/internal/safetar"
+	"github.com/josephjohncox/effectus/invocation"
+	"github.com/josephjohncox/effectus/schema/verb"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"

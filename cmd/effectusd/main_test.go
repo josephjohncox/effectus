@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/josephjohncox/effectus/schema/verb"
 	"github.com/stretchr/testify/require"
 )
 

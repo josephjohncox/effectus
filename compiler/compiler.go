@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/flow"
-	"github.com/effectus/effectus-go/list"
-	"github.com/effectus/effectus-go/schema/types"
+	"github.com/josephjohncox/effectus"
+	"github.com/josephjohncox/effectus/ast"
+	"github.com/josephjohncox/effectus/flow"
+	"github.com/josephjohncox/effectus/list"
+	"github.com/josephjohncox/effectus/schema/types"
 )
 
 // Compiler handles parsing and type checking of Effectus files

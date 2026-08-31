@@ -9,8 +9,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/effectus/effectus-go/adapters"
-	_ "github.com/effectus/effectus-go/adapters/grpc"
+	"github.com/josephjohncox/effectus/adapters"
+	_ "github.com/josephjohncox/effectus/adapters/grpc"
 )
 
 const (

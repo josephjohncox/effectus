@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/effectus/effectus-go/runtime/internal/db"
+	"github.com/josephjohncox/effectus/runtime/internal/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"

@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/effectus/effectus-go/loader"
-	effectusruntime "github.com/effectus/effectus-go/runtime"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/josephjohncox/effectus/loader"
+	effectusruntime "github.com/josephjohncox/effectus/runtime"
+	"github.com/josephjohncox/effectus/schema"
 	segmentio "github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/require"
 )

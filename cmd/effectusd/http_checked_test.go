@@ -11,12 +11,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/effectus/effectus-go/loader"
-	effectusruntime "github.com/effectus/effectus-go/runtime"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/types"
-	"github.com/effectus/effectus-go/schema/verb"
-	"github.com/effectus/effectus-go/unified"
+	"github.com/josephjohncox/effectus/loader"
+	effectusruntime "github.com/josephjohncox/effectus/runtime"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/types"
+	"github.com/josephjohncox/effectus/schema/verb"
+	"github.com/josephjohncox/effectus/unified"
 	"github.com/stretchr/testify/require"
 )
 

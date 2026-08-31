@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/effectus/effectus-go/compiler"
-	effectusv1 "github.com/effectus/effectus-go/gen/effectus/v1"
-	"github.com/effectus/effectus-go/schema"
+	"github.com/josephjohncox/effectus/compiler"
+	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
+	"github.com/josephjohncox/effectus/schema"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

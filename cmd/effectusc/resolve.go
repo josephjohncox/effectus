@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/effectus/effectus-go/unified"
+	"github.com/josephjohncox/effectus/unified"
 )
 
 func newResolveCommand() *Command {

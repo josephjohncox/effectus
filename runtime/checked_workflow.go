@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/effectus/effectus-go/common"
-	"github.com/effectus/effectus-go/compiler"
-	effectusv1 "github.com/effectus/effectus-go/gen/effectus/v1"
-	"github.com/effectus/effectus-go/invocation"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/workflow"
+	"github.com/josephjohncox/effectus/common"
+	"github.com/josephjohncox/effectus/compiler"
+	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
+	"github.com/josephjohncox/effectus/invocation"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/workflow"
 )
 
 func (er *ExecutionRuntime) executeVerbOnUnit(ctx context.Context, unit *compiler.CompiledUnit, verbName string, args map[string]interface{}) (interface{}, error) {

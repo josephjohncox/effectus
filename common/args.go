@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/effectus/effectus-go/ast"
+	"github.com/josephjohncox/effectus/ast"
 )
 
 // FactRef marks an argument value as a fact path reference.

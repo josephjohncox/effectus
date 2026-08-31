@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/effectus/effectus-go/adapters"
+	"github.com/josephjohncox/effectus/adapters"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 

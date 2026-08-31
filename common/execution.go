@@ -5,8 +5,8 @@ import (
 	"context"
 	"fmt"
 
-	eff "github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/schema/verb"
+	eff "github.com/josephjohncox/effectus"
+	"github.com/josephjohncox/effectus/schema/verb"
 )
 
 // VerbRegistry defines the interface for verb registry access

@@ -13,7 +13,7 @@ import (
 
 	"github.com/lib/pq"
 
-	"github.com/effectus/effectus-go/adapters"
+	"github.com/josephjohncox/effectus/adapters"
 )
 
 var pollerIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	"github.com/effectus/effectus-go/invocation"
+	"github.com/josephjohncox/effectus/invocation"
 )
 
 const (

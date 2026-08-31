@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/effectus/effectus-go/loader"
-	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/josephjohncox/effectus/loader"
+	"github.com/josephjohncox/effectus/schema/verb"
 )
 
 // LoaderAdapter adapts the ExtensionManager to work with existing registries

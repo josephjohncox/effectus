@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/ast"
-	"github.com/effectus/effectus-go/compiler"
-	"github.com/effectus/effectus-go/util"
+	"github.com/josephjohncox/effectus"
+	"github.com/josephjohncox/effectus/ast"
+	"github.com/josephjohncox/effectus/compiler"
+	"github.com/josephjohncox/effectus/util"
 )
 
 // SimpleExecutor is a basic implementation of effectus.Executor

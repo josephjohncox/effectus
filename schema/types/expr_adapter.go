@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/effectus/effectus-go"
-	"github.com/effectus/effectus-go/ast"
+	"github.com/josephjohncox/effectus"
+	"github.com/josephjohncox/effectus/ast"
 	exprPkg "github.com/expr-lang/expr"
 )
 

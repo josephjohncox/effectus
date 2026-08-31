@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/effectus/effectus-go/schema"
+	"github.com/josephjohncox/effectus/schema"
 )
 
 // RegistryFactProvider adapts the schema registry to the pathutil FactProvider interface.

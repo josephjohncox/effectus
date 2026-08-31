@@ -5,7 +5,7 @@ package effectus.v1;
 import "effectus/v1/common.proto";
 import "google/protobuf/any.proto";
 
-option go_package = "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1";
+option go_package = "github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1";
 
 // FactRegistryService manages fact schemas and their evolution
 service FactRegistryService {

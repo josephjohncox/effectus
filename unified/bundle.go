@@ -12,14 +12,14 @@ import (
 	"strings"
 	"time"
 
-	eff "github.com/effectus/effectus-go"
-	comp "github.com/effectus/effectus-go/compiler"
-	fl "github.com/effectus/effectus-go/flow"
-	list "github.com/effectus/effectus-go/list"
-	"github.com/effectus/effectus-go/pathutil"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/types"
-	"github.com/effectus/effectus-go/schema/verb"
+	eff "github.com/josephjohncox/effectus"
+	comp "github.com/josephjohncox/effectus/compiler"
+	fl "github.com/josephjohncox/effectus/flow"
+	list "github.com/josephjohncox/effectus/list"
+	"github.com/josephjohncox/effectus/pathutil"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/types"
+	"github.com/josephjohncox/effectus/schema/verb"
 )
 
 // BundleDigest returns the digest of the serializable release content.

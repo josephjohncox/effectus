@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/effectus/effectus-go/adapters"
+	"github.com/josephjohncox/effectus/adapters"
 )
 
 const maxWebhookBodyBytes int64 = 1 << 20

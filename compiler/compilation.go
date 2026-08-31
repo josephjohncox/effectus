@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/effectus/effectus-go/ir"
-	"github.com/effectus/effectus-go/loader"
-	"github.com/effectus/effectus-go/schema"
-	"github.com/effectus/effectus-go/schema/verb"
+	"github.com/josephjohncox/effectus/ir"
+	"github.com/josephjohncox/effectus/loader"
+	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/verb"
 )
 
 // CompilationResult represents the outcome of compilation

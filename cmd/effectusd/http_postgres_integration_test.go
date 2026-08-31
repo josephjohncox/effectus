@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/effectus/effectus-go/schema"
+	"github.com/josephjohncox/effectus/schema"
 	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )

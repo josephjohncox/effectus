@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/effectus/effectus-go/invocation"
+	"github.com/josephjohncox/effectus/invocation"
 )
 
 func (store *PostgresOutboxStore) RecoveryStats(ctx context.Context) (RecoveryStats, error) {
