@@ -5,6 +5,7 @@ This guide explains how to ingest facts from external systems (SQL/Snowflake, Ka
 ---
 
 ## Short Answer (TL;DR)
+
 Use the **adapters layer** for external fact sources. We already ship **Kafka + Postgres poller/CDC + MySQL CDC + Redis streams + file watcher + HTTP webhook + SQL + S3 + Iceberg + AMQP + gRPC**; new sources implement `adapters.FactSource` and register via `adapters.RegisterSourceType(...)`.
 
 ---
@@ -12,16 +13,20 @@ Use the **adapters layer** for external fact sources. We already ship **Kafka + 
 ## Core Pattern (Applies to All Sources)
 
 ### 1) Pick ingestion mode
+
 - **Streaming:** Kafka, Postgres CDC, MySQL CDC, Redis Streams, AMQP, gRPC -> `adapters/kafka`, `adapters/postgres/cdc`, `adapters/mysql`, `adapters/redis`, `adapters/amqp`, `adapters/grpc`
 - **Polling / batch:** SQL/Snowflake -> `adapters/sql`; S3/Iceberg -> dedicated adapters (`adapters/s3`, `adapters/iceberg`)
 
 ### 2) Implement a `FactSource`
+
 Create `adapters/<source>/` with:
+
 - `Create(config) (FactSource, error)`
 - `Start / Stop / Subscribe / GetSourceSchema / HealthCheck`
 - Convert raw records -> `adapters.TypedFact` (includes schema name + version)
 
 ### 3) Map external identifiers to Effectus fact types
+
 Use `FactMapping` to map source IDs (topic/table/schema ID) to your Effectus fact type:
 
 ```go
@@ -31,6 +36,7 @@ Mappings: []adapters.FactMapping{
 ```
 
 ### 4) Register schemas
+
 - **JSON:** `TypeSystem.LoadJSONSchemaFile(...)`
 - **Proto:** `TypeSystem.RegisterProtoTypes(...)`
 - **Versioned registry:** see `schema/buf_integration.go`
@@ -42,6 +48,7 @@ typeSystem.RegisterFactTypeVersion(\"acme.facts.Customer\", \"v2\", customerType
 ```
 
 ### 4b) External schema registries (optional)
+
 If your facts include schema IDs from an external registry (Confluent, Glue, custom), resolve them to Effectus
 schema name + version at the adapter boundary. Allow overrides in config/env for local runs.
 
@@ -58,6 +65,7 @@ schema_registry:
 ```
 
 ### 4c) Buf registry + SQL catalogs (hot reload)
+
 Use **schema providers** to load schemas directly from external systems at startup:
 
 - Runtime: `effectusd --schema-sources schema_sources.yaml`
@@ -69,7 +77,9 @@ If you prefer pre-generated files, put `*.schema.json` in `extensions.dirs` or a
 Replace the daemon pod when these files change.
 
 ### 5) Merge multiple sources into one facts provider
+
 Use namespaces + aliases for clean composition:
+
 - `pathutil.NamespacedLoader`
 - `pathutil.NewAliasedFacts(...)`
 
@@ -85,6 +95,7 @@ merged := pathutil.NewMergedFactProvider([]pathutil.SourceProvider{
 When conflicts occur, `GetWithContext` reports all sources that had values.
 
 ### 6) Universes + namespaces (scoping rules)
+
 Use universes to isolate facts per tenant, environment, or domain while keeping the same rule bundle.
 
 ```go
@@ -110,8 +121,8 @@ Namespace-based rules (ex: `customer.tier == \"gold\"`) now resolve within the s
 ```go
 import (
   "context"
-  "github.com/effectus/effectus-go/adapters"
-  _ "github.com/effectus/effectus-go/adapters/kafka"
+  "github.com/josephjohncox/effectus/adapters"
+  _ "github.com/josephjohncox/effectus/adapters/kafka"
 )
 
 cfg := adapters.SourceConfig{
@@ -203,6 +214,7 @@ KAFKA_BROKERS="localhost:9092" \
 ---
 
 ### Postgres CDC (Streaming)
+
 `adapters/postgres/cdc.go` supports logical replication with a CDC transformer.
 
 ```yaml
@@ -221,12 +233,14 @@ config:
 Use CDC when you need near-real-time updates without polling.
 
 Notes:
+
 - Requires a logical decoding plugin like `wal2json`.
 - Use `create_slot: true` to have Effectus create the slot automatically.
 
 ---
 
 ### MySQL CDC (Streaming)
+
 `adapters/mysql` streams binlog row events.
 
 ```yaml
@@ -247,6 +261,7 @@ config:
 ---
 
 ### AMQP (Streaming)
+
 Consume RabbitMQ or AMQP queues.
 
 ```yaml
@@ -264,6 +279,7 @@ config:
 ---
 
 ### gRPC Streaming
+
 Consume a server-streaming RPC that emits `google.protobuf.Struct`.
 
 ```yaml
@@ -281,9 +297,11 @@ Note: the adapter expects both request and response types to be `google.protobuf
 ---
 
 ### SQL / Snowflake / Trino / Athena (Batch + Streaming)
+
 Use the **generic SQL adapter** (`adapters/sql`). It supports both **batch** and **stream** modes.
 
 #### Batch mode (snapshots)
+
 ```yaml
 source_id: "warehouse_snapshot"
 type: "sql"
@@ -298,6 +316,7 @@ config:
 ```
 
 #### Streaming mode (watermark incremental)
+
 ```yaml
 source_id: "warehouse_stream"
 type: "sql"
@@ -321,6 +340,7 @@ See `examples/warehouse_sources/sql_scheduled_scrape.yaml` for a mocked schedule
 ---
 
 ### S3 (Batch or Streaming)
+
 Use the `s3` adapter for JSON/NDJSON/Parquet facts stored in buckets.
 
 1) Poll for new objects (prefix + timestamp/ETag).
@@ -346,6 +366,7 @@ For other columnar formats, use a SQL front-end (Athena/Trino) + the SQL adapter
 ---
 
 ### Iceberg (Batch or Streaming)
+
 Use the `iceberg` adapter when Iceberg tables are queryable via SQL engines (Trino/Athena/Spark).
 
 ```yaml
@@ -414,6 +435,7 @@ This keeps your rules stable even if sources change.
 ---
 
 ## What Exists Today (Code Paths)
+
 - Kafka: `adapters/kafka`
 - Postgres poller: `adapters/postgres/poller.go`
 - Postgres CDC: `adapters/postgres/cdc.go`

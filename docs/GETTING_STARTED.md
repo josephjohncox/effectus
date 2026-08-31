@@ -103,7 +103,7 @@ Production deployments must apply migrations with a controlled deployment job. D
 Run this command in the first terminal:
 
 ```bash
-EFFECTUS_API_TOKEN='demo-token' \
+export EFFECTUS_API_TOKEN='set-a-local-demo-token'
 EFFECTUS_POSTGRES_DSN="$EFFECTUS_POSTGRES_DSN" \
   go run ./cmd/effectusd \
   --bundle out/ui_demo/bundle.json \
@@ -126,10 +126,11 @@ Open [http://127.0.0.1:8080/ui](http://127.0.0.1:8080/ui) to inspect the bundle,
 Run this command in a second terminal:
 
 ```bash
+export EFFECTUS_IDEMPOTENCY_KEY="walkthrough-$(date +%s)"
 curl --fail-with-body --silent \
   --request POST http://127.0.0.1:8080/api/facts \
-  --header 'Authorization: Bearer demo-token' \
-  --header 'Idempotency-Key: walkthrough-001' \
+  --header "Authorization: Bearer $EFFECTUS_API_TOKEN" \
+  --header "Idempotency-Key: $EFFECTUS_IDEMPOTENCY_KEY" \
   --header 'Content-Type: application/json' \
   --data @examples/fraud_e2e/data/facts_payload.json
 ```
@@ -154,7 +155,7 @@ Check the global runtime status:
 
 ```bash
 curl --fail --silent \
-  --header 'Authorization: Bearer demo-token' \
+  --header "Authorization: Bearer $EFFECTUS_API_TOKEN" \
   http://127.0.0.1:8080/api/status
 ```
 
@@ -162,7 +163,7 @@ Read the stored local fact projection:
 
 ```bash
 curl --fail --silent \
-  --header 'Authorization: Bearer demo-token' \
+  --header "Authorization: Bearer $EFFECTUS_API_TOKEN" \
   'http://127.0.0.1:8080/api/facts?universe=demo'
 ```
 

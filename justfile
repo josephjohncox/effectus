@@ -757,19 +757,31 @@ example-extension-system:
 example-grpc-execution:
 	just grpc-execution-smoke
 
+# Run checked rules inside a Go application.
+example-embedded-orders:
+	cd examples && go run ./embedded_orders
+
+# Run effectusd with a separate PostgreSQL-backed business executor.
+example-standalone-executor:
+	examples/standalone_executor/scripts/run.sh
+
+# Stop and remove the standalone executor stack.
+example-standalone-executor-down:
+	examples/standalone_executor/scripts/down.sh
+
 # Run the modern SQL usage example
 example-modern-sql:
 	cd examples/modern_sql_usage && go run main.go
 
 # === Documentation ===
 
-# Generate documentation
+# Build the GitHub Pages documentation after installing requirements-docs.txt.
 docs:
-	go doc -all ./... > docs/api.md
+	NO_MKDOCS_2_WARNING=true mkdocs build --strict
 
-# Serve documentation locally
+# Serve the GitHub Pages documentation locally.
 docs-serve:
-	cd docs && python3 -m http.server 8000
+	NO_MKDOCS_2_WARNING=true mkdocs serve
 
 # === Release ===
 

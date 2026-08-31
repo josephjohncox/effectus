@@ -103,67 +103,60 @@ config:
   schema_name: "acme.v1.facts.Event"
 ```
 
-## 6) Library usage (compile + execute)
+## 6) Embedded library
 
-This is the shortest “library mode” path: register schema/verbs, compile rules, execute against facts.
+Use the `embedded` package to run checked rules inside a Go service:
 
 ```go
-package main
-
-import (
-  "context"
-
-  "github.com/effectus/effectus-go/common"
-  "github.com/effectus/effectus-go/compiler"
-  "github.com/effectus/effectus-go/list"
-  "github.com/effectus/effectus-go/schema/types"
-  "github.com/effectus/effectus-go/schema/verb"
-)
-
-type noopExec struct{}
-func (n *noopExec) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-  return true, nil
+application, err := embedded.New("orders", "1.0.0").
+  AddFact("order.id", "").
+  AddFact("order.total", 0.0).
+  AddSource("review.eff", ruleSource).
+  AddVerb(embedded.Verb{
+    Name:         "RequestManualReview",
+    ArgTypes:     map[string]string{"orderId": "string", "reason": "string"},
+    RequiredArgs: []string{"orderId", "reason"},
+    ReturnType:   "string",
+    Capabilities: []string{"write", "create", "idempotent"},
+    Handler:      reviewService.RequestReview,
+  }).
+  Build(ctx)
+if err != nil {
+  return err
 }
+defer application.Close()
 
-func main() {
-  ts := types.NewTypeSystem()
-  ts.RegisterFactType("order.id", types.NewStringType())
-  ts.RegisterFactType("order.total", types.NewFloatType())
-
-  registry := verb.NewRegistry(ts)
-  _ = registry.RegisterVerb(&verb.Spec{
-    Name:       "FlagHighValue",
-    ArgTypes:   map[string]string{"orderId": "string"},
-    ReturnType: "bool",
-    Executor:   &noopExec{},
-  })
-
-  facts := common.NewBasicFacts(map[string]interface{}{
-    "order": map[string]interface{}{"id": "o-1", "total": 2500.0},
-  }, ts)
-
-  comp := compiler.NewCompiler()
-  compTS := comp.GetTypeSystem()
-  compTS.RegisterFactType("order.id", types.NewStringType())
-  compTS.RegisterFactType("order.total", types.NewFloatType())
-  compTS.RegisterVerbType("FlagHighValue", map[string]*types.Type{"orderId": types.NewStringType()}, types.NewBoolType())
-
-  parsed, _ := comp.ParseAndTypeCheck("rules/flags.eff", facts)
-  listCompiler := &list.Compiler{}
-  specAny, _ := listCompiler.CompileParsedFile(parsed, "rules/flags.eff", facts.Schema())
-  spec := specAny.(*list.Spec)
-  spec.VerbRegistry = registry
-
-  _ = spec.Execute(context.Background(), facts, nil)
-}
+result, err := application.Execute(ctx, embedded.Request{
+  Namespace:      "merchant-42",
+  IdempotencyKey: "order-100-created",
+  Facts: map[string]any{
+    "order": map[string]any{"id": "order-100", "total": 2499.00},
+  },
+})
 ```
 
-When to choose each loader:
+Run the complete example:
 
-- Use `loader.NewStaticVerbLoader` for in-process Go executors.
-- Use JSON/OCI loaders for HTTP/gRPC/stream targets or cross-team verb distribution.
+```bash
+cd examples
+go run ./embedded_orders
+```
 
-## 7) Immutable OCI deployment
+The default embedded stores are process-local. Use standalone mode for restart-safe execution.
+
+## 7) Standalone business executor
+
+Run the complete daemon, PostgreSQL, and HTTP executor path:
+
+```bash
+examples/standalone_executor/scripts/run.sh
+```
+
+The example submits one order twice. It verifies one Effectus execution and one business review.
+
+Read [Integration Guide](INTEGRATION.md) for the request headers, idempotency contract, and deployment structure.
+
+## 8) Immutable OCI deployment
 
 Create a bundle, push and sign it, then run `effectusd` with the published digest.
 
@@ -176,7 +169,7 @@ effectusc bundle \
   --rules-dir examples/fraud_e2e/rules \
   --oci-ref ghcr.io/myorg/bundles/fraud-demo:1.0.0
 
-EFFECTUS_API_TOKEN=demo-token \
+EFFECTUS_API_TOKEN="$EFFECTUS_API_TOKEN" \
 EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
 effectusd \
   --oci-ref ghcr.io/myorg/bundles/fraud-demo@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
@@ -195,5 +188,5 @@ UI and API (token required for `/api/*`):
 
 ```bash
 open http://localhost:8080/ui
-curl -H "Authorization: Bearer demo-token" http://localhost:8080/api/status
+curl -H "Authorization: Bearer $EFFECTUS_API_TOKEN" http://localhost:8080/api/status
 ```

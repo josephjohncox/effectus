@@ -12,6 +12,18 @@ just test-examples
 
 This recipe tests the parent examples module and all six nested Go modules. A parent-module `go test ./...` does not enter nested modules.
 
+## Start with a realistic path
+
+| Goal | Example | Command |
+| --- | --- | --- |
+| Embed checked rules in a Go service | `embedded_orders` | `cd examples && go run ./embedded_orders` |
+| Run `effectusd` with a separate business service | `standalone_executor` | `examples/standalone_executor/scripts/run.sh` |
+| Inspect a checked daemon through the UI | `flow_ui_demo` | `just ui-flow-demo-smoke` |
+| Prove HTTP idempotent replay | `fraud_e2e` with `effectusd` | `just ui-demo-smoke` |
+| Call the generated gRPC service | `grpc_execution` | `just grpc-execution-smoke` |
+
+The standalone executor example uses PostgreSQL for both execution state and business idempotency. It runs the full HTTP executor protocol.
+
 ## Rule and compiler examples
 
 | Directory | Purpose |
@@ -31,8 +43,10 @@ These examples can use compatibility library APIs. They do not define the produc
 
 | Directory | Purpose |
 | --- | --- |
-| `fraud_e2e` | Run a complete fraud workflow with compensation |
-| `flow_ui_demo` | Run flow-heavy rules with the status UI |
+| `embedded_orders` | Embed checked rules and invocation-aware Go handlers |
+| `standalone_executor` | Run `effectusd`, PostgreSQL, and a separate HTTP business executor |
+| `fraud_e2e` | Compare the legacy embedded flow with the checked daemon smoke path |
+| `flow_ui_demo` | Run flow-heavy checked rules with the status UI |
 | `grpc_execution` | Call the generated ruleset execution service |
 | `multi_bundle_runtime` | Resolve and activate multiple local bundle versions |
 | `modern_sql_usage` | Use the current SQL adapter API |
