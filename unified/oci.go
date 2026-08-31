@@ -13,14 +13,14 @@ import (
 
 	"archive/tar"
 
-	"github.com/josephjohncox/effectus/internal/safetar"
-	"github.com/josephjohncox/effectus/loader"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
+	"github.com/josephjohncox/effectus/internal/safetar"
+	"github.com/josephjohncox/effectus/loader"
 )
 
 // OCIBundlePusher handles pushing bundles to OCI registries

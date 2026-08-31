@@ -5,9 +5,9 @@ import (
 	"regexp"
 	"strings"
 
+	exprPkg "github.com/expr-lang/expr"
 	"github.com/josephjohncox/effectus"
 	"github.com/josephjohncox/effectus/ast"
-	exprPkg "github.com/expr-lang/expr"
 )
 
 // This file provides utilities for working with the expr-based predicate system

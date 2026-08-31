@@ -8,12 +8,12 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/google/uuid"
 	eff "github.com/josephjohncox/effectus"
 	"github.com/josephjohncox/effectus/common"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/josephjohncox/effectus/schema/capability"
 	"github.com/josephjohncox/effectus/schema/verb"
-	"github.com/google/uuid"
 )
 
 // ExecutorOption defines an option for configuring the flow executor

@@ -12,13 +12,13 @@ import (
 	"sort"
 	"strings"
 
+	exprast "github.com/expr-lang/expr/ast"
+	exprparser "github.com/expr-lang/expr/parser"
 	"github.com/josephjohncox/effectus/ast"
 	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
 	"github.com/josephjohncox/effectus/ir"
 	"github.com/josephjohncox/effectus/schema/types"
 	"github.com/josephjohncox/effectus/schema/verb"
-	exprast "github.com/expr-lang/expr/ast"
-	exprparser "github.com/expr-lang/expr/parser"
 )
 
 // Source is one in-memory Effectus source file. Path determines the source
