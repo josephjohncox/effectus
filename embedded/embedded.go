@@ -170,7 +170,7 @@ func (builder *Builder) Build(ctx context.Context) (*Runtime, error) {
 			fmt.Sprintf("%s-source-%d", builder.ruleset, index), source.path, source.data,
 		))
 	}
-	if err := runtime.CompileAndValidate(ctx); err != nil {
+	if err := runtime.CompileAndValidateWithOptions(ctx, effectusruntime.CompileOptions{DiscardInitialData: true}); err != nil {
 		return nil, fmt.Errorf("compile embedded ruleset: %w", err)
 	}
 	if err := runtime.ConfigureDurableWorkflowExecution(

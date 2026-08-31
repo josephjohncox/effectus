@@ -118,6 +118,10 @@ func decodeMetadata(headers http.Header) (invocation.Context, error) {
 	if executionID == "" {
 		return invocation.Context{}, fmt.Errorf("%s header is required", invocation.HeaderExecutionID)
 	}
+	sagaID := strings.TrimSpace(headers.Get(invocation.HeaderSagaID))
+	if sagaID == "" {
+		return invocation.Context{}, fmt.Errorf("%s header is required", invocation.HeaderSagaID)
+	}
 	effectID := strings.TrimSpace(headers.Get(invocation.HeaderEffectID))
 	if effectID == "" {
 		return invocation.Context{}, fmt.Errorf("%s header is required", invocation.HeaderEffectID)
@@ -138,7 +142,7 @@ func decodeMetadata(headers http.Header) (invocation.Context, error) {
 		RequestID:   executionID,
 		ExecutionID: executionID,
 		Saga: invocation.Saga{
-			SagaID:         strings.TrimSpace(headers.Get(invocation.HeaderSagaID)),
+			SagaID:         sagaID,
 			EffectID:       effectID,
 			Attempt:        attempt,
 			Direction:      direction,

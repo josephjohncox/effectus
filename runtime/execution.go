@@ -60,6 +60,13 @@ type GenerationMetadata struct {
 	BundleDigest string `json:"bundle_digest,omitempty"`
 }
 
+// CompileOptions controls how a checked generation is published.
+type CompileOptions struct {
+	// DiscardInitialData retains inferred fact types but removes loader values
+	// before publication. Use this for type samples that are not runtime defaults.
+	DiscardInitialData bool
+}
+
 // ExecutionGeneration is the sole published production generation. Its unit
 // and extension snapshot are immutable and are retired together.
 type ExecutionGeneration struct {
@@ -290,8 +297,14 @@ func (er *ExecutionRuntime) RegisterExecutorFactory(executorType compiler.Execut
 	er.executors[executorType] = factory
 }
 
-// CompileAndValidate loads extensions, compiles them, and validates everything
+// CompileAndValidate loads extensions, compiles them, and validates everything.
 func (er *ExecutionRuntime) CompileAndValidate(ctx context.Context) error {
+	return er.CompileAndValidateWithOptions(ctx, CompileOptions{})
+}
+
+// CompileAndValidateWithOptions loads, checks, and publishes one generation
+// with the requested publication policy.
+func (er *ExecutionRuntime) CompileAndValidateWithOptions(ctx context.Context, options CompileOptions) error {
 	er.compileMu.Lock()
 	defer er.compileMu.Unlock()
 
@@ -321,6 +334,9 @@ func (er *ExecutionRuntime) CompileAndValidate(ctx context.Context) error {
 		_ = snapshot.Retire()
 		er.markInitialCompilationFailed(hasActiveGeneration)
 		return fmt.Errorf("compilation errors: %v", result.Errors)
+	}
+	if options.DiscardInitialData {
+		result.CompiledUnit.InitialData = make(map[string]interface{})
 	}
 	if err := er.publishGeneration(result.CompiledUnit, snapshot, expected); err != nil {
 		_ = snapshot.Retire()

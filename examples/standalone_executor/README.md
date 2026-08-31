@@ -81,3 +81,5 @@ Replace the demonstration credentials before deployment. Use TLS and a secret ma
 Run PostgreSQL with backups and high availability. Restrict network access between `effectusd` and each executor.
 
 Use an external fencing authority when a destination needs stale-writer rejection. Monitor blocked outcomes, retries, lease age, and executor latency.
+
+This demo assumes that order IDs are globally unique. In a multi-tenant system, pass the tenant identity as a checked verb argument and include it in review IDs, database keys, and cancellation queries.

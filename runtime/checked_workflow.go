@@ -9,6 +9,7 @@ import (
 	"math"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -97,7 +98,7 @@ func (executor checkedWorkflowInvocationExecutor) Invoke(ctx context.Context, re
 
 func (er *ExecutionRuntime) executeCheckedWorkflowMode(ctx context.Context, unit *compiler.CompiledUnit, namespace, executionID string, facts map[string]interface{}, selectedPlanIDs map[string]struct{}, waitMode WaitMode) error {
 	resolvedFacts := cloneWorkflowFacts(unit.InitialData)
-	mergeExecutionFactOverrides(resolvedFacts, facts)
+	mergeWorkflowFactOverrides(resolvedFacts, facts)
 	artifact := unit.CheckedIR.CloneArtifact()
 	dispatcherOptions := er.workflowOptions
 	dispatcherOptions.RequestID = executionID
@@ -663,29 +664,52 @@ func cloneWorkflowFacts(facts map[string]interface{}) map[string]interface{} {
 	return clone
 }
 
-func mergeExecutionFactOverrides(target, overrides map[string]interface{}) {
-	for path, value := range overrides {
+// mergeWorkflowFactOverrides applies nested values before explicit dotted
+// paths. An explicit dotted path therefore wins a collision deterministically.
+func mergeWorkflowFactOverrides(target, overrides map[string]interface{}) {
+	for _, path := range orderedWorkflowFactKeys(overrides) {
+		value := overrides[path]
 		target[path] = value
-		flattenExecutionFact(target, path, value)
+		flattenWorkflowFact(target, path, value)
 	}
 }
 
-func flattenExecutionFact(target map[string]interface{}, prefix string, value interface{}) {
+func flattenWorkflowFact(target map[string]interface{}, prefix string, value interface{}) {
 	object, ok := value.(map[string]interface{})
 	if !ok {
 		return
 	}
-	for key, child := range object {
+	for _, key := range orderedWorkflowFactKeys(object) {
+		child := object[key]
 		path := key
 		if prefix != "" {
 			path = prefix + "." + key
 		}
 		target[path] = child
-		flattenExecutionFact(target, path, child)
+		flattenWorkflowFact(target, path, child)
 	}
 }
 
+func orderedWorkflowFactKeys(object map[string]interface{}) []string {
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(left, right int) bool {
+		leftDotted := strings.Contains(keys[left], ".")
+		rightDotted := strings.Contains(keys[right], ".")
+		if leftDotted != rightDotted {
+			return !leftDotted
+		}
+		return keys[left] < keys[right]
+	})
+	return keys
+}
+
 func lookupWorkflowFact(facts map[string]interface{}, path string) (interface{}, bool) {
+	if value, exists := facts[path]; exists {
+		return value, true
+	}
 	current := interface{}(facts)
 	nested := true
 	for start := 0; start < len(path); {
@@ -708,8 +732,7 @@ func lookupWorkflowFact(facts map[string]interface{}, path string) (interface{},
 	if nested {
 		return current, true
 	}
-	value, exists := facts[path]
-	return value, exists
+	return nil, false
 }
 
 func checkedLiteralValue(literal *effectusv1.Literal) (interface{}, error) {

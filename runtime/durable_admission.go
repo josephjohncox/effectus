@@ -47,10 +47,10 @@ func buildDurableAdmission(ctx context.Context, unit *compiler.CompiledUnit, adm
 	}
 	switch mergePolicy {
 	case "merge":
-		mergeAdmissionFactOverrides(effectiveFacts, admission.Facts)
+		mergeWorkflowFactOverrides(effectiveFacts, admission.Facts)
 	case "replace":
 		effectiveFacts = make(map[string]interface{}, len(admission.Facts))
-		mergeAdmissionFactOverrides(effectiveFacts, admission.Facts)
+		mergeWorkflowFactOverrides(effectiveFacts, admission.Facts)
 	default:
 		return schema.DurableAdmission{}, nil, nil, fmt.Errorf("unsupported fact merge policy %q", mergePolicy)
 	}
@@ -103,28 +103,6 @@ func buildDurableAdmission(ctx context.Context, unit *compiler.CompiledUnit, adm
 		}
 	}
 	return request, selected, effectiveFacts, nil
-}
-
-func mergeAdmissionFactOverrides(target, overrides map[string]interface{}) {
-	for path, value := range overrides {
-		target[path] = value
-		flattenAdmissionFact(target, path, value)
-	}
-}
-
-func flattenAdmissionFact(target map[string]interface{}, prefix string, value interface{}) {
-	object, ok := value.(map[string]interface{})
-	if !ok {
-		return
-	}
-	for key, child := range object {
-		path := key
-		if prefix != "" {
-			path = prefix + "." + key
-		}
-		target[path] = child
-		flattenAdmissionFact(target, path, child)
-	}
 }
 
 func validateAdmissionFactTypes(environment ir.Environment, facts map[string]any) error {

@@ -66,6 +66,10 @@ result, err := application.Execute(ctx, embedded.Request{
 })
 ```
 
+`AddFact` values are type samples. They are not runtime defaults. Supply each fact that a selected predicate or verb argument requires.
+
+Requests can use nested objects or dotted paths. If one request supplies both forms for the same path, the explicit dotted path takes precedence.
+
 The same namespace, key, ruleset, version, and facts return the same execution ID. Different facts with the same identity fail.
 
 The default embedded ledger and outbox are process-local. They do not survive an application restart.
@@ -157,6 +161,8 @@ Store these values in the same transaction as the business mutation:
 - Effect ID
 
 Return the stored result when the key and argument hash match. Return a permanent failure when the same key has different arguments.
+
+Use globally unique business IDs. For multi-tenant systems, pass the tenant identity as a checked verb argument and include it in destination keys and queries.
 
 Do not report a retryable failure after an unknown commit. Report `unknown_outcome` and let Effectus block the execution for operator review.
 

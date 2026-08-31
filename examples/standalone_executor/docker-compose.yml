@@ -23,7 +23,7 @@ services:
       dockerfile: examples/standalone_executor/Dockerfile
     environment:
       BUSINESS_POSTGRES_DSN: postgres://effectus:effectus@postgres:5432/effectus?sslmode=disable
-      EXECUTOR_TOKEN: local-example-only
+      EXECUTOR_TOKEN: ${EXECUTOR_TOKEN:-local-example-only}
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,7 +48,7 @@ services:
       context: ../..
       dockerfile: Dockerfile
     environment:
-      EFFECTUS_API_TOKEN: effectus-demo-token
+      EFFECTUS_API_TOKEN: ${EFFECTUS_API_TOKEN:-effectus-demo-token}
       EFFECTUS_POSTGRES_DSN: postgres://effectus:effectus@postgres:5432/effectus?sslmode=disable
     command:
       - --bundle

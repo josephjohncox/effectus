@@ -95,6 +95,8 @@ Nested sagas are not implemented.
 
 The effectusd HTTP fact endpoint requires an idempotency key and durably admits the request through the checked engine before returning HTTP 202. A repeated identity with different content is rejected. A repeated matching request returns the recorded execution.
 
+Facts can use nested objects or explicit dotted paths. Effectus flattens nested objects in stable key order. If one admission supplies both forms for the same path, the explicit dotted path takes precedence.
+
 The optional local fact store is a projection, not the durable execution ledger. A projection failure does not erase an accepted execution and can be retried with the same identity.
 
 The Kafka consumer uses consumer groups and synchronous offset commits. It processes one application-level record at a time and supports completed-processing or durable-acceptance acknowledgement. A crash before the offset commit causes redelivery; the stable delivery identity replays the durable execution instead of creating a second one.

@@ -57,6 +57,22 @@ func TestHandlerRejectsUnencodableSuccessResult(t *testing.T) {
 	require.Equal(t, string(invocation.OutcomeUnknown), response.Header().Get(invocation.HeaderOutcome))
 }
 
+func TestHandlerRejectsMissingSagaID(t *testing.T) {
+	handler, err := NewHandler(Options{}, func(_ context.Context, _ Request) invocation.Outcome {
+		t.Fatal("invalid request must not reach the business handler")
+		return Success(nil)
+	})
+	require.NoError(t, err)
+	request := validRequest(`{"orderId":"order-1"}`)
+	request.Header.Del(invocation.HeaderSagaID)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	require.Contains(t, response.Body.String(), invocation.HeaderSagaID)
+}
+
 func TestHandlerRejectsMissingIdempotencyKey(t *testing.T) {
 	handler, err := NewHandler(Options{}, func(_ context.Context, _ Request) invocation.Outcome {
 		t.Fatal("invalid request must not reach the business handler")

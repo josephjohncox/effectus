@@ -82,6 +82,39 @@ func TestRuntimeRejectsConflictingIdempotentAdmission(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestFactSamplesAreNotRuntimeDefaults(t *testing.T) {
+	var calls atomic.Int32
+	application, err := New("orders", "1.0.0").
+		AddFact("order.id", "sample-order").
+		AddFact("order.total", 2500.0).
+		AddSource("orders.eff", []byte(orderRules)).
+		AddVerb(Verb{
+			Name:         "RequestReview",
+			ArgTypes:     map[string]string{"orderId": "string", "reason": "string"},
+			RequiredArgs: []string{"orderId", "reason"},
+			ReturnType:   "bool",
+			Capabilities: []string{"write", "create", "idempotent"},
+			Resources: []Resource{{
+				Name: "order_review", Capabilities: []string{"write", "create", "idempotent"},
+			}},
+			Handler: func(context.Context, invocation.Request) invocation.Outcome {
+				calls.Add(1)
+				return Success(true)
+			},
+		}).
+		Build(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, application.Close()) })
+
+	_, err = application.Execute(t.Context(), Request{
+		Namespace:      "tenant-a",
+		IdempotencyKey: "missing-order-facts",
+		Facts:          map[string]any{},
+	})
+	require.Error(t, err)
+	require.Zero(t, calls.Load())
+}
+
 func TestRuntimeRequiresIdempotencyKey(t *testing.T) {
 	application, err := newTestRuntime(t)
 	require.NoError(t, err)

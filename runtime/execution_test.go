@@ -120,15 +120,44 @@ func TestCheckedWorkflowResolvesPublishedInitialData(t *testing.T) {
 	require.NoError(t, runtime.ExecuteWorkflowWithIdentity(t.Context(), "test", "initial-data-execution", nil))
 }
 
+func TestCompileCanDiscardFactSamplesFromPublishedInitialData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "extension.verbs.json")
+	require.NoError(t, os.WriteFile(path, []byte(validWorkflowManifest()), 0o600))
+	samples := loader.NewStaticSchemaLoader("fact-samples")
+	samples.AddData("config.value", 7)
+
+	runtime := NewExecutionRuntime()
+	runtime.RegisterExtensionLoader(samples)
+	runtime.RegisterExtensionLoader(loader.NewJSONVerbLoader("test", path))
+	runtime.RegisterExtensionLoader(loader.NewStaticSourceLoader("workflow", "workflow.effx", []byte(validWorkflowSource("config.value"))))
+	require.NoError(t, runtime.CompileAndValidateWithOptions(t.Context(), CompileOptions{DiscardInitialData: true}))
+	require.Empty(t, runtime.activeGeneration.unit.InitialData)
+	require.Equal(t, "int", runtime.activeGeneration.unit.IREnvironment.Facts["config.value"])
+}
+
 func TestNestedAdmissionFactsOverrideFlatInitialData(t *testing.T) {
 	facts := map[string]interface{}{"order.total": 0.0}
-	mergeAdmissionFactOverrides(facts, map[string]interface{}{
+	mergeWorkflowFactOverrides(facts, map[string]interface{}{
 		"order": map[string]interface{}{"total": 2500.0},
 	})
 	require.Equal(t, 2500.0, facts["order.total"])
 	value, ok := lookupWorkflowFact(facts, "order.total")
 	require.True(t, ok)
 	require.Equal(t, 2500.0, value)
+}
+
+func TestExplicitDottedAdmissionFactDeterministicallyOverridesNestedFact(t *testing.T) {
+	for range 1000 {
+		facts := make(map[string]interface{})
+		mergeWorkflowFactOverrides(facts, map[string]interface{}{
+			"order":       map[string]interface{}{"total": 2500.0},
+			"order.total": 100.0,
+		})
+		require.Equal(t, 100.0, facts["order.total"])
+		value, ok := lookupWorkflowFact(facts, "order.total")
+		require.True(t, ok)
+		require.Equal(t, 100.0, value)
+	}
 }
 
 func validWorkflowManifest() string {
