@@ -10,7 +10,8 @@ if [[ "$status" -eq 0 ]]; then
   exit 0
 fi
 
-expected="$(cat <<'EOF'
+expected="$(
+  cat <<'EOF'
 effectus/v1/common.proto:7:1:File option "go_package" changed from "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1" to "github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1".
 effectus/v1/execution.proto:10:1:File option "go_package" changed from "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1" to "github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1".
 effectus/v1/facts.proto:8:1:File option "go_package" changed from "github.com/effectus/effectus-go/gen/effectus/v1;effectusv1" to "github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1".

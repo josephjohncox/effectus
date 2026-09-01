@@ -35,7 +35,7 @@ Build from source when you need the examples or development tools:
 ```bash
 git clone https://github.com/josephjohncox/effectus.git
 cd effectus
-git checkout v0.2.1
+git checkout v0.3.0
 just build
 export PATH="$PWD/bin:$PATH"
 ```
