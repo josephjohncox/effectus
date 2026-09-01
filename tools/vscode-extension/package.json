@@ -239,13 +239,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/effectus/effectus-vscode.git"
+    "url": "git+https://github.com/josephjohncox/effectus.git",
+    "directory": "tools/vscode-extension"
   },
   "bugs": {
-    "url": "https://github.com/effectus/effectus-vscode/issues"
+    "url": "https://github.com/josephjohncox/effectus/issues"
   },
   "license": "MIT",
   "author": "Joseph Cox",
   "type": "commonjs",
-  "homepage": "https://github.com/effectus/effectus-vscode#readme"
+  "homepage": "https://github.com/josephjohncox/effectus/tree/main/tools/vscode-extension#readme"
 }

@@ -34,6 +34,16 @@ suite('extension manifest', () => {
         }
     });
 
+    test('metadata points to the canonical monorepo', () => {
+        assert.strictEqual(manifest.repository.url, 'git+https://github.com/josephjohncox/effectus.git');
+        assert.strictEqual(manifest.repository.directory, 'tools/vscode-extension');
+        assert.strictEqual(manifest.bugs.url, 'https://github.com/josephjohncox/effectus/issues');
+        assert.strictEqual(
+            manifest.homepage,
+            'https://github.com/josephjohncox/effectus/tree/main/tools/vscode-extension#readme'
+        );
+    });
+
     test('the package excludes TypeScript build configuration', () => {
         const ignore = fs.readFileSync(path.join(extensionRoot, '.vscodeignore'), 'utf8');
         assert.match(ignore, /^tsconfig\*\.json$/m);
