@@ -2,7 +2,7 @@
   "name": "effectus-language-support",
   "displayName": "Effectus Rule Engine",
   "description": "Language support for Effectus rule files (.eff/.effx) with schema-aware completions",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "publisher": "effectus",
   "engines": {
     "vscode": "^1.74.0"
@@ -239,13 +239,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/effectus/effectus-vscode.git"
+    "url": "git+https://github.com/josephjohncox/effectus.git",
+    "directory": "tools/vscode-extension"
   },
   "bugs": {
-    "url": "https://github.com/effectus/effectus-vscode/issues"
+    "url": "https://github.com/josephjohncox/effectus/issues"
   },
   "license": "MIT",
   "author": "Joseph Cox",
   "type": "commonjs",
-  "homepage": "https://github.com/effectus/effectus-vscode#readme"
+  "homepage": "https://github.com/josephjohncox/effectus/tree/main/tools/vscode-extension#readme"
 }

@@ -6,9 +6,9 @@ RUN apk add --no-cache git \
   && git checkout 77f82e18b5401a65958f1619df6ebb994634bd88 \
   && test "$(git rev-parse HEAD)" = "77f82e18b5401a65958f1619df6ebb994634bd88" \
   && go get github.com/prometheus/prometheus@v0.311.3 \
-       golang.org/x/crypto@v0.53.0 \
-       golang.org/x/net@v0.56.0 \
-       golang.org/x/text@v0.39.0 \
+       golang.org/x/crypto@v0.55.0 \
+       golang.org/x/net@v0.57.0 \
+       golang.org/x/text@v0.41.0 \
        google.golang.org/grpc@v1.82.1 \
   && go mod tidy \
   && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/mc .

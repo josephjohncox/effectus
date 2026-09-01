@@ -1,8 +1,8 @@
 # Dependency Vulnerability Audit
 
-Audit date: 2026-08-26
+Audit date: 2026-08-31
 
-This report records the scans used for the current dependency update.
+This report records the scans used for the v0.3.0 release.
 It also records findings that upstream projects have not resolved.
 
 ## Go modules
@@ -17,12 +17,12 @@ The root module and all example modules report no called vulnerabilities.
 The update includes patched gRPC, pgx, AWS EventStream, AWS S3, `x/net`, `klauspost/compress`, and `edwards25519` versions.
 The Go toolchain is pinned to Go 1.25.13.
 
-GitHub's 109 open Dependabot alerts describe the default branch. This branch removes Axios and protobufjs and upgrades every Go and npm package named by those alerts. The alert count updates only after these manifests reach the default branch.
+Dependabot alerts describe repository dependency state. They do not replace the reachable-code result from `govulncheck`.
 
 ## VS Code extension
 
-The audit used `npm audit --audit-level=moderate`.
-It reports zero vulnerabilities.
+The production dependency audit reports zero vulnerabilities.
+The full development dependency audit reports two low-severity findings in `diff`, through Mocha. No nonbreaking upstream update is available. These packages do not ship in the VSIX runtime dependency set.
 
 The extension no longer uses Axios or protobufjs.
 The runtime HTTP client now uses bounded Node.js HTTP requests.
@@ -43,9 +43,11 @@ These images report no high or critical findings:
 - The patched RabbitMQ image.
 - The Redis 7.4 Alpine image.
 - The patched MinIO client image.
+- The standalone business-executor image.
 
 The custom images use pinned base-image digests.
 The builds also pin source commits for gosu, wal2json, MinIO, and the MinIO client.
+The MinIO builds pin `x/crypto` v0.55.0, `x/net` v0.57.0, and `x/text` v0.41.0 to resolve CVE-2026-56854.
 
 ### Residual upstream findings
 
@@ -77,7 +79,8 @@ Run these commands from the repository root:
 ```bash
 govulncheck ./...
 (cd examples && govulncheck ./...)
-(cd tools/vscode-extension && npm ci && npm audit --audit-level=moderate)
+(cd tools/vscode-extension && npm ci && npm audit --omit=dev --audit-level=high)
+(cd tools/vscode-extension && npm audit --audit-level=high)
 docker build -t effectus:audit .
 for spec in \
   fraud-mocks:examples/fraud_e2e/mocks \
@@ -90,6 +93,9 @@ for spec in \
   context="${spec#*:}"
   docker build -t "effectus/${name}:audit" "$context"
 done
+docker build \
+  --file examples/standalone_executor/Dockerfile \
+  --tag effectus/business-executor:audit .
 for image in \
   effectus:audit \
   effectus/fraud-mocks:audit \
@@ -97,7 +103,8 @@ for image in \
   effectus/mysql:audit \
   effectus/rabbitmq:audit \
   effectus/minio:audit \
-  effectus/minio-mc:audit; do
+  effectus/minio-mc:audit \
+  effectus/business-executor:audit; do
   docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
     aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c \
     image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$image"

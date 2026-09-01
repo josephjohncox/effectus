@@ -19,10 +19,10 @@ Clone the repository and select the current release:
 ```bash
 git clone https://github.com/josephjohncox/effectus.git
 cd effectus
-git checkout v0.2.1
+git checkout v0.3.0
 ```
 
-The [GitHub release](https://github.com/josephjohncox/effectus/releases/tag/v0.2.1) also provides prebuilt binaries, checksums, SBOMs, and signatures.
+The [GitHub release](https://github.com/josephjohncox/effectus/releases/tag/v0.3.0) also provides prebuilt binaries, checksums, SBOMs, and signatures.
 
 ## 2. Run the automated walkthrough
 
