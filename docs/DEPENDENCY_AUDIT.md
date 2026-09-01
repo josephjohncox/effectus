@@ -1,8 +1,8 @@
 # Dependency Vulnerability Audit
 
-Audit date: 2026-08-31
+Audit date: 2026-09-01
 
-This report records the scans used for the v0.3.0 release.
+This report records the scans used for the post-v0.3.0 dependency consolidation.
 It also records findings that upstream projects have not resolved.
 
 ## Go modules
@@ -14,15 +14,16 @@ govulncheck ./...
 ```
 
 The root module and all example modules report no called vulnerabilities.
-The update includes patched gRPC, pgx, AWS EventStream, AWS S3, `x/net`, `klauspost/compress`, and `edwards25519` versions.
+The update includes patched gRPC, pgx, AWS modules, Expr, PostgreSQL, Parquet, Kafka, `x/net`, `klauspost/compress`, and `edwards25519` versions.
 The Go toolchain is pinned to Go 1.25.13.
 
 Dependabot alerts describe repository dependency state. They do not replace the reachable-code result from `govulncheck`.
 
 ## VS Code extension
 
-The production dependency audit reports zero vulnerabilities.
-The full development dependency audit reports two low-severity findings in `diff`, through Mocha. No nonbreaking upstream update is available. These packages do not ship in the VSIX runtime dependency set.
+The production and full development dependency audits report zero vulnerabilities.
+Mocha 12 removes the vulnerable development-only `diff` version.
+ESLint 10 and typescript-eslint 8 use the supported flat configuration format.
 
 The extension no longer uses Axios or protobufjs.
 The runtime HTTP client now uses bounded Node.js HTTP requests.
