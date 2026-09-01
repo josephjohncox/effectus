@@ -47,6 +47,7 @@ suite('extension manifest', () => {
     test('the package excludes TypeScript build configuration', () => {
         const ignore = fs.readFileSync(path.join(extensionRoot, '.vscodeignore'), 'utf8');
         assert.match(ignore, /^tsconfig\*\.json$/m);
+        assert.match(ignore, /^eslint\.config\.\*$/m);
     });
 
     test('the package has no nonexistent Node server fallback', () => {
