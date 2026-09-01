@@ -616,13 +616,19 @@ func decodeNDJSON(payload []byte) ([]map[string]interface{}, error) {
 }
 
 func decodeParquet(payload []byte) ([]map[string]interface{}, error) {
-	reader := parquet.NewGenericReader[map[string]interface{}](bytes.NewReader(payload))
+	file, err := parquet.OpenFile(bytes.NewReader(payload), int64(len(payload)))
+	if err != nil {
+		return nil, err
+	}
+	reader := parquet.NewGenericReader[map[string]interface{}](file, file.Schema())
 	defer reader.Close()
 
 	var records []map[string]interface{}
-	batch := make([]map[string]interface{}, 256)
-
 	for {
+		batch := make([]map[string]interface{}, 256)
+		for index := range batch {
+			batch[index] = make(map[string]interface{})
+		}
 		n, err := reader.Read(batch)
 		if n > 0 {
 			for i := 0; i < n; i++ {

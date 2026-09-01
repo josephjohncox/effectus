@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/parquet-go/parquet-go"
 
 	"github.com/josephjohncox/effectus/adapters"
 )
@@ -194,6 +195,39 @@ func TestOversizedObjectIsAnErrorAndDoesNotAdvanceCursor(t *testing.T) {
 	}
 	if !source.lastSeenTime.IsZero() || source.lastSeenKey != "" {
 		t.Fatal("cursor advanced past oversized object")
+	}
+}
+
+func TestDecodeParquetRejectsInvalidPayload(t *testing.T) {
+	if _, err := decodeParquet([]byte("not parquet")); err == nil {
+		t.Fatal("expected invalid parquet payload to fail")
+	}
+}
+
+func TestDecodeParquetRoundTrip(t *testing.T) {
+	type record struct {
+		ID     string `parquet:"id"`
+		Amount int64  `parquet:"amount"`
+	}
+
+	var payload bytes.Buffer
+	writer := parquet.NewGenericWriter[record](&payload)
+	if _, err := writer.Write([]record{{ID: "order-1", Amount: 42}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := decodeParquet(payload.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("decoded %d records, want 1", len(records))
+	}
+	if records[0]["id"] != "order-1" || records[0]["amount"] != int64(42) {
+		t.Fatalf("decoded record = %#v", records[0])
 	}
 }
 

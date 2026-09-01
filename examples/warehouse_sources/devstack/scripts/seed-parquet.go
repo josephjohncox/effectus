@@ -10,11 +10,11 @@ import (
 )
 
 type Event struct {
-	EventID    string  `parquet:"name=event_id"`
-	UserID     string  `parquet:"name=user_id"`
-	EventType  string  `parquet:"name=event_type"`
-	OccurredAt string  `parquet:"name=occurred_at"`
-	Amount     float64 `parquet:"name=amount"`
+	EventID    string  `parquet:"event_id"`
+	UserID     string  `parquet:"user_id"`
+	EventType  string  `parquet:"event_type"`
+	OccurredAt string  `parquet:"occurred_at"`
+	Amount     float64 `parquet:"amount"`
 }
 
 func main() {

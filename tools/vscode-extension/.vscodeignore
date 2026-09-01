@@ -1,4 +1,5 @@
 .eslint*
+eslint.config.*
 .gitignore
 .github/**
 .vscode/**
