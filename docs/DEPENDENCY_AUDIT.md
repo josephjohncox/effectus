@@ -47,6 +47,7 @@ These images report no high or critical findings:
 
 The custom images use pinned base-image digests.
 The builds also pin source commits for gosu, wal2json, MinIO, and the MinIO client.
+The MinIO builds pin `x/crypto` v0.55.0, `x/net` v0.57.0, and `x/text` v0.41.0 to resolve CVE-2026-56854.
 
 ### Residual upstream findings
 
