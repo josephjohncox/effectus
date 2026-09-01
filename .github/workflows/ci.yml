@@ -464,7 +464,7 @@ jobs:
           cargo install just --version 1.38.0 --locked
           curl --fail --location --output /tmp/tla2tools.jar \
             https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
-          echo "eabd140a70f49eb9305a3bd3f3df944eddf87e5a90d329789085f8953a80533a  /tmp/tla2tools.jar" | sha256sum --check
+          echo "dbcc75552f21978a4846688b8e23be1a6b6c0b3fcee35d78fec2df167958ec94  /tmp/tla2tools.jar" | sha256sum --check
           printf '#!/bin/sh\nexec java -cp /tmp/tla2tools.jar tlc2.TLC "$@"\n' |
             sudo tee /usr/local/bin/tlc >/dev/null
           sudo chmod 0755 /usr/local/bin/tlc
