@@ -78,8 +78,14 @@ CI now runs Go vulnerability scans, example-module builds, npm audit, TypeScript
 Run these commands from the repository root:
 
 ```bash
-govulncheck ./...
-(cd examples && govulncheck ./...)
+while IFS= read -r module; do
+  directory="$(dirname "$module")"
+  (cd "$directory" && govulncheck ./...)
+done < <(
+  find . \
+    \( -path './.git' -o -path './.pi' -o -path './tools/vscode-extension' \) \
+    -prune -o -name go.mod -print | sort
+)
 (cd tools/vscode-extension && npm ci && npm audit --omit=dev --audit-level=high)
 (cd tools/vscode-extension && npm audit --audit-level=high)
 docker build -t effectus:audit .
