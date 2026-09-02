@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "effectusd chart values",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "image": {"$ref": "#/definitions/image"},
+    "postgres": {"$ref": "#/definitions/secret"},
+    "migrations": {"$ref": "#/definitions/migrations"},
+    "grpc": {"$ref": "#/definitions/grpc"},
+    "bundle": {"$ref": "#/definitions/bundle"},
+    "api": {"$ref": "#/definitions/api"},
+    "service": {"$ref": "#/definitions/service"},
+    "resources": {"$ref": "#/definitions/resources"},
+    "podSecurityContext": {"$ref": "#/definitions/podSecurityContext"},
+    "containerSecurityContext": {"$ref": "#/definitions/containerSecurityContext"},
+    "terminationGracePeriodSeconds": {"type": "integer", "minimum": 0},
+    "rolloutNonce": {"type": "string"},
+    "podAnnotations": {"type": "object", "additionalProperties": {"type": "string"}},
+    "initContainers": {"type": "array"},
+    "extraVolumes": {"type": "array"},
+    "extraVolumeMounts": {"type": "array"}
+  },
+  "definitions": {
+    "image": {"type": "object", "additionalProperties": false, "properties": {"repository": {"type": "string"}, "tag": {"type": "string"}, "digest": {"type": "string"}, "unsafeAllowTag": {"type": "boolean"}, "pullPolicy": {"type": "string"}}},
+    "secret": {"type": "object", "additionalProperties": false, "properties": {"existingSecret": {"type": "string"}, "dsnKey": {"type": "string"}}},
+    "migrations": {"type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}, "existingSecret": {"type": "string"}, "dsnKey": {"type": "string"}, "backoffLimit": {"type": "integer", "minimum": 0}}},
+    "grpc": {"type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}, "port": {"type": "integer", "minimum": 1, "maximum": 65535}, "existingTLSSecret": {"type": "string"}, "certKey": {"type": "string"}, "keyKey": {"type": "string"}}},
+    "bundle": {"type": "object", "additionalProperties": false, "properties": {"ociRef": {"type": "string"}, "signatureVerifier": {"type": "string"}}},
+    "api": {"type": "object", "additionalProperties": false, "properties": {"existingSecret": {"type": "string"}, "tokenKey": {"type": "string"}}},
+    "service": {"type": "object", "additionalProperties": false, "properties": {"type": {"type": "string"}, "port": {"type": "integer", "minimum": 1, "maximum": 65535}}},
+    "resources": {"type": "object", "additionalProperties": false, "properties": {"limits": {"$ref": "#/definitions/resourceList"}, "requests": {"$ref": "#/definitions/resourceList"}}},
+    "resourceList": {"type": "object", "additionalProperties": false, "properties": {"cpu": {"type": ["string", "number"]}, "memory": {"type": ["string", "number"]}, "ephemeral-storage": {"type": ["string", "number"]}}, "patternProperties": {"^hugepages-[a-zA-Z0-9.-]+$": {"type": ["string", "number"]}, "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+/[A-Za-z0-9]([A-Za-z0-9_.-]*[A-Za-z0-9])?$": {"type": ["string", "number"]}}},
+    "podSecurityContext": {"type": "object", "additionalProperties": false, "properties": {"appArmorProfile": {"$ref": "#/definitions/appArmorProfile"}, "fsGroup": {"type": "integer", "minimum": 0}, "fsGroupChangePolicy": {"type": "string"}, "runAsGroup": {"type": "integer", "minimum": 0}, "runAsNonRoot": {"type": "boolean"}, "runAsUser": {"type": "integer", "minimum": 0}, "seLinuxChangePolicy": {"type": "string"}, "seLinuxOptions": {"$ref": "#/definitions/seLinuxOptions"}, "seccompProfile": {"$ref": "#/definitions/seccompProfile"}, "supplementalGroups": {"type": "array", "items": {"type": "integer", "minimum": 0}}, "supplementalGroupsPolicy": {"type": "string"}, "sysctls": {"type": "array", "items": {"$ref": "#/definitions/sysctl"}}, "windowsOptions": {"$ref": "#/definitions/windowsSecurityContextOptions"}}},
+    "containerSecurityContext": {"type": "object", "additionalProperties": false, "properties": {"allowPrivilegeEscalation": {"type": "boolean"}, "appArmorProfile": {"$ref": "#/definitions/appArmorProfile"}, "capabilities": {"$ref": "#/definitions/capabilities"}, "privileged": {"type": "boolean"}, "procMount": {"type": "string"}, "readOnlyRootFilesystem": {"type": "boolean"}, "runAsGroup": {"type": "integer", "minimum": 0}, "runAsNonRoot": {"type": "boolean"}, "runAsUser": {"type": "integer", "minimum": 0}, "seLinuxOptions": {"$ref": "#/definitions/seLinuxOptions"}, "seccompProfile": {"$ref": "#/definitions/seccompProfile"}, "windowsOptions": {"$ref": "#/definitions/windowsSecurityContextOptions"}}},
+    "appArmorProfile": {"type": "object", "additionalProperties": false, "properties": {"type": {"type": "string"}, "localhostProfile": {"type": "string"}}},
+    "capabilities": {"type": "object", "additionalProperties": false, "properties": {"add": {"type": "array", "items": {"type": "string"}}, "drop": {"type": "array", "items": {"type": "string"}}}},
+    "seLinuxOptions": {"type": "object", "additionalProperties": false, "properties": {"level": {"type": "string"}, "role": {"type": "string"}, "type": {"type": "string"}, "user": {"type": "string"}}},
+    "seccompProfile": {"type": "object", "additionalProperties": false, "properties": {"type": {"type": "string"}, "localhostProfile": {"type": "string"}}},
+    "sysctl": {"type": "object", "additionalProperties": false, "properties": {"name": {"type": "string"}, "value": {"type": "string"}}},
+    "windowsSecurityContextOptions": {"type": "object", "additionalProperties": false, "properties": {"gmsaCredentialSpec": {"type": "string"}, "gmsaCredentialSpecName": {"type": "string"}, "hostProcess": {"type": "boolean"}, "runAsUserName": {"type": "string"}}}
+  }
+}

@@ -13,7 +13,3 @@ api:
 grpc:
   enabled: true
   existingTLSSecret: effectusd-grpc-tls
-persistence:
-  enabled: true
-  size: 5Gi
-  storageClass: standard

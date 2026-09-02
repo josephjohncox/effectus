@@ -20,7 +20,10 @@ assert_layout() {
 
 legacy=$temp/legacy
 mkdir -p "$legacy/examples/flow_ui_demo/rules"
-assert_layout "$legacy" flow-ui-demo
+if "$script_dir/recovery-bundle-layout.sh" "$legacy" 0.3.0 >/dev/null 2>&1; then
+  echo "removed flow-ui-demo layout was accepted" >&2
+  exit 1
+fi
 
 current=$temp/current
 mkdir -p "$current/examples/order_review/rules"

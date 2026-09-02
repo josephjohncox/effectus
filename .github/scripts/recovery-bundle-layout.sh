@@ -12,9 +12,6 @@ version=$2
 if [ -d "$root/examples/order_review/rules" ]; then
   bundle_name=order-review
   bundle_repo_path=bundles/order-review
-elif [ -d "$root/examples/flow_ui_demo/rules" ]; then
-  bundle_name=flow-ui-demo
-  bundle_repo_path=bundles/flow-ui-demo
 else
   echo "release source has no supported bundle layout: $root" >&2
   exit 1

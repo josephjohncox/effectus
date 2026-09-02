@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT_DIR"
 
-COMPOSE_FILE=${COMPOSE_FILE:-tests/fixtures/durable-stack/docker-compose.yml}
+COMPOSE_FILE=${COMPOSE_FILE:-tests/fixtures/postgres/docker-compose.yml}
 SOURCE_DATABASE=${SOURCE_DATABASE:-effectus_saga}
 RESTORE_DATABASE=${RESTORE_DATABASE:-effectus_restore_drill}
 OUTPUT_DIR=${RESTORE_DRILL_OUTPUT:-out/restore-drill}
@@ -27,7 +27,9 @@ docker compose -f "$COMPOSE_FILE" exec -T postgres \
 docker compose -f "$COMPOSE_FILE" exec -T postgres \
   pg_restore -U effectus -d "$RESTORE_DATABASE" --clean --if-exists < "$OUTPUT_DIR/postgres.dump"
 
-EFFECTUS_POSTGRES_DSN="$RESTORE_DSN" go run ./cmd/effectusd --database-migrations=validate-only
+# Validate with the current daemon migration contract. No historical migration
+# command or legacy bundle authority participates in this drill.
+EFFECTUS_POSTGRES_DSN="$RESTORE_DSN" go run ./cmd/effectusd --database-migrations=validate
 
 integrity_sql="
 SELECT CASE WHEN EXISTS (
@@ -60,7 +62,7 @@ sha256sum "$OUTPUT_DIR/postgres.dump" "$OUTPUT_DIR/non-postgres-dependencies.tar
 
 kafka_result="not configured"
 if [ -n "${KAFKA_BROKERS:-}" ]; then
-  KAFKA_BROKERS="$KAFKA_BROKERS" go test -count=1 -tags=integration ./internal/adapters/kafka \
+  KAFKA_BROKERS="$KAFKA_BROKERS" go test -count=1 -tags=integration ./internal/daemon/kafka \
     -run '^TestKafkaConsumerGroupCommitAndRestart$'
   kafka_result="commit/restart reconciliation passed"
 fi

@@ -37,8 +37,6 @@ spec:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           args:
             - "--database-migrations=apply"
-            - "--database-max-open=2"
-            - "--database-max-idle=1"
           env:
             - name: EFFECTUS_POSTGRES_DSN
               valueFrom:

@@ -149,29 +149,10 @@ jobs:
             fi
             rm -rf "$work"
           done
-          case "$BUNDLE_NAME" in
-            order-review)
-              go run ./cmd/effectusc bundle \
-                --name "$BUNDLE_NAME" --version "$VERSION" \
-                --schema-dir examples/standalone_executor/schema \
-                --verb-dir examples/standalone_executor/extensions \
-                --rules-dir examples/order_review/rules \
-                --output "dist/$BUNDLE_ASSET"
-              ;;
-            flow-ui-demo)
-              go run ./cmd/effectusc bundle \
-                --name "$BUNDLE_NAME" --version "$VERSION" \
-                --schema-dir examples/flow_ui_demo/schema \
-                --verb-dir examples/flow_ui_demo/verbs \
-                --verbschema examples/flow_ui_demo/schema/flow_verbs.json \
-                --rules-dir examples/flow_ui_demo/rules \
-                --output "dist/$BUNDLE_ASSET"
-              ;;
-            *)
-              echo "unsupported bundle layout: $BUNDLE_NAME" >&2
-              exit 1
-              ;;
-          esac
+          test "$BUNDLE_NAME" = order-review
+          go run ./examples/standalone_executor/bundle.go \
+            "dist/$BUNDLE_ASSET" release-placeholder-token "$VERSION"
+          go run ./cmd/effectusc check --bundle "dist/$BUNDLE_ASSET"
           helm package charts/effectusd --destination dist \
             --version "$VERSION" --app-version "$VERSION"
           docker build --build-arg SOURCE_DATE_EPOCH=0 \
