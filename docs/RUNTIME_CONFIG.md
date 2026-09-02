@@ -1,109 +1,68 @@
 # Runtime Configuration (Non-Library Mode)
 
-`effectusd` accepts one immutable `effectus.source-bundle.v1` source bundle.
-The daemon compiles that bundle once at startup and rejects legacy bundle
-formats, extension directories, extension OCI bundles, plugins, and reload
-configuration. The source bundle contains the complete checked declarations and
-executor descriptor manifest.
+`effectusd` accepts one immutable `effectus.source-bundle.v1` source bundle. It
+compiles the bundle once at startup. PostgreSQL is required for admission,
+recovery, the outbox, fencing, and the Kafka delivery ledger.
 
-PostgreSQL is required for daemon admission, recovery, outbox processing, and
-fencing. Set `EFFECTUS_POSTGRES_DSN` or configure `database.dsn`.
+## Start from a source-bundle file
 
-## Load a source bundle file
-
-Build the bundle with the current `effectusc bundle` command. Deploy the output
-file without changing it:
-
-```yaml
-bundle:
-  file: "/etc/effectus/order-review.json"
-
-http:
-  addr: ":8080"
-metrics:
-  addr: ":9090"
-api:
-  auth: "token"
-database:
-  dsn: "postgres://effectus:...@db/effectus?sslmode=require"
-```
-
-Start the daemon:
+Create a source bundle with a program that uses `bundle.New`, such as
+`examples/standalone_executor/bundle.go`. Validate it before deployment:
 
 ```bash
-EFFECTUS_API_TOKEN="..." EFFECTUS_API_READ_TOKEN="..." \
-  effectusd --config effectusd.yaml
+go run ./examples/standalone_executor/bundle.go order-review.json executor-token
+./effectusc check --bundle order-review.json
+EFFECTUS_POSTGRES_DSN='postgres://effectus:...@db/effectus?sslmode=require' \
+EFFECTUS_API_TOKEN='replace-with-a-secret' \
+  ./effectusd --bundle order-review.json --http-addr :8080
 ```
 
-The file must identify `format_version: effectus.source-bundle.v1`. A legacy
-OCI or directory-style bundle is rejected before the daemon opens listeners.
+`EFFECTUS_API_TOKEN` is required whenever HTTP or gRPC is enabled. Send it as
+`Authorization: Bearer TOKEN` to every `/v1/*` endpoint. `/healthz` and
+`/readyz` are intentionally unauthenticated probe endpoints. `GET /v1/status`
+returns the active generation after authentication. `POST /v1/execute` also
+requires `Idempotency-Key`; it returns HTTP 202 after durable admission. Use
+`If-Match` with a generation digest when the caller must reject a stale view.
 
 ## Load a verified OCI source bundle
 
-The daemon also accepts a SourceBundle OCI image only through a digest-pinned
-reference. `effectusd` verifies that the fetched image digest equals the
-reference, requires exactly one SourceBundle layer, and runs the fixed verifier
-executable before it decodes that layer. A tag such as `:latest` is rejected.
-
-```yaml
-bundle:
-  oci: "ghcr.io/myorg/bundles/order-review@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-  cache_dir: "/var/lib/effectus/bundles"
-
-http:
-  addr: ":8080"
-api:
-  auth: "token"
-database:
-  dsn: "postgres://effectus:...@db/effectus?sslmode=require"
-```
+OCI loading requires a digest-pinned reference and a verifier executable. The
+verifier receives the repository reference and verified digest.
 
 ```bash
-EFFECTUS_API_TOKEN="..." EFFECTUS_API_READ_TOKEN="..." \
-  effectusd --config effectusd.yaml \
+EFFECTUS_POSTGRES_DSN='postgres://effectus:...@db/effectus?sslmode=require' \
+EFFECTUS_API_TOKEN='replace-with-a-secret' \
+  ./effectusd \
+  --oci-ref ghcr.io/myorg/bundles/order-review@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   --oci-signature-verifier /usr/local/bin/effectus-verify-oci
 ```
 
-The verifier is mandatory for OCI loading. It receives the repository name and
-the verified digest. Configure its trust policy outside the bundle. `bundle.cache_dir`
-stores the verified canonical source bundle and must be writable. File loading
-does not perform an OCI signature verification; protect the mounted file with
-your deployment and filesystem controls.
+The daemon rejects tags, unverified OCI content, configuration files,
+extension directories, plugins, and reload configuration.
+
+## gRPC
+
+gRPC uses the same `EFFECTUS_API_TOKEN` as a bearer token and requires TLS by
+default:
+
+```bash
+./effectusd --bundle order-review.json --grpc-addr :9091 \
+  --grpc-tls-cert /run/tls/tls.crt --grpc-tls-key /run/tls/tls.key
+```
+
+`--grpc-allow-insecure` is an explicit development override. It does not disable
+bearer-token authentication.
 
 ## Kafka fact ingestion
 
-Use a stable consumer group and cluster namespace. PostgreSQL is the sole
-attempt and poison ledger.
+Use a stable consumer group and cluster namespace. PostgreSQL is the durable
+attempt ledger. A Kafka consumer will not start unless its tracker is installed.
 
-```yaml
-fact_source: "kafka"
-kafka:
-  brokers: ["kafka-1:9092", "kafka-2:9092"]
-  topic: "facts"
-  consumer_group: "effectusd-production"
-  cluster_namespace: "production-kafka"
-  ack_contract: "durable_acceptance"
-  max_attempts: 5
-  retry_initial: "1s"
-  retry_max: "30s"
-  poison_policy: "halt"
+```bash
+./effectusd --bundle order-review.json --fact-source kafka \
+  --kafka-brokers kafka-1:9092,kafka-2:9092 \
+  --kafka-topic facts --kafka-consumer-group effectusd-production
 ```
 
-Each message contains `namespace`, `universe`, and `facts`. New clients should
-send both identities when they differ.
-
-## Immutable deployment rules
-
-- Use exactly one of `bundle.file` and `bundle.oci` (or `--bundle` and
-  `--oci-ref`).
-- Do not configure `extensions.dirs`, `extensions.oci`, `--extensions-dir`, or
-  `--extensions-oci` with a SourceBundle. The daemon rejects them.
-- Do not configure `bundle.reload_interval`, `extensions.reload_interval`, or
-  `--reload-interval`. Deploy a new process with a new file or OCI digest.
-- Do not configure Go plugins, legacy saga stores, or Redis daemon state.
-- CLI flags override configuration values when both are present.
-- `/api/*` endpoints require a token; `/healthz` and `/readyz` are open by
-  default.
-
-Use [COMMANDS.md](COMMANDS.md) for the executable flag inventory and
-[GUARANTEES.md](GUARANTEES.md) for the runtime boundary.
+The Kafka acknowledgement contract controls whether offsets commit after
+durable acceptance or completed processing. Poison handling defaults to halt.

@@ -2,7 +2,7 @@
 
 - **Fact**: A typed piece of data used by rules (e.g., `customer.email`). Facts can be merged from multiple sources.
 - **Fact Schema**: The authoritative shape and type for a fact path (Proto or JSON Schema). May be versioned.
-- **Fact Source**: External system that produces facts (Kafka, CDC, SQL, S3, gRPC, etc.).
+- **Fact Source**: An HTTP request or Kafka record admitted by the daemon.
 - **Verb**: A named effect/operation with typed inputs and a typed return value.
 - **Inverse Verb**: The compensating verb that reverses a mutating verb.
 - **Capability**: The declared permission and concurrency semantics a verb requires (read/write/create/delete + idempotent/commutative/exclusive).
