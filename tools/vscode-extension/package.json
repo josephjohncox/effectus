@@ -1,249 +1,48 @@
 {
   "name": "effectus-language-support",
-  "displayName": "Effectus Rule Engine",
-  "description": "Language support for Effectus rule files (.eff/.effx) with schema-aware completions",
+  "displayName": "Effectus Rule Files",
+  "description": "Declarative syntax support for Effectus source rule files (.eff/.effx).",
   "version": "0.3.0",
   "publisher": "effectus",
-  "engines": {
-    "vscode": "^1.74.0"
-  },
-  "categories": [
-    "Programming Languages"
-  ],
-  "keywords": [
-    "effectus",
-    "rules",
-    "business-logic",
-    "protobuf",
-    "schemas"
-  ],
+  "engines": { "vscode": "^1.74.0" },
+  "categories": ["Programming Languages"],
+  "keywords": ["effectus", "rules", "source-bundle"],
   "main": "./out/extension.js",
   "contributes": {
-    "languages": [
-      {
-        "id": "effectus",
-        "aliases": [
-          "Effectus",
-          "effectus"
-        ],
-        "extensions": [
-          ".eff",
-          ".effx"
-        ],
-        "configuration": "./language-configuration.json",
-        "icon": {
-          "light": "./icons/effectus-light.svg",
-          "dark": "./icons/effectus-dark.svg"
-        }
-      }
-    ],
-    "grammars": [
-      {
-        "language": "effectus",
-        "scopeName": "source.effectus",
-        "path": "./syntaxes/effectus.tmLanguage.json"
-      }
-    ],
-    "configuration": {
-      "type": "object",
-      "title": "Effectus",
-      "properties": {
-        "effectus.schemaPath": {
-          "type": "string",
-          "default": ".effectus/schemas",
-          "description": "Path to schema files for intellisense"
-        },
-        "effectus.verbSchemaPath": {
-          "type": "string",
-          "default": ".effectus/verbs",
-          "description": "Path to verb schema files for intellisense"
-        },
-        "effectus.factExamplesPath": {
-          "type": "string",
-          "default": "./examples",
-          "description": "Path to fact example data"
-        },
-        "effectus.lsp.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable Language Server Protocol support"
-        },
-        "effectus.lsp.serverPath": {
-          "type": "string",
-          "default": "",
-          "description": "Absolute path to effectusc. When empty, the extension searches the workspace, PATH, GOPATH, and HOME."
-        },
-        "effectus.autoComplete.schemas": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable schema-aware autocompletion"
-        },
-        "effectus.validation.realtime": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable real-time rule validation"
-        },
-        "effectus.lint.unsafe": {
-          "type": "string",
-          "default": "warn",
-          "enum": [
-            "warn",
-            "error",
-            "ignore"
-          ],
-          "description": "Unsafe expression policy for linting"
-        },
-        "effectus.lint.verbs": {
-          "type": "string",
-          "default": "error",
-          "enum": [
-            "warn",
-            "error",
-            "ignore"
-          ],
-          "description": "Verb lint policy for missing capabilities, inverses, and resources"
-        },
-        "effectus.runtime.apiUrl": {
-          "type": "string",
-          "default": "",
-          "description": "effectusd base URL for candidate rule validation (e.g. http://localhost:8080)"
-        },
-        "effectus.runtime.apiToken": {
-          "type": "string",
-          "default": "",
-          "description": "API token for effectusd candidate rule validation"
-        }
-      }
-    },
-    "commands": [
-      {
-        "command": "effectus.generateDocs",
-        "title": "Generate Schema Documentation",
-        "category": "Effectus"
-      },
-      {
-        "command": "effectus.validateRule",
-        "title": "Validate Current Rule",
-        "category": "Effectus"
-      },
-      {
-        "command": "effectus.showLineage",
-        "title": "Show Schema Lineage",
-        "category": "Effectus"
-      },
-      {
-        "command": "effectus.rule.format",
-        "title": "Format Rule",
-        "category": "Effectus"
-      },
-      {
-        "command": "effectus.workspace.init",
-        "title": "Initialize Effectus Workspace",
-        "category": "Effectus"
-      },
-      {
-        "command": "effectus.schema.refresh",
-        "title": "Refresh Effectus Schemas",
-        "category": "Effectus"
-      }
-    ],
-    "menus": {
-      "editor/context": [
-        {
-          "command": "effectus.rule.format",
-          "when": "resourceExtname == .eff || resourceExtname == .effx",
-          "group": "effectus"
-        }
-      ]
-    },
-    "snippets": [
-      {
-        "language": "effectus",
-        "path": "./snippets/effectus.json"
-      }
-    ],
-    "problemMatchers": [
-      {
-        "name": "effectus-compiler",
-        "owner": "effectus",
-        "fileLocation": [
-          "relative",
-          "${workspaceFolder}"
-        ],
-        "pattern": {
-          "regexp": "^(.+):(\\d+):(\\d+):\\s+(error|warning|info):\\s+(.+)$",
-          "file": 1,
-          "line": 2,
-          "column": 3,
-          "severity": 4,
-          "message": 5
-        }
-      }
-    ],
-    "taskDefinitions": [
-      {
-        "type": "effectus",
-        "required": [
-          "command"
-        ],
-        "properties": {
-          "command": {
-            "type": "string",
-            "description": "The effectus command to execute"
-          },
-          "args": {
-            "type": "array",
-            "description": "Arguments for the command"
-          }
-        }
-      }
-    ]
+    "languages": [{
+      "id": "effectus",
+      "aliases": ["Effectus", "effectus"],
+      "extensions": [".eff", ".effx"],
+      "configuration": "./language-configuration.json",
+      "icon": { "light": "./icons/effectus-light.svg", "dark": "./icons/effectus-dark.svg" }
+    }],
+    "grammars": [{ "language": "effectus", "scopeName": "source.effectus", "path": "./syntaxes/effectus.tmLanguage.json" }],
+    "snippets": [{ "language": "effectus", "path": "./snippets/effectus.json" }]
   },
-  "activationEvents": [
-    "onLanguage:effectus",
-    "workspaceContains:**/*.eff",
-    "workspaceContains:**/*.effx",
-    "workspaceContains:.effectus/config.yaml"
-  ],
+  "activationEvents": ["onLanguage:effectus"],
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
-    "test": "npm run compile && npm run lint && npm run test:unit && npm run test:integration && npm run test:package",
+    "test": "npm run compile && npm run lint && npm run test:unit",
     "test:unit": "mocha --ui tdd out/test/unit/**/*.test.js",
-    "test:integration": "node ./out/test/runTest.js source",
-    "test:package": "node ./out/test/runTest.js package",
-    "package": "vsce package",
-    "deploy": "vsce publish"
+    "package": "vsce package"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/mocha": "^10.0.10",
     "@types/node": "16.x",
     "@types/vscode": "^1.74.0",
-    "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.9.2",
     "eslint": "^10.9.1",
     "mocha": "^12.0.0",
     "typescript": "^4.9.4",
     "typescript-eslint": "^8.69.0"
   },
-  "dependencies": {
-    "vscode-languageclient": "^8.1.0",
-    "yaml": "^2.9.0"
-  },
-  "overrides": {
-    "serialize-javascript": "7.0.5"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/josephjohncox/effectus.git",
-    "directory": "tools/vscode-extension"
-  },
-  "bugs": {
-    "url": "https://github.com/josephjohncox/effectus/issues"
-  },
+  "overrides": { "serialize-javascript": "7.0.5" },
+  "repository": { "type": "git", "url": "git+https://github.com/josephjohncox/effectus.git", "directory": "tools/vscode-extension" },
+  "bugs": { "url": "https://github.com/josephjohncox/effectus/issues" },
   "license": "MIT",
   "author": "Joseph Cox",
   "type": "commonjs",
