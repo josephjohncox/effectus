@@ -2,12 +2,9 @@
 # Do not update this file without an intentional surface review.
 .cursor
 .github
-analysis
-ast
 bundle
 charts
 cmd
-common
 compat
 compiler
 docs
@@ -21,11 +18,8 @@ guardrails
 internal
 invocation
 ir
-lint
-pathutil
 runtime
 schema
 scripts
 tests
 tools
-util

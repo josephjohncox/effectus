@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/josephjohncox/effectus/bundle"
 	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
 	"github.com/josephjohncox/effectus/ir"
 	"github.com/stretchr/testify/require"
@@ -33,27 +34,34 @@ func checkedTestEnvironment() ir.Environment {
 	}
 }
 
+func checkedBundle(t testing.TB, environment ir.Environment, sources ...bundle.Source) *bundle.SourceBundle {
+	t.Helper()
+	result, err := bundle.New(bundle.Spec{Name: "checked-test", Version: "v1", Sources: sources, Environment: environment})
+	require.NoError(t, err)
+	return result
+}
+
 func TestCompileCheckedMixedSourcesDeterministicAndRoundTrips(t *testing.T) {
 	environment := checkedTestEnvironment()
-	listSource := Source{Path: "rules/z.eff", Data: []byte(`
+	listSource := bundle.Source{Path: "rules/z.eff", Content: `
 rule "charge-list" priority 8 {
   when { order.ready == true }
   then { receipt = charge(order_id: order.id, amount: order.amount) }
   when { order.amount >= 10 }
   then { record(receipt: $receipt) }
-}`)}
-	flowSource := Source{Path: "flows/a.effx", Data: []byte(`
+}`}
+	flowSource := bundle.Source{Path: "flows/a.effx", Content: `
 flow "charge-flow" priority 4 {
   when { lower(order.id) == "abc" && order.tags contains "vip" }
   steps {
     receipt = charge(amount: 12, order_id: order.id)
     record(receipt: $receipt)
   }
-}`)}
+}`}
 
-	first, err := CompileChecked(t.Context(), []Source{listSource, flowSource}, environment, CompileOptions{})
+	first, err := CompileChecked(t.Context(), checkedBundle(t, environment, listSource, flowSource), CompileOptions{})
 	require.NoError(t, err)
-	second, err := CompileChecked(t.Context(), []Source{flowSource, listSource}, environment, CompileOptions{})
+	second, err := CompileChecked(t.Context(), checkedBundle(t, environment, flowSource, listSource), CompileOptions{})
 	require.NoError(t, err)
 	require.Equal(t, first.Digest(), second.Digest())
 	require.True(t, bytes.Equal(first.Marshal(), second.Marshal()))
@@ -78,11 +86,11 @@ flow "charge-flow" priority 4 {
 
 func TestCompileCheckedCanonicalPriorityAndSourceOrder(t *testing.T) {
 	environment := ir.Environment{Verbs: map[string]ir.VerbContract{}}
-	sources := []Source{
-		{Path: "b.eff", Data: []byte(`rule "b" priority 1 {}`)},
-		{Path: "a.eff", Data: []byte(`rule "low" priority 1 {} rule "high" priority 9 {}`)},
+	sources := []bundle.Source{
+		{Path: "b.eff", Content: `rule "b" priority 1 {}`},
+		{Path: "a.eff", Content: `rule "low" priority 1 {} rule "high" priority 9 {}`},
 	}
-	checked, err := CompileChecked(t.Context(), sources, environment, CompileOptions{})
+	checked, err := CompileChecked(t.Context(), checkedBundle(t, environment, sources...), CompileOptions{})
 	require.NoError(t, err)
 	plans := checked.CloneArtifact().Plans
 	require.Equal(t, []string{"high", "low", "b"}, []string{plans[0].Id, plans[1].Id, plans[2].Id})
@@ -103,7 +111,7 @@ func TestCompileCheckedRejectsResultSlotAndContractErrors(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := CompileChecked(t.Context(), []Source{{Path: "bad.effx", Data: []byte(test.source)}}, environment, CompileOptions{})
+			_, err := CompileChecked(t.Context(), checkedBundle(t, environment, bundle.Source{Path: "bad.effx", Content: test.source}), CompileOptions{})
 			require.ErrorContains(t, err, test.part)
 		})
 	}
@@ -111,44 +119,44 @@ func TestCompileCheckedRejectsResultSlotAndContractErrors(t *testing.T) {
 
 func TestCompileCheckedCompensationValidation(t *testing.T) {
 	environment := checkedTestEnvironment()
-	source := Source{Path: "flow.effx", Data: []byte(`flow "saga" priority 1 { when {} steps { charge(amount: 1, order_id: order.id) } }`)}
-	checked, err := CompileChecked(t.Context(), []Source{source}, environment, CompileOptions{ExecutionPolicy: ExecutionPolicyCompensating})
+	source := bundle.Source{Path: "flow.effx", Content: `flow "saga" priority 1 { when {} steps { charge(amount: 1, order_id: order.id) } }`}
+	checked, err := CompileChecked(t.Context(), checkedBundle(t, environment, source), CompileOptions{ExecutionPolicy: ExecutionPolicyCompensating})
 	require.NoError(t, err)
 	require.Equal(t, ExecutionPolicyCompensating, checked.CloneArtifact().Plans[0].ExecutionPolicy)
 
 	contract := environment.Verbs["charge"]
 	contract.InverseVerb = ""
 	environment.Verbs["charge"] = contract
-	_, err = CompileChecked(t.Context(), []Source{source}, environment, CompileOptions{ExecutionPolicy: ExecutionPolicyCompensating})
+	_, err = CompileChecked(t.Context(), checkedBundle(t, environment, source), CompileOptions{ExecutionPolicy: ExecutionPolicyCompensating})
 	require.ErrorContains(t, err, "declare an inverse")
 }
 
 func TestCompileCheckedRejectsUnsafeAndUnsupportedPredicates(t *testing.T) {
 	environment := checkedTestEnvironment()
 	environment.Functions["clock"] = ir.FunctionContract{ReturnType: "int", Pure: false, Total: true}
-	_, err := CompileChecked(t.Context(), []Source{{Path: "bad.eff", Data: []byte(`rule "bad" priority 1 { when { clock() > 0 } then {} }`)}}, environment, CompileOptions{})
+	_, err := CompileChecked(t.Context(), checkedBundle(t, environment, bundle.Source{Path: "bad.eff", Content: `rule "bad" priority 1 { when { clock() > 0 } then {} }`}), CompileOptions{})
 	require.ErrorContains(t, err, "not declared pure and total")
 
-	_, err = CompileChecked(t.Context(), []Source{{Path: "bad.eff", Data: []byte(`rule "bad" priority 1 { when { order.ready ? true : false } then {} }`)}}, environment, CompileOptions{})
+	_, err = CompileChecked(t.Context(), checkedBundle(t, environment, bundle.Source{Path: "bad.eff", Content: `rule "bad" priority 1 { when { order.ready ? true : false } then {} }`}), CompileOptions{})
 	require.Error(t, err)
 }
 
 func TestCompileCheckedHonorsArtifactLimits(t *testing.T) {
-	_, err := CompileChecked(t.Context(), []Source{{Path: "a.eff", Data: []byte(`rule "one" priority 1 {} rule "two" priority 1 {}`)}}, ir.Environment{}, CompileOptions{Limits: ir.Limits{MaxPlans: 1}})
+	_, err := CompileChecked(t.Context(), checkedBundle(t, ir.Environment{}, bundle.Source{Path: "a.eff", Content: `rule "one" priority 1 {} rule "two" priority 1 {}`}), CompileOptions{Limits: ir.Limits{MaxPlans: 1}})
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ir.ErrLimitExceeded))
 }
 
 func TestCompileCheckedContractChangeChangesArtifact(t *testing.T) {
-	source := Source{Path: "flow.effx", Data: []byte(`flow "charge" priority 1 { when {} steps { charge(amount: 1, order_id: order.id) } }`)}
+	source := bundle.Source{Path: "flow.effx", Content: `flow "charge" priority 1 { when {} steps { charge(amount: 1, order_id: order.id) } }`}
 	firstEnvironment := checkedTestEnvironment()
-	first, err := CompileChecked(t.Context(), []Source{source}, firstEnvironment, CompileOptions{})
+	first, err := CompileChecked(t.Context(), checkedBundle(t, firstEnvironment, source), CompileOptions{})
 	require.NoError(t, err)
 	secondEnvironment := checkedTestEnvironment()
 	contract := secondEnvironment.Verbs["charge"]
 	contract.RetryPolicy.MaxAttempts++
 	secondEnvironment.Verbs["charge"] = contract
-	second, err := CompileChecked(t.Context(), []Source{source}, secondEnvironment, CompileOptions{})
+	second, err := CompileChecked(t.Context(), checkedBundle(t, secondEnvironment, source), CompileOptions{})
 	require.NoError(t, err)
 	require.NotEqual(t, first.Digest(), second.Digest())
 }

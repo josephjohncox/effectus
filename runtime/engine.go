@@ -12,43 +12,35 @@ import (
 	"sync"
 	"time"
 
-	"github.com/josephjohncox/effectus/compiler"
-	"github.com/josephjohncox/effectus/internal/loader"
-	"github.com/josephjohncox/effectus/invocation"
-	"github.com/josephjohncox/effectus/ir"
 	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/fencing"
 	"github.com/josephjohncox/effectus/schema/ledger"
+	"github.com/josephjohncox/effectus/schema/workflow"
 )
 
 var (
 	ErrInvalidExecuteRequest = errors.New("invalid engine execute request")
 	ErrExecutionNotFound     = errors.New("engine execution not found")
-	ErrIdentityConflict      = errors.New("engine admission identity conflict")
-	ErrGenerationMismatch    = errors.New("engine generation mismatch")
-	ErrBlockedDependency     = errors.New("execution blocked by missing dependency")
-	ErrDurableDisposition    = errors.New("durable execution disposition failed")
+	// ErrIdentityConflict is the canonical identity-conflict sentinel. Durable
+	// stores use the same sentinel so transports classify direct and raced
+	// persistence conflicts consistently.
+	ErrIdentityConflict   = schema.ErrIdentityConflict
+	ErrGenerationMismatch = errors.New("engine generation mismatch")
+	ErrBlockedDependency  = errors.New("execution blocked by missing dependency")
+	ErrDurableDisposition = errors.New("durable execution disposition failed")
 )
 
-// Observer receives checked-runtime events without coupling the runtime to a
-// metrics implementation. Implementations must not block execution.
 type Observer interface {
 	ObserveExecution(ExecuteResult, error)
 	ObserveRecovery(RecoveryObservation)
 }
-
-// RecoveryObservation describes one bounded recovery poll or disposition.
 type RecoveryObservation struct {
-	BacklogMeasured    bool
-	Backlog            int64
-	Blocked            int64
-	OldestExecutionAge time.Duration
-	OldestOutboxAge    time.Duration
-	ExecutionID        string
-	State              string
-	Err                error
+	BacklogMeasured                     bool
+	Backlog, Blocked                    int64
+	OldestExecutionAge, OldestOutboxAge time.Duration
+	ExecutionID, State                  string
+	Err                                 error
 }
-
-// WaitMode controls how far Execute drives the shared state machine.
 type WaitMode string
 
 const (
@@ -56,7 +48,6 @@ const (
 	WaitTerminal WaitMode = "terminal"
 )
 
-// Admission is the transport-neutral logical request for a new execution.
 type Admission struct {
 	ExecutionID              string         `json:"execution_id"`
 	AdmissionID              string         `json:"admission_id,omitempty"`
@@ -67,17 +58,12 @@ type Admission struct {
 	MergePolicy              string         `json:"merge_policy,omitempty"`
 	ExpectedGenerationDigest string         `json:"expected_generation_digest,omitempty"`
 }
-
-// ExecuteRequest admits a new execution or resumes an existing one. Exactly
-// one of Admission and ResumeExecutionID must be set.
 type ExecuteRequest struct {
 	Admission         *Admission
 	ResumeExecutionID string
 	WaitMode          WaitMode
-	RecoveryLease     *schema.ExecutionLease // Set only by RecoveryWorker.
+	RecoveryLease     *schema.ExecutionLease
 }
-
-// ExecuteResult reports the durable boundary reached by Execute.
 type ExecuteResult struct {
 	ExecutionID      string `json:"execution_id"`
 	GenerationDigest string `json:"generation_digest"`
@@ -86,202 +72,170 @@ type ExecuteResult struct {
 	Completed        bool   `json:"completed"`
 }
 
-// Engine is the one workflow entry point used by compatibility runtime and
-// transport adapters. It pins the active compiled unit for each admitted
-// in-process execution. Durable deployments replace the in-memory admission
-// index with the execution ledger without changing this API.
+// Engine owns exactly one immutable Generation. A process must be replaced to
+// execute a changed bundle; durable recovery resolves the generation pinned in
+// the execution artifact rather than consulting mutable process state.
 type Engine struct {
-	runtime *ExecutionRuntime
-
-	mu         sync.Mutex
-	executions map[string]*engineExecution
-	ledger     ledger.ExecutionLedger
-	resolver   ArtifactResolver
-	observer   Observer
+	generation      *Generation
+	workflowStore   workflow.OutboxStore
+	workflowFencing fencing.Provider
+	workflowOptions schema.DispatcherOptions
+	ledger          ledger.ExecutionLedger
+	resolver        ArtifactResolver
+	observer        Observer
+	mu              sync.Mutex
+	executions      map[string]*engineExecution
+	closed          bool
 }
-
 type engineExecution struct {
-	mu             sync.Mutex
-	record         schema.ExecutionRecord
-	facts          map[string]any
-	selected       map[string]struct{}
-	unit           *compiler.CompiledUnit
-	snapshotHandle *loader.ExtensionSnapshotHandle
+	mu         sync.Mutex
+	record     schema.ExecutionRecord
+	facts      map[string]any
+	selected   map[string]struct{}
+	generation *Generation
 }
 
-func newRuntimeEngine(runtime *ExecutionRuntime) *Engine {
-	return &Engine{runtime: runtime, executions: make(map[string]*engineExecution), ledger: schema.NewInMemoryExecutionLedger()}
-}
-
-// NewEngine returns the shared engine owned by an ExecutionRuntime.
-func NewEngine(runtime *ExecutionRuntime) (*Engine, error) {
-	if runtime == nil {
-		return nil, fmt.Errorf("execution runtime is required")
+func NewEngine(generation *Generation) (*Engine, error) {
+	if generation == nil || generation.Checked() == nil {
+		return nil, fmt.Errorf("immutable generation is required")
 	}
-	runtime.mu.Lock()
-	defer runtime.mu.Unlock()
-	if runtime.engine == nil {
-		runtime.engine = newRuntimeEngine(runtime)
-	}
-	return runtime.engine, nil
+	return &Engine{generation: generation, ledger: schema.NewInMemoryExecutionLedger(), executions: make(map[string]*engineExecution)}, nil
 }
-
-// ConfigureLedger replaces the development ledger. Configure the same
-// PostgresOutboxStore as both workflow outbox and ledger to enable atomic admission.
-func (engine *Engine) ConfigureLedger(durableLedger ledger.ExecutionLedger, resolver ArtifactResolver) error {
-	if engine == nil || durableLedger == nil {
+func (engine *Engine) Close() error {
+	if engine == nil {
+		return nil
+	}
+	engine.mu.Lock()
+	if engine.closed {
+		engine.mu.Unlock()
+		return nil
+	}
+	engine.closed = true
+	generation := engine.generation
+	engine.mu.Unlock()
+	return generation.Close()
+}
+func (engine *Engine) ConfigureWorkflow(store workflow.OutboxStore, provider fencing.Provider, options schema.DispatcherOptions) error {
+	if engine == nil || store == nil {
+		return fmt.Errorf("workflow outbox store is required")
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if engine.closed || len(engine.executions) != 0 {
+		return fmt.Errorf("workflow cannot change after admission")
+	}
+	engine.workflowStore, engine.workflowFencing, engine.workflowOptions = store, provider, options
+	return nil
+}
+func (engine *Engine) ConfigureLedger(durable ledger.ExecutionLedger, resolver ArtifactResolver) error {
+	if engine == nil || durable == nil {
 		return fmt.Errorf("execution ledger is required")
 	}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
-	if len(engine.executions) != 0 {
+	if engine.closed || len(engine.executions) != 0 {
 		return fmt.Errorf("execution ledger cannot change after admission")
 	}
-	engine.ledger, engine.resolver = durableLedger, resolver
+	engine.ledger, engine.resolver = durable, resolver
 	return nil
 }
-
-// SetObserver installs an optional runtime observer.
 func (engine *Engine) SetObserver(observer Observer) {
-	if engine == nil {
-		return
+	if engine != nil {
+		engine.mu.Lock()
+		engine.observer = observer
+		engine.mu.Unlock()
 	}
-	engine.mu.Lock()
-	engine.observer = observer
-	engine.mu.Unlock()
 }
-
-// ActiveGeneration returns a copy of the checked runtime publication currently
-// used for new admissions, including its immutable bundle metadata.
-func (engine *Engine) ActiveGeneration() *ExecutionGeneration {
-	if engine == nil || engine.runtime == nil {
+func (engine *Engine) Generation() *Generation {
+	if engine == nil {
 		return nil
 	}
-	return engine.runtime.ActiveGeneration()
+	return engine.generation
 }
+func (engine *Engine) ActiveGenerationDigest() string { return engine.Generation().Digest() }
 
-// ActiveGenerationDigest returns the checked engine generation currently used
-// for new admissions.
-func (engine *Engine) ActiveGenerationDigest() string {
-	generation := engine.ActiveGeneration()
-	if generation == nil {
-		return ""
-	}
-	return generation.GenerationDigest
-}
-
-// Execute enters the same state machine for new admissions and recovery.
 func (engine *Engine) Execute(ctx context.Context, request ExecuteRequest) (result ExecuteResult, resultErr error) {
-	if engine != nil && engine.runtime != nil {
-		engine.runtime.executionMu.RLock()
-		defer engine.runtime.executionMu.RUnlock()
-		engine.runtime.mu.RLock()
-		closed := engine.runtime.state == StateClosing || engine.runtime.state == StateClosed
-		engine.runtime.mu.RUnlock()
-		if closed {
-			return ExecuteResult{}, fmt.Errorf("runtime is closed")
+	if engine == nil || ctx == nil {
+		return result, fmt.Errorf("%w: engine and context are required", ErrInvalidExecuteRequest)
+	}
+	engine.mu.Lock()
+	closed := engine.closed
+	observer := engine.observer
+	engine.mu.Unlock()
+	if closed {
+		return result, fmt.Errorf("engine is closed")
+	}
+	defer func() {
+		if observer != nil {
+			observer.ObserveExecution(result, resultErr)
 		}
-		defer func() {
-			engine.mu.Lock()
-			observer := engine.observer
-			engine.mu.Unlock()
-			if observer != nil {
-				observer.ObserveExecution(result, resultErr)
-			}
-		}()
-	}
-	if engine == nil || engine.runtime == nil || engine.ledger == nil {
-		return ExecuteResult{}, fmt.Errorf("%w: engine is not configured", ErrInvalidExecuteRequest)
-	}
-	if ctx == nil {
-		return ExecuteResult{}, fmt.Errorf("%w: context is nil", ErrInvalidExecuteRequest)
-	}
+	}()
 	if request.WaitMode == "" {
 		request.WaitMode = WaitTerminal
 	}
 	if request.WaitMode != WaitAccepted && request.WaitMode != WaitTerminal {
-		return ExecuteResult{}, fmt.Errorf("%w: unknown wait mode %q", ErrInvalidExecuteRequest, request.WaitMode)
+		return result, fmt.Errorf("%w: unknown wait mode", ErrInvalidExecuteRequest)
 	}
 	if (request.Admission == nil) == (strings.TrimSpace(request.ResumeExecutionID) == "") {
-		return ExecuteResult{}, fmt.Errorf("%w: set exactly one of admission or resume execution ID", ErrInvalidExecuteRequest)
+		return result, fmt.Errorf("%w: set exactly one of admission or resume execution ID", ErrInvalidExecuteRequest)
 	}
-
 	var execution *engineExecution
-	var created, atomicAdmission bool
+	var created, atomic bool
 	var err error
 	if request.Admission != nil {
-		execution, created, atomicAdmission, err = engine.admit(ctx, request.Admission)
+		execution, created, atomic, err = engine.admit(ctx, request.Admission)
 	} else {
-		execution, err = engine.loadExecution(ctx, strings.TrimSpace(request.ResumeExecutionID), nil)
+		execution, err = engine.loadExecution(ctx, request.ResumeExecutionID)
 	}
 	if err != nil {
-		if execution != nil && execution.record.State == schema.ExecutionBlockedDependency {
-			return engineResult(execution.record), err
-		}
-		if request.RecoveryLease != nil {
-			if releaseErr := engine.ledger.FinishExecutionLease(ctx, *request.RecoveryLease, "", err.Error()); releaseErr != nil {
-				return ExecuteResult{}, errors.Join(err, fmt.Errorf("%w: %v", ErrDurableDisposition, releaseErr))
-			}
-		}
-		return ExecuteResult{}, err
+		return engineFailureResult(execution), err
 	}
 	execution.mu.Lock()
 	defer execution.mu.Unlock()
 	if schema.IsTerminalExecutionState(execution.record.State) {
-		execution.releaseSnapshot()
 		return engineResult(execution.record), nil
 	}
 	if created && !selectedExecutionHasSteps(execution) {
-		if err := engine.persistExecutionState(ctx, execution, schema.ExecutionCompleted, "", request.RecoveryLease); err != nil {
-			return engineResult(execution.record), err
-		}
-		execution.releaseSnapshot()
+		err = engine.persistExecutionState(ctx, execution, schema.ExecutionCompleted, "", request.RecoveryLease)
+		return engineResult(execution.record), err
+	}
+	// Durable-admission callers never execute a replay synchronously. A matching
+	// retry observes the recorded identity even after a worker has failed, while
+	// a newly created admission requires one atomic ledger/outbox transaction.
+	if request.WaitMode == WaitAccepted && (!created || atomic) {
 		return engineResult(execution.record), nil
 	}
-	if request.WaitMode == WaitAccepted && created && atomicAdmission {
-		return engineResult(execution.record), nil
-	}
-	if execution.unit == nil || execution.unit.CheckedIR == nil {
+	if execution.generation == nil || execution.generation.Checked() == nil {
 		return engineResult(execution.record), fmt.Errorf("%w: generation %s", ErrBlockedDependency, execution.record.GenerationDigest)
 	}
-
 	if request.WaitMode == WaitTerminal && execution.record.State == schema.ExecutionAccepted && request.RecoveryLease == nil {
-		updated, updateErr := engine.ledger.SetExecutionState(ctx, execution.record.ExecutionID, execution.record.Revision, schema.ExecutionRunning, "")
-		if updateErr == nil {
+		if updated, e := engine.ledger.SetExecutionState(ctx, execution.record.ExecutionID, execution.record.Revision, schema.ExecutionRunning, ""); e == nil {
 			execution.record = updated
-		} else if !errors.Is(updateErr, schema.ErrOptimisticConflict) {
-			return engineResult(execution.record), updateErr
+		} else if !errors.Is(e, schema.ErrOptimisticConflict) {
+			return engineResult(execution.record), e
 		}
 	}
-	workflowErr := engine.runtime.executeCheckedWorkflowMode(ctx, execution.unit, execution.record.TenantNamespace,
-		execution.record.ExecutionID, execution.facts, execution.selected, request.WaitMode)
-	if workflowErr != nil {
-		state, dispositionErr := engine.executionFailureState(ctx, execution)
-		if dispositionErr != nil {
+	err = engine.executeCheckedWorkflow(ctx, execution.generation, execution.record.TenantNamespace, execution.record.ExecutionID, execution.facts, execution.selected, request.WaitMode)
+	if err != nil {
+		state, disposition := engine.executionFailureState(ctx, execution)
+		if disposition != nil {
 			state = execution.record.State
 		}
-		if persistErr := engine.persistExecutionState(ctx, execution, state, workflowErr.Error(), request.RecoveryLease); persistErr != nil {
-			return engineResult(execution.record), errors.Join(workflowErr, dispositionErr, fmt.Errorf("%w: %v", ErrDurableDisposition, persistErr))
+		if persist := engine.persistExecutionState(ctx, execution, state, err.Error(), request.RecoveryLease); persist != nil {
+			return engineResult(execution.record), errors.Join(err, disposition, fmt.Errorf("%w: %v", ErrDurableDisposition, persist))
 		}
-		if schema.IsTerminalExecutionState(execution.record.State) {
-			execution.releaseSnapshot()
-		}
-		return engineResult(execution.record), workflowErr
+		return engineResult(execution.record), err
 	}
 	if request.WaitMode == WaitTerminal {
-		if err := engine.persistExecutionState(ctx, execution, schema.ExecutionCompleted, "", request.RecoveryLease); err != nil {
-			return engineResult(execution.record), err
-		}
-		execution.releaseSnapshot()
+		err = engine.persistExecutionState(ctx, execution, schema.ExecutionCompleted, "", request.RecoveryLease)
 	}
-	return engineResult(execution.record), nil
+	return engineResult(execution.record), err
 }
-
-func (execution *engineExecution) releaseSnapshot() {
-	if execution != nil && execution.snapshotHandle != nil {
-		_ = execution.snapshotHandle.Release()
-		execution.snapshotHandle = nil
+func engineFailureResult(execution *engineExecution) ExecuteResult {
+	if execution == nil {
+		return ExecuteResult{}
 	}
+	return engineResult(execution.record)
 }
 
 func (engine *Engine) admit(ctx context.Context, admission *Admission) (*engineExecution, bool, bool, error) {
@@ -291,295 +245,133 @@ func (engine *Engine) admit(ctx context.Context, admission *Admission) (*engineE
 	admission.ExecutionID = strings.TrimSpace(admission.ExecutionID)
 	admission.TenantNamespace = strings.TrimSpace(admission.TenantNamespace)
 	admission.AdmissionID = strings.TrimSpace(admission.AdmissionID)
-	if admission.ExecutionID == "" {
-		return nil, false, false, fmt.Errorf("%w: stable execution ID is required", ErrInvalidExecuteRequest)
+	if admission.ExecutionID == "" || admission.TenantNamespace == "" {
+		return nil, false, false, fmt.Errorf("%w: stable execution ID and tenant namespace are required", ErrInvalidExecuteRequest)
 	}
-	if admission.TenantNamespace == "" {
-		return nil, false, false, fmt.Errorf("%w: tenant namespace is required", ErrInvalidExecuteRequest)
-	}
-	requestHash, err := admissionHash(admission)
+	hash, err := admissionHash(admission)
 	if err != nil {
-		return nil, false, false, fmt.Errorf("%w: hash admission: %v", ErrInvalidExecuteRequest, err)
+		return nil, false, false, err
 	}
 	identity := admission.AdmissionID
 	if identity == "" {
 		identity = admission.ExecutionID
 	}
-	if existing, getErr := engine.ledger.GetExecutionByAdmission(ctx, identity); getErr == nil {
+	if existing, e := engine.ledger.GetExecutionByAdmission(ctx, identity); e == nil {
 		if admission.ExpectedGenerationDigest != "" && admission.ExpectedGenerationDigest != existing.GenerationDigest {
 			return nil, false, false, ErrGenerationMismatch
 		}
-		if existing.ExecutionID != admission.ExecutionID || existing.RequestHash != requestHash {
+		if existing.ExecutionID != admission.ExecutionID || existing.RequestHash != hash {
 			return nil, false, false, fmt.Errorf("%w: admission identity %s", ErrIdentityConflict, identity)
 		}
-		execution, loadErr := engine.loadExecutionRecord(ctx, existing, nil)
-		return execution, false, false, loadErr
-	} else if !errors.Is(getErr, schema.ErrExecutionNotFound) {
-		return nil, false, false, getErr
+		x, e := engine.loadExecutionRecord(ctx, existing)
+		return x, false, false, e
+	} else if !errors.Is(e, schema.ErrExecutionNotFound) {
+		return nil, false, false, e
 	}
-
-	engine.runtime.mu.RLock()
-	if engine.runtime.state != StateReady {
-		state := engine.runtime.state
-		engine.runtime.mu.RUnlock()
-		return nil, false, false, fmt.Errorf("runtime not ready (state: %s)", state)
+	engine.mu.Lock()
+	generation, store := engine.generation, engine.workflowStore
+	engine.mu.Unlock()
+	if generation == nil || store == nil {
+		return nil, false, false, fmt.Errorf("checked durable workflow is not configured")
 	}
-	if engine.runtime.activeGeneration == nil || engine.runtime.activeGeneration.unit == nil || engine.runtime.activeGeneration.unit.CheckedIR == nil {
-		engine.runtime.mu.RUnlock()
-		return nil, false, false, fmt.Errorf("no checked extension workflow is available")
-	}
-	unit := engine.runtime.activeGeneration.unit
-	if engine.runtime.workflowStore == nil {
-		engine.runtime.mu.RUnlock()
-		return nil, false, false, fmt.Errorf("checked durable workflow outbox is not configured")
-	}
-	if _, redisOutbox := engine.runtime.workflowStore.(*schema.RedisOutboxStore); redisOutbox {
-		engine.runtime.mu.RUnlock()
-		return nil, false, false, fmt.Errorf("Redis outbox cannot provide atomic execution admission; use PostgreSQL for production checked admission")
-	}
-	if err := engine.validateUnitExecutors(unit); err != nil {
-		engine.runtime.mu.RUnlock()
-		return nil, false, false, err
-	}
-	unitSnapshot, snapshotErr := extensionSnapshot(unit)
-	if snapshotErr != nil {
-		engine.runtime.mu.RUnlock()
-		return nil, false, false, snapshotErr
-	}
-	var snapshotHandle *loader.ExtensionSnapshotHandle
-	if unitSnapshot != nil {
-		snapshotHandle, err = unitSnapshot.Acquire()
-		if err != nil {
-			engine.runtime.mu.RUnlock()
-			return nil, false, false, fmt.Errorf("acquire extension snapshot: %w", err)
-		}
-	}
-	engine.runtime.mu.RUnlock()
-
-	durable, selected, facts, err := buildDurableAdmission(ctx, unit, admission, requestHash)
+	durable, selected, facts, err := buildDurableAdmission(ctx, generation, admission, hash)
 	if err != nil {
-		if snapshotHandle != nil {
-			_ = snapshotHandle.Release()
-		}
 		return nil, false, false, err
 	}
 	if admission.ExpectedGenerationDigest != "" && admission.ExpectedGenerationDigest != durable.Artifact.GenerationDigest {
-		if snapshotHandle != nil {
-			_ = snapshotHandle.Release()
-		}
 		return nil, false, false, ErrGenerationMismatch
 	}
 	var record schema.ExecutionRecord
-	var created bool
-	atomicAdmission := false
-	if atomicStore, ok := engine.ledger.(schema.AtomicAdmissionStore); ok && any(engine.runtime.workflowStore) == any(atomicStore) {
+	created := false
+	atomic := false
+	if atomicStore, ok := engine.ledger.(schema.AtomicAdmissionStore); ok && any(store) == any(atomicStore) {
 		record, created, err = atomicStore.AdmitExecutionAtomic(ctx, durable)
-		atomicAdmission = true
+		atomic = true
 	} else {
 		if err = engine.ledger.PutArtifact(ctx, durable.Artifact); err == nil {
 			record, created, err = engine.ledger.AdmitExecution(ctx, durable)
 		}
 	}
 	if err != nil {
-		if errors.Is(err, schema.ErrIdentityConflict) || isPostgresConcurrencyError(err) {
-			existing, loadErr := engine.ledger.GetExecutionByAdmission(ctx, durable.Execution.AdmissionIdentity)
-			if loadErr == nil && existing.RequestHash == durable.Execution.RequestHash && existing.GenerationDigest == durable.Execution.GenerationDigest {
-				if snapshotHandle != nil {
-					_ = snapshotHandle.Release()
+		if errors.Is(err, ErrIdentityConflict) || isPostgresConcurrencyError(err) {
+			existing, getErr := engine.ledger.GetExecutionByAdmission(ctx, durable.Execution.AdmissionIdentity)
+			if getErr == nil {
+				if existing.ExecutionID == durable.Execution.ExecutionID && existing.RequestHash == durable.Execution.RequestHash {
+					x, loadErr := engine.loadExecutionRecord(ctx, existing)
+					return x, false, atomic, loadErr
 				}
-				execution, resolveErr := engine.loadExecutionRecord(ctx, existing, unit)
-				return execution, false, atomicAdmission, resolveErr
+				return nil, false, atomic, fmt.Errorf("%w: admission identity %s", ErrIdentityConflict, durable.Execution.AdmissionIdentity)
+			}
+			if errors.Is(err, ErrIdentityConflict) {
+				return nil, false, atomic, fmt.Errorf("%w: %v", ErrIdentityConflict, err)
 			}
 		}
-		if snapshotHandle != nil {
-			_ = snapshotHandle.Release()
-		}
-		if errors.Is(err, schema.ErrIdentityConflict) {
-			return nil, false, atomicAdmission, fmt.Errorf("%w: %v", ErrIdentityConflict, err)
-		}
-		return nil, false, atomicAdmission, err
+		return nil, false, atomic, err
 	}
 	if !created {
-		if snapshotHandle != nil {
-			_ = snapshotHandle.Release()
-		}
-		execution, loadErr := engine.loadExecutionRecord(ctx, record, unit)
-		return execution, false, atomicAdmission, loadErr
+		x, e := engine.loadExecutionRecord(ctx, record)
+		return x, false, atomic, e
 	}
-	execution := &engineExecution{record: record, facts: facts, selected: selected, unit: unit, snapshotHandle: snapshotHandle}
+	x := &engineExecution{record: record, facts: facts, selected: selected, generation: generation}
 	engine.mu.Lock()
-	engine.executions[record.ExecutionID] = execution
+	engine.executions[record.ExecutionID] = x
 	engine.mu.Unlock()
-	return execution, true, atomicAdmission, nil
+	return x, true, atomic, nil
 }
-
-func isPostgresConcurrencyError(err error) bool {
-	var value interface{ SQLState() string }
-	if errors.As(err, &value) {
-		code := value.SQLState()
-		return code == "40001" || code == "23505"
-	}
-	return false
-}
-
-func (engine *Engine) validateUnitExecutors(unit *compiler.CompiledUnit) error {
-	if engine.runtime.allowLegacyExecution {
-		return nil
-	}
-	for name, compiledVerb := range unit.VerbSpecs {
-		local, ok := compiledVerb.ExecutorConfig.(*compiler.LocalExecutorConfig)
-		if !ok || local == nil || local.Implementation == nil {
-			continue
-		}
-		if _, aware := any(local.Implementation).(invocation.Executor); !aware {
-			return fmt.Errorf("verb %q uses an unrestricted Go continuation; production execution requires an invocation-aware immutable resolver", name)
-		}
-		if _, described := any(local.Implementation).(invocation.ResolverDescriptorProvider); !described {
-			return fmt.Errorf("verb %q is invocation-aware but has no immutable resolver descriptor", name)
-		}
-	}
-	return nil
-}
-
-func (engine *Engine) loadExecution(ctx context.Context, id string, preferred *compiler.CompiledUnit) (*engineExecution, error) {
+func (engine *Engine) loadExecution(ctx context.Context, id string) (*engineExecution, error) {
 	engine.mu.Lock()
-	cached := engine.executions[id]
+	x := engine.executions[id]
 	engine.mu.Unlock()
-	if cached != nil {
-		return cached, nil
+	if x != nil {
+		return x, nil
 	}
 	record, err := engine.ledger.GetExecution(ctx, id)
+	if errors.Is(err, schema.ErrExecutionNotFound) {
+		return nil, fmt.Errorf("%w: %s", ErrExecutionNotFound, id)
+	}
 	if err != nil {
-		if errors.Is(err, schema.ErrExecutionNotFound) {
-			return nil, fmt.Errorf("%w: %s", ErrExecutionNotFound, id)
-		}
 		return nil, err
 	}
-	return engine.loadExecutionRecord(ctx, record, preferred)
+	return engine.loadExecutionRecord(ctx, record)
 }
-
-func (engine *Engine) loadExecutionRecord(ctx context.Context, record schema.ExecutionRecord, preferred *compiler.CompiledUnit) (*engineExecution, error) {
+func (engine *Engine) loadExecutionRecord(ctx context.Context, record schema.ExecutionRecord) (*engineExecution, error) {
 	engine.mu.Lock()
 	cached := engine.executions[record.ExecutionID]
 	engine.mu.Unlock()
 	if cached != nil {
-		cached.mu.Lock()
-		generationDigest := cached.record.GenerationDigest
-		cached.mu.Unlock()
-		if generationDigest == record.GenerationDigest {
-			return cached, nil
-		}
+		return cached, nil
 	}
 	facts, err := decodeExecutionFacts(record.EffectiveFacts)
 	if err != nil {
 		return nil, err
 	}
-	selected := make(map[string]struct{}, len(record.Plans))
+	selected := map[string]struct{}{}
 	for _, plan := range record.Plans {
 		selected[plan.PlanID] = struct{}{}
 	}
-	if preferred != nil {
-		if artifact, artifactErr := executionArtifactForUnit(preferred); artifactErr == nil && artifact.GenerationDigest == record.GenerationDigest {
-			preferredSnapshot, snapshotErr := extensionSnapshot(preferred)
-			if snapshotErr != nil {
-				return engine.blockDependency(ctx, record, facts, selected, snapshotErr)
-			}
-			var handle *loader.ExtensionSnapshotHandle
-			if preferredSnapshot != nil {
-				handle, err = preferredSnapshot.Acquire()
-				if err != nil {
-					return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("acquire preferred extension snapshot: %w", err))
-				}
-			}
-			execution := &engineExecution{record: record, facts: facts, selected: selected, unit: preferred, snapshotHandle: handle}
-			engine.mu.Lock()
-			engine.executions[record.ExecutionID] = execution
-			engine.mu.Unlock()
-			return execution, nil
+	generation := engine.generation
+	if generation == nil || generation.Digest() != record.GenerationDigest {
+		artifact, e := engine.ledger.GetArtifact(ctx, record.GenerationDigest)
+		if e != nil {
+			return engine.blockDependency(ctx, record, facts, selected, e)
+		}
+		if engine.resolver == nil {
+			return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("no immutable artifact resolver is configured"))
+		}
+		generation, e = engine.resolver.ResolveGeneration(ctx, artifact)
+		if e != nil {
+			return engine.blockDependency(ctx, record, facts, selected, e)
 		}
 	}
-	artifact, err := engine.ledger.GetArtifact(ctx, record.GenerationDigest)
-	if err != nil {
-		return engine.blockDependency(ctx, record, facts, selected, err)
+	if generation.Checked() == nil {
+		return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("resolved generation has no checked IR"))
 	}
-	environment, err := decodeArtifactEnvironment(artifact)
-	if err != nil {
-		return engine.blockDependency(ctx, record, facts, selected, err)
-	}
-	checked, err := ir.Parse(artifact.IRBytes, environment, ir.Limits{})
-	if err != nil || checked.Digest() != artifact.IRDigest {
-		return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("checked artifact digest mismatch: %w", err))
-	}
-	resolver := engine.resolver
-	if resolver == nil {
-		engine.runtime.mu.RLock()
-		var current *compiler.CompiledUnit
-		if engine.runtime.activeGeneration != nil {
-			current = engine.runtime.activeGeneration.unit
-		}
-		engine.runtime.mu.RUnlock()
-		if current != nil {
-			if currentArtifact, currentErr := executionArtifactForUnit(current); currentErr == nil && currentArtifact.GenerationDigest == record.GenerationDigest {
-				resolver = ArtifactResolverFunc(func(context.Context, schema.ExecutionArtifact, *ir.Checked) (*compiler.CompiledUnit, error) {
-					return current, nil
-				})
-			}
-		}
-	}
-	if resolver == nil {
-		return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("no immutable artifact resolver is configured"))
-	}
-	unit, err := resolver.ResolveArtifact(ctx, artifact, checked)
-	if err != nil {
-		return engine.blockDependency(ctx, record, facts, selected, err)
-	}
-	unitSnapshot, snapshotErr := extensionSnapshot(unit)
-	if snapshotErr != nil {
-		return engine.blockDependency(ctx, record, facts, selected, snapshotErr)
-	}
-	var snapshotHandle *loader.ExtensionSnapshotHandle
-	if unitSnapshot != nil {
-		snapshotHandle, err = unitSnapshot.Acquire()
-		if err != nil {
-			return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("acquire resolved extension snapshot: %w", err))
-		}
-		if unit.ExecutionOwnedSnapshot {
-			if retireErr := unitSnapshot.Retire(); retireErr != nil {
-				_ = snapshotHandle.Release()
-				return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("retire execution-owned snapshot: %w", retireErr))
-			}
-		}
-	}
-	blockResolved := func(cause error) (*engineExecution, error) {
-		if snapshotHandle != nil {
-			_ = snapshotHandle.Release()
-		}
-		return engine.blockDependency(ctx, record, facts, selected, cause)
-	}
-	if unit == nil || unit.CheckedIR == nil || unit.CheckedIR.Digest() != checked.Digest() {
-		return blockResolved(fmt.Errorf("resolver returned a mismatched checked generation"))
-	}
-	resolvedArtifact, resolvedErr := executionArtifactForUnit(unit)
-	if resolvedErr != nil || resolvedArtifact.GenerationDigest != record.GenerationDigest {
-		return blockResolved(fmt.Errorf("resolver executor/function manifest does not match pinned generation: %v", resolvedErr))
-	}
-	if err := engine.validateUnitExecutors(unit); err != nil {
-		return blockResolved(err)
-	}
-	for _, plan := range checked.CloneArtifact().Plans {
-		for _, step := range plan.Steps {
-			if unit.VerbSpecs[step.Verb] == nil {
-				return blockResolved(fmt.Errorf("verb contract %q is unavailable", step.Verb))
-			}
-		}
-	}
-	execution := &engineExecution{record: record, facts: facts, selected: selected, unit: unit, snapshotHandle: snapshotHandle}
+	x := &engineExecution{record: record, facts: facts, selected: selected, generation: generation}
 	engine.mu.Lock()
-	engine.executions[record.ExecutionID] = execution
+	engine.executions[record.ExecutionID] = x
 	engine.mu.Unlock()
-	return execution, nil
+	return x, nil
 }
-
 func (engine *Engine) blockDependency(ctx context.Context, record schema.ExecutionRecord, facts map[string]any, selected map[string]struct{}, cause error) (*engineExecution, error) {
 	if record.State != schema.ExecutionBlockedDependency {
 		if record.RecoveryToken != "" {
@@ -591,43 +383,39 @@ func (engine *Engine) blockDependency(ctx context.Context, record schema.Executi
 			record = updated
 		}
 	}
-	execution := &engineExecution{record: record, facts: facts, selected: selected}
+	x := &engineExecution{record: record, facts: facts, selected: selected}
 	engine.mu.Lock()
-	engine.executions[record.ExecutionID] = execution
+	engine.executions[record.ExecutionID] = x
 	engine.mu.Unlock()
-	return execution, fmt.Errorf("%w: %v", ErrBlockedDependency, cause)
+	return x, fmt.Errorf("%w: %v", ErrBlockedDependency, cause)
 }
-
-func (engine *Engine) persistExecutionState(ctx context.Context, execution *engineExecution, state schema.ExecutionState, message string, lease *schema.ExecutionLease) error {
+func (engine *Engine) persistExecutionState(ctx context.Context, x *engineExecution, state schema.ExecutionState, message string, lease *schema.ExecutionLease) error {
 	if lease != nil {
-		leaseState := state
+		next := state
 		if !schema.IsTerminalExecutionState(state) {
-			leaseState = "" // release the CAS lease without terminalizing recoverable work
+			next = ""
 		}
-		if err := engine.ledger.FinishExecutionLease(ctx, *lease, leaseState, message); err != nil {
+		if err := engine.ledger.FinishExecutionLease(ctx, *lease, next, message); err != nil {
 			return fmt.Errorf("%w: %v", ErrDurableDisposition, err)
 		}
-		updated, err := engine.ledger.GetExecution(ctx, execution.record.ExecutionID)
+		updated, err := engine.ledger.GetExecution(ctx, x.record.ExecutionID)
 		if err != nil {
-			return fmt.Errorf("%w: reload execution after lease completion: %v", ErrDurableDisposition, err)
+			return err
 		}
-		execution.record = updated
+		x.record = updated
 		return nil
 	}
-	updated, err := engine.ledger.SetExecutionState(ctx, execution.record.ExecutionID, execution.record.Revision, state, message)
-	if err != nil {
-		return err
+	updated, err := engine.ledger.SetExecutionState(ctx, x.record.ExecutionID, x.record.Revision, state, message)
+	if err == nil {
+		x.record = updated
 	}
-	execution.record = updated
-	return nil
+	return err
 }
-
-func (engine *Engine) executionFailureState(ctx context.Context, execution *engineExecution) (schema.ExecutionState, error) {
-	state := execution.record.State
-	for _, plan := range execution.record.Plans {
-		saga, err := engine.runtime.workflowStore.GetSaga(ctx, plan.SagaID)
+func (engine *Engine) executionFailureState(ctx context.Context, x *engineExecution) (schema.ExecutionState, error) {
+	for _, plan := range x.record.Plans {
+		saga, err := engine.workflowStore.GetSaga(ctx, plan.SagaID)
 		if err != nil {
-			return state, fmt.Errorf("read durable saga disposition %s: %w", plan.SagaID, err)
+			return x.record.State, err
 		}
 		switch saga.State {
 		case schema.SagaBlockedUnknown:
@@ -642,111 +430,98 @@ func (engine *Engine) executionFailureState(ctx context.Context, execution *engi
 			return schema.ExecutionFailed, nil
 		}
 	}
-	// Running, compensating, queued, and unreadable work is recoverable. Never
-	// infer a terminal disposition from the transient error returned by a store.
-	return state, nil
+	return x.record.State, nil
 }
-
-func selectedExecutionHasSteps(execution *engineExecution) bool {
-	if execution == nil || execution.unit == nil || execution.unit.CheckedIR == nil {
+func selectedExecutionHasSteps(x *engineExecution) bool {
+	if x == nil || x.generation == nil || x.generation.Checked() == nil {
 		return false
 	}
-	for _, plan := range execution.unit.CheckedIR.CloneArtifact().Plans {
-		if _, selected := execution.selected[plan.Id]; selected && len(plan.Steps) != 0 {
+	for _, plan := range x.generation.Checked().CloneArtifact().Plans {
+		if _, ok := x.selected[plan.Id]; ok && len(plan.Steps) > 0 {
 			return true
 		}
 	}
 	return false
 }
-
 func engineResult(record schema.ExecutionRecord) ExecuteResult {
 	return ExecuteResult{ExecutionID: record.ExecutionID, GenerationDigest: record.GenerationDigest, State: string(record.State), DurablyAccepted: record.State != schema.ExecutionAdmitting, Completed: record.State == schema.ExecutionCompleted}
 }
-
 func decodeExecutionFacts(data json.RawMessage) (map[string]any, error) {
+	var facts map[string]any
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.UseNumber()
-	var facts map[string]any
 	if err := decoder.Decode(&facts); err != nil {
 		return nil, fmt.Errorf("decode frozen execution facts: %w", err)
 	}
 	return facts, nil
 }
-
-func admissionHash(admission *Admission) (string, error) {
-	facts, err := canonicalJSONValue(admission.Facts)
+func admissionHash(a *Admission) (string, error) {
+	facts, err := canonicalJSONValue(a.Facts)
 	if err != nil {
 		return "", err
 	}
-	payload := struct {
+	data, err := json.Marshal(struct {
 		Namespace   string          `json:"namespace"`
 		Ruleset     string          `json:"ruleset"`
 		Version     string          `json:"version"`
 		MergePolicy string          `json:"merge_policy"`
 		Facts       json.RawMessage `json:"facts"`
-	}{
-		Namespace: admission.TenantNamespace, Ruleset: admission.Ruleset,
-		Version: admission.Version, MergePolicy: admission.MergePolicy, Facts: facts,
-	}
-	data, err := json.Marshal(payload)
+	}{a.TenantNamespace, a.Ruleset, a.Version, a.MergePolicy, facts})
 	if err != nil {
 		return "", err
 	}
-	digest := sha256.Sum256(data)
-	return hex.EncodeToString(digest[:]), nil
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
 }
-
 func canonicalJSONValue(value any) ([]byte, error) {
-	// encoding/json orders string map keys. Normalize recursively to reject
-	// unsupported values and non-finite numbers before identity is persisted.
 	normalized, err := normalizeAdmissionValue(value)
 	if err != nil {
 		return nil, err
 	}
 	return json.Marshal(normalized)
 }
-
 func normalizeAdmissionValue(value any) (any, error) {
 	switch value := value.(type) {
-	case nil, bool, string, json.Number, float64, float32,
-		int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+	case nil, bool, string, json.Number, float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		data, err := json.Marshal(value)
 		if err != nil {
 			return nil, err
 		}
-		var normalized any
+		var out any
 		decoder := json.NewDecoder(strings.NewReader(string(data)))
 		decoder.UseNumber()
-		if err := decoder.Decode(&normalized); err != nil {
-			return nil, err
-		}
-		return normalized, nil
+		err = decoder.Decode(&out)
+		return out, err
 	case map[string]any:
-		names := make([]string, 0, len(value))
-		for name := range value {
-			names = append(names, name)
+		keys := make([]string, 0, len(value))
+		for k := range value {
+			keys = append(keys, k)
 		}
-		sort.Strings(names)
-		result := make(map[string]any, len(value))
-		for _, name := range names {
-			normalized, err := normalizeAdmissionValue(value[name])
-			if err != nil {
-				return nil, fmt.Errorf("fact %q: %w", name, err)
+		sort.Strings(keys)
+		out := make(map[string]any, len(value))
+		for _, k := range keys {
+			v, e := normalizeAdmissionValue(value[k])
+			if e != nil {
+				return nil, e
 			}
-			result[name] = normalized
+			out[k] = v
 		}
-		return result, nil
+		return out, nil
 	case []any:
-		result := make([]any, len(value))
-		for index, item := range value {
-			normalized, err := normalizeAdmissionValue(item)
-			if err != nil {
-				return nil, fmt.Errorf("fact item %d: %w", index, err)
+		out := make([]any, len(value))
+		for i := range value {
+			v, e := normalizeAdmissionValue(value[i])
+			if e != nil {
+				return nil, e
 			}
-			result[index] = normalized
+			out[i] = v
 		}
-		return result, nil
+		return out, nil
 	default:
 		return nil, fmt.Errorf("unsupported value type %T", value)
 	}
+}
+func isPostgresConcurrencyError(err error) bool {
+	var value interface{ SQLState() string }
+	return errors.As(err, &value) && (value.SQLState() == "40001" || value.SQLState() == "23505")
 }

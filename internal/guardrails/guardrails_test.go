@@ -108,6 +108,26 @@ func TestDependencyRulesDetectOnlySegmentBoundedEdges(t *testing.T) {
 	require.Equal(t, []string{modulePath + "/compiler/check imports forbidden " + modulePath + "/runtime/engine (compiler must not depend on runtime)"}, violations)
 }
 
+func TestForbiddenProductionSymbolsRejectRemovedCompilerAndRuntimeAuthorities(t *testing.T) {
+	dir := t.TempDir()
+	source := `package fixture
+
+type ExecutionRuntime struct{}
+type CompiledUnit struct{}
+type CompiledSpec struct{}
+type CompileOptions struct { InspectSource func() }
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "fixture.go"), []byte(source), 0o600))
+	violations, err := CheckForbiddenProductionSymbols([]Package{{ImportPath: modulePath + "/fixture", Dir: dir, GoFiles: []string{"fixture.go"}}})
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		modulePath + "/fixture declares forbidden CompileOptions.InspectSource",
+		modulePath + "/fixture declares forbidden type CompiledSpec",
+		modulePath + "/fixture declares forbidden type CompiledUnit",
+		modulePath + "/fixture declares forbidden type ExecutionRuntime",
+	}, violations)
+}
+
 func TestDeprecationDeadlinesHavePositiveAndNegativeCoverage(t *testing.T) {
 	root := newGitRepository(t, "gen/\n")
 	require.NoError(t, os.WriteFile(filepath.Join(root, "valid.go"), []byte("package fixture\n// Deprecated: use Current. Removal deadline: 2030-01-02.\nfunc Old() {}\n"), 0o600))

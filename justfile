@@ -1,7 +1,7 @@
 # Effectus development commands. Use `just --list` for the supported surface.
 
 DB_DSN := env_var_or_default("DB_DSN", "postgres://effectus:effectus@localhost:55433/effectus_saga?sslmode=disable")
-COMPOSE := "docker compose -f tests/fixtures/durable-stack/docker-compose.yml"
+COMPOSE := "docker compose -f tests/fixtures/postgres/docker-compose.yml"
 
 # List supported workflows.
 default:

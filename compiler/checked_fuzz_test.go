@@ -3,6 +3,7 @@ package compiler
 import (
 	"testing"
 
+	"github.com/josephjohncox/effectus/bundle"
 	"github.com/josephjohncox/effectus/ir"
 )
 
@@ -21,6 +22,6 @@ func FuzzCompileChecked(f *testing.F) {
 		if extension != ".eff" && extension != ".effx" {
 			extension = ".eff"
 		}
-		_, _ = CompileChecked(t.Context(), []Source{{Path: "fuzz" + extension, Data: data}}, environment, CompileOptions{Limits: ir.Limits{MaxArtifactBytes: 128 << 10}})
+		_, _ = CompileChecked(t.Context(), checkedBundle(t, environment, bundle.Source{Path: "fuzz" + extension, Content: string(data)}), CompileOptions{Limits: ir.Limits{MaxArtifactBytes: 128 << 10}})
 	})
 }

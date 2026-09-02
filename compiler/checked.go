@@ -1,184 +1,33 @@
 package compiler
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"math"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	exprast "github.com/expr-lang/expr/ast"
 	exprparser "github.com/expr-lang/expr/parser"
-	"github.com/josephjohncox/effectus/ast"
+	"github.com/josephjohncox/effectus/bundle"
 	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
+	"github.com/josephjohncox/effectus/internal/language/ast"
 	"github.com/josephjohncox/effectus/ir"
-	"github.com/josephjohncox/effectus/schema/types"
-	"github.com/josephjohncox/effectus/schema/verb"
 )
-
-// Source is one in-memory Effectus source file. Path determines the source
-// dialect and canonical declaration order; Content is never read again after
-// CompileChecked returns.
-type Source struct {
-	Path    string
-	Content []byte
-	Data    []byte // Deprecated: use Content. Removal deadline: 2027-09-01.
-}
 
 // CompileOptions controls properties that must be frozen into checked IR.
 type CompileOptions struct {
 	ExecutionPolicy effectusv1.ExecutionPolicy
 	Limits          ir.Limits
-	// InspectSource receives each normalized AST exactly once before lowering.
-	// The callback must treat the file as immutable and must not retain it.
-	InspectSource func(path string, file *ast.File)
 }
 
 const (
 	ExecutionPolicyFailFast     = effectusv1.ExecutionPolicy_EXECUTION_POLICY_DURABLE_FAIL_FAST
 	ExecutionPolicyCompensating = effectusv1.ExecutionPolicy_EXECUTION_POLICY_DURABLE_COMPENSATING
 )
-
-// LoadSources reads Effectus source paths for CompileChecked. It is the shared
-// file front end used by command-line checked compilation.
-func LoadSources(paths []string) ([]Source, error) {
-	sources := make([]Source, 0, len(paths))
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read source %s: %w", path, err)
-		}
-		sources = append(sources, Source{Path: path, Content: data})
-	}
-	return sources, nil
-}
-
-// BuildIREnvironment converts loaded schema and verb declarations to the
-// immutable declaration environment required by checked compilation.
-func BuildIREnvironment(typeSystem *types.TypeSystem, registry *verb.Registry) (ir.Environment, error) {
-	environment := ir.Environment{
-		Facts: make(map[string]string), Verbs: make(map[string]ir.VerbContract),
-		Functions: make(map[string]ir.FunctionContract), Types: make(map[string]ir.TypeDefinition),
-	}
-	if typeSystem != nil {
-		for name, typ := range typeSystem.GetAllTypes() {
-			definition, structural, err := irTypeDefinition(typ)
-			if err != nil {
-				return ir.Environment{}, fmt.Errorf("type %s: %w", name, err)
-			}
-			if structural {
-				environment.Types[name] = definition
-			}
-		}
-		for _, path := range typeSystem.GetAllFactPaths() {
-			typ, err := typeSystem.GetFactType(path)
-			if err != nil {
-				return ir.Environment{}, fmt.Errorf("fact %s: %w", path, err)
-			}
-			environment.Facts[path], err = irTypeName(typ)
-			if err != nil {
-				return ir.Environment{}, fmt.Errorf("fact %s: %w", path, err)
-			}
-		}
-		for _, spec := range types.StandardLibrary() {
-			if spec == nil || spec.Unsafe {
-				continue
-			}
-			contract := ir.FunctionContract{
-				ArgumentTypes: append([]string(nil), spec.ArgTypes...), ReturnType: spec.ReturnType, Pure: true, Total: true,
-			}
-			// Polymorphic legacy helpers use open "any" contracts, which checked IR
-			// intentionally cannot prove. Do not advertise them as checked functions.
-			probe := ir.Environment{Types: environment.Types, Functions: map[string]ir.FunctionContract{spec.Name: contract}}
-			if _, err := ir.EnvironmentDigest(probe); err == nil {
-				environment.Functions[spec.Name] = contract
-			}
-		}
-	}
-	if registry != nil {
-		for _, spec := range registry.GetAllVerbs() {
-			contract := ir.VerbContract{
-				Arguments: cloneStringValues(spec.ArgTypes), RequiredArgs: append([]string(nil), spec.RequiredArgs...),
-				ResultType: spec.ReturnType, InverseVerb: spec.Inverse, RetryPolicy: ir.RetryPolicy{MaxAttempts: 1},
-			}
-			if spec.Capability&verb.CapIdempotent != 0 {
-				contract.IdempotencyPolicy = ir.IdempotencyKeyRequired
-			}
-			contract.FencingRequired = spec.Capability&verb.CapExclusive != 0
-			environment.Verbs[spec.Name] = contract
-		}
-	}
-	if _, err := ir.EnvironmentDigest(environment); err != nil {
-		return ir.Environment{}, fmt.Errorf("checked declarations: %w", err)
-	}
-	return environment, nil
-}
-
-func irTypeName(typ *types.Type) (string, error) {
-	if typ == nil {
-		return "", fmt.Errorf("type is nil")
-	}
-	if typ.ReferenceType != "" {
-		return typ.ReferenceType, nil
-	}
-	switch typ.PrimType {
-	case types.TypeBool:
-		return "bool", nil
-	case types.TypeInt:
-		return "int", nil
-	case types.TypeFloat:
-		return "float", nil
-	case types.TypeString:
-		return "string", nil
-	case types.TypeTime, types.TypeDate, types.TypeDuration:
-		return "", fmt.Errorf("temporal type %s is not supported by checked IR", typ.String())
-	case types.TypeList:
-		element, err := irTypeName(typ.ElementType)
-		return "[]" + element, err
-	case types.TypeMap:
-		element, err := irTypeName(typ.MapValueType())
-		return "map<" + element + ">", err
-	case types.TypeObject:
-		if typ.Name != "" {
-			return typ.Name, nil
-		}
-	}
-	if typ.Name != "" {
-		return typ.Name, nil
-	}
-	return "", fmt.Errorf("open or unknown type is not valid in checked IR")
-}
-
-func irTypeDefinition(typ *types.Type) (ir.TypeDefinition, bool, error) {
-	if typ == nil {
-		return ir.TypeDefinition{}, false, fmt.Errorf("type is nil")
-	}
-	switch typ.PrimType {
-	case types.TypeObject:
-		fields := make(map[string]string, len(typ.Properties))
-		for name, fieldType := range typ.Properties {
-			converted, err := irTypeName(fieldType)
-			if err != nil {
-				return ir.TypeDefinition{}, false, fmt.Errorf("field %s: %w", name, err)
-			}
-			fields[name] = converted
-		}
-		return ir.TypeDefinition{Kind: ir.TypeKindObject, Fields: fields}, true, nil
-	case types.TypeList:
-		element, err := irTypeName(typ.ElementType)
-		return ir.TypeDefinition{Kind: ir.TypeKindList, ElementType: element}, true, err
-	case types.TypeMap:
-		element, err := irTypeName(typ.MapValueType())
-		return ir.TypeDefinition{Kind: ir.TypeKindMap, ElementType: element}, true, err
-	default:
-		return ir.TypeDefinition{}, false, nil
-	}
-}
 
 const (
 	checkedCompilerName    = "effectusc"
@@ -188,7 +37,7 @@ const (
 // CompileChecked is the production compiler boundary. It parses .eff and
 // .effx sources, lowers their source ASTs without creating executable legacy
 // specs, and returns only an opaque value that has passed ir.Check.
-func CompileChecked(ctx context.Context, sources []Source, environment ir.Environment, options CompileOptions) (*ir.Checked, error) {
+func CompileChecked(ctx context.Context, sourceBundle *bundle.SourceBundle, options CompileOptions) (*ir.Checked, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("compile checked: context is nil")
 	}
@@ -200,15 +49,14 @@ func CompileChecked(ctx context.Context, sources []Source, environment ir.Enviro
 		return nil, fmt.Errorf("compile checked: unsupported execution policy %s", policy)
 	}
 
-	ordered, err := parseSources(ctx, sources)
+	if sourceBundle == nil {
+		return nil, fmt.Errorf("compile checked: source bundle is nil")
+	}
+	ordered, err := parseSources(ctx, sourceBundle.Sources())
 	if err != nil {
 		return nil, fmt.Errorf("compile checked: %w", err)
 	}
-	if options.InspectSource != nil {
-		for _, source := range ordered {
-			options.InspectSource(source.path, source.file)
-		}
-	}
+	environment := sourceBundle.Environment()
 
 	plans := make([]*effectusv1.Plan, 0)
 	var listOrder, flowOrder uint32
@@ -263,21 +111,6 @@ func CompileChecked(ctx context.Context, sources []Source, environment ir.Enviro
 		return nil, fmt.Errorf("compile checked: validate lowered artifact: %w", err)
 	}
 	return checked, nil
-}
-
-// CompileChecked provides a method facade for callers that already own a Compiler.
-func (c *Compiler) CompileChecked(ctx context.Context, sources []Source, environment ir.Environment, options CompileOptions) (*ir.Checked, error) {
-	return CompileChecked(ctx, sources, environment, options)
-}
-
-func checkedSourceBytes(source Source) ([]byte, error) {
-	if source.Content != nil && source.Data != nil && !bytes.Equal(source.Content, source.Data) {
-		return nil, fmt.Errorf("compile checked: source %q supplies conflicting Content and deprecated Data bytes", source.Path)
-	}
-	if source.Content != nil {
-		return source.Content, nil
-	}
-	return source.Data, nil
 }
 
 func restoreCheckedPredicateText(file *ast.File, data []byte) error {

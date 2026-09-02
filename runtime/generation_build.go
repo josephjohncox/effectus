@@ -30,13 +30,7 @@ func CompileGeneration(ctx context.Context, config GenerationBuildConfig) (*Gene
 	if config.Bundle == nil {
 		return nil, fmt.Errorf("compile generation: source bundle is required")
 	}
-	sources := config.Bundle.Sources()
-	compilerSources := make([]compiler.Source, len(sources))
-	for index, source := range sources {
-		compilerSources[index] = compiler.Source{Path: source.Path, Content: []byte(source.Content)}
-	}
-	environment := config.Bundle.Environment()
-	checked, err := compiler.CompileChecked(ctx, compilerSources, environment, config.CompileOptions)
+	checked, err := compiler.CompileChecked(ctx, config.Bundle, config.CompileOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +96,7 @@ func CompileGeneration(ctx context.Context, config GenerationBuildConfig) (*Gene
 		return nil, fmt.Errorf("compile generation: source digest: %w", err)
 	}
 	generation, err := NewGeneration(GenerationConfig{
-		Checked: checked, Environment: environment, Ruleset: config.Bundle.Name(), Version: config.Bundle.Version(),
+		Checked: checked, Environment: config.Bundle.Environment(), Ruleset: config.Bundle.Name(), Version: config.Bundle.Version(),
 		ExecutorDescriptors: descriptors, FunctionIDs: config.FunctionIDs, SourceDigest: sourceDigest,
 		Executors: executors, Closers: closers, Production: config.Production,
 	})

@@ -13,52 +13,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/josephjohncox/effectus/common"
-	"github.com/josephjohncox/effectus/compiler"
 	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
 	"github.com/josephjohncox/effectus/invocation"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/josephjohncox/effectus/schema/workflow"
 )
 
-func (er *ExecutionRuntime) executeVerbOnUnit(ctx context.Context, unit *compiler.CompiledUnit, verbName string, args map[string]interface{}) (interface{}, error) {
-	verbSpec, exists := unit.VerbSpecs[verbName]
-	if !exists || verbSpec == nil || verbSpec.Spec == nil {
-		return nil, fmt.Errorf("verb not found: %s", verbName)
-	}
-	registry := runtimeVerbRegistry{specs: unit.VerbSpecs}
-	if err := common.ValidateVerbArgs(verbSpec.Spec, args, registry); err != nil {
-		return nil, fmt.Errorf("argument validation failed: %w", err)
-	}
-	executorFactory, exists := er.executors[verbSpec.ExecutorType]
-	if !exists {
-		return nil, fmt.Errorf("no executor factory for type: %s", verbSpec.ExecutorType)
-	}
-	executor, err := executorFactory.CreateExecutor(verbSpec.ExecutorConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create executor: %w", err)
-	}
-	result, err := executor.Execute(ctx, args)
-	if err != nil {
-		return nil, fmt.Errorf("verb execution failed: %w", err)
-	}
-	if err := common.ValidateVerbReturn(verbSpec.Spec, result, registry); err != nil {
-		return nil, fmt.Errorf("return validation failed: %w", err)
-	}
-	return result, nil
-}
-
 type checkedWorkflowInvocationExecutor struct {
-	runtime *ExecutionRuntime
-	unit    *compiler.CompiledUnit
-	store   workflow.OutboxStore
+	generation *Generation
+	store      workflow.OutboxStore
 }
 
 func (executor checkedWorkflowInvocationExecutor) RetryUnknownOutcome(request invocation.Request) bool {
-	if executor.unit == nil || executor.unit.CheckedIR == nil {
+	if executor.generation == nil || executor.generation.Checked() == nil {
 		return false
 	}
-	for _, plan := range executor.unit.CheckedIR.CloneArtifact().Plans {
+	for _, plan := range executor.generation.Checked().CloneArtifact().Plans {
 		for _, step := range plan.Steps {
 			if step.Id == request.Metadata.Saga.EffectID && step.Verb == request.Verb && step.ContractHash == request.ContractHash {
 				return step.IdempotencyPolicy == effectusv1.IdempotencyPolicy_IDEMPOTENCY_POLICY_SINK_GUARANTEED
@@ -67,40 +37,25 @@ func (executor checkedWorkflowInvocationExecutor) RetryUnknownOutcome(request in
 	}
 	return false
 }
-
 func (executor checkedWorkflowInvocationExecutor) Invoke(ctx context.Context, request invocation.Request) invocation.Outcome {
 	saga, err := executor.store.GetSaga(ctx, request.Metadata.Saga.SagaID)
 	if err != nil {
 		return invocation.Outcome{Class: invocation.OutcomeUnknown, Err: err}
 	}
-	if saga.PlanDigest != executor.unit.CheckedIR.Digest() {
+	if executor.generation == nil || saga.PlanDigest != executor.generation.Checked().Digest() {
 		return invocation.Outcome{Class: invocation.OutcomePermanentFailure, Err: schema.ErrIdentityConflict}
 	}
-	compiledVerb := executor.unit.VerbSpecs[request.Verb]
-	if compiledVerb != nil {
-		if local, ok := compiledVerb.ExecutorConfig.(*compiler.LocalExecutorConfig); ok && local != nil {
-			if aware, ok := any(local.Implementation).(invocation.Executor); ok {
-				return aware.Invoke(ctx, request)
-			}
-		}
+	resolved, ok := executor.generation.Executor(request.Verb)
+	if !ok || resolved == nil {
+		return invocation.Outcome{Class: invocation.OutcomePermanentFailure, Err: fmt.Errorf("verb %q is unavailable", request.Verb)}
 	}
-	if !executor.runtime.allowLegacyExecution {
-		return invocation.Outcome{Class: invocation.OutcomePermanentFailure, Err: fmt.Errorf("verb %q is not invocation-aware", request.Verb)}
-	}
-	result, err := executor.runtime.executeVerbOnUnit(ctx, executor.unit, request.Verb, request.Arguments)
-	if err != nil {
-		// A generic continuation cannot prove whether an external target
-		// committed before returning an error. Preserve the unknown outcome.
-		return invocation.Outcome{Class: invocation.OutcomeUnknown, Err: err}
-	}
-	return invocation.Outcome{Class: invocation.OutcomeSuccess, Result: result}
+	return resolved.Invoke(ctx, request)
 }
 
-func (er *ExecutionRuntime) executeCheckedWorkflowMode(ctx context.Context, unit *compiler.CompiledUnit, namespace, executionID string, facts map[string]interface{}, selectedPlanIDs map[string]struct{}, waitMode WaitMode) error {
-	resolvedFacts := cloneWorkflowFacts(unit.InitialData)
-	mergeWorkflowFactOverrides(resolvedFacts, facts)
-	artifact := unit.CheckedIR.CloneArtifact()
-	dispatcherOptions := er.workflowOptions
+func (engine *Engine) executeCheckedWorkflow(ctx context.Context, generation *Generation, namespace, executionID string, facts map[string]interface{}, selectedPlanIDs map[string]struct{}, waitMode WaitMode) error {
+	resolvedFacts := cloneWorkflowFacts(facts)
+	artifact := generation.Checked().CloneArtifact()
+	dispatcherOptions := engine.workflowOptions
 	dispatcherOptions.RequestID = executionID
 
 	selected := make([]*effectusv1.Plan, 0, len(artifact.Plans))
@@ -113,7 +68,7 @@ func (er *ExecutionRuntime) executeCheckedWorkflowMode(ctx context.Context, unit
 				continue
 			}
 		} else {
-			matches, err := evaluateCheckedPredicate(plan.GetPredicate().GetExpression(), resolvedFacts, unit)
+			matches, err := evaluateCheckedPredicate(plan.GetPredicate().GetExpression(), resolvedFacts, generation)
 			if err != nil {
 				return fmt.Errorf("evaluate checked plan %q predicate: %w", plan.Id, err)
 			}
@@ -126,19 +81,19 @@ func (er *ExecutionRuntime) executeCheckedWorkflowMode(ctx context.Context, unit
 		}
 		selected = append(selected, plan)
 		sagaID := schema.StableSagaID(executionID, plan.Id)
-		if _, err := er.workflowStore.CreateSaga(ctx, schema.CreateSagaRequest{
+		if _, err := engine.workflowStore.CreateSaga(ctx, schema.CreateSagaRequest{
 			Namespace: namespace, SagaID: sagaID, ExecutionID: executionID,
-			PlanID: plan.Id, PlanDigest: unit.CheckedIR.Digest(), Serial: true,
+			PlanID: plan.Id, PlanDigest: generation.Checked().Digest(), Serial: true,
 		}); err != nil {
 			return fmt.Errorf("create checked workflow saga %q: %w", plan.Id, err)
 		}
 		if len(plan.Steps) == 0 {
-			if err := er.workflowStore.CompleteSaga(ctx, sagaID); err != nil {
+			if err := engine.workflowStore.CompleteSaga(ctx, sagaID); err != nil {
 				return fmt.Errorf("complete empty checked workflow saga %q: %w", plan.Id, err)
 			}
 			continue
 		}
-		if _, err := schema.EnqueueCheckedStep(ctx, er.workflowStore, unit.CheckedIR, schema.CheckedEnqueueRequest{
+		if _, err := schema.EnqueueCheckedStep(ctx, engine.workflowStore, generation.Checked(), schema.CheckedEnqueueRequest{
 			SagaID: sagaID, PlanID: plan.Id, EffectID: plan.Steps[0].Id, Facts: resolvedFacts,
 		}); err != nil {
 			return fmt.Errorf("enqueue plan %q first step: %w", plan.Id, err)
@@ -160,20 +115,20 @@ func (er *ExecutionRuntime) executeCheckedWorkflowMode(ctx context.Context, unit
 				stepOptions.InitialBackoff = time.Duration(policy.InitialBackoffMillis) * time.Millisecond
 				stepOptions.MaxBackoff = time.Duration(policy.MaxBackoffMillis) * time.Millisecond
 			}
-			dispatcher, err := schema.NewDispatcher(er.workflowStore, er.workflowFencing, checkedWorkflowInvocationExecutor{runtime: er, unit: unit, store: er.workflowStore}, stepOptions)
+			dispatcher, err := schema.NewDispatcher(engine.workflowStore, engine.workflowFencing, checkedWorkflowInvocationExecutor{generation: generation, store: engine.workflowStore}, stepOptions)
 			if err != nil {
 				return fmt.Errorf("create checked workflow dispatcher: %w", err)
 			}
-			dispatch, err := schema.EnqueueCheckedStep(ctx, er.workflowStore, unit.CheckedIR, schema.CheckedEnqueueRequest{
+			dispatch, err := schema.EnqueueCheckedStep(ctx, engine.workflowStore, generation.Checked(), schema.CheckedEnqueueRequest{
 				SagaID: sagaID, PlanID: plan.Id, EffectID: step.Id, Facts: resolvedFacts, ResultSlots: slots,
 			})
 			if err != nil {
 				return fmt.Errorf("enqueue plan %q step %q: %w", plan.Id, step.Id, err)
 			}
-			completed, err := dispatchCheckedWorkflowStep(ctx, dispatcher, er.workflowStore, dispatch.ID)
+			completed, err := dispatchCheckedWorkflowStep(ctx, dispatcher, engine.workflowStore, dispatch.ID)
 			if err != nil {
 				if plan.ExecutionPolicy == effectusv1.ExecutionPolicy_EXECUTION_POLICY_DURABLE_COMPENSATING {
-					if compensationErr := driveCheckedCompensation(ctx, dispatcher, er.workflowStore, sagaID); compensationErr != nil {
+					if compensationErr := driveCheckedCompensation(ctx, dispatcher, engine.workflowStore, sagaID); compensationErr != nil {
 						return errors.Join(fmt.Errorf("plan %q step %q: %w", plan.Id, step.Id, err), compensationErr)
 					}
 				}
@@ -190,7 +145,7 @@ func (er *ExecutionRuntime) executeCheckedWorkflowMode(ctx context.Context, unit
 				slots = append(slots, result)
 			}
 		}
-		if err := er.workflowStore.CompleteSaga(ctx, sagaID); err != nil {
+		if err := engine.workflowStore.CompleteSaga(ctx, sagaID); err != nil {
 			return fmt.Errorf("complete checked workflow saga %q: %w", plan.Id, err)
 		}
 	}
@@ -289,8 +244,8 @@ func decodeCheckedWorkflowResult(raw json.RawMessage) (interface{}, error) {
 	return result, nil
 }
 
-func evaluateCheckedPredicate(expression *effectusv1.Expression, facts map[string]interface{}, unit *compiler.CompiledUnit) (bool, error) {
-	value, err := evaluateCheckedExpression(expression, facts, unit)
+func evaluateCheckedPredicate(expression *effectusv1.Expression, facts map[string]interface{}, generation *Generation) (bool, error) {
+	value, err := evaluateCheckedExpression(expression, facts, generation)
 	if err != nil {
 		return false, err
 	}
@@ -301,7 +256,7 @@ func evaluateCheckedPredicate(expression *effectusv1.Expression, facts map[strin
 	return result, nil
 }
 
-func evaluateCheckedExpression(expression *effectusv1.Expression, facts map[string]interface{}, unit *compiler.CompiledUnit) (interface{}, error) {
+func evaluateCheckedExpression(expression *effectusv1.Expression, facts map[string]interface{}, generation *Generation) (interface{}, error) {
 	if expression == nil {
 		return nil, fmt.Errorf("expression is nil")
 	}
@@ -318,7 +273,7 @@ func evaluateCheckedExpression(expression *effectusv1.Expression, facts map[stri
 		if kind.Unary == nil {
 			return nil, fmt.Errorf("unary expression is nil")
 		}
-		value, err := evaluateCheckedExpression(kind.Unary.Operand, facts, unit)
+		value, err := evaluateCheckedExpression(kind.Unary.Operand, facts, generation)
 		if err != nil {
 			return nil, err
 		}
@@ -344,7 +299,7 @@ func evaluateCheckedExpression(expression *effectusv1.Expression, facts map[stri
 		if kind.Binary == nil {
 			return nil, fmt.Errorf("binary expression is nil")
 		}
-		left, err := evaluateCheckedExpression(kind.Binary.Left, facts, unit)
+		left, err := evaluateCheckedExpression(kind.Binary.Left, facts, generation)
 		if err != nil {
 			return nil, err
 		}
@@ -359,45 +314,13 @@ func evaluateCheckedExpression(expression *effectusv1.Expression, facts map[stri
 				return true, nil
 			}
 		}
-		right, err := evaluateCheckedExpression(kind.Binary.Right, facts, unit)
+		right, err := evaluateCheckedExpression(kind.Binary.Right, facts, generation)
 		if err != nil {
 			return nil, err
 		}
 		return evaluateCheckedBinary(kind.Binary.Operator, left, right)
 	case *effectusv1.Expression_Call:
-		if kind.Call == nil || unit == nil {
-			return nil, fmt.Errorf("function call is unavailable")
-		}
-		function := unit.Functions[kind.Call.Function]
-		if function == nil || function.Implementation == nil {
-			return nil, fmt.Errorf("function %q implementation is unavailable", kind.Call.Function)
-		}
-		arguments := make([]reflect.Value, len(kind.Call.Arguments))
-		implementation := reflect.ValueOf(function.Implementation)
-		if implementation.Kind() != reflect.Func || implementation.Type().NumIn() != len(arguments) {
-			return nil, fmt.Errorf("function %q implementation has an incompatible signature", kind.Call.Function)
-		}
-		for index, argument := range kind.Call.Arguments {
-			value, err := evaluateCheckedExpression(argument, facts, unit)
-			if err != nil {
-				return nil, err
-			}
-			reflected := reflect.ValueOf(value)
-			expected := implementation.Type().In(index)
-			if !reflected.IsValid() || !reflected.Type().AssignableTo(expected) {
-				if reflected.IsValid() && reflected.Type().ConvertibleTo(expected) {
-					reflected = reflected.Convert(expected)
-				} else {
-					return nil, fmt.Errorf("function %q argument %d is %T", kind.Call.Function, index, value)
-				}
-			}
-			arguments[index] = reflected
-		}
-		results := implementation.Call(arguments)
-		if len(results) != 1 {
-			return nil, fmt.Errorf("function %q implementation must return one value", kind.Call.Function)
-		}
-		return results[0].Interface(), nil
+		return nil, fmt.Errorf("function calls are not available in an immutable source generation")
 	default:
 		return nil, fmt.Errorf("expression kind is not set")
 	}

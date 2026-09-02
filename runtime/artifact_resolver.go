@@ -7,29 +7,22 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/josephjohncox/effectus/compiler"
-	"github.com/josephjohncox/effectus/internal/loader"
 	"github.com/josephjohncox/effectus/invocation"
 	"github.com/josephjohncox/effectus/ir"
 	"github.com/josephjohncox/effectus/schema/ledger"
-	"github.com/josephjohncox/effectus/schema/verb"
 )
 
-// ManifestArtifactResolver reconstructs invocation-aware adapters only from
-// immutable descriptors stored in the execution artifact.
+// ManifestArtifactResolver rebuilds a generation only from the descriptor
+// manifest durably pinned with an execution. No extension loader or callback
+// implementation participates in recovery.
 type ManifestArtifactResolver struct{ resolvers *invocation.Registry }
 
-// NewManifestArtifactResolver creates a fail-closed artifact resolver. The
-// only implicit resolver is the canonical HTTP resolver; legacy loader resolver
-// IDs are deliberately not decoded or recovered.
 func NewManifestArtifactResolver(registries ...*invocation.Registry) *ManifestArtifactResolver {
 	if len(registries) > 0 && registries[0] != nil {
-		return &ManifestArtifactResolver{resolvers: registries[0]}
+		return &ManifestArtifactResolver{registries[0]}
 	}
-	registry, _ := invocation.NewRegistry([]invocation.ResolverRegistration{{
-		ID: invocation.HTTPResolverID, Resolver: invocation.HTTPResolver{},
-	}})
-	return &ManifestArtifactResolver{resolvers: registry}
+	registry, _ := invocation.NewRegistry([]invocation.ResolverRegistration{{ID: invocation.HTTPResolverID, Resolver: invocation.HTTPResolver{}}})
+	return &ManifestArtifactResolver{registry}
 }
 
 type artifactExecutorEntry struct {
@@ -37,84 +30,77 @@ type artifactExecutorEntry struct {
 	Descriptor invocation.Descriptor `json:"descriptor"`
 }
 
-func (resolver *ManifestArtifactResolver) ResolveArtifact(ctx context.Context, artifact ledger.ExecutionArtifact, checked *ir.Checked) (*compiler.CompiledUnit, error) {
+func (resolver *ManifestArtifactResolver) ResolveGeneration(ctx context.Context, artifact ledger.ExecutionArtifact) (*Generation, error) {
+	if resolver == nil || resolver.resolvers == nil {
+		return nil, fmt.Errorf("artifact invocation resolver registry is not configured")
+	}
 	var environment ir.Environment
 	if err := strictArtifactJSON(artifact.Environment, &environment); err != nil {
 		return nil, fmt.Errorf("decode checked environment: %w", err)
+	}
+	checked, err := ir.Parse(artifact.IRBytes, environment, ir.Limits{})
+	if err != nil {
+		return nil, fmt.Errorf("parse checked artifact: %w", err)
+	}
+	if checked.Digest() != artifact.IRDigest {
+		return nil, fmt.Errorf("checked artifact digest mismatch")
 	}
 	var entries []artifactExecutorEntry
 	if err := strictArtifactJSON(artifact.ExecutorManifest, &entries); err != nil {
 		return nil, fmt.Errorf("decode executor manifest: %w", err)
 	}
-	var functionEnvelope struct {
-		InitialData map[string]any `json:"initial_data"`
-		Functions   map[string]any `json:"functions"`
-	}
-	if len(artifact.FunctionManifest) > 0 {
-		if err := strictArtifactJSON(artifact.FunctionManifest, &functionEnvelope); err != nil {
-			return nil, fmt.Errorf("decode function manifest: %w", err)
-		}
-		if len(functionEnvelope.Functions) > 0 {
-			return nil, fmt.Errorf("artifact functions require a configured immutable function resolver")
-		}
-	}
-	if resolver == nil || resolver.resolvers == nil {
-		return nil, fmt.Errorf("artifact invocation resolver registry is not configured")
-	}
-	specs := make(map[string]*compiler.CompiledVerbSpec, len(entries))
+	descriptors := make(map[string]invocation.Descriptor, len(entries))
+	executors := make(map[string]invocation.Executor, len(entries))
 	closers := make([]io.Closer, 0, len(entries))
-	closeResolved := func() {
-		for index := len(closers) - 1; index >= 0; index-- {
-			_ = closers[index].Close()
+	closeAll := func() {
+		for i := len(closers) - 1; i >= 0; i-- {
+			_ = closers[i].Close()
 		}
 	}
 	for _, entry := range entries {
-		contract, ok := environment.Verbs[entry.Name]
-		if !ok {
-			closeResolved()
+		if _, ok := environment.Verbs[entry.Name]; !ok {
+			closeAll()
 			return nil, fmt.Errorf("executor %q has no checked contract", entry.Name)
 		}
-		implementation, closer, err := resolver.resolvers.Resolve(ctx, entry.Descriptor)
+		executor, closer, err := resolver.resolvers.Resolve(ctx, entry.Descriptor)
 		if err != nil {
-			closeResolved()
+			closeAll()
 			return nil, fmt.Errorf("resolve verb %q: %w", entry.Name, err)
 		}
+		descriptors[entry.Name] = entry.Descriptor
+		executors[entry.Name] = executor
 		if closer != nil {
 			closers = append(closers, closer)
 		}
-		adapter := &generationInvocationExecutor{executor: implementation, descriptor: entry.Descriptor}
-		strict := true
-		spec := &verb.Spec{
-			Name: entry.Name, ArgTypes: contract.Arguments, RequiredArgs: contract.RequiredArgs,
-			ReturnType: contract.ResultType, Inverse: contract.InverseVerb, Executor: adapter,
-			StrictArgs: &strict, StrictReturn: &strict,
-		}
-		specs[entry.Name] = &compiler.CompiledVerbSpec{
-			Spec: spec, ExecutorType: compiler.ExecutorLocal,
-			ExecutorConfig: &compiler.LocalExecutorConfig{Implementation: adapter},
-			TypeSignature:  &compiler.TypeSignature{InputTypes: contract.Arguments, OutputType: contract.ResultType},
-		}
 	}
-	snapshot, err := loader.NewResourceSnapshot(closers...)
+	var identity struct {
+		Ruleset     string            `json:"ruleset"`
+		Version     string            `json:"version"`
+		FunctionIDs map[string]string `json:"function_ids"`
+	}
+	if err := strictArtifactJSON(artifact.FunctionManifest, &identity); err != nil {
+		closeAll()
+		return nil, fmt.Errorf("decode generation identity: %w", err)
+	}
+	generation, err := NewGeneration(GenerationConfig{Checked: checked, Environment: environment, Ruleset: identity.Ruleset, Version: identity.Version, ExecutorDescriptors: descriptors, FunctionIDs: identity.FunctionIDs, SourceDigest: artifact.SourceDigest, Executors: executors, Closers: closers, Production: true})
 	if err != nil {
-		closeResolved()
-		return nil, fmt.Errorf("own resolved executor resources: %w", err)
+		closeAll()
+		return nil, err
 	}
-	return &compiler.CompiledUnit{
-		VerbSpecs: specs, Functions: map[string]*compiler.CompiledFunction{}, CheckedIR: checked,
-		IREnvironment: environment, SourceDigest: artifact.SourceDigest, InitialData: functionEnvelope.InitialData,
-		ExtensionSnapshot: snapshot, ExecutionOwnedSnapshot: true,
-	}, nil
+	if generation.Digest() != artifact.GenerationDigest {
+		_ = generation.Close()
+		return nil, fmt.Errorf("resolved generation digest does not match pinned artifact")
+	}
+	return generation, nil
 }
-
 func strictArtifactJSON(data []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
 		if err == nil {
 			return fmt.Errorf("trailing JSON value")
 		}
