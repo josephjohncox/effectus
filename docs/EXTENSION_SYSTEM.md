@@ -1,210 +1,41 @@
-# Extension System
+# SourceBundle Extension Boundary
 
-Effectus extensions add fact types, pure functions, verb contracts, executor targets, and rule sources.
+Effectus does not have a runtime extension manager. The supported declaration
+unit is one immutable `bundle.SourceBundle`.
 
-Effectusd compiles extension `.eff` and `.effx` sources into canonical checked IR before it publishes a generation.
+## Bundle contents
 
-## Production boundary
+A SourceBundle contains rule sources, an immutable declaration environment, and
+verb executor descriptors. `effectusc check`, `compile`, and `inspect` accept
+only this bundle. `effectusd` accepts one bundle from a file or a digest-pinned,
+signature-verified OCI reference.
 
-Production effectusd accepts declarative extension inputs. It rejects in-process Go plugins.
+The daemon compiles the bundle once at startup. It does not load extension
+directories, JSON manifests, plugins, dynamic schemas, or rule updates.
 
-A trusted embedded Go application can register static Go executors. This compatibility path is outside the daemon isolation boundary.
+## Executor descriptors
 
-JSON verb manifests define contracts and targets. They do not contain workflow control flow.
+Production daemon bundles use resolved HTTP invocation descriptors. The daemon
+resolves every descriptor before it becomes ready. A missing or unsupported
+descriptor fails startup.
 
-## Extension inputs
+The HTTP destination receives stable invocation, idempotency, contract, attempt,
+and fencing metadata. The destination must enforce idempotency or fencing where
+its business mutation needs that guarantee.
 
-Effectus supports:
+The generated gRPC service is an inbound execution API. Kafka is an inbound
+fact source. Neither is an outbound executor descriptor.
 
-- JSON verb manifests
-- JSON schema and function manifests
-- Protobuf verb declarations
-- Local extension directories
-- Digest-pinned OCI extension bundles
-- Static Go declarations for embedded applications
+## Embedded applications
 
-The extension manager combines these inputs into a candidate declaration environment.
+A trusted Go application can use `embedded.Open` with a static resolver
+registry. This is process-local application code, not a plugin mechanism and
+not a daemon extension path. The shared embedded example consumes the exact
+`examples/order_review` rule and data artifacts through Go embedding.
 
-## Verb manifest
+## OCI distribution
 
-A verb manifest declares one or more operation contracts:
-
-```json
-{
-  "name": "payments",
-  "version": "1.0.0",
-  "verbs": [
-    {
-      "name": "ReservePayment",
-      "argTypes": {
-        "orderId": "string",
-        "amount": "float"
-      },
-      "requiredArgs": ["orderId", "amount"],
-      "returnType": "PaymentReservation",
-      "capabilities": ["write", "idempotent"],
-      "resources": [
-        {
-          "resource": "payment",
-          "capabilities": ["write"]
-        }
-      ],
-      "inverse": "ReleasePayment",
-      "target": {
-        "type": "http",
-        "config": {
-          "url": "https://payments.example/reservations",
-          "method": "POST",
-          "timeout": "5s"
-        }
-      }
-    }
-  ]
-}
-```
-
-The compiler checks names, argument types, required arguments, result types, capabilities, resources, inverse references, and target configuration.
-
-A successful declaration check does not prove the destination implements the contract.
-
-## Schema manifest
-
-A schema manifest can define named types, pure function signatures, and immutable initial data:
-
-```json
-{
-  "name": "payment-types",
-  "version": "1.0.0",
-  "types": {
-    "PaymentReservation": {
-      "name": "PaymentReservation",
-      "type": "object",
-      "properties": {
-        "reservationId": {"type": "string"},
-        "accepted": {"type": "boolean"}
-      }
-    }
-  },
-  "functions": {
-    "isSupportedCurrency": {
-      "name": "isSupportedCurrency",
-      "type": "builtin"
-    }
-  },
-  "initialData": {
-    "payment.defaultCurrency": "USD"
-  }
-}
-```
-
-The current workflow IR records function declarations as generation metadata. It does not invoke arbitrary registered Go functions.
-
-## Rule sources
-
-An extension bundle can contain `.eff` and `.effx` sources.
-
-The daemon compiles these sources with `compiler.CompileChecked`. It rejects a bundle when any source fails to parse or check.
-
-A schema or verb refresh recompiles the same source against the candidate environment.
-
-## Executor targets
-
-### HTTP
-
-The HTTP executor sends a checked argument object to a configured endpoint.
-
-It applies URL, host, redirect, DNS, timeout, and response-size controls. These controls reduce SSRF and resource-exhaustion risk.
-
-The destination receives invocation, idempotency, attempt, contract, and fencing metadata.
-
-No gRPC, stream, Kafka, or OCI executor resolver is a supported production target. The generated gRPC service is an inbound API, and OCI can distribute source bundles; neither is an outbound verb executor resolver.
-
-## Embedded handlers
-
-A trusted application can use the documented `embedded` package to register invocation-aware Go handlers. This process-local path is separate from the daemon. It cannot become checked protobuf IR or an untrusted plugin system.
-
-## Immutable snapshots
-
-The runtime builds one extension snapshot for each candidate generation.
-
-A snapshot contains declarations, executor instances, checked artifacts, and content digests. Active executions retain a reference to their snapshot.
-
-Retirement waits until no execution uses the old snapshot. A failed candidate closes its own resources without changing the active generation.
-
-## Source-bundle distribution
-
-`effectusc bundle` writes one canonical JSON source bundle. It can also publish the deterministic source-bundle layer to OCI.
-
-```bash
-effectusc bundle \
-  --name payments \
-  --version 1.0.0 \
-  --schema-dir ./schemas \
-  --verb-dir ./verbs \
-  --rules-dir ./rules \
-  --output payments.json \
-  --oci-ref ghcr.io/acme/effectus-payments:1.0.0
-```
-
-The command prints a verified `repository@sha256:...` reference after publication. Sign and deploy that digest; never deploy the mutable tag.
-
-```bash
-EFFECTUS_POSTGRES_DSN="$POSTGRES_DSN" \
-  effectusd \
-  --oci-ref ghcr.io/acme/effectus-payments@sha256:BUNDLE_DIGEST \
-  --oci-signature-verifier /usr/local/bin/effectus-verify-oci
-```
-
-Effectusd verifies the digest and signature before it decodes the source-bundle layer.
-
-## Archive safety
-
-The shared extractor rejects:
-
-- Absolute paths
-- Parent traversal
-- Symbolic and hard links
-- Device and unsupported entry types
-- Excessive file counts
-- Excessive file or expanded archive sizes
-
-Nested archives use the same limits.
-
-## Durable execution metadata
-
-A checked invocation carries:
-
-- Stable execution, plan, effect, and dispatch identities
-- An idempotency key
-- An attempt number
-- The contract hash
-- A fencing class and token
-
-The destination must enforce idempotency or fencing when correctness requires it.
-
-## Compensation
-
-A verb can name an inverse verb. The runtime records forward success before it considers compensation.
-
-Compensation runs in reverse source order. It is another external operation and can fail.
-
-The runtime blocks automatic compensation when a forward operation has an unknown outcome.
-
-## Security checklist
-
-- Use digest-pinned OCI references.
-- Configure and test a signature verifier.
-- Keep credentials in a secret store.
-- Use TLS and destination authentication.
-- Restrict executor network access.
-- Set request and response limits.
-- Require destination idempotency or fencing where needed.
-- Review capability and resource declarations.
-
-## Related documents
-
-- [Checked Compilation Flow](coherent_flow.md)
-- [Runtime Guarantees](GUARANTEES.md)
-- [Runtime Lifecycle](LIFECYCLE.md)
-- [Durable Saga Protocol](DURABLE_SAGA_PROTOCOL.md)
-- [Loader Package](https://github.com/josephjohncox/effectus/blob/main/internal/loader/README.md)
+OCI distributes the immutable SourceBundle layer. `effectusd --oci-ref` requires
+a digest-pinned reference and `--oci-signature-verifier`; the verifier defines
+the operator trust policy. OCI tags, unverifiable content, and mutable reload
+configuration are not accepted.

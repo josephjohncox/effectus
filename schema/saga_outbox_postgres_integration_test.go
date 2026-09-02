@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/josephjohncox/effectus/invocation"
 	"github.com/josephjohncox/effectus/schema/fencing"
 	"github.com/stretchr/testify/require"

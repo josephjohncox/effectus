@@ -10,9 +10,6 @@ spec:
     - name: http
       port: {{ .Values.service.port }}
       targetPort: http
-    - name: metrics
-      port: {{ .Values.service.metricsPort }}
-      targetPort: metrics
     {{- if .Values.grpc.enabled }}
     - name: grpc
       port: {{ .Values.grpc.port }}

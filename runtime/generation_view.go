@@ -4,13 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/josephjohncox/effectus/compiler"
 	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
 	"github.com/josephjohncox/effectus/ir"
 )
 
-// GenerationView is an immutable presentation snapshot of the generation used
-// for new admissions. It contains no executor implementation or mutable state.
 type GenerationView struct {
 	Ruleset          string
 	Version          string
@@ -20,8 +17,6 @@ type GenerationView struct {
 	Environment      ir.Environment
 	Plans            []PlanView
 }
-
-// PlanView is a checked plan shown by status and dry-run APIs.
 type PlanView struct {
 	ID        string
 	Dialect   effectusv1.SourceDialect
@@ -30,68 +25,43 @@ type PlanView struct {
 	Verbs     []string
 }
 
-// GenerationView returns the single checked generation that backs admission,
-// transport execution, status, and UI presentation.
 func (engine *Engine) GenerationView() *GenerationView {
-	if engine == nil || engine.runtime == nil {
+	if engine == nil {
 		return nil
 	}
-	engine.runtime.mu.RLock()
-	defer engine.runtime.mu.RUnlock()
-	generation := engine.runtime.activeGeneration
-	if generation == nil || generation.unit == nil || generation.unit.CheckedIR == nil {
-		return nil
-	}
-	return generationView(generation, generation.unit)
+	return generationView(engine.Generation())
 }
-
-func generationView(generation *ExecutionGeneration, compiled *compiler.CompiledUnit) *GenerationView {
-	artifact := compiled.CheckedIR.CloneArtifact()
-	view := &GenerationView{
-		Ruleset: generation.Ruleset, Version: generation.Version,
-		GenerationDigest: generation.GenerationDigest, IRDigest: generation.IRDigest,
-		SourceDigest: compiled.SourceDigest, Environment: cloneGenerationEnvironment(compiled.IREnvironment),
-		Plans: make([]PlanView, 0, len(artifact.Plans)),
+func generationView(generation *Generation) *GenerationView {
+	if generation == nil || generation.Checked() == nil {
+		return nil
 	}
+	artifact := generation.Checked().CloneArtifact()
+	view := &GenerationView{Ruleset: generation.Ruleset(), Version: generation.Version(), GenerationDigest: generation.Digest(), IRDigest: generation.Checked().Digest(), SourceDigest: generation.SourceDigest(), Environment: generation.Environment(), Plans: make([]PlanView, 0, len(artifact.Plans))}
 	for _, plan := range artifact.Plans {
 		if plan == nil {
 			continue
 		}
-		item := PlanView{ID: plan.Id, Dialect: plan.SourceDialect, Priority: plan.Priority, Verbs: make([]string, 0, len(plan.Steps))}
+		item := PlanView{ID: plan.Id, Dialect: plan.SourceDialect, Priority: plan.Priority, Verbs: planVerbNames(plan)}
 		if plan.Predicate != nil && plan.Predicate.Expression != nil {
 			item.Predicate = plan.Predicate.Expression.String()
-		}
-		for _, step := range plan.Steps {
-			if step != nil {
-				item.Verbs = append(item.Verbs, step.Verb)
-			}
 		}
 		view.Plans = append(view.Plans, item)
 	}
 	return view
 }
-
-// DryRun evaluates the active checked generation without durable admission,
-// invocation, retries, or other external effects.
 func (engine *Engine) DryRun(ctx context.Context, facts map[string]any) ([]PlanEvaluation, error) {
-	if engine == nil || engine.runtime == nil || ctx == nil {
+	if engine == nil || ctx == nil {
 		return nil, fmt.Errorf("checked dry-run requires an engine and context")
 	}
-	engine.runtime.mu.RLock()
-	generation := engine.runtime.activeGeneration
-	if engine.runtime.state != StateReady || generation == nil || generation.unit == nil || generation.unit.CheckedIR == nil {
-		engine.runtime.mu.RUnlock()
+	generation := engine.Generation()
+	if generation == nil || generation.Checked() == nil {
 		return nil, fmt.Errorf("checked generation is unavailable")
 	}
-	unit := generation.unit
-	engine.runtime.mu.RUnlock()
-
-	effective := cloneWorkflowFacts(unit.InitialData)
-	mergeWorkflowFactOverrides(effective, facts)
-	if err := validateAdmissionFactTypes(unit.IREnvironment, effective); err != nil {
+	effective := cloneWorkflowFacts(facts)
+	if err := validateAdmissionFactTypes(generation.Environment(), effective); err != nil {
 		return nil, err
 	}
-	artifact := unit.CheckedIR.CloneArtifact()
+	artifact := generation.Checked().CloneArtifact()
 	result := make([]PlanEvaluation, 0, len(artifact.Plans))
 	for _, plan := range artifact.Plans {
 		if err := ctx.Err(); err != nil {
@@ -100,7 +70,7 @@ func (engine *Engine) DryRun(ctx context.Context, facts map[string]any) ([]PlanE
 		if plan == nil || plan.Predicate == nil {
 			return nil, fmt.Errorf("checked generation has an invalid plan")
 		}
-		matched, err := evaluateCheckedPredicate(plan.Predicate.Expression, effective, unit)
+		matched, err := evaluateCheckedPredicate(plan.Predicate.Expression, effective, generation)
 		if err != nil {
 			return nil, fmt.Errorf("evaluate checked plan %q: %w", plan.Id, err)
 		}
@@ -109,7 +79,6 @@ func (engine *Engine) DryRun(ctx context.Context, facts map[string]any) ([]PlanE
 	return result, nil
 }
 
-// PlanEvaluation is the result of evaluating one checked plan in DryRun.
 type PlanEvaluation struct {
 	Plan    PlanView
 	Matched bool

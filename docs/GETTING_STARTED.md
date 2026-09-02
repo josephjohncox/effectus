@@ -58,7 +58,7 @@ The application compiles `examples/order_review/rules/order_review.eff` to check
 
 ## Path 2: Durable Docker
 
-This path uses Docker Compose for all services. The script builds `effectusc` and `effectusd` from the current checkout.
+This path uses Docker Compose for all services. The script creates the immutable source bundle, then builds and starts `effectusd` from the current checkout.
 
 Install these host tools before you run the acceptance script:
 
@@ -83,7 +83,7 @@ examples/standalone_executor/scripts/run.sh
 The script performs these checks:
 
 1. It creates `out/standalone_executor`.
-2. It compiles the shared rule with the current `effectusc` source.
+2. It creates a `bundle.SourceBundle` from the shared rule and executor descriptor.
 3. It includes the HTTP executor descriptors in the source bundle.
 4. It builds the current `effectusd` image.
 5. It starts PostgreSQL at `postgres:5432`.
@@ -105,16 +105,14 @@ A successful run ends with output in this form:
 }
 conflicting_replay_http_status: 409
 {
-  "error": "engine admission identity conflict: admission identity ...",
-  "request_id": "..."
+  "error": "engine admission identity conflict: admission identity ..."
 }
 OK durable order-review demo passed
-UI: http://127.0.0.1:18080/ui
 ```
 
 Compose and image-build progress can appear on standard error. The script prints Compose logs after a startup or readiness failure.
 
-The services stay active after a successful run. The script prints the active UI URL. With the default port, open [http://127.0.0.1:18080/ui](http://127.0.0.1:18080/ui).
+The services stay active after a successful run. Use the authenticated `/v1/status` endpoint to inspect the active generation.
 
 The host ports bind only to the loopback interface:
 
@@ -141,7 +139,9 @@ The inspection commands below use these exported variables.
 Check readiness:
 
 ```bash
-curl --fail "http://127.0.0.1:${EFFECTUS_DEMO_HTTP_PORT}/readyz"
+curl --fail --silent \
+  --header "Authorization: Bearer ${EFFECTUS_API_TOKEN}" \
+  "http://127.0.0.1:${EFFECTUS_DEMO_HTTP_PORT}/v1/status"
 ```
 
 Read the one business review:

@@ -8,10 +8,14 @@ services:
       POSTGRES_PASSWORD: effectus
       POSTGRES_DB: effectus
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U effectus -d effectus"]
+      # The entrypoint's temporary initialization server listens only on its
+      # Unix socket. Probe the application database through TCP so dependents
+      # wait for the final post-initialization server.
+      test: ["CMD-SHELL", "pg_isready --host=127.0.0.1 --username=\"$$POSTGRES_USER\" --dbname=\"$$POSTGRES_DB\""]
       interval: 2s
       timeout: 3s
       retries: 30
+      start_period: 5s
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
@@ -35,7 +39,7 @@ services:
     image: ${EFFECTUS_IMAGE:-effectus-demo-current}
     environment:
       EFFECTUS_POSTGRES_DSN: postgres://effectus:effectus@postgres:5432/effectus?sslmode=disable
-    command: ["--database-migrations=apply"]
+    command: ["--migrate-only"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,18 +51,17 @@ services:
       context: ../..
       dockerfile: Dockerfile
     image: ${EFFECTUS_IMAGE:-effectus-demo-current}
+    # Match the invoking non-root user so the daemon can read the owner-only
+    # generated bundle without exposing its executor credential on the host.
+    user: "${EFFECTUS_DEMO_UID:-10001}:${EFFECTUS_DEMO_GID:-10001}"
     environment:
       EFFECTUS_API_TOKEN: ${EFFECTUS_API_TOKEN:-}
       EFFECTUS_POSTGRES_DSN: postgres://effectus:effectus@postgres:5432/effectus?sslmode=disable
     command:
       - --bundle
       - /config/bundle.json
-      - --facts-store
-      - memory
       - --http-addr
       - :8080
-      - --metrics-addr
-      - ""
     depends_on:
       business-executor:
         condition: service_started

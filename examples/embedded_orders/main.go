@@ -4,108 +4,103 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"sync"
+	"io"
+	"os"
+	"path/filepath"
+	goruntime "runtime"
 
+	"github.com/josephjohncox/effectus/bundle"
 	"github.com/josephjohncox/effectus/embedded"
-	orderreview "github.com/josephjohncox/effectus/internal/demo/orderreview"
 	"github.com/josephjohncox/effectus/invocation"
+	"github.com/josephjohncox/effectus/ir"
 )
 
-type reviewService struct {
-	mu      sync.Mutex
-	reviews map[string]map[string]any
-}
+const resolverID = "example/embedded-orders/v1"
 
-func (service *reviewService) requestReview(_ context.Context, request invocation.Request) invocation.Outcome {
-	key := request.Metadata.Saga.IdempotencyKey
-	if key == "" {
-		return embedded.Permanent(fmt.Errorf("review idempotency key is required"))
-	}
-	service.mu.Lock()
-	defer service.mu.Unlock()
-	if existing, ok := service.reviews[key]; ok {
-		return embedded.Success(existing["review_id"])
-	}
-	review := map[string]any{
-		"review_id": "review-" + request.Arguments["orderId"].(string),
-		"order_id":  request.Arguments["orderId"],
-		"reason":    request.Arguments["reason"],
-		"status":    "pending",
-	}
-	service.reviews[key] = review
-	return embedded.Success(review["review_id"])
+type reviewExecutor struct{ reviews *int }
+
+func (executor reviewExecutor) Invoke(_ context.Context, _ invocation.Request) invocation.Outcome {
+	(*executor.reviews)++
+	return invocation.Outcome{Class: invocation.OutcomeSuccess, Result: true}
 }
 
 func main() {
 	ctx := context.Background()
-	reviews := &reviewService{reviews: make(map[string]map[string]any)}
-	ruleSource, err := orderreview.RuleSource()
+	descriptor, err := invocation.NewDescriptor(invocation.DescriptorSpec{Type: invocation.DescriptorEmbedded, ResolverID: resolverID, Reference: "order-review"})
 	if err != nil {
-		log.Fatal(err)
+		fail(err)
 	}
-	application, err := embedded.New("order-review", "1.0.0").
-		AddFact("order.id", "").
-		AddFact("order.total", 0.0).
-		AddFact("order.currency", "").
-		AddFact("order.risk_score", int64(0)).
-		AddSource("order_review.eff", ruleSource).
-		AddVerb(embedded.Verb{
-			Name:         "RequestManualReview",
-			Description:  "Create a manual review for a risky order",
-			ArgTypes:     map[string]string{"orderId": "string", "reason": "string"},
-			RequiredArgs: []string{"orderId", "reason"},
-			ReturnType:   "string",
-			Capabilities: []string{"write", "create", "idempotent"},
-			Resources: []embedded.Resource{{
-				Name: "order_review", Capabilities: []string{"write", "create", "idempotent"},
-			}},
-			Handler: reviews.requestReview,
-		}).
-		Build(ctx)
+	var scenario struct {
+		IdempotencyKey string `json:"idempotency_key"`
+		Request        struct {
+			Namespace string         `json:"namespace"`
+			Facts     map[string]any `json:"facts"`
+		} `json:"request"`
+	}
+	rule, scenarioJSON, err := sharedOrderReviewArtifacts()
 	if err != nil {
-		log.Fatal(err)
+		fail(err)
 	}
-	defer application.Close()
+	if err := json.Unmarshal(scenarioJSON, &scenario); err != nil {
+		fail(fmt.Errorf("decode shared order-review scenario: %w", err))
+	}
+	source, err := bundle.New(bundle.Spec{
+		Name: "order-review", Version: "1.0.0",
+		Sources: []bundle.Source{{Path: "rules/order_review.eff", Content: string(rule)}},
 
-	scenario, err := orderreview.CanonicalScenario()
+		Environment: ir.Environment{
+			Facts: map[string]string{"order.id": "string", "order.total": "float", "order.risk_score": "int"},
+			Verbs: map[string]ir.VerbContract{"RequestManualReview": {Arguments: map[string]string{"orderId": "string", "reason": "string"}, RequiredArgs: []string{"orderId", "reason"}, ResultType: "bool"}},
+		},
+		Executors: map[string]invocation.Descriptor{"RequestManualReview": descriptor},
+	})
 	if err != nil {
-		log.Fatal(err)
+		fail(err)
 	}
-	request := embedded.Request{
-		Namespace:      scenario.Request.Namespace,
-		IdempotencyKey: scenario.IdempotencyKey,
-		Facts:          scenario.Facts(),
-	}
-	first, err := application.Execute(ctx, request)
+	var reviews int
+	resolvers, err := invocation.NewRegistry([]invocation.ResolverRegistration{{ID: resolverID, Resolver: invocation.ResolverFunc(func(context.Context, invocation.Descriptor) (invocation.Executor, io.Closer, error) {
+		return reviewExecutor{reviews: &reviews}, nil, nil
+	})}})
 	if err != nil {
-		log.Fatal(err)
+		fail(err)
 	}
-	second, err := application.Execute(ctx, request)
+	runtime, err := embedded.Open(ctx, source, resolvers)
 	if err != nil {
-		log.Fatal(err)
+		fail(err)
 	}
-
-	reviewCount := len(reviews.reviews)
-	if !first.Completed || !second.Completed {
-		log.Fatalf("execution did not complete: first=%t replay=%t", first.Completed, second.Completed)
-	}
-	if first.ExecutionID == "" || first.ExecutionID != second.ExecutionID {
-		log.Fatalf("replay execution ID mismatch: first=%q replay=%q", first.ExecutionID, second.ExecutionID)
-	}
-	if reviewCount != 1 {
-		log.Fatalf("review count = %d, want 1", reviewCount)
-	}
-
-	output := map[string]any{
-		"execution_id":       first.ExecutionID,
-		"replayed_execution": second.ExecutionID,
-		"completed":          first.Completed,
-		"review_count":       reviewCount,
-	}
-	encoded, err := json.MarshalIndent(output, "", "  ")
+	defer runtime.Close()
+	request := embedded.Request{Namespace: scenario.Request.Namespace, IdempotencyKey: scenario.IdempotencyKey, Facts: scenario.Request.Facts}
+	first, err := runtime.Execute(ctx, request)
 	if err != nil {
-		log.Fatal(err)
+		fail(err)
 	}
-	fmt.Println(string(encoded))
+	second, err := runtime.Execute(ctx, request)
+	if err != nil {
+		fail(err)
+	}
+	fmt.Fprintln(os.Stderr, "Runtime compiled successfully with 1 verbs, 0 functions")
+	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"completed": first.Completed, "execution_id": first.ExecutionID, "replayed_execution": second.ExecutionID, "review_count": reviews}); err != nil {
+		fail(err)
+	}
 }
+
+// sharedOrderReviewArtifacts uses the source location, not the process working
+// directory, so `go run ./examples/embedded_orders` reads the one shared demo.
+func sharedOrderReviewArtifacts() ([]byte, []byte, error) {
+	_, file, _, ok := goruntime.Caller(0)
+	if !ok {
+		return nil, nil, fmt.Errorf("resolve embedded example source path")
+	}
+	root := filepath.Join(filepath.Dir(file), "..", "order_review")
+	rule, err := os.ReadFile(filepath.Join(root, "rules", "order_review.eff"))
+	if err != nil {
+		return nil, nil, fmt.Errorf("read shared order-review rule: %w", err)
+	}
+	scenario, err := os.ReadFile(filepath.Join(root, "data", "order.json"))
+	if err != nil {
+		return nil, nil, fmt.Errorf("read shared order-review scenario: %w", err)
+	}
+	return rule, scenario, nil
+}
+
+func fail(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }

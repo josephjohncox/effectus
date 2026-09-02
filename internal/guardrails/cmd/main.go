@@ -136,6 +136,12 @@ func check(root string) error {
 	} else {
 		failures = append(failures, guardrails.CheckDependencyRules(packages, rules)...)
 	}
+	forbiddenSymbols, err := guardrails.CheckForbiddenProductionSymbols(packages)
+	if err != nil {
+		failures = append(failures, err.Error())
+	} else {
+		failures = append(failures, forbiddenSymbols...)
+	}
 	deprecations, err := guardrails.CheckDeprecations(root, time.Now().UTC())
 	if err != nil {
 		failures = append(failures, err.Error())
@@ -147,6 +153,9 @@ func check(root string) error {
 		failures = append(failures, err.Error())
 	} else {
 		failures = append(failures, docClaims...)
+	}
+	if err := documentedCLITestContract(root); err != nil {
+		failures = append(failures, err.Error())
 	}
 	catalog, err := exampleCatalog(guardrails.DiscoverExamples(root))
 	if err != nil {
@@ -160,6 +169,24 @@ func check(root string) error {
 		return fmt.Errorf("repository guardrails failed:\n- %s", strings.Join(failures, "\n- "))
 	}
 	fmt.Println("repository guardrails passed")
+	return nil
+}
+
+// documentedCLITestContract prevents a future surface reduction from silently
+// deleting the executable documentation contracts that CI runs through guardrails.
+func documentedCLITestContract(root string) error {
+	for _, path := range []string{
+		filepath.Join(root, "cmd", "effectusc", "docs_contract_test.go"),
+		filepath.Join(root, "cmd", "effectusd", "docs_contract_test.go"),
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("required documented CLI contract test is absent: %s", path)
+		}
+		if !strings.Contains(string(data), "func TestDocumentedCLIAndFlags") {
+			return fmt.Errorf("documented CLI contract test matches nothing: %s", path)
+		}
+	}
 	return nil
 }
 

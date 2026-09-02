@@ -1,40 +1,5 @@
 # Approved exported Go declarations.
 # Do not update this file without an intentional surface review.
-github.com/josephjohncox/effectus	func Invoke(ctx context.Context, executor Executor, effect Effect) (interface{}, error)
-github.com/josephjohncox/effectus	func InvokeContext(ctx context.Context, executor ContextExecutor, effect Effect) (interface{}, error)
-github.com/josephjohncox/effectus	type Compiler interface{CompileFilefunc(path string, schema SchemaInfo) (Spec, error)}
-github.com/josephjohncox/effectus	type ContextExecutor interface{DoContextfunc(ctx context.Context, effect Effect) (result interface{}, err error)}
-github.com/josephjohncox/effectus	type Effect struct{Verb string; Payload interface{}}
-github.com/josephjohncox/effectus	type Executor interface{Dofunc(effect Effect) (result interface{}, err error)}
-github.com/josephjohncox/effectus	type Facts interface{Getfunc(path string) (interface{}, bool); Schemafunc() SchemaInfo}
-github.com/josephjohncox/effectus	type SchemaInfo interface{ValidatePathfunc(path string) bool}
-github.com/josephjohncox/effectus	type Spec interface{GetNamefunc() string; RequiredFactsfunc() []string; Executefunc(ctx context.Context, facts Facts, ex Executor) error}
-github.com/josephjohncox/effectus/analysis	func BuildDependencyGraph(file *ast.File, knownFacts map[string]struct{}) DependencyGraph
-github.com/josephjohncox/effectus/analysis	type CoverageReport struct{UsedFacts []string; UnknownFacts []string; UnusedFacts []string}
-github.com/josephjohncox/effectus/analysis	type DependencyGraph struct{Rules []string; Flows []string; Facts []string; Verbs []string; Edges []Edge; Coverage CoverageReport}
-github.com/josephjohncox/effectus/analysis	type Edge struct{From string; To string; Kind string}
-github.com/josephjohncox/effectus/ast	method Flow.PostProcess()
-github.com/josephjohncox/effectus/ast	method Literal.PostProcess()
-github.com/josephjohncox/effectus/ast	method PathExpression.GetFullPath() string
-github.com/josephjohncox/effectus/ast	method PredicateBlock.GetExpression() string
-github.com/josephjohncox/effectus/ast	method PredicateBlock.PostProcess()
-github.com/josephjohncox/effectus/ast	method Rule.PostProcess()
-github.com/josephjohncox/effectus/ast	type ArgValue struct{Pos lexer.Position; VarRef string; PathExpr *PathExpression; Literal *Literal}
-github.com/josephjohncox/effectus/ast	type Effect struct{Pos lexer.Position; BindName string; Verb string; Args []*StepArg}
-github.com/josephjohncox/effectus/ast	type EffectBlock struct{Pos lexer.Position; Effects []*Effect}
-github.com/josephjohncox/effectus/ast	type File struct{Pos lexer.Position; Rules []*Rule; Flows []*Flow}
-github.com/josephjohncox/effectus/ast	type Flow struct{Pos lexer.Position; Name string; Priority int; When *PredicateBlock; Steps *StepBlock; End string}
-github.com/josephjohncox/effectus/ast	type Literal struct{Pos lexer.Position; String *string; Int *int; Float *float64; Bool *bool; List []Literal; Map []*MapEntry}
-github.com/josephjohncox/effectus/ast	type MapEntry struct{Pos lexer.Position; Key string; Value Literal}
-github.com/josephjohncox/effectus/ast	type PathExpression struct{Path string}
-github.com/josephjohncox/effectus/ast	type PathSegmentInfo struct{Name string; Index *int}
-github.com/josephjohncox/effectus/ast	type PredicateBlock struct{Pos lexer.Position; Expression string}
-github.com/josephjohncox/effectus/ast	type Rule struct{Pos lexer.Position; Name string; Priority int; Blocks []*WhenThenBlock; End string}
-github.com/josephjohncox/effectus/ast	type Step struct{Pos lexer.Position; BindName string; Verb string; Args []*StepArg; Arrow string}
-github.com/josephjohncox/effectus/ast	type StepArg struct{Pos lexer.Position; Name string; Value *ArgValue}
-github.com/josephjohncox/effectus/ast	type StepBlock struct{Pos lexer.Position; Steps []*Step}
-github.com/josephjohncox/effectus/ast	type WhenThenBlock struct{Pos lexer.Position; When *PredicateBlock; Then *EffectBlock}
-github.com/josephjohncox/effectus/ast	var Lexer = lexer.MustStateful(lexer.Rules{ "Root": { {Name: "Comment", Pattern: `//[^\n]*|#[^\n]*`, Action: nil}, {Name: "Whitespace", Pattern: `\s+`, Action: nil}, {Name: "Float", Pattern: `\d+\.\d+`, Action: nil}, {Name: "Int", Pattern: `\d+`, Action: nil}, {Name: "String", Pattern: `"(?:\\.|[^"])*"|'(?:\\.|[^'])*'`, Action: nil}, {Name: "LogicalOp", Pattern: `&&|\|\||!`, Action: nil}, {Name: "Arrow", Pattern: `->`, Action: nil}, {Name: "Operator", Pattern: `==|!=|>=|<=|>|<|\+|-|\*|/|%`, Action: nil}, {Name: "VarRef", Pattern: `\$[a-zA-Z_][a-zA-Z0-9_]*`, Action: nil}, {Name: "FactPath", Pattern: `[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*|\[\d+\])+`, Action: nil}, {Name: "Ident", Pattern: `[a-zA-Z_][a-zA-Z0-9_]*`, Action: nil}, {Name: "Punct", Pattern: `[(),\[\].:?=]`, Action: nil}, {Name: "Braces", Pattern: `[{}]`, Action: nil}, }, })
 github.com/josephjohncox/effectus/bundle	const FormatVersion = "effectus.source-bundle.v1"
 github.com/josephjohncox/effectus/bundle	func New(spec Spec) (*SourceBundle, error)
 github.com/josephjohncox/effectus/bundle	func Parse(data []byte) (*SourceBundle, error)
@@ -55,52 +20,23 @@ github.com/josephjohncox/effectus/bundle	type OCIVerifier func(context.Context, 
 github.com/josephjohncox/effectus/bundle	type Source struct{Path string; Content string}
 github.com/josephjohncox/effectus/bundle	type SourceBundle struct{}
 github.com/josephjohncox/effectus/bundle	type Spec struct{Name string; Version string; Sources []Source; Environment ir.Environment; Executors map[string]invocation.Descriptor; Metadata map[string]string}
-github.com/josephjohncox/effectus/common	func CompileArgs(args []*ast.StepArg, bindings map[string]interface{}) (map[string]interface{}, error)
-github.com/josephjohncox/effectus/common	func CompileLiteral(lit *ast.Literal) interface{}
-github.com/josephjohncox/effectus/common	func NewBasicFacts(data map[string]interface{}, schema SchemaInfo) *BasicFacts
-github.com/josephjohncox/effectus/common	func NewBasicSchema() *BasicSchema
-github.com/josephjohncox/effectus/common	func NewExecutorAdapter(verbRegistry VerbRegistry, facts Facts) *ExecutorAdapter
-github.com/josephjohncox/effectus/common	func SortByPriorityFuncStable[T any](items []T, getPriority func(T) int)
-github.com/josephjohncox/effectus/common	func SortByPriorityFunc[T any](items []T, getPriority func(T) int)
-github.com/josephjohncox/effectus/common	func SortByPriorityStable[T Prioritized](items []T)
-github.com/josephjohncox/effectus/common	func SortByPriority[T Prioritized](items []T)
-github.com/josephjohncox/effectus/common	func TryNewBasicFacts(data map[string]interface{}, schema SchemaInfo) (*BasicFacts, error)
-github.com/josephjohncox/effectus/common	func ValidateVerbArgs(spec *verb.Spec, args map[string]interface{}, registry VerbRegistry) error
-github.com/josephjohncox/effectus/common	func ValidateVerbReturn(spec *verb.Spec, result interface{}, registry VerbRegistry) error
-github.com/josephjohncox/effectus/common	method BasicFacts.Get(path string) (interface{}, bool)
-github.com/josephjohncox/effectus/common	method BasicFacts.GetWithContext(path string) (interface{}, *ResolutionResult)
-github.com/josephjohncox/effectus/common	method BasicFacts.HasPath(path string) bool
-github.com/josephjohncox/effectus/common	method BasicFacts.Schema() SchemaInfo
-github.com/josephjohncox/effectus/common	method BasicFacts.TryWithData(updatedData map[string]interface{}) (*BasicFacts, error)
-github.com/josephjohncox/effectus/common	method BasicFacts.WithData(updatedData map[string]interface{}) *BasicFacts
-github.com/josephjohncox/effectus/common	method BasicSchema.GetPathType(path string) *types.Type
-github.com/josephjohncox/effectus/common	method BasicSchema.RegisterPathType(path string, typ *types.Type)
-github.com/josephjohncox/effectus/common	method BasicSchema.ValidatePath(path string) bool
-github.com/josephjohncox/effectus/common	method ExecutorAdapter.Do(effect eff.Effect) (interface{}, error)
-github.com/josephjohncox/effectus/common	method ExecutorAdapter.DoContext(ctx context.Context, effect eff.Effect) (interface{}, error)
-github.com/josephjohncox/effectus/common	type BasicFacts struct{}
-github.com/josephjohncox/effectus/common	type BasicSchema struct{}
-github.com/josephjohncox/effectus/common	type ExecutorAdapter struct{VerbRegistry VerbRegistry; Facts Facts}
-github.com/josephjohncox/effectus/common	type FactRef string
-github.com/josephjohncox/effectus/common	type Facts interface{Getfunc(path string) (interface{}, bool); GetWithContextfunc(path string) (interface{}, *ResolutionResult); Schemafunc() SchemaInfo; HasPathfunc(path string) bool}
-github.com/josephjohncox/effectus/common	type FactsExt interface{Facts; GetByPathfunc(path string) (interface{}, bool)}
-github.com/josephjohncox/effectus/common	type Predicate struct{Path pathutil.Path; Op string; Lit interface{}}
-github.com/josephjohncox/effectus/common	type Prioritized interface{GetPriorityfunc() int}
-github.com/josephjohncox/effectus/common	type ResolutionResult struct{Path string; Value interface{}; Exists bool; Error error; Type *types.Type}
-github.com/josephjohncox/effectus/common	type ResultRef string
-github.com/josephjohncox/effectus/common	type SchemaInfo interface{ValidatePathfunc(path string) bool; GetPathTypefunc(path string) *types.Type; RegisterPathTypefunc(path string, typ *types.Type)}
-github.com/josephjohncox/effectus/common	type VerbRegistry interface{GetVerbfunc(name string) (*verb.Spec, bool)}
-github.com/josephjohncox/effectus/compat/v03/embedded	type Builder = root.Builder
-github.com/josephjohncox/effectus/compat/v03/embedded	type HandlerFunc = root.HandlerFunc
-github.com/josephjohncox/effectus/compat/v03/embedded	type Request = root.Request
-github.com/josephjohncox/effectus/compat/v03/embedded	type Resource = root.Resource
-github.com/josephjohncox/effectus/compat/v03/embedded	type Runtime = root.Runtime
-github.com/josephjohncox/effectus/compat/v03/embedded	type Verb = root.Verb
-github.com/josephjohncox/effectus/compat/v03/embedded	var New = root.New
-github.com/josephjohncox/effectus/compat/v03/embedded	var Permanent = root.Permanent
-github.com/josephjohncox/effectus/compat/v03/embedded	var Retryable = root.Retryable
-github.com/josephjohncox/effectus/compat/v03/embedded	var Success = root.Success
-github.com/josephjohncox/effectus/compat/v03/embedded	var Unknown = root.Unknown
+github.com/josephjohncox/effectus/compat/v03/embedded	func New(name, version string) *Builder
+github.com/josephjohncox/effectus/compat/v03/embedded	func Permanent(err error) invocation.Outcome
+github.com/josephjohncox/effectus/compat/v03/embedded	func Retryable(err error) invocation.Outcome
+github.com/josephjohncox/effectus/compat/v03/embedded	func Success(result any) invocation.Outcome
+github.com/josephjohncox/effectus/compat/v03/embedded	func Unknown(err error) invocation.Outcome
+github.com/josephjohncox/effectus/compat/v03/embedded	method Builder.AddFact(name string, value any) *Builder
+github.com/josephjohncox/effectus/compat/v03/embedded	method Builder.AddSource(path string, source []byte) *Builder
+github.com/josephjohncox/effectus/compat/v03/embedded	method Builder.AddVerb(verb Verb) *Builder
+github.com/josephjohncox/effectus/compat/v03/embedded	method Builder.Build(ctx context.Context) (*Runtime, error)
+github.com/josephjohncox/effectus/compat/v03/embedded	method Runtime.Close() error
+github.com/josephjohncox/effectus/compat/v03/embedded	method Runtime.Execute(ctx context.Context, request Request) (runtime.ExecuteResult, error)
+github.com/josephjohncox/effectus/compat/v03/embedded	type Builder struct{}
+github.com/josephjohncox/effectus/compat/v03/embedded	type HandlerFunc func(context.Context, invocation.Request) invocation.Outcome
+github.com/josephjohncox/effectus/compat/v03/embedded	type Request struct{Namespace string; IdempotencyKey string; Facts map[string]any; WaitMode runtime.WaitMode}
+github.com/josephjohncox/effectus/compat/v03/embedded	type Resource struct{Name string; Capabilities []string}
+github.com/josephjohncox/effectus/compat/v03/embedded	type Runtime struct{}
+github.com/josephjohncox/effectus/compat/v03/embedded	type Verb struct{Name string; Description string; ArgTypes map[string]string; RequiredArgs []string; ReturnType string; InverseVerb string; Capabilities []string; Resources []Resource; Handler HandlerFunc}
 github.com/josephjohncox/effectus/compat/v03/executorhttp	const DirectionCompensation = invocation.DirectionCompensation
 github.com/josephjohncox/effectus/compat/v03/executorhttp	const DirectionForward = invocation.DirectionForward
 github.com/josephjohncox/effectus/compat/v03/executorhttp	func NewHandler(options Options, handler HandlerFunc) (http.Handler, error)
@@ -150,120 +86,16 @@ github.com/josephjohncox/effectus/compat/v03/invocation	type ResolverDescriptorP
 github.com/josephjohncox/effectus/compat/v03/invocation	type Saga = root.Saga
 github.com/josephjohncox/effectus/compat/v03/invocation	var NewHTTPExecutor = root.NewHTTPExecutor
 github.com/josephjohncox/effectus/compat/v03/invocation	var ValidateOutcome = root.ValidateOutcome
-github.com/josephjohncox/effectus/compiler	const ErrorPolicyCompensate ErrorPolicy = "compensate"
-github.com/josephjohncox/effectus/compiler	const ErrorPolicyContinue ErrorPolicy = "continue"
-github.com/josephjohncox/effectus/compiler	const ErrorPolicyFail ErrorPolicy = "fail"
-github.com/josephjohncox/effectus/compiler	const ErrorPolicyRetry ErrorPolicy = "retry"
 github.com/josephjohncox/effectus/compiler	const ExecutionPolicyCompensating = effectusv1.ExecutionPolicy_EXECUTION_POLICY_DURABLE_COMPENSATING
 github.com/josephjohncox/effectus/compiler	const ExecutionPolicyFailFast = effectusv1.ExecutionPolicy_EXECUTION_POLICY_DURABLE_FAIL_FAST
-github.com/josephjohncox/effectus/compiler	const ExecutorExternal ExecutorType = "external"
-github.com/josephjohncox/effectus/compiler	const ExecutorGRPC ExecutorType = "grpc"
-github.com/josephjohncox/effectus/compiler	const ExecutorHTTP ExecutorType = "http"
-github.com/josephjohncox/effectus/compiler	const ExecutorLocal ExecutorType = "local"
-github.com/josephjohncox/effectus/compiler	const ExecutorMessage ExecutorType = "message"
-github.com/josephjohncox/effectus/compiler	const ExecutorMock ExecutorType = "mock"
-github.com/josephjohncox/effectus/compiler	func BuildIREnvironment(typeSystem *types.TypeSystem, registry *verb.Registry) (ir.Environment, error)
-github.com/josephjohncox/effectus/compiler	func CompileChecked(ctx context.Context, sources []Source, environment ir.Environment, options CompileOptions) (*ir.Checked, error)
-github.com/josephjohncox/effectus/compiler	func LoadSources(paths []string) ([]Source, error)
-github.com/josephjohncox/effectus/compiler	func NewCompiler() *Compiler
-github.com/josephjohncox/effectus/compiler	func NewErrorReporter() *ErrorReporter
-github.com/josephjohncox/effectus/compiler	func NewExtensionCompiler() *ExtensionCompiler
-github.com/josephjohncox/effectus/compiler	method CapabilityValidator.Validate(_ *TypeSystem, verbs map[string]*CompiledVerbSpec) ([]CompilationError, []CompilationWarning)
-github.com/josephjohncox/effectus/compiler	method CompiledSpec.Execute(ctx context.Context, facts effectus.Facts, ex effectus.Executor) error
-github.com/josephjohncox/effectus/compiler	method CompiledSpec.FlowSpec() effectus.Spec
-github.com/josephjohncox/effectus/compiler	method CompiledSpec.GetName() string
-github.com/josephjohncox/effectus/compiler	method CompiledSpec.ListSpec() effectus.Spec
-github.com/josephjohncox/effectus/compiler	method CompiledSpec.RequiredFacts() []string
-github.com/josephjohncox/effectus/compiler	method Compiler.CompileChecked(ctx context.Context, sources []Source, environment ir.Environment, options CompileOptions) (*ir.Checked, error)
-github.com/josephjohncox/effectus/compiler	method Compiler.CompileFiles(filenames []string, facts effectus.Facts) (effectus.Spec, error)
-github.com/josephjohncox/effectus/compiler	method Compiler.CompileProgram(filenames []string, facts effectus.Facts) (*CompiledSpec, error)
-github.com/josephjohncox/effectus/compiler	method Compiler.CompileUncheckedFiles(filenames []string, facts effectus.Facts) (effectus.Spec, error)
-github.com/josephjohncox/effectus/compiler	method Compiler.CompileUncheckedProgram(filenames []string, facts effectus.Facts) (*CompiledSpec, error)
-github.com/josephjohncox/effectus/compiler	method Compiler.GenerateTypeReport() string
-github.com/josephjohncox/effectus/compiler	method Compiler.GetTypeSystem() *types.TypeSystem
-github.com/josephjohncox/effectus/compiler	method Compiler.LoadVerbSpecs(filename string) error
-github.com/josephjohncox/effectus/compiler	method Compiler.ParseAndCompileFiles(filenames []string, facts effectus.Facts) (effectus.Spec, error)
-github.com/josephjohncox/effectus/compiler	method Compiler.ParseAndCompileProgram(filenames []string, facts effectus.Facts) (*CompiledSpec, error)
-github.com/josephjohncox/effectus/compiler	method Compiler.ParseAndTypeCheck(filename string, facts effectus.Facts) (*ast.File, error)
-github.com/josephjohncox/effectus/compiler	method Compiler.ParseFile(filename string) (*ast.File, error)
-github.com/josephjohncox/effectus/compiler	method Compiler.RegisterProtoTypes(protoFile string) error
-github.com/josephjohncox/effectus/compiler	method DependencyOptimizer.Optimize(plan *ExecutionPlan) *ExecutionPlan
-github.com/josephjohncox/effectus/compiler	method DependencyValidator.Validate(_ *TypeSystem, verbs map[string]*CompiledVerbSpec) ([]CompilationError, []CompilationWarning)
-github.com/josephjohncox/effectus/compiler	method DescriptorExecutorConfig.GetType() ExecutorType
-github.com/josephjohncox/effectus/compiler	method DescriptorExecutorConfig.Validate() error
-github.com/josephjohncox/effectus/compiler	method ExecutionPlanOptimizer.Optimize(plan *ExecutionPlan) *ExecutionPlan
-github.com/josephjohncox/effectus/compiler	method ExtensionCompiler.Compile(ctx context.Context, input any) (*CompilationResult, error)
-github.com/josephjohncox/effectus/compiler	method ExtensionCompiler.CompileSnapshot(ctx context.Context, input any) (*CompilationResult, error)
-github.com/josephjohncox/effectus/compiler	method GRPCExecutorConfig.GetType() ExecutorType
-github.com/josephjohncox/effectus/compiler	method GRPCExecutorConfig.Validate() error
-github.com/josephjohncox/effectus/compiler	method HTTPExecutorConfig.GetType() ExecutorType
-github.com/josephjohncox/effectus/compiler	method HTTPExecutorConfig.Validate() error
-github.com/josephjohncox/effectus/compiler	method LocalExecutorConfig.GetType() ExecutorType
-github.com/josephjohncox/effectus/compiler	method LocalExecutorConfig.Validate() error
-github.com/josephjohncox/effectus/compiler	method MessageExecutorConfig.GetType() ExecutorType
-github.com/josephjohncox/effectus/compiler	method MessageExecutorConfig.Validate() error
-github.com/josephjohncox/effectus/compiler	method MockExecutorConfig.GetType() ExecutorType
-github.com/josephjohncox/effectus/compiler	method MockExecutorConfig.Validate() error
-github.com/josephjohncox/effectus/compiler	method SecurityValidator.Validate(_ *TypeSystem, verbs map[string]*CompiledVerbSpec) ([]CompilationError, []CompilationWarning)
-github.com/josephjohncox/effectus/compiler	method TypeValidator.Validate(ts *TypeSystem, verbs map[string]*CompiledVerbSpec) ([]CompilationError, []CompilationWarning)
-github.com/josephjohncox/effectus/compiler	type CapabilityValidator struct{}
-github.com/josephjohncox/effectus/compiler	type CheckedFunctionProvider interface{CheckedFunctionContractfunc() ir.FunctionContract; CheckedFunctionImplementationfunc() any; CheckedFunctionDescriptorfunc() any}
-github.com/josephjohncox/effectus/compiler	type CompilationError struct{Type string; Component string; Location string; Message string; Suggestions []string}
-github.com/josephjohncox/effectus/compiler	type CompilationResult struct{Success bool; Errors []CompilationError; Warnings []CompilationWarning; CompiledUnit *CompiledUnit}
-github.com/josephjohncox/effectus/compiler	type CompilationWarning struct{Type string; Location string; Message string}
-github.com/josephjohncox/effectus/compiler	type CompileOptions struct{ExecutionPolicy effectusv1.ExecutionPolicy; Limits ir.Limits; InspectSource func(path string, file *ast.File)}
-github.com/josephjohncox/effectus/compiler	type CompiledFunction struct{Name string; Implementation interface{}; ResolverDescriptor any; TypeSignature *TypeSignature; Dependencies []string}
-github.com/josephjohncox/effectus/compiler	type CompiledSpec struct{Name string}
-github.com/josephjohncox/effectus/compiler	type CompiledUnit struct{VerbSpecs map[string]*CompiledVerbSpec; Functions map[string]*CompiledFunction; TypeSystem *TypeSystem; ExecutionPlan *ExecutionPlan; CheckedIR *ir.Checked; IREnvironment ir.Environment; SourceDigest string; InitialData map[string]interface{}; Dependencies []string; Capabilities []string; ExtensionSnapshot any; ExecutionOwnedSnapshot bool}
-github.com/josephjohncox/effectus/compiler	type CompiledVerbSpec struct{Spec *verb.Spec; ExecutorType ExecutorType; ExecutorConfig ExecutorConfig; ExecutorDescriptor *ExecutorDescriptor; Dependencies []string; TypeSignature *TypeSignature; ValidationRules []ValidationRule}
-github.com/josephjohncox/effectus/compiler	type Compiler struct{}
-github.com/josephjohncox/effectus/compiler	type DependencyOptimizer struct{}
-github.com/josephjohncox/effectus/compiler	type DependencyValidator struct{}
-github.com/josephjohncox/effectus/compiler	type DescriptorExecutorConfig struct{Descriptor ExecutorDescriptor}
-github.com/josephjohncox/effectus/compiler	type ErrorPolicy string
-github.com/josephjohncox/effectus/compiler	type ErrorReporter struct{}
-github.com/josephjohncox/effectus/compiler	type ExecutionPhase struct{Name string; Verbs []string; Parallel bool; Timeout string; ErrorPolicy ErrorPolicy}
-github.com/josephjohncox/effectus/compiler	type ExecutionPlan struct{Phases []ExecutionPhase; Dependencies map[string][]string; Capabilities map[string][]string; Executors map[string]ExecutorConfig}
-github.com/josephjohncox/effectus/compiler	type ExecutionPlanOptimizer struct{}
-github.com/josephjohncox/effectus/compiler	type ExecutorConfig interface{GetTypefunc() ExecutorType; Validatefunc() error}
-github.com/josephjohncox/effectus/compiler	type ExecutorDescriptor struct{Type string; VerbName string; Config map[string]interface{}}
-github.com/josephjohncox/effectus/compiler	type ExecutorType string
-github.com/josephjohncox/effectus/compiler	type ExtensionCompiler struct{}
-github.com/josephjohncox/effectus/compiler	type FunctionDefinition struct{Name string; InputTypes []string; OutputType string; Pure bool}
-github.com/josephjohncox/effectus/compiler	type GRPCExecutorConfig struct{Address string; Method string; Timeout string; Metadata map[string]string; UseTLS bool; Insecure bool; ServerName string; RetrySafe bool; RetryPolicy *RetryPolicy}
-github.com/josephjohncox/effectus/compiler	type HTTPExecutorConfig struct{URL string; Method string; Headers map[string]string; Timeout string; AllowPrivateNetwork bool; RetryPolicy *RetryPolicy}
-github.com/josephjohncox/effectus/compiler	type LocalExecutorConfig struct{Implementation verb.Executor}
-github.com/josephjohncox/effectus/compiler	type MessageExecutorConfig struct{Publisher string; Brokers []string; URL string; Headers map[string]string; Topic string; Queue string; Exchange string; RoutingKey string; Timeout string; AllowPrivateNetwork bool; RetryPolicy *RetryPolicy}
-github.com/josephjohncox/effectus/compiler	type MockExecutorConfig struct{}
-github.com/josephjohncox/effectus/compiler	type Optimizer interface{Optimizefunc(plan *ExecutionPlan) *ExecutionPlan}
-github.com/josephjohncox/effectus/compiler	type RetryPolicy struct{MaxRetries int; InitialDelay string; MaxDelay string; BackoffFactor float64; RetryableErrors []string}
-github.com/josephjohncox/effectus/compiler	type SecurityValidator struct{}
-github.com/josephjohncox/effectus/compiler	type Source struct{Path string; Content []byte; Data []byte}
-github.com/josephjohncox/effectus/compiler	type TypeConstraint struct{Type string; Parameter string; Values []interface{}; Description string}
-github.com/josephjohncox/effectus/compiler	type TypeDefinition struct{Name string; Type string; Properties map[string]interface{}; ElementType *TypeDefinition; UnionTypes []*TypeDefinition; Constraints []TypeConstraint}
-github.com/josephjohncox/effectus/compiler	type TypeSignature struct{InputTypes map[string]string; OutputType string; Constraints []TypeConstraint}
-github.com/josephjohncox/effectus/compiler	type TypeSystem struct{}
-github.com/josephjohncox/effectus/compiler	type TypeValidator struct{}
-github.com/josephjohncox/effectus/compiler	type ValidationRule struct{Type string; Expression string; ErrorMessage string}
-github.com/josephjohncox/effectus/compiler	type Validator interface{Validatefunc(typeSystem *TypeSystem, verbs map[string]*CompiledVerbSpec) ([]CompilationError, []CompilationWarning)}
-github.com/josephjohncox/effectus/compiler	var ErrUnsupportedExtensionWorkflow = errors.New("unsupported extension workflow")
-github.com/josephjohncox/effectus/embedded	func New(ruleset, version string) *Builder
-github.com/josephjohncox/effectus/embedded	func Permanent(err error) invocation.Outcome
-github.com/josephjohncox/effectus/embedded	func Retryable(err error) invocation.Outcome
-github.com/josephjohncox/effectus/embedded	func Success(result any) invocation.Outcome
-github.com/josephjohncox/effectus/embedded	func Unknown(err error) invocation.Outcome
-github.com/josephjohncox/effectus/embedded	method Builder.AddFact(path string, sample any) *Builder
-github.com/josephjohncox/effectus/embedded	method Builder.AddSource(path string, data []byte) *Builder
-github.com/josephjohncox/effectus/embedded	method Builder.AddVerb(verb Verb) *Builder
-github.com/josephjohncox/effectus/embedded	method Builder.Build(ctx context.Context) (*Runtime, error)
+github.com/josephjohncox/effectus/compiler	func CompileChecked(ctx context.Context, sourceBundle *bundle.SourceBundle, options CompileOptions) (*ir.Checked, error)
+github.com/josephjohncox/effectus/compiler	type CompileOptions struct{ExecutionPolicy effectusv1.ExecutionPolicy; Limits ir.Limits}
+github.com/josephjohncox/effectus/embedded	func Open(ctx context.Context, source *bundle.SourceBundle, resolvers *invocation.Registry) (*Runtime, error)
 github.com/josephjohncox/effectus/embedded	method Runtime.Close() error
-github.com/josephjohncox/effectus/embedded	method Runtime.Execute(ctx context.Context, request Request) (effectusruntime.ExecuteResult, error)
-github.com/josephjohncox/effectus/embedded	type Builder struct{}
-github.com/josephjohncox/effectus/embedded	type HandlerFunc func(context.Context, invocation.Request) invocation.Outcome
-github.com/josephjohncox/effectus/embedded	type Request struct{Namespace string; IdempotencyKey string; Facts map[string]any; WaitMode effectusruntime.WaitMode}
-github.com/josephjohncox/effectus/embedded	type Resource struct{Name string; Capabilities []string}
+github.com/josephjohncox/effectus/embedded	method Runtime.Engine() *runtime.Engine
+github.com/josephjohncox/effectus/embedded	method Runtime.Execute(ctx context.Context, request Request) (runtime.ExecuteResult, error)
+github.com/josephjohncox/effectus/embedded	type Request struct{Namespace string; IdempotencyKey string; Facts map[string]any; WaitMode runtime.WaitMode}
 github.com/josephjohncox/effectus/embedded	type Runtime struct{}
-github.com/josephjohncox/effectus/embedded	type Verb struct{Name string; Description string; ArgTypes map[string]string; RequiredArgs []string; ReturnType string; InverseVerb string; Capabilities []string; Resources []Resource; Handler HandlerFunc}
 github.com/josephjohncox/effectus/executorhttp	func NewHandler(options Options, handler HandlerFunc) (http.Handler, error)
 github.com/josephjohncox/effectus/executorhttp	func Permanent(err error) invocation.Outcome
 github.com/josephjohncox/effectus/executorhttp	func Retryable(err error) invocation.Outcome
@@ -1596,173 +1428,31 @@ github.com/josephjohncox/effectus/ir	type VerbContract struct{Arguments map[stri
 github.com/josephjohncox/effectus/ir	var DefaultLimits = Limits{ MaxArtifactBytes: 4 << 20, MaxPlans: 1_000, MaxSteps: 10_000, MaxStepsPerPlan: 1_000, MaxArgumentsPerStep: 128, MaxPredicateNodes: 1_024, MaxLiteralNodes: 10_000, MaxDepth: 64, MaxStringBytes: 1 << 20, MaxBytesValue: 1 << 20, MaxCollectionItems: 10_000, MaxObjectFields: 1_024, MaxTotalStringBytes: 4 << 20, }
 github.com/josephjohncox/effectus/ir	var ErrInvalidArtifact = errors.New("invalid checked IR artifact")
 github.com/josephjohncox/effectus/ir	var ErrLimitExceeded = errors.New("checked IR limit exceeded")
-github.com/josephjohncox/effectus/lint	const CodeBindingNoReturn = "binding-no-return"
-github.com/josephjohncox/effectus/lint	const CodeDeadFlow = "dead-flow"
-github.com/josephjohncox/effectus/lint	const CodeDeadRule = "dead-rule"
-github.com/josephjohncox/effectus/lint	const CodeDivisionByZero = "division-by-zero"
-github.com/josephjohncox/effectus/lint	const CodeEmptyFactPath = "empty-fact-path"
-github.com/josephjohncox/effectus/lint	const CodeMissingCapability = "missing-capability"
-github.com/josephjohncox/effectus/lint	const CodeMissingConcurrency = "missing-concurrency"
-github.com/josephjohncox/effectus/lint	const CodeMissingInverse = "missing-inverse"
-github.com/josephjohncox/effectus/lint	const CodeMissingResources = "missing-resources"
-github.com/josephjohncox/effectus/lint	const CodeOverbroadCapability = "overbroad-capability"
-github.com/josephjohncox/effectus/lint	const CodeUnsafeExpression = "unsafe-expression"
-github.com/josephjohncox/effectus/lint	const CodeUnusedBinding = "unused-binding"
-github.com/josephjohncox/effectus/lint	const SeverityError = "error"
-github.com/josephjohncox/effectus/lint	const SeverityWarning = "warning"
-github.com/josephjohncox/effectus/lint	const UnsafeError UnsafeMode = "error"
-github.com/josephjohncox/effectus/lint	const UnsafeIgnore UnsafeMode = "ignore"
-github.com/josephjohncox/effectus/lint	const UnsafeWarn UnsafeMode = "warn"
-github.com/josephjohncox/effectus/lint	const VerbError VerbMode = "error"
-github.com/josephjohncox/effectus/lint	const VerbIgnore VerbMode = "ignore"
-github.com/josephjohncox/effectus/lint	const VerbWarn VerbMode = "warn"
-github.com/josephjohncox/effectus/lint	func DefaultOptions() LintOptions
-github.com/josephjohncox/effectus/lint	func LintFile(file *ast.File, path string, verbs VerbLookup) []Issue
-github.com/josephjohncox/effectus/lint	func LintFileWithOptions(file *ast.File, path string, verbs VerbLookup, options LintOptions) []Issue
-github.com/josephjohncox/effectus/lint	func ParseUnsafeMode(raw string) (UnsafeMode, error)
-github.com/josephjohncox/effectus/lint	func ParseVerbMode(raw string) (VerbMode, error)
-github.com/josephjohncox/effectus/lint	type Issue struct{File string; Pos lexer.Position; Severity string; Code string; Message string}
-github.com/josephjohncox/effectus/lint	type LintOptions struct{UnsafeMode UnsafeMode; VerbMode VerbMode}
-github.com/josephjohncox/effectus/lint	type UnsafeMode string
-github.com/josephjohncox/effectus/lint	type VerbLookup interface{GetVerbfunc(name string) (*verb.Spec, bool)}
-github.com/josephjohncox/effectus/lint	type VerbMode string
-github.com/josephjohncox/effectus/pathutil	const MergeError MergeStrategy = "error"
-github.com/josephjohncox/effectus/pathutil	const MergeFirst MergeStrategy = "first"
-github.com/josephjohncox/effectus/pathutil	const MergeLast MergeStrategy = "last"
-github.com/josephjohncox/effectus/pathutil	func NewAliasedFacts(base effectus.Facts, aliases map[string]string) *AliasedFacts
-github.com/josephjohncox/effectus/pathutil	func NewJSONLoader(jsonData []byte) *JSONLoader
-github.com/josephjohncox/effectus/pathutil	func NewMergedFactProvider(sources []SourceProvider, strategy MergeStrategy) *MergedFactProvider
-github.com/josephjohncox/effectus/pathutil	func NewNamespacedLoader() *NamespacedLoader
-github.com/josephjohncox/effectus/pathutil	func NewProtoLoader(message proto.Message) *ProtoLoader
-github.com/josephjohncox/effectus/pathutil	func NewRegistry() *Registry
-github.com/josephjohncox/effectus/pathutil	func NewRegistryFactProvider() *RegistryFactProvider
-github.com/josephjohncox/effectus/pathutil	func NewRegistryFactProviderFromJSON(jsonData []byte) (*RegistryFactProvider, error)
-github.com/josephjohncox/effectus/pathutil	func NewRegistryFactProviderFromMap(data map[string]interface{}) *RegistryFactProvider
-github.com/josephjohncox/effectus/pathutil	func NewRegistryFactProviderFromStruct(structData interface{}) (*RegistryFactProvider, error)
-github.com/josephjohncox/effectus/pathutil	func NewRegistryFactProviderWithRegistry(registry *schema.Registry) *RegistryFactProvider
-github.com/josephjohncox/effectus/pathutil	func NewStructLoader(data interface{}) *StructLoader
-github.com/josephjohncox/effectus/pathutil	func NewUniverseFacts(registry *UniverseRegistry, universe string, schema effectus.SchemaInfo) *UniverseFacts
-github.com/josephjohncox/effectus/pathutil	func NewUniverseRegistry() *UniverseRegistry
-github.com/josephjohncox/effectus/pathutil	func NormalizeTypeName(typeName string) string
-github.com/josephjohncox/effectus/pathutil	method AliasedFacts.Get(path string) (interface{}, bool)
-github.com/josephjohncox/effectus/pathutil	method AliasedFacts.Schema() effectus.SchemaInfo
-github.com/josephjohncox/effectus/pathutil	method JSONLoader.Load() (*RegistryFactProvider, error)
-github.com/josephjohncox/effectus/pathutil	method MergedFactProvider.Get(path string) (interface{}, bool)
-github.com/josephjohncox/effectus/pathutil	method MergedFactProvider.GetWithContext(path string) (interface{}, *ResolutionResult)
-github.com/josephjohncox/effectus/pathutil	method NamespacedLoader.AddSource(namespace string, source interface{}) *NamespacedLoader
-github.com/josephjohncox/effectus/pathutil	method NamespacedLoader.Load() (*RegistryFactProvider, error)
-github.com/josephjohncox/effectus/pathutil	method Path.Child(segment string) Path
-github.com/josephjohncox/effectus/pathutil	method Path.Namespace() string
-github.com/josephjohncox/effectus/pathutil	method Path.String() string
-github.com/josephjohncox/effectus/pathutil	method Path.WithNamespace(namespace string) Path
-github.com/josephjohncox/effectus/pathutil	method ProtoLoader.Load() (*RegistryFactProvider, error)
-github.com/josephjohncox/effectus/pathutil	method Registry.Get(path string) (interface{}, bool)
-github.com/josephjohncox/effectus/pathutil	method Registry.GetWithContext(path string) (interface{}, *ResolutionResult)
-github.com/josephjohncox/effectus/pathutil	method Registry.Providers() map[string]FactProvider
-github.com/josephjohncox/effectus/pathutil	method Registry.Register(namespace string, provider FactProvider)
-github.com/josephjohncox/effectus/pathutil	method RegistryFactProvider.EvaluateExpr(expression string) (interface{}, error)
-github.com/josephjohncox/effectus/pathutil	method RegistryFactProvider.EvaluateExprBool(expression string) (bool, error)
-github.com/josephjohncox/effectus/pathutil	method RegistryFactProvider.EvaluateExpression(expression string) (interface{}, error)
-github.com/josephjohncox/effectus/pathutil	method RegistryFactProvider.Get(path string) (interface{}, bool)
-github.com/josephjohncox/effectus/pathutil	method RegistryFactProvider.GetRegistry() *schema.Registry
-github.com/josephjohncox/effectus/pathutil	method RegistryFactProvider.GetWithContext(path string) (interface{}, *ResolutionResult)
-github.com/josephjohncox/effectus/pathutil	method RegistryFactProvider.HasPath(path string) bool
-github.com/josephjohncox/effectus/pathutil	method RegistryFactProvider.LoadFromMap(data map[string]interface{})
-github.com/josephjohncox/effectus/pathutil	method RegistryFactProvider.Set(path string, value interface{})
-github.com/josephjohncox/effectus/pathutil	method StructLoader.Load() (*RegistryFactProvider, error)
-github.com/josephjohncox/effectus/pathutil	method UniverseFacts.Get(path string) (interface{}, bool)
-github.com/josephjohncox/effectus/pathutil	method UniverseFacts.Schema() effectus.SchemaInfo
-github.com/josephjohncox/effectus/pathutil	method UniverseRegistry.Get(universe, path string) (interface{}, bool)
-github.com/josephjohncox/effectus/pathutil	method UniverseRegistry.GetWithContext(universe, path string) (interface{}, *ResolutionResult)
-github.com/josephjohncox/effectus/pathutil	method UniverseRegistry.Register(universe, namespace string, provider FactProvider)
-github.com/josephjohncox/effectus/pathutil	method UniverseRegistry.RegisterMerged(universe, namespace string, sources []SourceProvider, strategy MergeStrategy)
-github.com/josephjohncox/effectus/pathutil	method UniverseRegistry.Universe(universe string) *Registry
-github.com/josephjohncox/effectus/pathutil	method UniverseRegistry.Universes() []string
-github.com/josephjohncox/effectus/pathutil	type AliasedFacts struct{Base effectus.Facts; Aliases map[string]string}
-github.com/josephjohncox/effectus/pathutil	type FactLoader interface{Loadfunc() (*RegistryFactProvider, error)}
-github.com/josephjohncox/effectus/pathutil	type FactProvider interface{Getfunc(path string) (interface{}, bool); GetWithContextfunc(path string) (interface{}, *ResolutionResult)}
-github.com/josephjohncox/effectus/pathutil	type JSONLoader struct{}
-github.com/josephjohncox/effectus/pathutil	type MergeStrategy string
-github.com/josephjohncox/effectus/pathutil	type MergedFactProvider struct{}
-github.com/josephjohncox/effectus/pathutil	type NamespacedLoader struct{}
-github.com/josephjohncox/effectus/pathutil	type Path string
-github.com/josephjohncox/effectus/pathutil	type ProtoLoader struct{}
-github.com/josephjohncox/effectus/pathutil	type Registry struct{}
-github.com/josephjohncox/effectus/pathutil	type RegistryFactProvider struct{}
-github.com/josephjohncox/effectus/pathutil	type ResolutionResult struct{Path string; Exists bool; Value interface{}; Error error; Source string; Sources []string; Universe string}
-github.com/josephjohncox/effectus/pathutil	type SourceProvider struct{Name string; Provider FactProvider; Priority int}
-github.com/josephjohncox/effectus/pathutil	type StructLoader struct{}
-github.com/josephjohncox/effectus/pathutil	type UniverseFacts struct{Universe string; Registry *UniverseRegistry}
-github.com/josephjohncox/effectus/pathutil	type UniverseRegistry struct{}
-github.com/josephjohncox/effectus/runtime	const DeploymentStatusActive DeploymentStatus = "active"
-github.com/josephjohncox/effectus/runtime	const DeploymentStatusCanary DeploymentStatus = "canary"
-github.com/josephjohncox/effectus/runtime	const DeploymentStatusDeploying DeploymentStatus = "deploying"
-github.com/josephjohncox/effectus/runtime	const DeploymentStatusFailed DeploymentStatus = "failed"
-github.com/josephjohncox/effectus/runtime	const DeploymentStatusInactive DeploymentStatus = "inactive"
-github.com/josephjohncox/effectus/runtime	const DeploymentStatusPending DeploymentStatus = "pending"
-github.com/josephjohncox/effectus/runtime	const DeploymentStatusRollingBack DeploymentStatus = "rolling_back"
-github.com/josephjohncox/effectus/runtime	const RuleTypeFlow RuleType = "flow"
-github.com/josephjohncox/effectus/runtime	const RuleTypeList RuleType = "list"
-github.com/josephjohncox/effectus/runtime	const RulesetStatusDeployed RulesetStatus = "deployed"
-github.com/josephjohncox/effectus/runtime	const RulesetStatusDeprecated RulesetStatus = "deprecated"
-github.com/josephjohncox/effectus/runtime	const RulesetStatusDraft RulesetStatus = "draft"
-github.com/josephjohncox/effectus/runtime	const RulesetStatusFailed RulesetStatus = "failed"
-github.com/josephjohncox/effectus/runtime	const RulesetStatusReady RulesetStatus = "ready"
-github.com/josephjohncox/effectus/runtime	const RulesetStatusValidating RulesetStatus = "validating"
-github.com/josephjohncox/effectus/runtime	const StateClosed RuntimeState = "closed"
-github.com/josephjohncox/effectus/runtime	const StateClosing RuntimeState = "closing"
-github.com/josephjohncox/effectus/runtime	const StateCompiling RuntimeState = "compiling"
-github.com/josephjohncox/effectus/runtime	const StateExecuting RuntimeState = "executing"
-github.com/josephjohncox/effectus/runtime	const StateFailed RuntimeState = "failed"
-github.com/josephjohncox/effectus/runtime	const StateInitializing RuntimeState = "initializing"
-github.com/josephjohncox/effectus/runtime	const StateLoading RuntimeState = "loading"
-github.com/josephjohncox/effectus/runtime	const StateReady RuntimeState = "ready"
 github.com/josephjohncox/effectus/runtime	const WaitAccepted WaitMode = "accepted"
 github.com/josephjohncox/effectus/runtime	const WaitTerminal WaitMode = "terminal"
 github.com/josephjohncox/effectus/runtime	func CompileGeneration(ctx context.Context, config GenerationBuildConfig) (*Generation, error)
 github.com/josephjohncox/effectus/runtime	func NewBearerTokenAuthenticator(token string) (*BearerTokenAuthenticator, error)
 github.com/josephjohncox/effectus/runtime	func NewBearerTokenAuthenticatorSet(tokens []string) (*BearerTokenAuthenticator, error)
-github.com/josephjohncox/effectus/runtime	func NewEngine(runtime *ExecutionRuntime) (*Engine, error)
-github.com/josephjohncox/effectus/runtime	func NewExecutionRuntime() *ExecutionRuntime
+github.com/josephjohncox/effectus/runtime	func NewEngine(generation *Generation) (*Engine, error)
 github.com/josephjohncox/effectus/runtime	func NewGeneration(config GenerationConfig) (*Generation, error)
-github.com/josephjohncox/effectus/runtime	func NewInMemoryRuleStorage() *InMemoryRuleStorage
 github.com/josephjohncox/effectus/runtime	func NewManifestArtifactResolver(registries ...*invocation.Registry) *ManifestArtifactResolver
-github.com/josephjohncox/effectus/runtime	func NewPostgresStorage(config *PostgresStorageConfig) (*PostgresStorage, error)
-github.com/josephjohncox/effectus/runtime	func NewRulesetExecutionServer(runtime *ExecutionRuntime, addr string) (*RulesetExecutionServer, error)
-github.com/josephjohncox/effectus/runtime	func NewRulesetExecutionServerOnListener(runtime *ExecutionRuntime, listener net.Listener, options RulesetExecutionServerOptions) (*RulesetExecutionServer, error)
-github.com/josephjohncox/effectus/runtime	func NewRulesetExecutionServerWithOptions(runtime *ExecutionRuntime, addr string, options RulesetExecutionServerOptions) (*RulesetExecutionServer, error)
+github.com/josephjohncox/effectus/runtime	func NewRulesetExecutionServer(engine *Engine, addr string) (*RulesetExecutionServer, error)
+github.com/josephjohncox/effectus/runtime	func NewRulesetExecutionServerOnListener(engine *Engine, listener net.Listener, options RulesetExecutionServerOptions) (*RulesetExecutionServer, error)
+github.com/josephjohncox/effectus/runtime	func NewRulesetExecutionServerWithOptions(engine *Engine, addr string, options RulesetExecutionServerOptions) (*RulesetExecutionServer, error)
 github.com/josephjohncox/effectus/runtime	func RegisterEngineExecutionServiceWithOptions(registrar grpc.ServiceRegistrar, engine *Engine, options EngineExecutionServiceOptions) error
-github.com/josephjohncox/effectus/runtime	method ArtifactResolverFunc.ResolveArtifact(ctx context.Context, artifact ledger.ExecutionArtifact, checked *ir.Checked) (*compiler.CompiledUnit, error)
+github.com/josephjohncox/effectus/runtime	method ArtifactResolverFunc.ResolveGeneration(ctx context.Context, artifact ledger.ExecutionArtifact) (*Generation, error)
 github.com/josephjohncox/effectus/runtime	method BearerTokenAuthenticator.Authenticate(ctx context.Context, _ string) (context.Context, error)
-github.com/josephjohncox/effectus/runtime	method Engine.ActiveGeneration() *ExecutionGeneration
 github.com/josephjohncox/effectus/runtime	method Engine.ActiveGenerationDigest() string
-github.com/josephjohncox/effectus/runtime	method Engine.ConfigureLedger(durableLedger ledger.ExecutionLedger, resolver ArtifactResolver) error
+github.com/josephjohncox/effectus/runtime	method Engine.Close() error
+github.com/josephjohncox/effectus/runtime	method Engine.ConfigureLedger(durable ledger.ExecutionLedger, resolver ArtifactResolver) error
+github.com/josephjohncox/effectus/runtime	method Engine.ConfigureWorkflow(store workflow.OutboxStore, provider fencing.Provider, options schema.DispatcherOptions) error
 github.com/josephjohncox/effectus/runtime	method Engine.DryRun(ctx context.Context, facts map[string]any) ([]PlanEvaluation, error)
 github.com/josephjohncox/effectus/runtime	method Engine.Execute(ctx context.Context, request ExecuteRequest) (result ExecuteResult, resultErr error)
+github.com/josephjohncox/effectus/runtime	method Engine.Generation() *Generation
 github.com/josephjohncox/effectus/runtime	method Engine.GenerationView() *GenerationView
 github.com/josephjohncox/effectus/runtime	method Engine.SetObserver(observer Observer)
 github.com/josephjohncox/effectus/runtime	method EngineExecutionService.ExecuteRuleset(ctx context.Context, request *effectusv1.ExecutionRequest) (*effectusv1.ExecutionResponse, error)
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.ActiveGeneration() *ExecutionGeneration
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.Close() error
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.CompileAndValidate(ctx context.Context) error
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.CompileAndValidateWithOptions(ctx context.Context, options CompileOptions) error
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.ConfigureDurableWorkflowExecution(store workflow.OutboxStore, provider fencing.Provider, options schema.DispatcherOptions) error
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.ConfigureExecutionLedger(durableLedger ledger.ExecutionLedger, resolver ArtifactResolver) error
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.ConfigureGenerationMetadata(metadata GenerationMetadata) error
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.EnableLegacyExecutionForCompatibility()
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.Engine() *Engine
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.ExecuteVerb(ctx context.Context, verbName string, args map[string]interface{}) (interface{}, error)
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.ExecuteWorkflow(ctx context.Context, facts map[string]interface{}) error
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.ExecuteWorkflowWithIdentity(ctx context.Context, namespace, executionID string, facts map[string]interface{}) error
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.GetRuntimeInfo() *RuntimeInfo
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.HotReload(ctx context.Context) error
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.PublishGeneration(generation *Generation) error
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.RegisterExecutorFactory(executorType compiler.ExecutorType, factory ExecutorFactory)
-github.com/josephjohncox/effectus/runtime	method ExecutionRuntime.RegisterExtensionLoader(input any) error
 github.com/josephjohncox/effectus/runtime	method GRPCAuthenticatorFunc.Authenticate(ctx context.Context, method string) (context.Context, error)
-github.com/josephjohncox/effectus/runtime	method GRPCExecutor.Execute(ctx context.Context, args map[string]interface{}) (interface{}, error)
-github.com/josephjohncox/effectus/runtime	method GRPCExecutorFactory.Close() error
-github.com/josephjohncox/effectus/runtime	method GRPCExecutorFactory.CreateExecutor(config compiler.ExecutorConfig) (VerbExecutor, error)
 github.com/josephjohncox/effectus/runtime	method Generation.Checked() *ir.Checked
 github.com/josephjohncox/effectus/runtime	method Generation.Close() error
 github.com/josephjohncox/effectus/runtime	method Generation.Closed() bool
@@ -1774,119 +1464,36 @@ github.com/josephjohncox/effectus/runtime	method Generation.FunctionIDs() map[st
 github.com/josephjohncox/effectus/runtime	method Generation.Ruleset() string
 github.com/josephjohncox/effectus/runtime	method Generation.SourceDigest() string
 github.com/josephjohncox/effectus/runtime	method Generation.Version() string
-github.com/josephjohncox/effectus/runtime	method HTTPExecutor.Execute(ctx context.Context, args map[string]interface{}) (interface{}, error)
-github.com/josephjohncox/effectus/runtime	method HTTPExecutorFactory.CreateExecutor(config compiler.ExecutorConfig) (VerbExecutor, error)
-github.com/josephjohncox/effectus/runtime	method InMemoryRuleStorage.Cleanup(ctx context.Context, olderThan time.Time) error
-github.com/josephjohncox/effectus/runtime	method InMemoryRuleStorage.DeleteRuleset(ctx context.Context, name, version string) error
-github.com/josephjohncox/effectus/runtime	method InMemoryRuleStorage.DeployRuleset(ctx context.Context, name, version, environment string, config *DeploymentConfig) error
-github.com/josephjohncox/effectus/runtime	method InMemoryRuleStorage.GetActiveVersion(ctx context.Context, name, environment string) (*RulesetVersion, error)
-github.com/josephjohncox/effectus/runtime	method InMemoryRuleStorage.GetAuditLog(ctx context.Context, filters *AuditFilters) ([]*AuditEntry, error)
-github.com/josephjohncox/effectus/runtime	method InMemoryRuleStorage.GetDeploymentStatus(ctx context.Context, name, environment string) (*DeploymentStatus, error)
-github.com/josephjohncox/effectus/runtime	method InMemoryRuleStorage.GetRuleset(ctx context.Context, name, version string) (*StoredRuleset, error)
-github.com/josephjohncox/effectus/runtime	method InMemoryRuleStorage.GetRulesetVersions(ctx context.Context, name string) ([]*RulesetVersion, error)
-github.com/josephjohncox/effectus/runtime	method InMemoryRuleStorage.HealthCheck(ctx context.Context) error
-github.com/josephjohncox/effectus/runtime	method InMemoryRuleStorage.ListRulesets(ctx context.Context, filters *RulesetFilters) ([]*RulesetMetadata, error)
-github.com/josephjohncox/effectus/runtime	method InMemoryRuleStorage.RecordActivity(ctx context.Context, entry *AuditEntry) error
-github.com/josephjohncox/effectus/runtime	method InMemoryRuleStorage.RollbackDeployment(ctx context.Context, name, environment, targetVersion string) error
-github.com/josephjohncox/effectus/runtime	method InMemoryRuleStorage.SetActiveVersion(ctx context.Context, name, environment, version string) error
-github.com/josephjohncox/effectus/runtime	method InMemoryRuleStorage.StoreRuleset(ctx context.Context, ruleset *StoredRuleset) error
-github.com/josephjohncox/effectus/runtime	method LocalExecutorAdapter.Execute(ctx context.Context, args map[string]interface{}) (interface{}, error)
-github.com/josephjohncox/effectus/runtime	method LocalExecutorFactory.CreateExecutor(config compiler.ExecutorConfig) (VerbExecutor, error)
-github.com/josephjohncox/effectus/runtime	method ManifestArtifactResolver.ResolveArtifact(ctx context.Context, artifact ledger.ExecutionArtifact, checked *ir.Checked) (*compiler.CompiledUnit, error)
-github.com/josephjohncox/effectus/runtime	method MessageExecutor.Execute(ctx context.Context, args map[string]interface{}) (interface{}, error)
-github.com/josephjohncox/effectus/runtime	method MessageExecutorFactory.CreateExecutor(config compiler.ExecutorConfig) (VerbExecutor, error)
-github.com/josephjohncox/effectus/runtime	method MockExecutor.Execute(ctx context.Context, args map[string]interface{}) (interface{}, error)
-github.com/josephjohncox/effectus/runtime	method MockExecutorFactory.CreateExecutor(config compiler.ExecutorConfig) (VerbExecutor, error)
-github.com/josephjohncox/effectus/runtime	method PostgresStorage.Cleanup(ctx context.Context, olderThan time.Time) error
-github.com/josephjohncox/effectus/runtime	method PostgresStorage.Close()
-github.com/josephjohncox/effectus/runtime	method PostgresStorage.DeleteRuleset(ctx context.Context, name, version string) error
-github.com/josephjohncox/effectus/runtime	method PostgresStorage.DeployRuleset(ctx context.Context, name, version, environment string, config *DeploymentConfig) error
-github.com/josephjohncox/effectus/runtime	method PostgresStorage.GetActiveVersion(ctx context.Context, name, environment string) (*RulesetVersion, error)
-github.com/josephjohncox/effectus/runtime	method PostgresStorage.GetAuditLog(ctx context.Context, filters *AuditFilters) ([]*AuditEntry, error)
-github.com/josephjohncox/effectus/runtime	method PostgresStorage.GetDeploymentStatus(ctx context.Context, name, environment string) (*DeploymentStatus, error)
-github.com/josephjohncox/effectus/runtime	method PostgresStorage.GetRuleset(ctx context.Context, name, version string) (*StoredRuleset, error)
-github.com/josephjohncox/effectus/runtime	method PostgresStorage.GetRulesetVersions(ctx context.Context, name string) ([]*RulesetVersion, error)
-github.com/josephjohncox/effectus/runtime	method PostgresStorage.HealthCheck(ctx context.Context) error
-github.com/josephjohncox/effectus/runtime	method PostgresStorage.ListRulesets(ctx context.Context, filters *RulesetFilters) ([]*RulesetMetadata, error)
-github.com/josephjohncox/effectus/runtime	method PostgresStorage.RecordActivity(ctx context.Context, entry *AuditEntry) error
-github.com/josephjohncox/effectus/runtime	method PostgresStorage.RollbackDeployment(ctx context.Context, name, environment, targetVersion string) error
-github.com/josephjohncox/effectus/runtime	method PostgresStorage.SetActiveVersion(ctx context.Context, name, environment, version string) error
-github.com/josephjohncox/effectus/runtime	method PostgresStorage.StoreRuleset(ctx context.Context, ruleset *StoredRuleset) error
+github.com/josephjohncox/effectus/runtime	method ManifestArtifactResolver.ResolveGeneration(ctx context.Context, artifact ledger.ExecutionArtifact) (*Generation, error)
 github.com/josephjohncox/effectus/runtime	method RecoveryWorker.Run(ctx context.Context) error
 github.com/josephjohncox/effectus/runtime	method RecoveryWorker.RunOnce(ctx context.Context) (int, error)
 github.com/josephjohncox/effectus/runtime	method RulesetExecutionServer.Address() net.Addr
 github.com/josephjohncox/effectus/runtime	method RulesetExecutionServer.Ready() error
 github.com/josephjohncox/effectus/runtime	method RulesetExecutionServer.Start() error
 github.com/josephjohncox/effectus/runtime	method RulesetExecutionServer.Stop()
-github.com/josephjohncox/effectus/runtime	type ActivationStore interface{GetActiveVersionfunc(context.Context, string, string) (*RulesetVersion, error); SetActiveVersionfunc(context.Context, string, string, string) error; DeployRulesetfunc(context.Context, string, string, string, *DeploymentConfig) error; GetDeploymentStatusfunc(context.Context, string, string) (*DeploymentStatus, error); RollbackDeploymentfunc(context.Context, string, string, string) error}
 github.com/josephjohncox/effectus/runtime	type Admission struct{ExecutionID string; AdmissionID string; TenantNamespace string; Ruleset string; Version string; Facts map[string]any; MergePolicy string; ExpectedGenerationDigest string}
-github.com/josephjohncox/effectus/runtime	type ArtifactResolver interface{ResolveArtifactfunc(context.Context, ledger.ExecutionArtifact, *ir.Checked) (*compiler.CompiledUnit, error)}
-github.com/josephjohncox/effectus/runtime	type ArtifactResolverFunc func(context.Context, ledger.ExecutionArtifact, *ir.Checked) (*compiler.CompiledUnit, error)
-github.com/josephjohncox/effectus/runtime	type AuditEntry struct{ID string; Timestamp time.Time; Action string; Resource string; ResourceID *uuid.UUID; Version string; Environment string; UserID string; UserEmail string; IPAddress string; UserAgent string; SessionID string; Details map[string]interface{}; RequestID string; TraceID string; Result string; ErrorMsg string; DurationMs int}
-github.com/josephjohncox/effectus/runtime	type AuditFilters struct{Actions []string; Resources []string; UserIDs []string; StartTime time.Time; EndTime time.Time; Result string; Limit int; Offset int}
-github.com/josephjohncox/effectus/runtime	type AuditStore interface{GetAuditLogfunc(context.Context, *AuditFilters) ([]*AuditEntry, error); RecordActivityfunc(context.Context, *AuditEntry) error}
+github.com/josephjohncox/effectus/runtime	type ArtifactResolver interface{ResolveGenerationfunc(context.Context, ledger.ExecutionArtifact) (*Generation, error)}
+github.com/josephjohncox/effectus/runtime	type ArtifactResolverFunc func(context.Context, ledger.ExecutionArtifact) (*Generation, error)
 github.com/josephjohncox/effectus/runtime	type BearerTokenAuthenticator struct{}
-github.com/josephjohncox/effectus/runtime	type CanaryConfig struct{TrafficPercent int; Duration time.Duration; SuccessThreshold float64; ErrorThreshold float64; MetricsQueries []string}
-github.com/josephjohncox/effectus/runtime	type CompileOptions struct{DiscardInitialData bool}
-github.com/josephjohncox/effectus/runtime	type CompiledEffect struct{VerbName string; Args map[string]any}
-github.com/josephjohncox/effectus/runtime	type CompiledPredicate struct{Path string; Operator string; Value any}
-github.com/josephjohncox/effectus/runtime	type CompiledRule struct{Name string; Type RuleType; Predicates []CompiledPredicate; Effects []CompiledEffect; Priority int; Description string}
-github.com/josephjohncox/effectus/runtime	type CompiledRuleset struct{Name string; Version string; Description string; FactSchema *Schema; EffectSchemas map[string]*Schema; Rules []CompiledRule; Verbs map[string]*compiler.CompiledVerbSpec; Dependencies []string; Capabilities []string; Metadata map[string]string}
-github.com/josephjohncox/effectus/runtime	type Deployment struct{Environment string; Version string; DeployedAt time.Time; DeployedBy string; Status DeploymentStatus; Config *DeploymentConfig; HealthCheck *HealthCheckResult; RollbackInfo *RollbackInfo; CanaryConfig *CanaryConfig}
-github.com/josephjohncox/effectus/runtime	type DeploymentConfig struct{Strategy string; HealthCheckURL string; RollbackOnError bool; MaxRollbackDays int; Environments []string; RequiredTests []string; Approvers []string; Metadata map[string]string}
-github.com/josephjohncox/effectus/runtime	type DeploymentStatus string
 github.com/josephjohncox/effectus/runtime	type Engine struct{}
 github.com/josephjohncox/effectus/runtime	type EngineExecutionService struct{UnimplementedRulesetExecutionServiceServer effectusv1.UnimplementedRulesetExecutionServiceServer; Engine *Engine}
 github.com/josephjohncox/effectus/runtime	type EngineExecutionServiceOptions struct{RulesetName string; Version string}
 github.com/josephjohncox/effectus/runtime	type ExecuteRequest struct{Admission *Admission; ResumeExecutionID string; WaitMode WaitMode; RecoveryLease *schema.ExecutionLease}
 github.com/josephjohncox/effectus/runtime	type ExecuteResult struct{ExecutionID string; GenerationDigest string; State string; DurablyAccepted bool; Completed bool}
-github.com/josephjohncox/effectus/runtime	type ExecutionGeneration struct{GenerationDigest string; IRDigest string; GenerationMetadata GenerationMetadata; PublishedAt time.Time}
-github.com/josephjohncox/effectus/runtime	type ExecutionRuntime struct{}
-github.com/josephjohncox/effectus/runtime	type ExecutorFactory interface{CreateExecutorfunc(config compiler.ExecutorConfig) (VerbExecutor, error)}
-github.com/josephjohncox/effectus/runtime	type FieldType struct{Type string; MessageType string; Required bool; Description string}
 github.com/josephjohncox/effectus/runtime	type GRPCAuthenticator interface{Authenticatefunc(context.Context, string) (context.Context, error)}
 github.com/josephjohncox/effectus/runtime	type GRPCAuthenticatorFunc func(context.Context, string) (context.Context, error)
-github.com/josephjohncox/effectus/runtime	type GRPCExecutor struct{}
-github.com/josephjohncox/effectus/runtime	type GRPCExecutorFactory struct{}
 github.com/josephjohncox/effectus/runtime	type Generation struct{}
 github.com/josephjohncox/effectus/runtime	type GenerationBuildConfig struct{Bundle *bundle.SourceBundle; CompileOptions compiler.CompileOptions; Resolvers *invocation.Registry; FunctionIDs map[string]string; Production bool}
 github.com/josephjohncox/effectus/runtime	type GenerationConfig struct{Checked *ir.Checked; Environment ir.Environment; Ruleset string; Version string; ExecutorDescriptors map[string]invocation.Descriptor; FunctionIDs map[string]string; SourceDigest string; Executors map[string]invocation.Executor; Closers []io.Closer; Production bool}
-github.com/josephjohncox/effectus/runtime	type GenerationMetadata struct{Ruleset string; Version string; BundleDigest string}
 github.com/josephjohncox/effectus/runtime	type GenerationView struct{Ruleset string; Version string; GenerationDigest string; IRDigest string; SourceDigest string; Environment ir.Environment; Plans []PlanView}
-github.com/josephjohncox/effectus/runtime	type HTTPExecutor struct{}
-github.com/josephjohncox/effectus/runtime	type HTTPExecutorFactory struct{}
-github.com/josephjohncox/effectus/runtime	type HealthCheckResult struct{Status string; LastChecked time.Time; Details map[string]string; Errors []string}
-github.com/josephjohncox/effectus/runtime	type InMemoryRuleStorage struct{}
-github.com/josephjohncox/effectus/runtime	type LocalExecutorAdapter struct{}
-github.com/josephjohncox/effectus/runtime	type LocalExecutorFactory struct{}
 github.com/josephjohncox/effectus/runtime	type ManifestArtifactResolver struct{}
-github.com/josephjohncox/effectus/runtime	type MessageExecutor struct{}
-github.com/josephjohncox/effectus/runtime	type MessageExecutorFactory struct{}
-github.com/josephjohncox/effectus/runtime	type MockExecutor struct{}
-github.com/josephjohncox/effectus/runtime	type MockExecutorFactory struct{}
 github.com/josephjohncox/effectus/runtime	type Observer interface{ObserveExecutionfunc(ExecuteResult, error); ObserveRecoveryfunc(RecoveryObservation)}
 github.com/josephjohncox/effectus/runtime	type PlanEvaluation struct{Plan PlanView; Matched bool}
 github.com/josephjohncox/effectus/runtime	type PlanView struct{ID string; Dialect effectusv1.SourceDialect; Priority int32; Predicate string; Verbs []string}
-github.com/josephjohncox/effectus/runtime	type PostgresStorage struct{}
-github.com/josephjohncox/effectus/runtime	type PostgresStorageConfig struct{DSN string; MaxConnections int; ConnMaxLifetime time.Duration; ConnMaxIdleTime time.Duration; MigrationsPath string; AutoMigrate bool}
 github.com/josephjohncox/effectus/runtime	type RecoveryObservation struct{BacklogMeasured bool; Backlog int64; Blocked int64; OldestExecutionAge time.Duration; OldestOutboxAge time.Duration; ExecutionID string; State string; Err error}
 github.com/josephjohncox/effectus/runtime	type RecoveryWorker struct{Engine *Engine; Store ledger.ExecutionLedger; Owner string; BatchSize int; LeaseDuration time.Duration; PollInterval time.Duration; Observer Observer}
-github.com/josephjohncox/effectus/runtime	type RollbackInfo struct{PreviousVersion string; RollbackReason string; RolledBackAt time.Time; RolledBackBy string; AutoRollback bool}
-github.com/josephjohncox/effectus/runtime	type RuleStorageBackend interface{RulesetStore; ActivationStore; AuditStore; StorageMaintenance}
-github.com/josephjohncox/effectus/runtime	type RuleType string
 github.com/josephjohncox/effectus/runtime	type RulesetExecutionServer struct{}
 github.com/josephjohncox/effectus/runtime	type RulesetExecutionServerOptions struct{MaxReceiveBytes int; MaxSendBytes int; MaxExecutionDuration time.Duration; MaxConcurrentRPCs int; Authenticator GRPCAuthenticator; AllowUnauthenticated bool; TLSConfig *tls.Config; AllowInsecureTransport bool; RulesetName string; Version string}
-github.com/josephjohncox/effectus/runtime	type RulesetFilters struct{Names []string; Versions []string; Environments []string; Status []RulesetStatus; Tags []string; Owner string; Team string; CreatedAfter *time.Time; CreatedBy string; GitCommit string; Metadata map[string]string; Limit int; Offset int}
-github.com/josephjohncox/effectus/runtime	type RulesetMetadata struct{ID string; Name string; Version string; Environment string; Status RulesetStatus; RuleCount int; CreatedAt time.Time; UpdatedAt time.Time; CreatedBy string; Tags []string; Description string; Owner string; Team string; SchemaVersion string; ValidationHash string; DeploymentCount int}
-github.com/josephjohncox/effectus/runtime	type RulesetStatus string
-github.com/josephjohncox/effectus/runtime	type RulesetStore interface{StoreRulesetfunc(context.Context, *StoredRuleset) error; GetRulesetfunc(context.Context, string, string) (*StoredRuleset, error); ListRulesetsfunc(context.Context, *RulesetFilters) ([]*RulesetMetadata, error); DeleteRulesetfunc(context.Context, string, string) error; GetRulesetVersionsfunc(context.Context, string) ([]*RulesetVersion, error)}
-github.com/josephjohncox/effectus/runtime	type RulesetVersion struct{Version string; CreatedAt time.Time; CreatedBy string; GitCommit string; IsActive bool; DeployedEnvs []string; ChangeMessage string}
-github.com/josephjohncox/effectus/runtime	type RuntimeInfo struct{State RuntimeState; GenerationDigest string; IRDigest string; Ruleset string; Version string; BundleDigest string; PublishedAt time.Time; LoaderCount int; VerbCount int; FunctionCount int; PlanCount int; Dependencies []string; Capabilities []string}
-github.com/josephjohncox/effectus/runtime	type RuntimeState string
-github.com/josephjohncox/effectus/runtime	type Schema struct{Name string; Fields map[string]*FieldType; Required []string; Description string}
-github.com/josephjohncox/effectus/runtime	type StorageMaintenance interface{HealthCheckfunc(context.Context) error; Cleanupfunc(context.Context, time.Time) error}
-github.com/josephjohncox/effectus/runtime	type StoredRuleset struct{Ruleset *CompiledRuleset; ID string; Name string; Version string; Environment string; CreatedAt time.Time; UpdatedAt time.Time; CreatedBy string; UpdatedBy string; GitCommit string; GitBranch string; GitTag string; GitAuthor string; PullRequest string; CompiledAt time.Time; CompilerVersion string; SchemaVersion string; ValidationHash string; Status RulesetStatus; Deployments map[string]*Deployment; Tags []string; Description string; Owner string; Team string; Metadata map[string]string}
-github.com/josephjohncox/effectus/runtime	type VerbExecutor interface{Executefunc(ctx context.Context, args map[string]interface{}) (interface{}, error)}
 github.com/josephjohncox/effectus/runtime	type WaitMode string
 github.com/josephjohncox/effectus/runtime	var ErrBlockedDependency = errors.New("execution blocked by missing dependency")
 github.com/josephjohncox/effectus/runtime	var ErrDurableDisposition = errors.New("durable execution disposition failed")
@@ -1896,10 +1503,8 @@ github.com/josephjohncox/effectus/runtime	var ErrGRPCResourceExhausted = errors.
 github.com/josephjohncox/effectus/runtime	var ErrGRPCUnauthorized = errors.New("gRPC authentication failed")
 github.com/josephjohncox/effectus/runtime	var ErrGRPCUnavailable = errors.New("gRPC execution unavailable")
 github.com/josephjohncox/effectus/runtime	var ErrGenerationMismatch = errors.New("engine generation mismatch")
-github.com/josephjohncox/effectus/runtime	var ErrIdentityConflict = errors.New("engine admission identity conflict")
+github.com/josephjohncox/effectus/runtime	var ErrIdentityConflict = schema.ErrIdentityConflict
 github.com/josephjohncox/effectus/runtime	var ErrInvalidExecuteRequest = errors.New("invalid engine execute request")
-github.com/josephjohncox/effectus/runtime	var ErrRulesetActive = errors.New("ruleset is active")
-github.com/josephjohncox/effectus/runtime	var ErrUnsupportedDeploymentStrategy = errors.New("unsupported deployment strategy")
 github.com/josephjohncox/effectus/schema	const DispatchBlockedFence = workflow.DispatchBlockedFence
 github.com/josephjohncox/effectus/schema	const DispatchBlockedUnknown = workflow.DispatchBlockedUnknown
 github.com/josephjohncox/effectus/schema	const DispatchFailedPermanent = workflow.DispatchFailedPermanent
@@ -1923,10 +1528,6 @@ github.com/josephjohncox/effectus/schema	const SagaBlockedUnknown = workflow.Sag
 github.com/josephjohncox/effectus/schema	const SagaCompensated = workflow.SagaCompensated
 github.com/josephjohncox/effectus/schema	const SagaCompensating = workflow.SagaCompensating
 github.com/josephjohncox/effectus/schema	const SagaCompleted = workflow.SagaCompleted
-github.com/josephjohncox/effectus/schema	const SagaEffectCompensated = "compensated"
-github.com/josephjohncox/effectus/schema	const SagaEffectFailed = "failed"
-github.com/josephjohncox/effectus/schema	const SagaEffectPending = "pending"
-github.com/josephjohncox/effectus/schema	const SagaEffectSuccess = "success"
 github.com/josephjohncox/effectus/schema	const SagaFailed = workflow.SagaFailed
 github.com/josephjohncox/effectus/schema	const SagaRunning = workflow.SagaRunning
 github.com/josephjohncox/effectus/schema	const StepCompensated = workflow.StepCompensated
@@ -1935,30 +1536,16 @@ github.com/josephjohncox/effectus/schema	const StepPending = workflow.StepPendin
 github.com/josephjohncox/effectus/schema	const StepSucceeded = workflow.StepSucceeded
 github.com/josephjohncox/effectus/schema	func CanonicalJSON(value any) (json.RawMessage, string, error)
 github.com/josephjohncox/effectus/schema	func EnqueueCheckedStep(ctx context.Context, store OutboxStore, checked *ir.Checked, request CheckedEnqueueRequest) (*Dispatch, error)
-github.com/josephjohncox/effectus/schema	func EvaluatePredicatesWithFacts(predicates []*Predicate, facts effectus.Facts) bool
-github.com/josephjohncox/effectus/schema	func EvaluatePredicatesWithFactsE(predicates []*Predicate, facts effectus.Facts) (bool, error)
 github.com/josephjohncox/effectus/schema	func ExtractFactPaths(expression string) map[string]struct{}
-github.com/josephjohncox/effectus/schema	func GetSagaEffect(store SagaStore, sagaID, effectID string) (*SagaEffect, error)
 github.com/josephjohncox/effectus/schema	func IdempotencyKey(namespace, sagaID, effectID string, direction invocation.Direction) string
 github.com/josephjohncox/effectus/schema	func IsTerminalExecutionState(state ExecutionState) bool
-github.com/josephjohncox/effectus/schema	func MigrateRedisOutboxV2(ctx context.Context, options RedisOutboxStoreOptions) error
 github.com/josephjohncox/effectus/schema	func MigrateSagaV2(ctx context.Context, db *sql.DB) error
 github.com/josephjohncox/effectus/schema	func NewBufIntegration(workspaceRoot string) (*BufIntegration, error)
 github.com/josephjohncox/effectus/schema	func NewDispatcher(store OutboxStore, provider fencing.Provider, executor invocation.Executor, options DispatcherOptions) (*Dispatcher, error)
 github.com/josephjohncox/effectus/schema	func NewInMemoryExecutionLedger() *InMemoryExecutionLedger
 github.com/josephjohncox/effectus/schema	func NewInMemoryOutboxStore() *InMemoryOutboxStore
-github.com/josephjohncox/effectus/schema	func NewInMemorySagaStore() *InMemorySagaStore
 github.com/josephjohncox/effectus/schema	func NewPostgresOutboxStore(db *sql.DB) (*PostgresOutboxStore, error)
-github.com/josephjohncox/effectus/schema	func NewPostgresSagaStore(dsn string) (*PostgresSagaStore, error)
-github.com/josephjohncox/effectus/schema	func NewRedisOutboxStore(options RedisOutboxStoreOptions) (*RedisOutboxStore, error)
-github.com/josephjohncox/effectus/schema	func NewRedisSagaStore(opts RedisSagaStoreOptions) (*RedisSagaStore, error)
-github.com/josephjohncox/effectus/schema	func NewRegistry() *Registry
-github.com/josephjohncox/effectus/schema	func NewSagaExecutor(executor effectus.Executor, sagaStore SagaStore, capSystem *capability.CapabilitySystem, verbRegistry SagaVerbRegistry, holderID string) *SagaExecutor
 github.com/josephjohncox/effectus/schema	func PruneTerminalRecords(ctx context.Context, db *sql.DB, options PruneOptions) (PruneReport, error)
-github.com/josephjohncox/effectus/schema	func ResetDefaultClock()
-github.com/josephjohncox/effectus/schema	func SagaEffectID(sequence int) string
-github.com/josephjohncox/effectus/schema	func SetDefaultClock(clock func() time.Time)
-github.com/josephjohncox/effectus/schema	func SetFixedTime(now time.Time)
 github.com/josephjohncox/effectus/schema	func StableAdmissionID(namespace, deliveryID, ruleset, version string) string
 github.com/josephjohncox/effectus/schema	func StableExecutionID(namespace, deliveryID, ruleset, version string) string
 github.com/josephjohncox/effectus/schema	func StableSagaID(executionID, planID string) string
@@ -1991,14 +1578,6 @@ github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.GetSaga(ctx 
 github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.ListAttempts(ctx context.Context, dispatchID string) ([]DispatchAttempt, error)
 github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.ListDispatches(ctx context.Context, sagaID string) ([]*Dispatch, error)
 github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.SaveFencingGrants(ctx context.Context, dispatchID string, attempt uint64, leaseToken string, grants []invocation.FencingGrant) error
-github.com/josephjohncox/effectus/schema	method InMemorySagaStore.CompleteSaga(sagaID string) error
-github.com/josephjohncox/effectus/schema	method InMemorySagaStore.GetActiveSagas() ([]string, error)
-github.com/josephjohncox/effectus/schema	method InMemorySagaStore.GetTransactionEffects(sagaID string) ([]*SagaEffect, error)
-github.com/josephjohncox/effectus/schema	method InMemorySagaStore.MarkCompensated(sagaID, effectID string) error
-github.com/josephjohncox/effectus/schema	method InMemorySagaStore.MarkFailed(sagaID, effectID string, reason error) error
-github.com/josephjohncox/effectus/schema	method InMemorySagaStore.MarkSuccess(sagaID, effectID string, result interface{}) error
-github.com/josephjohncox/effectus/schema	method InMemorySagaStore.RecordEffect(sagaID, effectID string, sequence int, verb string, args map[string]interface{}) error
-github.com/josephjohncox/effectus/schema	method InMemorySagaStore.StartTransaction(sagaID, ruleName string) error
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.AdmitExecution(ctx context.Context, admission DurableAdmission) (ExecutionRecord, bool, error)
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.AdmitExecutionAtomic(ctx context.Context, admission DurableAdmission) (ExecutionRecord, bool, error)
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.ClaimDispatch(ctx context.Context, options ClaimOptions) (*Dispatch, error)
@@ -2020,59 +1599,6 @@ github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.PutArtifact(
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.RecoveryStats(ctx context.Context) (RecoveryStats, error)
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.SaveFencingGrants(ctx context.Context, dispatchID string, attempt uint64, leaseToken string, grants []invocation.FencingGrant) error
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.SetExecutionState(ctx context.Context, id string, revision uint64, state ExecutionState, message string) (ExecutionRecord, error)
-github.com/josephjohncox/effectus/schema	method PostgresSagaStore.CompleteSaga(sagaID string) error
-github.com/josephjohncox/effectus/schema	method PostgresSagaStore.GetActiveSagas() ([]string, error)
-github.com/josephjohncox/effectus/schema	method PostgresSagaStore.GetTransactionEffects(sagaID string) ([]*SagaEffect, error)
-github.com/josephjohncox/effectus/schema	method PostgresSagaStore.MarkCompensated(sagaID, effectID string) error
-github.com/josephjohncox/effectus/schema	method PostgresSagaStore.MarkFailed(sagaID, effectID string, reason error) error
-github.com/josephjohncox/effectus/schema	method PostgresSagaStore.MarkSuccess(sagaID, effectID string, result interface{}) error
-github.com/josephjohncox/effectus/schema	method PostgresSagaStore.RecordEffect(sagaID, effectID string, sequence int, verb string, args map[string]interface{}) error
-github.com/josephjohncox/effectus/schema	method PostgresSagaStore.StartTransaction(sagaID, ruleName string) error
-github.com/josephjohncox/effectus/schema	method Predicate.Evaluate() (bool, error)
-github.com/josephjohncox/effectus/schema	method Predicate.EvaluateWithRegistry(registry *Registry) (bool, error)
-github.com/josephjohncox/effectus/schema	method RedisOutboxStore.ClaimDispatch(ctx context.Context, options ClaimOptions) (*Dispatch, error)
-github.com/josephjohncox/effectus/schema	method RedisOutboxStore.Close() error
-github.com/josephjohncox/effectus/schema	method RedisOutboxStore.CompleteDispatch(ctx context.Context, completion Completion) error
-github.com/josephjohncox/effectus/schema	method RedisOutboxStore.CompleteSaga(ctx context.Context, sagaID string) error
-github.com/josephjohncox/effectus/schema	method RedisOutboxStore.CreateSaga(ctx context.Context, request CreateSagaRequest) (*SagaInstance, error)
-github.com/josephjohncox/effectus/schema	method RedisOutboxStore.EnqueueStep(ctx context.Context, request EnqueueStepRequest) (*Dispatch, error)
-github.com/josephjohncox/effectus/schema	method RedisOutboxStore.GetDispatch(ctx context.Context, id string) (*Dispatch, error)
-github.com/josephjohncox/effectus/schema	method RedisOutboxStore.GetSaga(ctx context.Context, sagaID string) (*SagaInstance, error)
-github.com/josephjohncox/effectus/schema	method RedisOutboxStore.ListAttempts(ctx context.Context, id string) ([]DispatchAttempt, error)
-github.com/josephjohncox/effectus/schema	method RedisOutboxStore.ListDispatches(ctx context.Context, sagaID string) ([]*Dispatch, error)
-github.com/josephjohncox/effectus/schema	method RedisOutboxStore.OptimisticConflictRetries() uint64
-github.com/josephjohncox/effectus/schema	method RedisOutboxStore.SaveFencingGrants(ctx context.Context, dispatchID string, attempt uint64, token string, grants []invocation.FencingGrant) error
-github.com/josephjohncox/effectus/schema	method RedisSagaStore.Close() error
-github.com/josephjohncox/effectus/schema	method RedisSagaStore.CompleteSaga(sagaID string) error
-github.com/josephjohncox/effectus/schema	method RedisSagaStore.GetActiveSagas() ([]string, error)
-github.com/josephjohncox/effectus/schema	method RedisSagaStore.GetTransactionEffects(sagaID string) ([]*SagaEffect, error)
-github.com/josephjohncox/effectus/schema	method RedisSagaStore.MarkCompensated(sagaID, effectID string) error
-github.com/josephjohncox/effectus/schema	method RedisSagaStore.MarkFailed(sagaID, effectID string, reason error) error
-github.com/josephjohncox/effectus/schema	method RedisSagaStore.MarkSuccess(sagaID, effectID string, result interface{}) error
-github.com/josephjohncox/effectus/schema	method RedisSagaStore.RecordEffect(sagaID, effectID string, sequence int, verb string, args map[string]interface{}) error
-github.com/josephjohncox/effectus/schema	method RedisSagaStore.StartTransaction(sagaID, ruleName string) error
-github.com/josephjohncox/effectus/schema	method Registry.Clear()
-github.com/josephjohncox/effectus/schema	method Registry.ClearAll()
-github.com/josephjohncox/effectus/schema	method Registry.CompileExpression(expression string) error
-github.com/josephjohncox/effectus/schema	method Registry.CompileLogicalExpression(expression string, schemaInfo effectus.SchemaInfo) ([]*Predicate, map[string]struct{}, error)
-github.com/josephjohncox/effectus/schema	method Registry.EvaluateBoolean(expression string) (bool, error)
-github.com/josephjohncox/effectus/schema	method Registry.EvaluateCompiled(expression string) (interface{}, error)
-github.com/josephjohncox/effectus/schema	method Registry.EvaluateExpression(expression string) (interface{}, error)
-github.com/josephjohncox/effectus/schema	method Registry.EvaluatePredicates(predicates []*Predicate, facts effectus.Facts) bool
-github.com/josephjohncox/effectus/schema	method Registry.Get(path string) (interface{}, bool)
-github.com/josephjohncox/effectus/schema	method Registry.GetPathsWithPrefix(prefix string) []string
-github.com/josephjohncox/effectus/schema	method Registry.GetType(path string) (interface{}, bool)
-github.com/josephjohncox/effectus/schema	method Registry.LoadFromFacts(facts effectus.Facts)
-github.com/josephjohncox/effectus/schema	method Registry.LoadFromJSON(jsonData []byte) error
-github.com/josephjohncox/effectus/schema	method Registry.LoadFromMap(data map[string]interface{})
-github.com/josephjohncox/effectus/schema	method Registry.Merge(other *Registry)
-github.com/josephjohncox/effectus/schema	method Registry.NewPredicate(expression string) (*Predicate, error)
-github.com/josephjohncox/effectus/schema	method Registry.RegisterFunction(name string, fn interface{})
-github.com/josephjohncox/effectus/schema	method Registry.Set(path string, value interface{})
-github.com/josephjohncox/effectus/schema	method Registry.SetClock(clock func() time.Time)
-github.com/josephjohncox/effectus/schema	method Registry.SetNow(now time.Time)
-github.com/josephjohncox/effectus/schema	method Registry.TypeCheckExpression(expression string) error
-github.com/josephjohncox/effectus/schema	method SagaExecutor.ExecuteWithSaga(ctx context.Context, sagaID string, ruleName string, effects []effectus.Effect) ([]interface{}, error)
 github.com/josephjohncox/effectus/schema	type AtomicAdmissionStore = ledger.AtomicAdmissionStore
 github.com/josephjohncox/effectus/schema	type BufBreakingConfig struct{Use []string}
 github.com/josephjohncox/effectus/schema	type BufBuildConfig struct{Excludes []string}
@@ -2098,42 +1624,28 @@ github.com/josephjohncox/effectus/schema	type EnqueueStepRequest = workflow.Enqu
 github.com/josephjohncox/effectus/schema	type ExecutionArtifact = ledger.ExecutionArtifact
 github.com/josephjohncox/effectus/schema	type ExecutionLease = ledger.ExecutionLease
 github.com/josephjohncox/effectus/schema	type ExecutionLedger = ledger.ExecutionLedger
-github.com/josephjohncox/effectus/schema	type ExecutionPlan struct{Steps []*ExecutionStep}
 github.com/josephjohncox/effectus/schema	type ExecutionPlanRecord = ledger.ExecutionPlanRecord
 github.com/josephjohncox/effectus/schema	type ExecutionRecord = ledger.ExecutionRecord
 github.com/josephjohncox/effectus/schema	type ExecutionState = ledger.ExecutionState
-github.com/josephjohncox/effectus/schema	type ExecutionStep struct{Sequence int; Effects []effectus.Effect; CanRunConcurrently bool}
 github.com/josephjohncox/effectus/schema	type FactApplication = ledger.FactApplication
 github.com/josephjohncox/effectus/schema	type FactSchema struct{Name string; Version string; Description string; Schema map[string]interface{}; Indexes []IndexDefinition; RetentionPolicy *RetentionPolicy; PrivacyRules []PrivacyRule; BufModule string; BufCommit string; CreatedAt time.Time; UpdatedAt time.Time}
 github.com/josephjohncox/effectus/schema	type FactSchemaRegistry struct{}
 github.com/josephjohncox/effectus/schema	type FencingRequirement = workflow.FencingRequirement
 github.com/josephjohncox/effectus/schema	type InMemoryExecutionLedger struct{}
 github.com/josephjohncox/effectus/schema	type InMemoryOutboxStore struct{}
-github.com/josephjohncox/effectus/schema	type InMemorySagaStore struct{}
 github.com/josephjohncox/effectus/schema	type IndexDefinition struct{Name string; Fields []string; Type string; Unique bool; Sparse bool; Options map[string]string}
 github.com/josephjohncox/effectus/schema	type OutboxStore = workflow.OutboxStore
 github.com/josephjohncox/effectus/schema	type PostgresOutboxStore struct{}
-github.com/josephjohncox/effectus/schema	type PostgresSagaStore struct{}
-github.com/josephjohncox/effectus/schema	type Predicate struct{Expression string}
 github.com/josephjohncox/effectus/schema	type PrivacyRule struct{FieldPath string; Action string; MaskPattern string; AllowedRoles []string; Conditions map[string]string}
 github.com/josephjohncox/effectus/schema	type PruneOptions struct{Before time.Time; Retention time.Duration; BatchSize int; DryRun bool}
 github.com/josephjohncox/effectus/schema	type PruneReport struct{Executions int64; ExecutionPlans int64; FactApplications int64; FactSnapshots int64; SagaInstances int64; Sagas int64; SagaSteps int64; SagaOutbox int64; SagaAttempts int64; RuleGenerations int64; Artifacts int64; KafkaDeliveries int64}
 github.com/josephjohncox/effectus/schema	type PruneResult = PruneReport
 github.com/josephjohncox/effectus/schema	type RecoveryStats = ledger.RecoveryStats
 github.com/josephjohncox/effectus/schema	type RecoveryStatsReader = ledger.RecoveryStatsReader
-github.com/josephjohncox/effectus/schema	type RedisOutboxStore struct{}
-github.com/josephjohncox/effectus/schema	type RedisOutboxStoreOptions struct{Addr string; Password string; DB int; Prefix string; TTL time.Duration; MaxRetries int; MaxSagaBytes int; MaxLegacyBytes int}
-github.com/josephjohncox/effectus/schema	type RedisSagaStore struct{}
-github.com/josephjohncox/effectus/schema	type RedisSagaStoreOptions struct{Addr string; Password string; DB int; Prefix string; TTL time.Duration}
-github.com/josephjohncox/effectus/schema	type Registry struct{}
 github.com/josephjohncox/effectus/schema	type RetentionPolicy struct{Duration string; Strategy string; Conditions map[string]string}
-github.com/josephjohncox/effectus/schema	type SagaEffect struct{ID string; Sequence int; Verb string; Args map[string]interface{}; Result interface{}; Status string; Timestamp time.Time; Error string}
-github.com/josephjohncox/effectus/schema	type SagaExecutor struct{}
 github.com/josephjohncox/effectus/schema	type SagaInstance = workflow.SagaInstance
 github.com/josephjohncox/effectus/schema	type SagaState = workflow.SagaState
 github.com/josephjohncox/effectus/schema	type SagaStep = workflow.SagaStep
-github.com/josephjohncox/effectus/schema	type SagaStore interface{StartTransactionfunc(sagaID, ruleName string) error; RecordEffectfunc(sagaID, effectID string, sequence int, verb string, args map[string]interface{}) error; MarkSuccessfunc(sagaID, effectID string, result interface{}) error; MarkFailedfunc(sagaID, effectID string, reason error) error; MarkCompensatedfunc(sagaID, effectID string) error; GetTransactionEffectsfunc(sagaID string) ([]*SagaEffect, error); GetActiveSagasfunc() ([]string, error); CompleteSagafunc(sagaID string) error}
-github.com/josephjohncox/effectus/schema	type SagaVerbRegistry interface{GetVerbfunc(name string) (*verb.Spec, bool)}
 github.com/josephjohncox/effectus/schema	type SchemaValidationResult struct{Valid bool; Errors []string; Warnings []string; BreakingChanges []string; Suggestions []string}
 github.com/josephjohncox/effectus/schema	type StepState = workflow.StepState
 github.com/josephjohncox/effectus/schema	type UnknownOutcomeRetryPolicy = workflow.UnknownOutcomeRetryPolicy
@@ -2141,36 +1653,13 @@ github.com/josephjohncox/effectus/schema	type VerbSchema struct{Name string; Ver
 github.com/josephjohncox/effectus/schema	type VerbSchemaRegistry struct{}
 github.com/josephjohncox/effectus/schema	var ErrArtifactNotFound = errors.New("execution artifact not found")
 github.com/josephjohncox/effectus/schema	var ErrExecutionNotFound = errors.New("execution not found")
-github.com/josephjohncox/effectus/schema	var ErrIdentityConflict = errors.New("durable identity conflict")
+github.com/josephjohncox/effectus/schema	var ErrIdentityConflict = errors.New("engine admission identity conflict")
 github.com/josephjohncox/effectus/schema	var ErrInvalidTransition = errors.New("invalid saga state transition")
 github.com/josephjohncox/effectus/schema	var ErrNoDispatch = errors.New("no eligible dispatch")
 github.com/josephjohncox/effectus/schema	var ErrOptimisticConflict = errors.New("optimistic persistence conflict")
-github.com/josephjohncox/effectus/schema	var ErrSagaStoreRequired = errors.New("saga execution requires a saga store")
 github.com/josephjohncox/effectus/schema	var ErrStaleExecutionLease = errors.New("stale execution recovery lease")
 github.com/josephjohncox/effectus/schema	var ErrStaleLease = errors.New("stale dispatch lease")
 github.com/josephjohncox/effectus/schema	var ErrTerminalSaga = errors.New("terminal saga cannot be reopened")
-github.com/josephjohncox/effectus/schema/capability	func NewCapabilityAwareExecutor(executor effectus.Executor, capSystem *CapabilitySystem, holderID string) *CapabilityAwareExecutor
-github.com/josephjohncox/effectus/schema/capability	func NewCapabilitySystem() *CapabilitySystem
-github.com/josephjohncox/effectus/schema/capability	method CapabilityAwareExecutor.Do(effect effectus.Effect) (interface{}, error)
-github.com/josephjohncox/effectus/schema/capability	method CapabilityAwareExecutor.DoContext(ctx context.Context, effect effectus.Effect) (interface{}, error)
-github.com/josephjohncox/effectus/schema/capability	method CapabilitySystem.AcquireLock(capability types.Capability, key, holder string) (*LockResult, error)
-github.com/josephjohncox/effectus/schema/capability	method CapabilitySystem.CheckConflicts(effect1, effect2 effectus.Effect, cap1, cap2 types.Capability) bool
-github.com/josephjohncox/effectus/schema/capability	method CapabilitySystem.CleanupExpiredLocks()
-github.com/josephjohncox/effectus/schema/capability	method CapabilitySystem.GetActiveLocks() map[string]LockInfo
-github.com/josephjohncox/effectus/schema/capability	method CapabilitySystem.RegisterResourcePolicy(policy *ResourcePolicy)
-github.com/josephjohncox/effectus/schema/capability	method CapabilitySystem.ValidateCapability(effect effectus.Effect, requiredCapability types.Capability) error
-github.com/josephjohncox/effectus/schema/capability	method CapabilitySystem.ValidateCapabilityForHolder(effect effectus.Effect, requiredCapability types.Capability, holder string) error
-github.com/josephjohncox/effectus/schema/capability	method DefaultCapabilityValidator.Validate(ctx CapabilityContext) error
-github.com/josephjohncox/effectus/schema/capability	method TimeBasedCapabilityValidator.Validate(ctx CapabilityContext) error
-github.com/josephjohncox/effectus/schema/capability	type CapabilityAwareExecutor struct{}
-github.com/josephjohncox/effectus/schema/capability	type CapabilityContext struct{Effect effectus.Effect; Capability types.Capability; Key string; Holder string; Timestamp time.Time}
-github.com/josephjohncox/effectus/schema/capability	type CapabilitySystem struct{}
-github.com/josephjohncox/effectus/schema/capability	type CapabilityValidator interface{Validatefunc(ctx CapabilityContext) error}
-github.com/josephjohncox/effectus/schema/capability	type DefaultCapabilityValidator struct{}
-github.com/josephjohncox/effectus/schema/capability	type LockInfo struct{Capability string; Key string; Holder string; Acquired time.Time; Expires time.Time; Exclusive bool}
-github.com/josephjohncox/effectus/schema/capability	type LockResult struct{LockID string; FenceToken int64; Guarantee fencing.Guarantee; FencingStatus invocation.FencingStatus; ExpiresAt time.Time; Unlock func()}
-github.com/josephjohncox/effectus/schema/capability	type ResourcePolicy struct{ResourceType string; RequiredCapability types.Capability; AllowConcurrent bool; MaxConcurrency int; DefaultTimeout time.Duration; Validators []CapabilityValidator}
-github.com/josephjohncox/effectus/schema/capability	type TimeBasedCapabilityValidator struct{AllowedHours []int}
 github.com/josephjohncox/effectus/schema/expression	type PredicateEvaluator interface{Evaluatefunc(map[string]interface{}) (bool, error)}
 github.com/josephjohncox/effectus/schema/expression	type Registry interface{Setfunc(string, interface{}); Getfunc(string) (interface{}, bool); RegisterFunctionfunc(string, interface{}); EvaluateExpressionfunc(string) (interface{}, error)}
 github.com/josephjohncox/effectus/schema/fencing	const GuaranteeDurableMonotonic Guarantee = "durable_monotonic"
@@ -2211,222 +1700,6 @@ github.com/josephjohncox/effectus/schema/ledger	type ExecutionState string
 github.com/josephjohncox/effectus/schema/ledger	type FactApplication struct{ExecutionID string; FactEventID string; MergePolicy string; Facts json.RawMessage; AppliedRevision uint64}
 github.com/josephjohncox/effectus/schema/ledger	type RecoveryStats struct{Nonterminal int64; Blocked int64; OldestNonterminal time.Time; OldestOutbox time.Time}
 github.com/josephjohncox/effectus/schema/ledger	type RecoveryStatsReader interface{RecoveryStatsfunc(context.Context) (RecoveryStats, error)}
-github.com/josephjohncox/effectus/schema/types	const CapabilityCreate
-github.com/josephjohncox/effectus/schema/types	const CapabilityDelete
-github.com/josephjohncox/effectus/schema/types	const CapabilityModify
-github.com/josephjohncox/effectus/schema/types	const CapabilityNone Capability = iota
-github.com/josephjohncox/effectus/schema/types	const CapabilityRead
-github.com/josephjohncox/effectus/schema/types	const TypeBool
-github.com/josephjohncox/effectus/schema/types	const TypeDate
-github.com/josephjohncox/effectus/schema/types	const TypeDuration
-github.com/josephjohncox/effectus/schema/types	const TypeFloat
-github.com/josephjohncox/effectus/schema/types	const TypeInt
-github.com/josephjohncox/effectus/schema/types	const TypeList
-github.com/josephjohncox/effectus/schema/types	const TypeMap
-github.com/josephjohncox/effectus/schema/types	const TypeObject
-github.com/josephjohncox/effectus/schema/types	const TypeString
-github.com/josephjohncox/effectus/schema/types	const TypeTime
-github.com/josephjohncox/effectus/schema/types	const TypeUnknown PrimitiveType = iota
-github.com/josephjohncox/effectus/schema/types	func AreComparableTypes(t1, t2 *Type) bool
-github.com/josephjohncox/effectus/schema/types	func AreTypesCompatible(actual, expected *Type) bool
-github.com/josephjohncox/effectus/schema/types	func CanAssign(sourceType, targetType *Type) bool
-github.com/josephjohncox/effectus/schema/types	func GetLiteralValue(lit ast.Literal) interface{}
-github.com/josephjohncox/effectus/schema/types	func InferTypeFromInterface(value interface{}) *Type
-github.com/josephjohncox/effectus/schema/types	func InferTypeFromJSON(jsonData []byte) (*Type, error)
-github.com/josephjohncox/effectus/schema/types	func InferTypeFromLiteral(lit *ast.Literal) *Type
-github.com/josephjohncox/effectus/schema/types	func InferTypeFromValue(value interface{}) *Type
-github.com/josephjohncox/effectus/schema/types	func IsCoercibleTo(sourceType, targetType *Type) bool
-github.com/josephjohncox/effectus/schema/types	func IsComparableType(t *Type) bool
-github.com/josephjohncox/effectus/schema/types	func IsContainerType(t *Type) bool
-github.com/josephjohncox/effectus/schema/types	func NewAnyType() *Type
-github.com/josephjohncox/effectus/schema/types	func NewBoolType() *Type
-github.com/josephjohncox/effectus/schema/types	func NewDateType() *Type
-github.com/josephjohncox/effectus/schema/types	func NewDurationType() *Type
-github.com/josephjohncox/effectus/schema/types	func NewFloatType() *Type
-github.com/josephjohncox/effectus/schema/types	func NewIntType() *Type
-github.com/josephjohncox/effectus/schema/types	func NewListType(elemType *Type) *Type
-github.com/josephjohncox/effectus/schema/types	func NewMapType(keyType, valueType *Type) *Type
-github.com/josephjohncox/effectus/schema/types	func NewObjectType() *Type
-github.com/josephjohncox/effectus/schema/types	func NewStringType() *Type
-github.com/josephjohncox/effectus/schema/types	func NewTimeType() *Type
-github.com/josephjohncox/effectus/schema/types	func NewTypeSystem() *TypeSystem
-github.com/josephjohncox/effectus/schema/types	func NewTypedProvider(provider FactProvider, typeSystem *TypeSystem) *TypedProvider
-github.com/josephjohncox/effectus/schema/types	func ParseTypeName(name string) (*Type, error)
-github.com/josephjohncox/effectus/schema/types	func StandardLibrary() []*FunctionSpec
-github.com/josephjohncox/effectus/schema/types	method Capability.CanPerform(required Capability) bool
-github.com/josephjohncox/effectus/schema/types	method Capability.String() string
-github.com/josephjohncox/effectus/schema/types	method Type.AddProperty(name string, propType *Type) error
-github.com/josephjohncox/effectus/schema/types	method Type.Clone() *Type
-github.com/josephjohncox/effectus/schema/types	method Type.Equals(other *Type) bool
-github.com/josephjohncox/effectus/schema/types	method Type.IsContainer() bool
-github.com/josephjohncox/effectus/schema/types	method Type.IsNamed() bool
-github.com/josephjohncox/effectus/schema/types	method Type.IsNumeric() bool
-github.com/josephjohncox/effectus/schema/types	method Type.IsPrimitive() bool
-github.com/josephjohncox/effectus/schema/types	method Type.IsReference() bool
-github.com/josephjohncox/effectus/schema/types	method Type.ListType() *Type
-github.com/josephjohncox/effectus/schema/types	method Type.MapKeyType() *Type
-github.com/josephjohncox/effectus/schema/types	method Type.MapValueType() *Type
-github.com/josephjohncox/effectus/schema/types	method Type.String() string
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.AutoRegisterTypes(facts effectus.Facts)
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.BuildTypeSchemaFromFacts(facts effectus.Facts)
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.CheckValueTypeCompatibility(operator string, factType, valueType *Type) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.GenerateTypeReport() string
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.GetAllFactPaths() []string
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.GetAllTypes() map[string]*Type
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.GetAllVerbNames() []string
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.GetFactType(path string) (*Type, error)
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.GetFactTypeVersion(path, version string) (*Type, error)
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.GetFunctionSpec(name string) (*FunctionSpec, bool)
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.GetFunctionSpecs() map[string]*FunctionSpec
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.GetType(name string) (*Type, bool)
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.GetVerbSpec(verbName string) (*VerbSpec, error)
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.GetVerbType(verbName string) (*VerbInfo, bool)
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.GetVerbTypes() map[string]*VerbInfo
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.InferTypeFromFactPath(facts effectus.Facts, path string) (*Type, error)
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.LoadJSONSchemaBytes(prefix string, data []byte) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.LoadJSONSchemaBytesVersion(prefix, version string, data []byte, setDefault bool) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.LoadJSONSchemaFile(filename string) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.LoadSchemaFile(filename string) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.LoadSchemaJSONBytes(prefix string, data []byte) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.LoadSchemaJSONBytesVersion(prefix, version string, data []byte, setDefault bool) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.LoadVerbSpecs(filename string) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.MergeTypeSystem(other *TypeSystem)
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.OperatorCompatibility(operator string, valueType *Type) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.RegisterFactType(path string, typ *Type)
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.RegisterFactTypeVersion(path, version string, typ *Type, setDefault bool)
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.RegisterFunctionSpec(spec *FunctionSpec)
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.RegisterNamespaceAlias(alias, target string)
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.RegisterProtoTypes(protoFile string) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.RegisterStandardLibrary()
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.RegisterType(name string, typ *Type)
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.RegisterVerb(verbName string, argTypes map[string]*Type, returnType *Type, requiredArgs []string) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.RegisterVerbType(verbName string, argTypes map[string]*Type, returnType *Type) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.ResetFactTypes()
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.ResolveAlias(path string) string
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.SetDefaultFactVersion(path, version string)
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.TypeCheckArgValue(value *ast.ArgValue, requiredType *Type, facts Facts) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.TypeCheckArgValueWithBindings(value *ast.ArgValue, requiredType *Type, facts Facts, bindings map[string]*Type) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.TypeCheckArgumentValue(arg *ast.ArgValue, requiredType *Type, facts Facts) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.TypeCheckEffect(effect *ast.Effect, facts Facts) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.TypeCheckFact(facts effectus.Facts, path string, expectedType *Type) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.TypeCheckFile(file *ast.File, facts effectus.Facts) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.TypeCheckListElements(elements []ast.Literal, elementType *Type) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.TypeCheckLiteralArgument(lit *ast.Literal, requiredType *Type) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.TypeCheckLogicalExpressionAST(expr string) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.TypeCheckMapEntries(entries []*ast.MapEntry, keyType, valueType *Type) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.TypeCheckPayload(payload interface{}, expectedType *Type) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.TypeCheckPredicate(expr string) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.TypeCheckPredicateAST(expr string) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.TypeCheckStep(step *ast.Step, facts Facts) error
-github.com/josephjohncox/effectus/schema/types	method TypeSystem.TypeCheckValue(value interface{}, expectedType *Type) error
-github.com/josephjohncox/effectus/schema/types	method TypedProvider.EnrichWithTypes(facts effectus.Facts) *TypedProvider
-github.com/josephjohncox/effectus/schema/types	method TypedProvider.Get(path string) (interface{}, bool)
-github.com/josephjohncox/effectus/schema/types	method TypedProvider.GetTypeSystem() *TypeSystem
-github.com/josephjohncox/effectus/schema/types	method TypedProvider.GetWithContext(path string) (interface{}, *ResolutionResult)
-github.com/josephjohncox/effectus/schema/types	method TypedProvider.WithProvider(provider FactProvider) *TypedProvider
-github.com/josephjohncox/effectus/schema/types	type AdvancedFactProvider interface{FactProvider; GetWithContextfunc(path string) (interface{}, *ResolutionResult)}
-github.com/josephjohncox/effectus/schema/types	type Capability uint32
-github.com/josephjohncox/effectus/schema/types	type FactProvider interface{Getfunc(path string) (interface{}, bool)}
-github.com/josephjohncox/effectus/schema/types	type Facts interface{Getfunc(path string) (interface{}, bool)}
-github.com/josephjohncox/effectus/schema/types	type FunctionSpec struct{Name string; Func interface{}; ArgTypes []string; ReturnType string; Unsafe bool; Description string}
-github.com/josephjohncox/effectus/schema/types	type PrimitiveType int
-github.com/josephjohncox/effectus/schema/types	type ResolutionResult struct{Exists bool; Path string; Value interface{}; Error error; Depth int; Resolved []string}
-github.com/josephjohncox/effectus/schema/types	type Type struct{Name string; PrimType PrimitiveType; ElementType *Type; Properties map[string]*Type; ReferenceType string}
-github.com/josephjohncox/effectus/schema/types	type TypeSystem struct{}
-github.com/josephjohncox/effectus/schema/types	type TypedProvider struct{}
-github.com/josephjohncox/effectus/schema/types	type VerbInfo struct{ArgTypes map[string]*Type; ReturnType *Type}
-github.com/josephjohncox/effectus/schema/types	type VerbSpec struct{Name string; ArgTypes map[string]*Type; ReturnType *Type; InverseVerb string; RequiredArgs []string; Capability Capability; Description string}
-github.com/josephjohncox/effectus/schema/verb	const CapAll = CapRead | CapWrite | CapCreate | CapDelete
-github.com/josephjohncox/effectus/schema/verb	const CapCommutative
-github.com/josephjohncox/effectus/schema/verb	const CapCreate
-github.com/josephjohncox/effectus/schema/verb	const CapDefault
-github.com/josephjohncox/effectus/schema/verb	const CapDelete
-github.com/josephjohncox/effectus/schema/verb	const CapExclusive
-github.com/josephjohncox/effectus/schema/verb	const CapIdempotent
-github.com/josephjohncox/effectus/schema/verb	const CapNone Capability = 0
-github.com/josephjohncox/effectus/schema/verb	const CapRead Capability = 1 << iota
-github.com/josephjohncox/effectus/schema/verb	const CapReadWrite = CapRead | CapWrite
-github.com/josephjohncox/effectus/schema/verb	const CapWrite
-github.com/josephjohncox/effectus/schema/verb	const SourceGRPC = "grpc"
-github.com/josephjohncox/effectus/schema/verb	const SourceHTTP = "http"
-github.com/josephjohncox/effectus/schema/verb	const SourceInternal = "internal"
-github.com/josephjohncox/effectus/schema/verb	const SourceMock = "mock"
-github.com/josephjohncox/effectus/schema/verb	const SourceNoop = "noop"
-github.com/josephjohncox/effectus/schema/verb	const SourceOCI = "oci"
-github.com/josephjohncox/effectus/schema/verb	const SourcePlugin = "plugin"
-github.com/josephjohncox/effectus/schema/verb	const SourceStream = "stream"
-github.com/josephjohncox/effectus/schema/verb	const SourceUnknown = "unknown"
-github.com/josephjohncox/effectus/schema/verb	func ExportPlugin(plugin *SimpleVerbPlugin) Plugin
-github.com/josephjohncox/effectus/schema/verb	func FormatAnalysisResult(result *AnalysisResult) string
-github.com/josephjohncox/effectus/schema/verb	func NewCapabilityAnalyzer(registry AnalyzerVerbRegistry) *CapabilityAnalyzer
-github.com/josephjohncox/effectus/schema/verb	func NewFunctionExecutor(fn func(ctx context.Context, args map[string]interface{}) (interface{}, error)) *FunctionExecutor
-github.com/josephjohncox/effectus/schema/verb	func NewPluginBuilder() *PluginBuilder
-github.com/josephjohncox/effectus/schema/verb	func NewRegistry(typeSystem interface{}) *Registry
-github.com/josephjohncox/effectus/schema/verb	func NewSimpleVerbPlugin(verbs ...*Spec) *SimpleVerbPlugin
-github.com/josephjohncox/effectus/schema/verb	func NewSpec(name string, cap Capability, argTypes map[string]string, returnType string) *Spec
-github.com/josephjohncox/effectus/schema/verb	func ResourceConflict(a, b ResourceCapability) bool
-github.com/josephjohncox/effectus/schema/verb	method Capability.CanAccess(required Capability) bool
-github.com/josephjohncox/effectus/schema/verb	method Capability.IsCommutative() bool
-github.com/josephjohncox/effectus/schema/verb	method Capability.IsCommutativeWith(other Capability) bool
-github.com/josephjohncox/effectus/schema/verb	method Capability.IsExclusive() bool
-github.com/josephjohncox/effectus/schema/verb	method Capability.IsIdempotent() bool
-github.com/josephjohncox/effectus/schema/verb	method Capability.RuntimeCapability() types.Capability
-github.com/josephjohncox/effectus/schema/verb	method Capability.String() string
-github.com/josephjohncox/effectus/schema/verb	method CapabilityAnalyzer.Analyze(file *ast.File) (*AnalysisResult, error)
-github.com/josephjohncox/effectus/schema/verb	method FunctionExecutor.Execute(ctx context.Context, args map[string]interface{}) (interface{}, error)
-github.com/josephjohncox/effectus/schema/verb	method PluginBuilder.AddVerb(spec *Spec) *PluginBuilder
-github.com/josephjohncox/effectus/schema/verb	method PluginBuilder.GetVerbs() []*Spec
-github.com/josephjohncox/effectus/schema/verb	method Registry.Count() int
-github.com/josephjohncox/effectus/schema/verb	method Registry.DuplicatePolicy() string
-github.com/josephjohncox/effectus/schema/verb	method Registry.GetAllVerbs() []*Spec
-github.com/josephjohncox/effectus/schema/verb	method Registry.GetTypeSystem() interface{}
-github.com/josephjohncox/effectus/schema/verb	method Registry.GetVerb(name string) (*Spec, bool)
-github.com/josephjohncox/effectus/schema/verb	method Registry.GetVerbHash() string
-github.com/josephjohncox/effectus/schema/verb	method Registry.GetVerbSource(name string) (SourceInfo, bool)
-github.com/josephjohncox/effectus/schema/verb	method Registry.LoadFromJSON(filepath string) error
-github.com/josephjohncox/effectus/schema/verb	method Registry.LoadPlugins(dir string) error
-github.com/josephjohncox/effectus/schema/verb	method Registry.RegisterDefaults() error
-github.com/josephjohncox/effectus/schema/verb	method Registry.RegisterDirectory(dirPath string) error
-github.com/josephjohncox/effectus/schema/verb	method Registry.RegisterVerb(spec *Spec) error
-github.com/josephjohncox/effectus/schema/verb	method Registry.RequireInverseForMutating() bool
-github.com/josephjohncox/effectus/schema/verb	method Registry.Reset()
-github.com/josephjohncox/effectus/schema/verb	method Registry.SaveToJSON(filepath string) error
-github.com/josephjohncox/effectus/schema/verb	method Registry.SetDuplicatePolicy(policy string) error
-github.com/josephjohncox/effectus/schema/verb	method Registry.SetExecutor(name string, executor Executor) error
-github.com/josephjohncox/effectus/schema/verb	method Registry.SetRequireInverseForMutating(value bool)
-github.com/josephjohncox/effectus/schema/verb	method Registry.SetStrictArgs(value *bool)
-github.com/josephjohncox/effectus/schema/verb	method Registry.SetStrictReturn(value *bool)
-github.com/josephjohncox/effectus/schema/verb	method Registry.SetVerbSource(name string, source SourceInfo)
-github.com/josephjohncox/effectus/schema/verb	method Registry.StrictArgs() *bool
-github.com/josephjohncox/effectus/schema/verb	method Registry.StrictReturn() *bool
-github.com/josephjohncox/effectus/schema/verb	method Registry.VerbSources() map[string]SourceInfo
-github.com/josephjohncox/effectus/schema/verb	method ResourceSet.ConflictsWith(other ResourceSet) bool
-github.com/josephjohncox/effectus/schema/verb	method ResourceSet.String() string
-github.com/josephjohncox/effectus/schema/verb	method SimpleVerbPlugin.GetVerbs() []*Spec
-github.com/josephjohncox/effectus/schema/verb	method Spec.WithDescription(desc string) *Spec
-github.com/josephjohncox/effectus/schema/verb	method Spec.WithExecutor(executor Executor) *Spec
-github.com/josephjohncox/effectus/schema/verb	method Spec.WithInverse(inverse string) *Spec
-github.com/josephjohncox/effectus/schema/verb	method Spec.WithRequiredArgs(args []string) *Spec
-github.com/josephjohncox/effectus/schema/verb	method Spec.WithResources(resources ResourceSet) *Spec
-github.com/josephjohncox/effectus/schema/verb	method Spec.WithStrictArgs(strict bool) *Spec
-github.com/josephjohncox/effectus/schema/verb	method Spec.WithStrictReturn(strict bool) *Spec
-github.com/josephjohncox/effectus/schema/verb	method Spec.WithStrictTypes(strict bool) *Spec
-github.com/josephjohncox/effectus/schema/verb	type AnalysisResult struct{Conflicts []Conflict; Resources map[string]Capability; VerbsCalled []string}
-github.com/josephjohncox/effectus/schema/verb	type AnalyzerVerbRegistry interface{GetVerbfunc(name string) (*Spec, bool)}
-github.com/josephjohncox/effectus/schema/verb	type Capability uint64
-github.com/josephjohncox/effectus/schema/verb	type CapabilityAnalyzer struct{}
-github.com/josephjohncox/effectus/schema/verb	type Conflict struct{Resource string; Effects []string; Reason string}
-github.com/josephjohncox/effectus/schema/verb	type Executor interface{Executefunc(ctx context.Context, args map[string]interface{}) (interface{}, error)}
-github.com/josephjohncox/effectus/schema/verb	type FunctionExecutor struct{Fn func(ctx context.Context, args map[string]interface{}) (interface{}, error)}
-github.com/josephjohncox/effectus/schema/verb	type Plugin interface{GetVerbsfunc() []*Spec}
-github.com/josephjohncox/effectus/schema/verb	type PluginBuilder struct{}
-github.com/josephjohncox/effectus/schema/verb	type Registry struct{}
-github.com/josephjohncox/effectus/schema/verb	type ResourceCapability struct{Resource string; Cap Capability}
-github.com/josephjohncox/effectus/schema/verb	type ResourceSet []ResourceCapability
-github.com/josephjohncox/effectus/schema/verb	type SimpleVerbPlugin struct{}
-github.com/josephjohncox/effectus/schema/verb	type SourceInfo struct{Type string; Ref string; Detail string}
-github.com/josephjohncox/effectus/schema/verb	type SourceProvider interface{SourceInfofunc() SourceInfo}
-github.com/josephjohncox/effectus/schema/verb	type Spec struct{Name string; ArgTypes map[string]string; ReturnType string; Capability Capability; RequiredArgs []string; Resources ResourceSet; Inverse string; Description string; Executor Executor; StrictArgs *bool; StrictReturn *bool}
 github.com/josephjohncox/effectus/schema/workflow	const DispatchBlockedFence DispatchState = "blocked_fence"
 github.com/josephjohncox/effectus/schema/workflow	const DispatchBlockedUnknown DispatchState = "blocked_unknown"
 github.com/josephjohncox/effectus/schema/workflow	const DispatchFailedPermanent DispatchState = "failed_permanent"
@@ -2461,9 +1734,3 @@ github.com/josephjohncox/effectus/schema/workflow	type SagaState string
 github.com/josephjohncox/effectus/schema/workflow	type SagaStep struct{SagaID string; EffectID string; Sequence int; Verb string; ContractHash string; Arguments json.RawMessage; ArgumentHash string; CompensationVerb string; CompensationContract string; CompensationArguments json.RawMessage; CompensationArgumentHash string; Fencing []FencingRequirement; State StepState; Result json.RawMessage}
 github.com/josephjohncox/effectus/schema/workflow	type StepState string
 github.com/josephjohncox/effectus/schema/workflow	type UnknownOutcomeRetryPolicy interface{RetryUnknownOutcomefunc(invocation.Request) bool}
-github.com/josephjohncox/effectus/util	func NewASTDumper(writer io.Writer) *ASTDumper
-github.com/josephjohncox/effectus/util	func NewStdoutASTDumper() *ASTDumper
-github.com/josephjohncox/effectus/util	method ASTDumper.DumpFile(file *ast.File)
-github.com/josephjohncox/effectus/util	method ASTDumper.DumpFlows(flows []*ast.Flow)
-github.com/josephjohncox/effectus/util	method ASTDumper.DumpRules(rules []*ast.Rule)
-github.com/josephjohncox/effectus/util	type ASTDumper struct{}

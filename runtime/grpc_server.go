@@ -147,11 +147,11 @@ type RulesetExecutionServer struct {
 	serveErr error
 }
 
-func NewRulesetExecutionServer(runtime *ExecutionRuntime, addr string) (*RulesetExecutionServer, error) {
-	return NewRulesetExecutionServerWithOptions(runtime, addr, RulesetExecutionServerOptions{})
+func NewRulesetExecutionServer(engine *Engine, addr string) (*RulesetExecutionServer, error) {
+	return NewRulesetExecutionServerWithOptions(engine, addr, RulesetExecutionServerOptions{})
 }
 
-func NewRulesetExecutionServerWithOptions(runtime *ExecutionRuntime, addr string, options RulesetExecutionServerOptions) (*RulesetExecutionServer, error) {
+func NewRulesetExecutionServerWithOptions(engine *Engine, addr string, options RulesetExecutionServerOptions) (*RulesetExecutionServer, error) {
 	if strings.TrimSpace(addr) == "" {
 		return nil, fmt.Errorf("gRPC listen address is required")
 	}
@@ -159,7 +159,7 @@ func NewRulesetExecutionServerWithOptions(runtime *ExecutionRuntime, addr string
 	if err != nil {
 		return nil, fmt.Errorf("listen for gRPC execution: %w", err)
 	}
-	server, err := NewRulesetExecutionServerOnListener(runtime, listener, options)
+	server, err := NewRulesetExecutionServerOnListener(engine, listener, options)
 	if err != nil {
 		_ = listener.Close()
 		return nil, err
@@ -167,8 +167,8 @@ func NewRulesetExecutionServerWithOptions(runtime *ExecutionRuntime, addr string
 	return server, nil
 }
 
-func NewRulesetExecutionServerOnListener(runtime *ExecutionRuntime, listener net.Listener, options RulesetExecutionServerOptions) (*RulesetExecutionServer, error) {
-	if runtime == nil || runtime.Engine() == nil {
+func NewRulesetExecutionServerOnListener(engine *Engine, listener net.Listener, options RulesetExecutionServerOptions) (*RulesetExecutionServer, error) {
+	if engine == nil || engine.Generation() == nil {
 		return nil, fmt.Errorf("checked execution runtime is required")
 	}
 	if listener == nil {
@@ -187,7 +187,7 @@ func NewRulesetExecutionServerOnListener(runtime *ExecutionRuntime, listener net
 		grpcOptions = append(grpcOptions, grpc.Creds(credentials.NewTLS(resolved.TLSConfig)))
 	}
 	grpcServer := grpc.NewServer(grpcOptions...)
-	if err := RegisterEngineExecutionServiceWithOptions(grpcServer, runtime.Engine(), EngineExecutionServiceOptions{RulesetName: resolved.RulesetName, Version: resolved.Version}); err != nil {
+	if err := RegisterEngineExecutionServiceWithOptions(grpcServer, engine, EngineExecutionServiceOptions{RulesetName: resolved.RulesetName, Version: resolved.Version}); err != nil {
 		return nil, err
 	}
 	return &RulesetExecutionServer{server: grpcServer, listener: listener, options: resolved}, nil

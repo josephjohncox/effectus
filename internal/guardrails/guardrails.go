@@ -182,6 +182,59 @@ func CheckDependencyRules(packages []Package, rules []DependencyRule) []string {
 	return violations
 }
 
+// CheckForbiddenProductionSymbols rejects removed declarations in non-test Go
+// files. Keep this source-level check alongside dependency rules so deleted
+// authorities cannot be reintroduced behind an otherwise legal import edge.
+func CheckForbiddenProductionSymbols(packages []Package) ([]string, error) {
+	forbiddenTypes := map[string]struct{}{
+		"ExecutionRuntime": {},
+		"CompiledUnit":     {},
+		"CompiledSpec":     {},
+	}
+	var violations []string
+	for _, pkg := range packages {
+		for _, name := range pkg.GoFiles {
+			path := filepath.Join(pkg.Dir, name)
+			fileSet := token.NewFileSet()
+			file, err := parser.ParseFile(fileSet, path, nil, 0)
+			if err != nil {
+				return nil, fmt.Errorf("parse %s: %w", path, err)
+			}
+			for _, declaration := range file.Decls {
+				general, ok := declaration.(*ast.GenDecl)
+				if !ok || general.Tok != token.TYPE {
+					continue
+				}
+				for _, specification := range general.Specs {
+					typeSpec, ok := specification.(*ast.TypeSpec)
+					if !ok {
+						continue
+					}
+					if _, forbidden := forbiddenTypes[typeSpec.Name.Name]; forbidden {
+						violations = append(violations, fmt.Sprintf("%s declares forbidden type %s", pkg.ImportPath, typeSpec.Name.Name))
+					}
+					if typeSpec.Name.Name != "CompileOptions" {
+						continue
+					}
+					structure, ok := typeSpec.Type.(*ast.StructType)
+					if !ok || structure.Fields == nil {
+						continue
+					}
+					for _, field := range structure.Fields.List {
+						for _, fieldName := range field.Names {
+							if fieldName.Name == "InspectSource" {
+								violations = append(violations, fmt.Sprintf("%s declares forbidden CompileOptions.InspectSource", pkg.ImportPath))
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	sort.Strings(violations)
+	return violations, nil
+}
+
 // CheckDeprecations requires a future removal deadline on hand-written Go deprecations.
 func CheckDeprecations(root string, now time.Time) ([]string, error) {
 	files, err := includedRepositoryFiles(root, root)

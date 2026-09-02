@@ -17,7 +17,7 @@ Read the [published documentation](https://josephjohncox.github.io/effectus/) or
 - [Tutorials](TUTORIALS.md) contains short examples.
 - [CLI Reference](COMMANDS.md) describes `effectusc` and `effectusd`.
 - [Client Examples](CLIENT_EXAMPLES.md) shows API clients.
-- [Extension System](EXTENSION_SYSTEM.md) describes extension manifests and executor targets.
+- [SourceBundle Extension Boundary](EXTENSION_SYSTEM.md) describes immutable bundle contents and executor descriptors.
 - [Fact Sources](FACT_SOURCES.md) describes streaming and batch adapters.
 - [gRPC Execution](GRPC_EXECUTION.md) describes the generated execution service.
 

@@ -7,7 +7,8 @@ import (
 	"sort"
 
 	"github.com/alecthomas/participle/v2"
-	"github.com/josephjohncox/effectus/ast"
+	"github.com/josephjohncox/effectus/bundle"
+	"github.com/josephjohncox/effectus/internal/language/ast"
 )
 
 // parsedSource is the normalized, in-memory result of the compiler front end.
@@ -17,10 +18,31 @@ type parsedSource struct {
 	file *ast.File
 }
 
-// parseSources is the single parser and dialect boundary for legacy and checked
-// lowering. It normalizes source identity, predicate text, and flow bindings
-// exactly once before either representation is built.
-func parseSources(ctx context.Context, sources []Source) ([]parsedSource, error) {
+func normalizeFlowBindings(file *ast.File) error {
+	if file == nil {
+		return nil
+	}
+	for _, flow := range file.Flows {
+		if flow == nil || flow.Steps == nil {
+			continue
+		}
+		for _, step := range flow.Steps.Steps {
+			if step == nil || step.Arrow == "" {
+				continue
+			}
+			if step.BindName != "" {
+				return fmt.Errorf("%d:%d: step cannot use both prefix and arrow bindings", step.Pos.Line, step.Pos.Column)
+			}
+			step.BindName, step.Arrow = step.Arrow, ""
+		}
+	}
+	return nil
+}
+
+// parseSources is the checked compiler's parser and dialect boundary. It
+// normalizes source identity, predicate text, and flow bindings before IR is
+// lowered. SourceBundle has already validated source paths and UTF-8 content.
+func parseSources(ctx context.Context, sources []bundle.Source) ([]parsedSource, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("compile front end: context is nil")
 	}
@@ -51,10 +73,7 @@ func parseSources(ctx context.Context, sources []Source) ([]parsedSource, error)
 		if extension != ".eff" && extension != ".effx" {
 			return nil, fmt.Errorf("compile front end: source %q must use .eff or .effx", path)
 		}
-		data, err := checkedSourceBytes(source)
-		if err != nil {
-			return nil, err
-		}
+		data := []byte(source.Content)
 		file, err := parser.ParseBytes(path, data)
 		if err != nil {
 			return nil, fmt.Errorf("compile front end: parse %s: %w", path, err)

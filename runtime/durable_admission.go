@@ -2,15 +2,12 @@ package runtime
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
 	"strings"
 
-	"github.com/josephjohncox/effectus/compiler"
 	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
 	"github.com/josephjohncox/effectus/invocation"
 	"github.com/josephjohncox/effectus/ir"
@@ -18,42 +15,37 @@ import (
 	"github.com/josephjohncox/effectus/schema/ledger"
 )
 
-// ArtifactResolver reconstructs invocation-aware executor instances from an
-// immutable artifact manifest. Callback-only implementations are not valid
-// durable resolvers.
+// ArtifactResolver reconstructs a callback-free Generation from one immutable
+// durable artifact. It intentionally has no compiler or loader surface.
 type ArtifactResolver interface {
-	ResolveArtifact(context.Context, ledger.ExecutionArtifact, *ir.Checked) (*compiler.CompiledUnit, error)
+	ResolveGeneration(context.Context, ledger.ExecutionArtifact) (*Generation, error)
+}
+type ArtifactResolverFunc func(context.Context, ledger.ExecutionArtifact) (*Generation, error)
+
+func (f ArtifactResolverFunc) ResolveGeneration(ctx context.Context, artifact ledger.ExecutionArtifact) (*Generation, error) {
+	return f(ctx, artifact)
 }
 
-type ArtifactResolverFunc func(context.Context, ledger.ExecutionArtifact, *ir.Checked) (*compiler.CompiledUnit, error)
-
-func (function ArtifactResolverFunc) ResolveArtifact(ctx context.Context, artifact ledger.ExecutionArtifact, checked *ir.Checked) (*compiler.CompiledUnit, error) {
-	return function(ctx, artifact, checked)
-}
-
-func buildDurableAdmission(ctx context.Context, unit *compiler.CompiledUnit, admission *Admission, requestHash string) (schema.DurableAdmission, map[string]struct{}, map[string]any, error) {
-	if unit == nil || unit.CheckedIR == nil {
-		return schema.DurableAdmission{}, nil, nil, fmt.Errorf("checked compiled unit is required")
+func buildDurableAdmission(ctx context.Context, generation *Generation, admission *Admission, requestHash string) (schema.DurableAdmission, map[string]struct{}, map[string]any, error) {
+	if generation == nil || generation.Checked() == nil {
+		return schema.DurableAdmission{}, nil, nil, fmt.Errorf("checked generation is required")
 	}
-	artifact, err := executionArtifactForUnit(unit)
+	artifact, err := executionArtifactForGeneration(generation)
 	if err != nil {
 		return schema.DurableAdmission{}, nil, nil, err
 	}
-	effectiveFacts := cloneWorkflowFacts(unit.InitialData)
+	effectiveFacts := make(map[string]any)
 	mergePolicy := admission.MergePolicy
 	if mergePolicy == "" {
 		mergePolicy = "merge"
 	}
 	switch mergePolicy {
-	case "merge":
-		mergeWorkflowFactOverrides(effectiveFacts, admission.Facts)
-	case "replace":
-		effectiveFacts = make(map[string]interface{}, len(admission.Facts))
+	case "merge", "replace":
 		mergeWorkflowFactOverrides(effectiveFacts, admission.Facts)
 	default:
 		return schema.DurableAdmission{}, nil, nil, fmt.Errorf("unsupported fact merge policy %q", mergePolicy)
 	}
-	if err := validateAdmissionFactTypes(unit.IREnvironment, effectiveFacts); err != nil {
+	if err := validateAdmissionFactTypes(generation.Environment(), effectiveFacts); err != nil {
 		return schema.DurableAdmission{}, nil, nil, err
 	}
 	factsJSON, _, err := schema.CanonicalJSON(effectiveFacts)
@@ -68,21 +60,14 @@ func buildDurableAdmission(ctx context.Context, unit *compiler.CompiledUnit, adm
 	if identity == "" {
 		identity = admission.ExecutionID
 	}
-	record := schema.ExecutionRecord{
-		ExecutionID: admission.ExecutionID, AdmissionIdentity: identity, RequestHash: requestHash,
-		Ruleset: admission.Ruleset, Version: admission.Version, TenantNamespace: admission.TenantNamespace,
-		MergePolicy: mergePolicy, GenerationDigest: artifact.GenerationDigest, EffectiveFacts: factsJSON,
-	}
-	request := schema.DurableAdmission{
-		Artifact: artifact, Execution: record,
-		FactApplication: schema.FactApplication{ExecutionID: admission.ExecutionID, FactEventID: identity, MergePolicy: mergePolicy, Facts: inputFactsJSON, AppliedRevision: 1},
-	}
-	selected := make(map[string]struct{})
-	for _, plan := range unit.CheckedIR.CloneArtifact().Plans {
+	record := schema.ExecutionRecord{ExecutionID: admission.ExecutionID, AdmissionIdentity: identity, RequestHash: requestHash, Ruleset: admission.Ruleset, Version: admission.Version, TenantNamespace: admission.TenantNamespace, MergePolicy: mergePolicy, GenerationDigest: artifact.GenerationDigest, EffectiveFacts: factsJSON}
+	request := schema.DurableAdmission{Artifact: artifact, Execution: record, FactApplication: schema.FactApplication{ExecutionID: admission.ExecutionID, FactEventID: identity, MergePolicy: mergePolicy, Facts: inputFactsJSON, AppliedRevision: 1}}
+	selected := map[string]struct{}{}
+	for _, plan := range generation.Checked().CloneArtifact().Plans {
 		if err := ctx.Err(); err != nil {
 			return schema.DurableAdmission{}, nil, nil, err
 		}
-		matches, err := evaluateCheckedPredicate(plan.Predicate.Expression, effectiveFacts, unit)
+		matches, err := evaluateCheckedPredicate(plan.Predicate.Expression, effectiveFacts, generation)
 		if err != nil {
 			return schema.DurableAdmission{}, nil, nil, fmt.Errorf("evaluate plan %q: %w", plan.Id, err)
 		}
@@ -92,13 +77,13 @@ func buildDurableAdmission(ctx context.Context, unit *compiler.CompiledUnit, adm
 		selected[plan.Id] = struct{}{}
 		sagaID := schema.StableSagaID(admission.ExecutionID, plan.Id)
 		request.Plans = append(request.Plans, schema.ExecutionPlanRecord{ExecutionID: admission.ExecutionID, PlanID: plan.Id, SagaID: sagaID, Ordinal: len(request.Plans), State: "selected"})
-		request.Sagas = append(request.Sagas, schema.CreateSagaRequest{Namespace: admission.TenantNamespace, SagaID: sagaID, ExecutionID: admission.ExecutionID, PlanID: plan.Id, PlanDigest: unit.CheckedIR.Digest(), Serial: true})
-		if len(plan.Steps) != 0 {
-			stepRequest, err := durableInitialStep(plan, effectiveFacts, sagaID)
+		request.Sagas = append(request.Sagas, schema.CreateSagaRequest{Namespace: admission.TenantNamespace, SagaID: sagaID, ExecutionID: admission.ExecutionID, PlanID: plan.Id, PlanDigest: generation.Checked().Digest(), Serial: true})
+		if len(plan.Steps) > 0 {
+			step, err := durableInitialStep(plan, effectiveFacts, sagaID)
 			if err != nil {
 				return schema.DurableAdmission{}, nil, nil, err
 			}
-			request.InitialSteps = append(request.InitialSteps, stepRequest)
+			request.InitialSteps = append(request.InitialSteps, step)
 		}
 	}
 	return request, selected, effectiveFacts, nil
@@ -198,8 +183,8 @@ func durableInitialStep(plan *effectusv1.Plan, facts map[string]any, sagaID stri
 	return request, nil
 }
 
-func executionArtifactForUnit(unit *compiler.CompiledUnit) (schema.ExecutionArtifact, error) {
-	environment, err := json.Marshal(unit.IREnvironment)
+func executionArtifactForGeneration(generation *Generation) (schema.ExecutionArtifact, error) {
+	environment, err := json.Marshal(generation.Environment())
 	if err != nil {
 		return schema.ExecutionArtifact{}, err
 	}
@@ -207,103 +192,33 @@ func executionArtifactForUnit(unit *compiler.CompiledUnit) (schema.ExecutionArti
 		Name       string                `json:"name"`
 		Descriptor invocation.Descriptor `json:"descriptor"`
 	}
-	executors := make([]executorEntry, 0, len(unit.VerbSpecs))
-	names := make([]string, 0, len(unit.VerbSpecs))
-	for name := range unit.VerbSpecs {
+	descriptors := generation.ExecutorDescriptors()
+	names := make([]string, 0, len(descriptors))
+	for name := range descriptors {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	entries := make([]executorEntry, 0, len(names))
 	for _, name := range names {
-		compiledVerb := unit.VerbSpecs[name]
-		if compiledVerb == nil {
-			return schema.ExecutionArtifact{}, fmt.Errorf("verb %q has no compiled executor", name)
-		}
-		local, ok := compiledVerb.ExecutorConfig.(*compiler.LocalExecutorConfig)
-		if !ok || local == nil || local.Implementation == nil {
-			return schema.ExecutionArtifact{}, fmt.Errorf("verb %q has no resolved invocation executor", name)
-		}
-		provider, described := any(local.Implementation).(invocation.ResolverDescriptorProvider)
-		var descriptor invocation.Descriptor
-		if described {
-			var descriptorErr error
-			descriptor, descriptorErr = provider.InvocationResolverDescriptor()
-			if descriptorErr != nil {
-				return schema.ExecutionArtifact{}, fmt.Errorf("verb %q invocation descriptor: %w", name, descriptorErr)
-			}
-		} else {
-			// Compatibility callbacks receive a stable, explicitly unresolvable
-			// descriptor. Production admission rejects it in validateUnitExecutors.
-			var descriptorErr error
-			descriptor, descriptorErr = invocation.NewDescriptor(invocation.DescriptorSpec{
-				Type: invocation.DescriptorEmbedded, Reference: name,
-			})
-			if descriptorErr != nil {
-				return schema.ExecutionArtifact{}, descriptorErr
-			}
-		}
-		executors = append(executors, executorEntry{Name: name, Descriptor: descriptor})
+		entries = append(entries, executorEntry{Name: name, Descriptor: descriptors[name]})
 	}
-	executorManifest, err := json.Marshal(executors)
+	executorManifest, err := json.Marshal(entries)
 	if err != nil {
 		return schema.ExecutionArtifact{}, err
 	}
-	functionNames := make([]string, 0, len(unit.Functions))
-	for name := range unit.Functions {
-		functionNames = append(functionNames, name)
-	}
-	sort.Strings(functionNames)
-	functions := make(map[string]any, len(functionNames))
-	for _, name := range functionNames {
-		compiled := unit.Functions[name]
-		if compiled == nil {
-			continue
-		}
-		if compiled.ResolverDescriptor == nil && compiled.Implementation != nil {
-			return schema.ExecutionArtifact{}, fmt.Errorf("function %q has no immutable resolver descriptor", name)
-		}
-		functions[name] = map[string]any{"resolver_descriptor": compiled.ResolverDescriptor}
-	}
-	initialData, err := json.Marshal(unit.InitialData)
-	if err != nil {
-		return schema.ExecutionArtifact{}, fmt.Errorf("marshal immutable initial data: %w", err)
-	}
-	functionManifest, err := json.Marshal(struct {
-		Functions   map[string]any  `json:"functions"`
-		InitialData json.RawMessage `json:"initial_data"`
-	}{Functions: functions, InitialData: initialData})
+	compilerMetadata, err := json.Marshal(generation.Checked().CloneArtifact().Compiler)
 	if err != nil {
 		return schema.ExecutionArtifact{}, err
 	}
-	compilerMetadata, err := json.Marshal(unit.CheckedIR.CloneArtifact().Compiler)
+	identity, err := json.Marshal(struct {
+		Ruleset     string            `json:"ruleset"`
+		Version     string            `json:"version"`
+		FunctionIDs map[string]string `json:"function_ids"`
+	}{generation.Ruleset(), generation.Version(), generation.FunctionIDs()})
 	if err != nil {
 		return schema.ExecutionArtifact{}, err
 	}
-	sourceDigest := unit.SourceDigest
-	if sourceDigest == "" {
-		sourceDigest = unit.CheckedIR.Digest()
-	}
-	manifest := struct {
-		IRDigest, EnvironmentDigest, SourceDigest string
-		Executors                                 json.RawMessage
-		Functions                                 json.RawMessage
-		InitialData                               json.RawMessage
-	}{
-		IRDigest: unit.CheckedIR.Digest(), SourceDigest: sourceDigest, Executors: executorManifest, Functions: functionManifest, InitialData: initialData,
-	}
-	manifest.EnvironmentDigest, err = ir.EnvironmentDigest(unit.IREnvironment)
-	if err != nil {
-		return schema.ExecutionArtifact{}, err
-	}
-	manifestJSON, err := json.Marshal(manifest)
-	if err != nil {
-		return schema.ExecutionArtifact{}, err
-	}
-	digest := sha256.Sum256(manifestJSON)
-	return schema.ExecutionArtifact{
-		GenerationDigest: hex.EncodeToString(digest[:]), IRDigest: unit.CheckedIR.Digest(), IRBytes: unit.CheckedIR.Marshal(),
-		Environment: environment, ExecutorManifest: executorManifest, FunctionManifest: functionManifest,
-		SourceDigest: sourceDigest, CompilerMetadata: compilerMetadata,
-	}, nil
+	return schema.ExecutionArtifact{GenerationDigest: generation.Digest(), IRDigest: generation.Checked().Digest(), IRBytes: generation.Checked().Marshal(), Environment: environment, ExecutorManifest: executorManifest, FunctionManifest: identity, SourceDigest: generation.SourceDigest(), CompilerMetadata: compilerMetadata}, nil
 }
 
 func decodeArtifactEnvironment(artifact schema.ExecutionArtifact) (ir.Environment, error) {

@@ -1,7 +1,7 @@
 # Durable saga dispatch protocol
 
-The V2 library and `runtime.ExecutionRuntime.ExecuteWorkflowWithIdentity` store each checked workflow effect as an outbox dispatch.
-The `effectusd` legacy bundle executor does not implement this protocol and rejects `--saga`.
+`runtime.Engine.Execute` stores each checked workflow effect as an outbox dispatch.
+`effectusd` uses this protocol for every production transport and has no legacy `--saga` mode.
 The dispatcher does not call an external executor before it commits the dispatch.
 Compensation also uses an outbox dispatch.
 `EnqueueCheckedStep` derives the step ID, order, verb, and contract hash from `ir.Checked`.
@@ -183,13 +183,7 @@ effectus_fencing_counters
 effectus_fencing_leases
 ```
 
-The Redis V2 store uses one versioned state document per configured prefix.
-It uses `WATCH` and `MULTI` for atomic state transitions.
-It retries optimistic conflicts and uses Redis server time for lease checks.
-A configured TTL applies to the complete recovery document only after every stored saga is terminal. Active recovery state is persisted without expiration.
-Use a unique prefix for each independent deployment.
-The state-document design favors protocol correctness over high write throughput.
-Use PostgreSQL when one Redis document would create excessive contention or size.
+PostgreSQL is the only durable store. It atomically records admission, workflow state, fencing, and recovery data.
 
 The in-memory V2 store implements the same state checks for tests.
 It does not provide durable recovery.

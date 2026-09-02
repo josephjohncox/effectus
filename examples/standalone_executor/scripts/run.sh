@@ -9,13 +9,14 @@ export EFFECTUS_API_TOKEN="${EFFECTUS_API_TOKEN:-effectus-demo-token}"
 export EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-executor-demo-token}"
 export EFFECTUS_DEMO_HTTP_PORT="${EFFECTUS_DEMO_HTTP_PORT:-18080}"
 export EXECUTOR_DEMO_HTTP_PORT="${EXECUTOR_DEMO_HTTP_PORT:-8090}"
+export EFFECTUS_DEMO_UID="${EFFECTUS_DEMO_UID:-$(id -u)}"
+export EFFECTUS_DEMO_GID="${EFFECTUS_DEMO_GID:-$(id -g)}"
 # Compose builds this image from the checked-out source tree. A caller can
 # change only the local tag, not substitute a prebuilt release image.
 EFFECTUS_IMAGE="${EFFECTUS_IMAGE:-effectus-demo-current}"
 export EFFECTUS_IMAGE
 COMPOSE=(docker compose -f "$EXAMPLE_DIR/docker-compose.yml")
 BUNDLE="$ROOT_DIR/out/standalone_executor/bundle.json"
-RUNTIME_EXTENSIONS="$ROOT_DIR/out/standalone_executor/extensions"
 ORDER_SCENARIO="$ROOT_DIR/examples/order_review/data/order.json"
 ORDER_REQUEST=""
 IDEMPOTENCY_KEY=""
@@ -47,7 +48,7 @@ fail() {
   exit 1
 }
 
-for command in docker curl python3 go; do
+for command in docker curl python3 go id; do
   command -v "$command" >/dev/null 2>&1 || fail "missing required command: $command"
 done
 [[ -n "${BASH_VERSION:-}" ]] || fail "run this script with Bash"
@@ -63,6 +64,10 @@ validate_port() {
 }
 validate_port EFFECTUS_DEMO_HTTP_PORT "$EFFECTUS_DEMO_HTTP_PORT"
 validate_port EXECUTOR_DEMO_HTTP_PORT "$EXECUTOR_DEMO_HTTP_PORT"
+[[ "$EFFECTUS_DEMO_UID" =~ ^[1-9][0-9]*$ ]] ||
+  fail "run the durable demo as a non-root user"
+[[ "$EFFECTUS_DEMO_GID" =~ ^[0-9]+$ ]] ||
+  fail "EFFECTUS_DEMO_GID must be a nonnegative integer"
 [[ "$EFFECTUS_DEMO_HTTP_PORT" != "$EXECUTOR_DEMO_HTTP_PORT" ]] ||
   fail "EFFECTUS_DEMO_HTTP_PORT and EXECUTOR_DEMO_HTTP_PORT must be different"
 
@@ -129,49 +134,12 @@ PY
 )"
 
 mkdir -p "$(dirname "$BUNDLE")"
-rm -rf "$RUNTIME_EXTENSIONS"
-mkdir -p "$RUNTIME_EXTENSIONS"
-EXECUTOR_DEMO_TOKEN="$EXECUTOR_TOKEN" python3 - \
-  "$EXAMPLE_DIR/extensions" "$RUNTIME_EXTENSIONS" <<'PY'
-import json
-import os
-import shutil
-import sys
-from pathlib import Path
-
-source_dir = Path(sys.argv[1])
-target_dir = Path(sys.argv[2])
-token = os.environ["EXECUTOR_DEMO_TOKEN"]
-replacements = 0
-for source in sorted(source_dir.glob("*.json")):
-    target = target_dir / source.name
-    if source.name != "order.verbs.json":
-        shutil.copyfile(source, target)
-        continue
-    payload = json.loads(source.read_text())
-    for verb in payload["verbs"]:
-        headers = verb["target"]["config"].get("headers", {})
-        if headers.get("X-Demo-Token") != "__EXECUTOR_TOKEN__":
-            raise SystemExit(f"unexpected executor token template in {source}")
-        headers["X-Demo-Token"] = token
-        replacements += 1
-    target.write_text(json.dumps(payload, indent=2) + "\n")
-if replacements != 2:
-    raise SystemExit(f"expected two executor token replacements, got {replacements}")
-PY
-
 (
-  cd "$ROOT_DIR"
-  go run ./cmd/effectusc bundle \
-    --name order-review \
-    --version 1.0.0 \
-    --schema-dir examples/standalone_executor/schema \
-    --verb-dir out/standalone_executor/extensions \
-    --rules-dir examples/order_review/rules \
-    --output out/standalone_executor/bundle.json
+  cd "$EXAMPLE_DIR"
+  go run ./bundle.go "$BUNDLE" "$EXECUTOR_TOKEN"
 )
 
-test -s "$BUNDLE" || fail "effectusc did not create $BUNDLE"
+test -s "$BUNDLE" || fail "bundle generator did not create $BUNDLE"
 # No project resources existed above, so any resources created after this point
 # belong to this invocation and are safe to remove on failure.
 STACK_CREATED=1
@@ -180,7 +148,9 @@ STACK_CREATED=1
 wait_until_ready() {
   local ready=0
   for _ in $(seq 1 90); do
-    if curl --fail --silent "http://127.0.0.1:${EFFECTUS_DEMO_HTTP_PORT}/readyz" >/dev/null &&
+    if curl --fail --silent \
+      --header "Authorization: Bearer $EFFECTUS_API_TOKEN" \
+      "http://127.0.0.1:${EFFECTUS_DEMO_HTTP_PORT}/v1/status" >/dev/null &&
       curl --fail --silent "http://127.0.0.1:${EXECUTOR_DEMO_HTTP_PORT}/healthz" >/dev/null; then
       ready=1
       break
@@ -193,10 +163,10 @@ wait_until_ready
 
 submit() {
   curl --fail-with-body --silent \
-    --request POST "http://127.0.0.1:${EFFECTUS_DEMO_HTTP_PORT}/api/facts" \
+    --request POST "http://127.0.0.1:${EFFECTUS_DEMO_HTTP_PORT}/v1/execute" \
+    --header 'Content-Type: application/json' \
     --header "Authorization: Bearer $EFFECTUS_API_TOKEN" \
     --header "Idempotency-Key: $IDEMPOTENCY_KEY" \
-    --header 'Content-Type: application/json' \
     --data @"$ORDER_REQUEST"
 }
 
@@ -262,10 +232,10 @@ CONFLICT_BODY="$(mktemp)"
 conflict_status="$(curl --silent \
   --output "$CONFLICT_BODY" \
   --write-out '%{http_code}' \
-  --request POST "http://127.0.0.1:${EFFECTUS_DEMO_HTTP_PORT}/api/facts" \
+  --request POST "http://127.0.0.1:${EFFECTUS_DEMO_HTTP_PORT}/v1/execute" \
+  --header 'Content-Type: application/json' \
   --header "Authorization: Bearer $EFFECTUS_API_TOKEN" \
   --header "Idempotency-Key: $IDEMPOTENCY_KEY" \
-  --header 'Content-Type: application/json' \
   --data @"$CONFLICT_REQUEST")"
 [[ "$conflict_status" == 409 ]] || {
   cat "$CONFLICT_BODY" >&2
@@ -278,6 +248,5 @@ CONFLICT_BODY=""
 
 SUCCESS=1
 echo "OK durable order-review demo passed"
-echo "UI: http://127.0.0.1:${EFFECTUS_DEMO_HTTP_PORT}/ui"
 echo "Logs: docker compose -f examples/standalone_executor/docker-compose.yml logs"
 echo "Stop and delete data: examples/standalone_executor/scripts/down.sh"

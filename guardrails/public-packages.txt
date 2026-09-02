@@ -1,10 +1,6 @@
 # Approved importable packages.
 # Do not update this file without an intentional surface review.
-github.com/josephjohncox/effectus
-github.com/josephjohncox/effectus/analysis
-github.com/josephjohncox/effectus/ast
 github.com/josephjohncox/effectus/bundle
-github.com/josephjohncox/effectus/common
 github.com/josephjohncox/effectus/compat/v03/embedded
 github.com/josephjohncox/effectus/compat/v03/executorhttp
 github.com/josephjohncox/effectus/compat/v03/invocation
@@ -14,15 +10,9 @@ github.com/josephjohncox/effectus/executorhttp
 github.com/josephjohncox/effectus/gen/effectus/v1
 github.com/josephjohncox/effectus/invocation
 github.com/josephjohncox/effectus/ir
-github.com/josephjohncox/effectus/lint
-github.com/josephjohncox/effectus/pathutil
 github.com/josephjohncox/effectus/runtime
 github.com/josephjohncox/effectus/schema
-github.com/josephjohncox/effectus/schema/capability
 github.com/josephjohncox/effectus/schema/expression
 github.com/josephjohncox/effectus/schema/fencing
 github.com/josephjohncox/effectus/schema/ledger
-github.com/josephjohncox/effectus/schema/types
-github.com/josephjohncox/effectus/schema/verb
 github.com/josephjohncox/effectus/schema/workflow
-github.com/josephjohncox/effectus/util

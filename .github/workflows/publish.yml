@@ -129,12 +129,9 @@ jobs:
             fi
             rm -rf "$work"
           done
-          go run ./cmd/effectusc bundle \
-            --name order-review --version "$VERSION" \
-            --schema-dir examples/standalone_executor/schema \
-            --verb-dir examples/standalone_executor/extensions \
-            --rules-dir examples/order_review/rules \
-            --output "dist/order-review-${VERSION}.json"
+          go run ./examples/standalone_executor/bundle.go \
+            "dist/order-review-${VERSION}.json" release-placeholder-token "$VERSION"
+          go run ./cmd/effectusc check --bundle "dist/order-review-${VERSION}.json"
           helm package charts/effectusd --destination dist \
             --version "$VERSION" --app-version "$VERSION"
           docker build --build-arg SOURCE_DATE_EPOCH=0 \
@@ -208,13 +205,8 @@ jobs:
           docker buildx build --platform linux/amd64,linux/arm64 \
             --build-arg SOURCE_DATE_EPOCH=0 \
             --provenance=mode=max --sbom=true --push --tag "$image_stage" .
-          go run ./cmd/effectusc bundle \
-            --name order-review --version "$VERSION" \
-            --schema-dir examples/standalone_executor/schema \
-            --verb-dir examples/standalone_executor/extensions \
-            --rules-dir examples/order_review/rules \
-            --output "dist/order-review-${VERSION}.json" \
-            --oci-ref "$bundle_stage"
+          go run .github/scripts/publish-source-bundle.go \
+            --bundle "dist/order-review-${VERSION}.json" --oci-ref "$bundle_stage"
           helm push "dist/effectusd-${VERSION}.tgz" \
             "oci://${CHART_STAGE_REPO%/effectusd}"
           image_digest=$(crane digest "$image_stage")

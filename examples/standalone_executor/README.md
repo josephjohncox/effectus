@@ -20,9 +20,6 @@ PostgreSQL has no host port. Containers connect to it at `postgres:5432`.
 | `docker-compose.yml` | Defines the loopback-only service stack and migration order |
 | `Dockerfile` | Builds the separate Go business executor |
 | `executor/main.go` | Implements review creation, compensation, and business idempotency |
-| `extensions/` | Contains non-secret HTTP executor templates |
-| `schema/` | Declares fact and compiler verb types |
-| `verbs/` | Declares capabilities, resources, and compensation pairs |
 | `scripts/run.sh` | Derives the request from the shared scenario and runs replay, restart, and conflict checks |
 | `scripts/down.sh` | Removes containers, the network, and the data volume |
 | `../order_review/` | Owns the shared rule and scenario artifact |
@@ -35,7 +32,7 @@ The business executor stores the idempotency key and argument hash with the revi
 
 A conflicting replay returns a permanent failure. An unknown database commit returns an unknown outcome.
 
-The committed extension manifest contains a token placeholder. The run script writes the actual demo token only under `out/standalone_executor`.
+The bundle generator creates immutable HTTP executor descriptors and writes the actual demo token only to the generated bundle under `out/standalone_executor`.
 
 ## Production changes
 
