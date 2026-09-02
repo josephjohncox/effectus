@@ -114,7 +114,8 @@ for raw_port in sys.argv[1:]:
 PY
 
 ORDER_REQUEST="$(mktemp)"
-IDEMPOTENCY_KEY="$(python3 - "$ORDER_SCENARIO" "$ORDER_REQUEST" <<'PY'
+IDEMPOTENCY_KEY="$(
+  python3 - "$ORDER_SCENARIO" "$ORDER_REQUEST" <<'PY'
 import json
 import sys
 
