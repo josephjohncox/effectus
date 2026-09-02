@@ -35,7 +35,7 @@ func TestDocumentationClaimsRejectsPublishedV030CompatibilityPathsInEveryMarkdow
 	releases := filepath.Join(docs, "releases")
 	require.NoError(t, os.MkdirAll(releases, 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "examples"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(docs, "COMPATIBILITY.md"), []byte("The first future root release that contains this branch introduces these paths.\nPublished `v0.3.0` does not contain these paths.\njust smoke-compat \"$ROOT_VERSION\"\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(docs, "COMPATIBILITY.md"), []byte("Version 0.4.0 introduces the frozen v0.3 compatibility packages.\nPublished `v0.3.0` does not contain these paths.\njust smoke-compat \"$ROOT_VERSION\"\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(releases, "v0.3.0.md"), []byte("The v0.3.0 release provides compat/v03/invocation.\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "README.md"), []byte("compat/v03/executorhttp is shipped by v0.3.0.\n"), 0o600))
 
@@ -52,7 +52,7 @@ func TestDocumentationClaimsAllowsExplicitPublishedV030Negation(t *testing.T) {
 	root := t.TempDir()
 	docs := filepath.Join(root, "docs")
 	require.NoError(t, os.MkdirAll(docs, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(docs, "COMPATIBILITY.md"), []byte("The first future root release that contains this branch introduces these paths.\nPublished `v0.3.0` does not contain these paths.\njust smoke-compat \"$ROOT_VERSION\"\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(docs, "COMPATIBILITY.md"), []byte("Version 0.4.0 introduces the frozen v0.3 compatibility packages.\nPublished `v0.3.0` does not contain these paths.\njust smoke-compat \"$ROOT_VERSION\"\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "README.md"), []byte("Published v0.3.0 does not provide compat/v03/invocation.\n"), 0o600))
 
 	violations, err := documentationClaims(root)

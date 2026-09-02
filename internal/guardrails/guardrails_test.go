@@ -149,14 +149,14 @@ func TestCanonicalExecutorDocsRejectsUnsupportedResolverClaims(t *testing.T) {
 	require.Empty(t, CheckCanonicalExecutorDocs("Production supports the canonical HTTP executor target only."))
 }
 
-func TestCompatibilityDocsRequireAnUnpublishedIntroductionBoundary(t *testing.T) {
-	valid := "The first future root release that contains this branch introduces these paths.\n" +
+func TestCompatibilityDocsRequireV040IntroductionBoundary(t *testing.T) {
+	valid := "Version 0.4.0 introduces the frozen v0.3 compatibility packages.\n" +
 		"Published `v0.3.0` does not contain these paths.\n" +
 		"just smoke-compat \"$ROOT_VERSION\"\n"
 	require.Empty(t, CheckCompatibilityDocs(valid))
 	require.Equal(t, []string{
 		"missing compatibility release boundary: Published `v0.3.0` does not contain these paths.",
-		"missing compatibility release boundary: first future root release that contains this branch",
+		"missing compatibility release boundary: Version 0.4.0 introduces the frozen v0.3 compatibility packages.",
 		"missing compatibility release boundary: just smoke-compat \"$ROOT_VERSION\"",
 	}, CheckCompatibilityDocs("A root tag such as v0.3.0 publishes all paths."))
 }

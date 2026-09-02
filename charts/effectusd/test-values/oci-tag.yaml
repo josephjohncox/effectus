@@ -1,7 +1,7 @@
 # yamllint disable rule:line-length
 ---
 image:
-  tag: "0.3.0"
+  tag: "0.4.0"
   unsafeAllowTag: true
 postgres:
   existingSecret: effectusd-postgres

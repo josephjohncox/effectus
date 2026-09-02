@@ -11,7 +11,11 @@ services:
       # The entrypoint's temporary initialization server listens only on its
       # Unix socket. Probe the application database through TCP so dependents
       # wait for the final post-initialization server.
-      test: ["CMD-SHELL", "pg_isready --host=127.0.0.1 --username=\"$$POSTGRES_USER\" --dbname=\"$$POSTGRES_DB\""]
+      test:
+        [
+          "CMD-SHELL",
+          'pg_isready --host=127.0.0.1 --username="$$POSTGRES_USER" --dbname="$$POSTGRES_DB"',
+        ]
       interval: 2s
       timeout: 3s
       retries: 30

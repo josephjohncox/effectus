@@ -318,13 +318,13 @@ func CheckCanonicalExecutorDocs(data string) []string {
 	return violations
 }
 
-// CheckCompatibilityDocs requires the documented boundary for unpublished
-// compatibility import paths.
+// CheckCompatibilityDocs requires the documented v0.4 introduction boundary
+// for the compatibility import paths.
 func CheckCompatibilityDocs(data string) []string {
 	data = strings.Join(strings.Fields(data), " ")
 	var violations []string
 	for _, required := range []string{
-		"first future root release that contains this branch",
+		"Version 0.4.0 introduces the frozen v0.3 compatibility packages.",
 		"Published `v0.3.0` does not contain these paths.",
 		"just smoke-compat \"$ROOT_VERSION\"",
 	} {

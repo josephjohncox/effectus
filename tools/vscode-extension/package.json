@@ -2,7 +2,7 @@
   "name": "effectus-language-support",
   "displayName": "Effectus Rule Files",
   "description": "Declarative syntax support for Effectus source rule files (.eff/.effx).",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "effectus",
   "engines": { "vscode": "^1.74.0" },
   "categories": ["Programming Languages"],
