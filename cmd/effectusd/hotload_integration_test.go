@@ -12,17 +12,17 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/josephjohncox/effectus/internal/unified"
 	effectusruntime "github.com/josephjohncox/effectus/runtime"
 	"github.com/josephjohncox/effectus/schema/types"
 	"github.com/josephjohncox/effectus/schema/verb"
-	"github.com/josephjohncox/effectus/unified"
 	"github.com/stretchr/testify/require"
 )
 
 func TestHotloadFailsClosedWithCheckedEngine(t *testing.T) {
-	repoRoot := filepath.Join("..", "..")
-	schemaPath := filepath.Join(repoRoot, "examples", "fraud_e2e", "schema", "fraud_facts.json")
-	rulePath := filepath.Join(repoRoot, "examples", "fraud_e2e", "rules", "fraud_rules.eff")
+	fixtureDir := filepath.Join("testdata", "hotload")
+	schemaPath := filepath.Join(fixtureDir, "facts.json")
+	rulePath := filepath.Join(fixtureDir, "rules.eff")
 
 	ruleContent, err := os.ReadFile(rulePath)
 	require.NoError(t, err)

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/josephjohncox/effectus/executorhttp"
+	"github.com/josephjohncox/effectus/invocation"
 	_ "github.com/lib/pq"
 )
 
@@ -107,8 +108,8 @@ func run() error {
 	}
 }
 
-func (service *service) requestReview(ctx context.Context, request executorhttp.Request) executorhttp.Outcome {
-	if request.Metadata.Saga.Direction != executorhttp.DirectionForward {
+func (service *service) requestReview(ctx context.Context, request invocation.Request) invocation.Outcome {
+	if request.Metadata.Saga.Direction != invocation.DirectionForward {
 		return executorhttp.Permanent(fmt.Errorf("RequestManualReview does not support compensation"))
 	}
 	orderID, ok := request.Arguments["orderId"].(string)
@@ -170,8 +171,8 @@ WHERE idempotency_key = $1`, result.IdempotencyKey).Scan(
 	return executorhttp.Success(result.ReviewID)
 }
 
-func (service *service) cancelReview(ctx context.Context, request executorhttp.Request) executorhttp.Outcome {
-	if request.Metadata.Saga.Direction != executorhttp.DirectionCompensation {
+func (service *service) cancelReview(ctx context.Context, request invocation.Request) invocation.Outcome {
+	if request.Metadata.Saga.Direction != invocation.DirectionCompensation {
 		return executorhttp.Permanent(fmt.Errorf("CancelManualReview requires compensation direction"))
 	}
 	orderID, ok := request.Arguments["orderId"].(string)

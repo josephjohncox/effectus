@@ -8,8 +8,8 @@ import (
 
 	"github.com/josephjohncox/effectus"
 	"github.com/josephjohncox/effectus/ast"
-	"github.com/josephjohncox/effectus/flow"
-	"github.com/josephjohncox/effectus/list"
+	"github.com/josephjohncox/effectus/internal/flow"
+	"github.com/josephjohncox/effectus/internal/list"
 	"github.com/josephjohncox/effectus/schema/types"
 )
 
@@ -101,7 +101,7 @@ func (c *Compiler) CompileProgram(filenames []string, facts effectus.Facts) (*Co
 }
 
 // CompileUncheckedFiles compiles without type checking.
-// Deprecated: production code must use CompileFiles or CompileProgram.
+// Deprecated: production code must use CompileFiles or CompileProgram. Removal deadline: 2027-09-01.
 func (c *Compiler) CompileUncheckedFiles(filenames []string, facts effectus.Facts) (effectus.Spec, error) {
 	return c.CompileUncheckedProgram(filenames, facts)
 }
@@ -141,8 +141,8 @@ func (c *Compiler) compileParsedSources(sources []parsedSource, schema effectus.
 		}
 	}
 	return &CompiledSpec{
-		List: c.mergeListSpecs(listSpecs),
-		Flow: c.mergeFlowSpecs(flowSpecs),
+		list: c.mergeListSpecs(listSpecs),
+		flow: c.mergeFlowSpecs(flowSpecs),
 		Name: "unified",
 	}, nil
 }
@@ -151,24 +151,19 @@ func (c *Compiler) compileParsedSources(sources []parsedSource, schema effectus.
 // contain callbacks and must not be serialized as a production artifact. Use
 // CompileChecked for validated, callback-free artifacts.
 type CompiledSpec struct {
-	List *list.Spec
-	Flow *flow.Spec
+	list *list.Spec
+	flow *flow.Spec
 	Name string
 }
 
-// NewUnifiedSpec creates a unified spec.
-func NewUnifiedSpec(listSpec *list.Spec, flowSpec *flow.Spec, name string) effectus.Spec {
-	return &CompiledSpec{List: listSpec, Flow: flowSpec, Name: name}
+// ListSpec returns the compiled list rules as an executable specification.
+func (s *CompiledSpec) ListSpec() effectus.Spec {
+	return s.list
 }
 
-// ListSpec returns the compiled list rules.
-func (s *CompiledSpec) ListSpec() *list.Spec {
-	return s.List
-}
-
-// FlowSpec returns the compiled flow rules.
-func (s *CompiledSpec) FlowSpec() *flow.Spec {
-	return s.Flow
+// FlowSpec returns the compiled flow rules as an executable specification.
+func (s *CompiledSpec) FlowSpec() effectus.Spec {
+	return s.flow
 }
 
 // RequiredFacts implements effectus.Spec
@@ -176,15 +171,15 @@ func (s *CompiledSpec) RequiredFacts() []string {
 	factPathSet := make(map[string]struct{})
 
 	// Add list spec fact paths
-	if s.List != nil {
-		for _, path := range s.List.FactPaths {
+	if s.list != nil {
+		for _, path := range s.list.FactPaths {
 			factPathSet[path] = struct{}{}
 		}
 	}
 
 	// Add flow spec fact paths
-	if s.Flow != nil {
-		for _, path := range s.Flow.FactPaths {
+	if s.flow != nil {
+		for _, path := range s.flow.FactPaths {
 			factPathSet[path] = struct{}{}
 		}
 	}
@@ -207,15 +202,15 @@ func (s *CompiledSpec) GetName() string {
 // Execute implements effectus.Spec
 func (s *CompiledSpec) Execute(ctx context.Context, facts effectus.Facts, ex effectus.Executor) error {
 	// Execute list spec if available
-	if s.List != nil {
-		if err := s.List.Execute(ctx, facts, ex); err != nil {
+	if s.list != nil {
+		if err := s.list.Execute(ctx, facts, ex); err != nil {
 			return fmt.Errorf("list spec execution error: %w", err)
 		}
 	}
 
 	// Execute flow spec if available
-	if s.Flow != nil {
-		if err := s.Flow.Execute(ctx, facts, ex); err != nil {
+	if s.flow != nil {
+		if err := s.flow.Execute(ctx, facts, ex); err != nil {
 			return fmt.Errorf("flow spec execution error: %w", err)
 		}
 	}
@@ -298,7 +293,7 @@ func (c *Compiler) mergeFlowSpecs(specs []effectus.Spec) *flow.Spec {
 }
 
 // ParseAndCompileFiles parses, checks, and compiles through the legacy API.
-// Deprecated: use ParseAndCompileProgram.
+// Deprecated: use ParseAndCompileProgram. Removal deadline: 2027-09-01.
 func (c *Compiler) ParseAndCompileFiles(filenames []string, facts effectus.Facts) (effectus.Spec, error) {
 	return c.ParseAndCompileProgram(filenames, facts)
 }

@@ -188,7 +188,7 @@ func (m *InMemoryRuleStorage) GetActiveVersion(ctx context.Context, name, enviro
 }
 
 // SetActiveVersion atomically replaces the active version for an environment.
-// Deprecated: use DeployRuleset with the atomic strategy.
+// Deprecated: use DeployRuleset with the atomic strategy. Removal deadline: 2027-09-01.
 func (m *InMemoryRuleStorage) SetActiveVersion(ctx context.Context, name, environment, version string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

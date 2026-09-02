@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"reflect"
 	"sort"
 	"strings"
 
@@ -205,8 +204,8 @@ func executionArtifactForUnit(unit *compiler.CompiledUnit) (schema.ExecutionArti
 		return schema.ExecutionArtifact{}, err
 	}
 	type executorEntry struct {
-		Name, Type, ConfigType, ImplementationType string
-		ResolverDescriptor                         any `json:"resolver_descriptor,omitempty"`
+		Name       string                `json:"name"`
+		Descriptor invocation.Descriptor `json:"descriptor"`
 	}
 	executors := make([]executorEntry, 0, len(unit.VerbSpecs))
 	names := make([]string, 0, len(unit.VerbSpecs))
@@ -215,19 +214,34 @@ func executionArtifactForUnit(unit *compiler.CompiledUnit) (schema.ExecutionArti
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		verb := unit.VerbSpecs[name]
-		entry := executorEntry{Name: name}
-		if verb != nil {
-			entry.Type = string(verb.ExecutorType)
-			entry.ConfigType = fmt.Sprintf("%T", verb.ExecutorConfig)
-			if local, ok := verb.ExecutorConfig.(*compiler.LocalExecutorConfig); ok && local != nil && local.Implementation != nil {
-				entry.ImplementationType = reflect.TypeOf(local.Implementation).String()
-				if provider, ok := any(local.Implementation).(invocation.ResolverDescriptorProvider); ok {
-					entry.ResolverDescriptor = provider.InvocationResolverDescriptor()
-				}
+		compiledVerb := unit.VerbSpecs[name]
+		if compiledVerb == nil {
+			return schema.ExecutionArtifact{}, fmt.Errorf("verb %q has no compiled executor", name)
+		}
+		local, ok := compiledVerb.ExecutorConfig.(*compiler.LocalExecutorConfig)
+		if !ok || local == nil || local.Implementation == nil {
+			return schema.ExecutionArtifact{}, fmt.Errorf("verb %q has no resolved invocation executor", name)
+		}
+		provider, described := any(local.Implementation).(invocation.ResolverDescriptorProvider)
+		var descriptor invocation.Descriptor
+		if described {
+			var descriptorErr error
+			descriptor, descriptorErr = provider.InvocationResolverDescriptor()
+			if descriptorErr != nil {
+				return schema.ExecutionArtifact{}, fmt.Errorf("verb %q invocation descriptor: %w", name, descriptorErr)
+			}
+		} else {
+			// Compatibility callbacks receive a stable, explicitly unresolvable
+			// descriptor. Production admission rejects it in validateUnitExecutors.
+			var descriptorErr error
+			descriptor, descriptorErr = invocation.NewDescriptor(invocation.DescriptorSpec{
+				Type: invocation.DescriptorEmbedded, Reference: name,
+			})
+			if descriptorErr != nil {
+				return schema.ExecutionArtifact{}, descriptorErr
 			}
 		}
-		executors = append(executors, entry)
+		executors = append(executors, executorEntry{Name: name, Descriptor: descriptor})
 	}
 	executorManifest, err := json.Marshal(executors)
 	if err != nil {
@@ -247,7 +261,7 @@ func executionArtifactForUnit(unit *compiler.CompiledUnit) (schema.ExecutionArti
 		if compiled.ResolverDescriptor == nil && compiled.Implementation != nil {
 			return schema.ExecutionArtifact{}, fmt.Errorf("function %q has no immutable resolver descriptor", name)
 		}
-		functions[name] = map[string]any{"implementation_type": fmt.Sprintf("%T", compiled.Implementation), "resolver_descriptor": compiled.ResolverDescriptor}
+		functions[name] = map[string]any{"resolver_descriptor": compiled.ResolverDescriptor}
 	}
 	initialData, err := json.Marshal(unit.InitialData)
 	if err != nil {
@@ -264,7 +278,10 @@ func executionArtifactForUnit(unit *compiler.CompiledUnit) (schema.ExecutionArti
 	if err != nil {
 		return schema.ExecutionArtifact{}, err
 	}
-	sourceDigest := unit.CheckedIR.Digest()
+	sourceDigest := unit.SourceDigest
+	if sourceDigest == "" {
+		sourceDigest = unit.CheckedIR.Digest()
+	}
 	manifest := struct {
 		IRDigest, EnvironmentDigest, SourceDigest string
 		Executors                                 json.RawMessage

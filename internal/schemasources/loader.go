@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/josephjohncox/effectus/adapters"
+	"github.com/josephjohncox/effectus/internal/adapters"
 	"github.com/josephjohncox/effectus/schema/types"
 	"gopkg.in/yaml.v3"
 )

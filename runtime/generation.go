@@ -15,21 +15,13 @@ import (
 	"github.com/josephjohncox/effectus/ir"
 )
 
-// ExecutorDescriptor is the immutable resolver input for one verb binding.
-type ExecutorDescriptor struct {
-	Type       string            `json:"type"`
-	ResolverID string            `json:"resolver_id"`
-	Reference  string            `json:"reference,omitempty"`
-	Config     map[string]string `json:"config,omitempty"`
-}
-
 // GenerationConfig contains every value covered by a generation digest.
 type GenerationConfig struct {
 	Checked             *ir.Checked
 	Environment         ir.Environment
 	Ruleset             string
 	Version             string
-	ExecutorDescriptors map[string]ExecutorDescriptor
+	ExecutorDescriptors map[string]invocation.Descriptor
 	FunctionIDs         map[string]string
 	SourceDigest        string
 	Executors           map[string]invocation.Executor
@@ -44,17 +36,16 @@ type Generation struct {
 	environment         ir.Environment
 	ruleset             string
 	version             string
-	executorDescriptors map[string]ExecutorDescriptor
+	executorDescriptors map[string]invocation.Descriptor
 	functionIDs         map[string]string
 	sourceDigest        string
 	digest              string
 	executors           map[string]invocation.Executor
 	closers             []io.Closer
 
-	refs    atomic.Int64
-	retired atomic.Bool
-	closed  atomic.Bool
-	closeMu sync.Mutex
+	closed   atomic.Bool
+	closeMu  sync.Mutex
+	closeErr error
 }
 
 func NewGeneration(config GenerationConfig) (*Generation, error) {
@@ -71,16 +62,38 @@ func NewGeneration(config GenerationConfig) (*Generation, error) {
 	if config.Checked.CloneArtifact().EnvironmentDigest != environmentDigest {
 		return nil, fmt.Errorf("generation environment does not match checked IR")
 	}
+	if config.Production && strings.TrimSpace(config.SourceDigest) == "" {
+		return nil, fmt.Errorf("production generation source digest is required")
+	}
+	for verb, descriptor := range config.ExecutorDescriptors {
+		if _, err := descriptor.CanonicalJSON(); err != nil {
+			return nil, fmt.Errorf("generation executor %q descriptor: %w", verb, err)
+		}
+	}
 	for verb, executor := range config.Executors {
 		if executor == nil {
 			return nil, fmt.Errorf("generation executor %q is nil", verb)
 		}
 		descriptor, ok := config.ExecutorDescriptors[verb]
-		if !ok || strings.TrimSpace(descriptor.Type) == "" {
+		if !ok {
 			return nil, fmt.Errorf("generation executor %q has no canonical descriptor", verb)
 		}
-		if config.Production && strings.TrimSpace(descriptor.ResolverID) == "" {
+		if config.Production && strings.TrimSpace(descriptor.ResolverID()) == "" {
 			return nil, fmt.Errorf("production generation executor %q is callback-only and cannot be recovered", verb)
+		}
+	}
+	if config.Production {
+		for _, plan := range config.Checked.CloneArtifact().Plans {
+			for _, step := range plan.Steps {
+				if err := validateResolvedGenerationVerb(step.Verb, config.ExecutorDescriptors, config.Executors); err != nil {
+					return nil, err
+				}
+				if step.Compensation != nil {
+					if err := validateResolvedGenerationVerb(step.Compensation.InverseVerb, config.ExecutorDescriptors, config.Executors); err != nil {
+						return nil, err
+					}
+				}
+			}
 		}
 	}
 	manifest := generationDigestManifest{
@@ -101,6 +114,20 @@ func NewGeneration(config GenerationConfig) (*Generation, error) {
 	}, nil
 }
 
+func validateResolvedGenerationVerb(verb string, descriptors map[string]invocation.Descriptor, executors map[string]invocation.Executor) error {
+	descriptor, described := descriptors[verb]
+	if !described {
+		return fmt.Errorf("production generation verb %q has no canonical descriptor", verb)
+	}
+	if descriptor.ResolverID() == "" {
+		return fmt.Errorf("production generation verb %q is callback-only and cannot be recovered", verb)
+	}
+	if executors[verb] == nil {
+		return fmt.Errorf("production generation verb %q is unresolved", verb)
+	}
+	return nil
+}
+
 type generationDigestManifest struct {
 	IRDigest          string                    `json:"ir_digest"`
 	EnvironmentDigest string                    `json:"environment_digest"`
@@ -112,8 +139,8 @@ type generationDigestManifest struct {
 }
 
 type namedExecutorDescriptor struct {
-	Name       string             `json:"name"`
-	Descriptor ExecutorDescriptor `json:"descriptor"`
+	Name       string                `json:"name"`
+	Descriptor invocation.Descriptor `json:"descriptor"`
 }
 
 type namedString struct {
@@ -121,7 +148,7 @@ type namedString struct {
 	Value string `json:"value"`
 }
 
-func canonicalExecutorDescriptors(values map[string]ExecutorDescriptor) []namedExecutorDescriptor {
+func canonicalExecutorDescriptors(values map[string]invocation.Descriptor) []namedExecutorDescriptor {
 	names := make([]string, 0, len(values))
 	for name := range values {
 		names = append(names, name)
@@ -129,7 +156,7 @@ func canonicalExecutorDescriptors(values map[string]ExecutorDescriptor) []namedE
 	sort.Strings(names)
 	result := make([]namedExecutorDescriptor, 0, len(names))
 	for _, name := range names {
-		result = append(result, namedExecutorDescriptor{Name: name, Descriptor: cloneExecutorDescriptor(values[name])})
+		result = append(result, namedExecutorDescriptor{Name: name, Descriptor: values[name]})
 	}
 	return result
 }
@@ -189,99 +216,46 @@ func (generation *Generation) Executor(verb string) (invocation.Executor, bool) 
 	executor, ok := generation.executors[verb]
 	return executor, ok
 }
-func (generation *Generation) Retired() bool { return generation != nil && generation.retired.Load() }
-func (generation *Generation) Closed() bool  { return generation != nil && generation.closed.Load() }
 
-func (generation *Generation) closeIfUnused() error {
-	if generation == nil || !generation.retired.Load() || generation.refs.Load() != 0 || generation.closed.Load() {
+// ExecutorDescriptors returns the immutable resolver manifest.
+func (generation *Generation) ExecutorDescriptors() map[string]invocation.Descriptor {
+	if generation == nil {
+		return nil
+	}
+	return cloneExecutorDescriptors(generation.executorDescriptors)
+}
+
+// FunctionIDs returns the immutable function resolver identities.
+func (generation *Generation) FunctionIDs() map[string]string {
+	if generation == nil {
+		return nil
+	}
+	return cloneGenerationStringMap(generation.functionIDs)
+}
+
+// Closed reports whether generation-owned executor resources are retired.
+func (generation *Generation) Closed() bool { return generation != nil && generation.closed.Load() }
+
+// Close retires all generation-owned resources exactly once in reverse
+// acquisition order. A changed generation requires replacing the process.
+func (generation *Generation) Close() error {
+	if generation == nil {
 		return nil
 	}
 	generation.closeMu.Lock()
 	defer generation.closeMu.Unlock()
-	if generation.closed.Load() || generation.refs.Load() != 0 {
-		return nil
+	if generation.closed.Load() {
+		return generation.closeErr
 	}
-	var first error
 	for index := len(generation.closers) - 1; index >= 0; index-- {
 		if generation.closers[index] != nil {
-			if err := generation.closers[index].Close(); err != nil && first == nil {
-				first = err
+			if err := generation.closers[index].Close(); err != nil && generation.closeErr == nil {
+				generation.closeErr = err
 			}
 		}
 	}
 	generation.closed.Store(true)
-	return first
-}
-
-// GenerationManager is retained for embedded compatibility tests.
-// Deprecated: ExecutionRuntime owns the production generation publication.
-type GenerationManager struct{ active atomic.Pointer[Generation] }
-
-func (manager *GenerationManager) Publish(generation *Generation) error {
-	if manager == nil || generation == nil {
-		return fmt.Errorf("generation manager and generation are required")
-	}
-	if generation.retired.Load() || generation.closed.Load() {
-		return fmt.Errorf("cannot publish a retired generation")
-	}
-	previous := manager.active.Swap(generation)
-	if previous != nil && previous != generation {
-		previous.retired.Store(true)
-		return previous.closeIfUnused()
-	}
-	return nil
-}
-
-func (manager *GenerationManager) Acquire() (*GenerationHandle, error) {
-	if manager == nil {
-		return nil, fmt.Errorf("generation manager is nil")
-	}
-	for {
-		generation := manager.active.Load()
-		if generation == nil {
-			return nil, fmt.Errorf("no active generation")
-		}
-		generation.refs.Add(1)
-		if manager.active.Load() == generation && !generation.retired.Load() && !generation.closed.Load() {
-			return &GenerationHandle{generation: generation}, nil
-		}
-		if generation.refs.Add(-1) == 0 {
-			_ = generation.closeIfUnused()
-		}
-	}
-}
-
-func (manager *GenerationManager) ActiveDigest() string {
-	if manager == nil {
-		return ""
-	}
-	generation := manager.active.Load()
-	if generation == nil {
-		return ""
-	}
-	return generation.digest
-}
-
-// GenerationHandle pins a generation until Release.
-type GenerationHandle struct {
-	generation *Generation
-	released   atomic.Bool
-}
-
-func (handle *GenerationHandle) Generation() *Generation {
-	if handle == nil || handle.released.Load() {
-		return nil
-	}
-	return handle.generation
-}
-func (handle *GenerationHandle) Release() error {
-	if handle == nil || handle.generation == nil || !handle.released.CompareAndSwap(false, true) {
-		return nil
-	}
-	if handle.generation.refs.Add(-1) < 0 {
-		panic("runtime generation reference count became negative")
-	}
-	return handle.generation.closeIfUnused()
+	return generation.closeErr
 }
 
 func cloneGenerationEnvironment(environment ir.Environment) ir.Environment {
@@ -309,14 +283,10 @@ func cloneGenerationStringMap(values map[string]string) map[string]string {
 	}
 	return result
 }
-func cloneExecutorDescriptor(value ExecutorDescriptor) ExecutorDescriptor {
-	value.Config = cloneGenerationStringMap(value.Config)
-	return value
-}
-func cloneExecutorDescriptors(values map[string]ExecutorDescriptor) map[string]ExecutorDescriptor {
-	result := make(map[string]ExecutorDescriptor, len(values))
+func cloneExecutorDescriptors(values map[string]invocation.Descriptor) map[string]invocation.Descriptor {
+	result := make(map[string]invocation.Descriptor, len(values))
 	for name, value := range values {
-		result[name] = cloneExecutorDescriptor(value)
+		result[name] = value
 	}
 	return result
 }

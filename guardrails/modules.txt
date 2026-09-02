@@ -1,0 +1,3 @@
+# Approved Go modules.
+# Do not update this file without an intentional surface review.
+.

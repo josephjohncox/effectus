@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/josephjohncox/effectus/adapters"
+	"github.com/josephjohncox/effectus/internal/adapters"
 	"github.com/josephjohncox/effectus/schema/types"
 )
 

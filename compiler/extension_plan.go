@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/josephjohncox/effectus/internal/loader"
 	"github.com/josephjohncox/effectus/ir"
-	"github.com/josephjohncox/effectus/loader"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/josephjohncox/effectus/schema/verb"
 )
@@ -24,7 +24,10 @@ type CheckedFunctionProvider interface {
 }
 
 type extensionCandidateTarget struct {
-	delegate    *schema.LoaderAdapter
+	delegate interface {
+		loader.LoadTarget
+		loader.DescriptorLoadTarget
+	}
 	sources     []loader.SourceFile
 	types       map[string]loader.TypeDefinition
 	facts       map[string]string
@@ -35,7 +38,7 @@ type extensionCandidateTarget struct {
 
 func newExtensionCandidateTarget(registry *schema.Registry, verbs *verb.Registry) *extensionCandidateTarget {
 	return &extensionCandidateTarget{
-		delegate: schema.NewLoaderAdapter(registry, verbs),
+		delegate: loader.NewRegistryAdapter(registry, verbs),
 		types:    make(map[string]loader.TypeDefinition), facts: make(map[string]string),
 		functions: make(map[string]interface{}), descriptors: make(map[string]loader.ExecutorDescriptor), initialData: make(map[string]interface{}),
 	}

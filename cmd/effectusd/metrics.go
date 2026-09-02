@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	kafkaadapter "github.com/josephjohncox/effectus/adapters/kafka"
+	kafkaadapter "github.com/josephjohncox/effectus/internal/adapters/kafka"
 	effectusruntime "github.com/josephjohncox/effectus/runtime"
 )
 

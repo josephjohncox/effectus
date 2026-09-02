@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/josephjohncox/effectus/invocation"
 	"github.com/josephjohncox/effectus/schema/fencing"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 

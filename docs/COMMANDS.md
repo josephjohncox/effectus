@@ -238,7 +238,7 @@ Options:
   --verb-dir     Directory containing verb files
   --rules-dir    Directory containing rule files
   --output       Output file for bundle (default: bundle.json)
-  --oci-ref      OCI reference to push bundle to (e.g., ghcr.io/user/bundle:v1)
+  --oci-ref      OCI publication target; prints the digest-pinned reference to deploy
   --pii-masks    Comma-separated list of PII paths to mask
   --verbose      Show detailed output
 ```
@@ -259,17 +259,7 @@ effectusc bundle \
   --output bundle.json
 ```
 
-Create and push to OCI registry:
-
-```bash
-effectusc bundle \
-  --name customer-rules \
-  --version 1.2.0 \
-  --schema-dir ./schemas \
-  --verb-dir ./verbs \
-  --rules-dir ./rules \
-  --oci-ref ghcr.io/myorg/customer-rules:v1.2.0
-```
+The command always writes the local source bundle. `--oci-ref` may name a mutable publication tag, but the command verifies the upload and prints the only reference that may be deployed: `repository@sha256:...`.
 
 #### resolve
 
@@ -333,7 +323,7 @@ effectusd [options]
 
 ```bash
 --bundle           Path to bundle file
---oci-ref          Digest-pinned OCI reference for a bundle
+--oci-ref          Digest-pinned source-bundle OCI reference
 --oci-cache-dir    Writable OCI cache directory
 --oci-signature-verifier Fixed verifier executable for OCI signatures
 --extensions-dir   Directory containing extension manifests (*.verbs.json, *.schema.json)
@@ -344,7 +334,7 @@ effectusd [options]
 --config           Path to YAML/JSON config file
 --reload-interval  Rejected compatibility flag. Redeploy to change the bundle.
 --verb-duplicate-policy Duplicate verb policy (error, replace, ignore)
---verb-oci-warmup  Warm OCI verb executors at startup
+--verb-oci-warmup  Deprecated compatibility flag until 2027-09-01; OCI executor resolvers are not supported
 --verb-strict      Validate verb arguments and return values (default: true)
 ```
 
@@ -454,8 +444,7 @@ EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
 ```bash
 EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
   effectusd \
-  --oci-ref ghcr.io/myorg/customer-rules@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-  --oci-signature-verifier /usr/local/bin/effectus-verify-oci
+  --bundle /config/customer-rules.json
 ```
 
 #### Durable checked workflows
@@ -541,8 +530,7 @@ effectusd \
 EFFECTUS_API_TOKEN="..." \
 EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
 effectusd \
-  --oci-ref ghcr.io/myorg/customer-rules@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-  --oci-signature-verifier /usr/local/bin/effectus-verify-oci \
+  --bundle /config/customer-rules.json \
   --fact-source kafka \
   --kafka-ack-contract durable_acceptance \
   --kafka-brokers kafka-cluster:9092 \
@@ -584,14 +572,14 @@ effectusc capabilities rules/*.eff
 ### 3. Bundle Creation
 
 ```bash
-# Create distributable bundle
+# Create a canonical source bundle
 effectusc bundle \
   --name my-rules \
   --version 1.0.0 \
   --schema-dir schemas/ \
   --verb-dir verbs/ \
   --rules-dir rules/ \
-  --oci-ref ghcr.io/myorg/my-rules:v1.0.0
+  --output my-rules.json
 ```
 
 ### 4. Runtime Deployment
@@ -600,8 +588,7 @@ effectusc bundle \
 # Run the checked durable daemon
 EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
 effectusd \
-  --oci-ref ghcr.io/myorg/my-rules@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-  --oci-signature-verifier /usr/local/bin/effectus-verify-oci \
+  --bundle /config/my-rules.json \
   --fact-source kafka \
   --kafka-ack-contract durable_acceptance
 ```
@@ -658,16 +645,16 @@ set -e
 # Validate rules
 effectusc typecheck --schema schemas/ --verbschema verbs/ rules/*.eff
 
-# Create bundle
+# Create the source bundle
 effectusc bundle \
   --name "app-rules" \
   --version "$BUILD_VERSION" \
   --schema-dir schemas/ \
   --verb-dir verbs/ \
   --rules-dir rules/ \
-  --oci-ref "ghcr.io/myorg/app-rules:$BUILD_VERSION"
+  --output "dist/app-rules-$BUILD_VERSION.json"
 
-echo "Bundle created and pushed successfully"
+echo "Bundle created successfully"
 ```
 
 ### OCI + Helm Publishing
@@ -685,7 +672,7 @@ helm push dist/effectusd-1.2.3.tgz oci://ghcr.io/myorg/helm
 helm install effectusd oci://ghcr.io/myorg/helm/effectusd \
   --version 1.2.3 \
   --set image.digest=sha256:IMAGE_DIGEST \
-  --set bundle.ociRef=ghcr.io/myorg/bundles/flow-ui-demo@sha256:BUNDLE_DIGEST \
+  --set bundle.ociRef=ghcr.io/myorg/bundles/order-review@sha256:BUNDLE_DIGEST \
   --set bundle.signatureVerifier=/usr/local/bin/effectus-verify-oci \
   --set postgres.existingSecret=effectusd-postgres \
   --set api.existingSecret=effectusd-api

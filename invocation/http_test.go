@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 func TestHTTPExecutorPropagatesSystemInvocationHeaders(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		require.Equal(t, "request-1", request.Header.Get(HeaderRequestID))
 		require.Equal(t, "execution-1", request.Header.Get(HeaderExecutionID))
 		require.Equal(t, "saga-1", request.Header.Get(HeaderSagaID))
 		require.Equal(t, "effect-1", request.Header.Get(HeaderEffectID))
@@ -28,6 +30,7 @@ func TestHTTPExecutorPropagatesSystemInvocationHeaders(t *testing.T) {
 	require.NoError(t, err)
 	outcome := executor.Invoke(context.Background(), Request{
 		Metadata: Context{
+			RequestID:     "request-1",
 			ExecutionID:   "execution-1",
 			Saga:          Saga{SagaID: "saga-1", EffectID: "effect-1", Attempt: 2, Direction: DirectionForward, IdempotencyKey: "stable-key"},
 			FencingGrants: []FencingGrant{{Authority: "db", Resource: "account-1", Token: 9}},
@@ -38,6 +41,38 @@ func TestHTTPExecutorPropagatesSystemInvocationHeaders(t *testing.T) {
 	require.NoError(t, outcome.Err)
 	require.Equal(t, OutcomeSuccess, outcome.Class)
 	require.Equal(t, true, outcome.Result.(map[string]any)["ok"])
+}
+
+func TestHTTPExecutorRejectsCaseInsensitiveStaticHeaderCollisions(t *testing.T) {
+	_, err := NewHTTPExecutor(HTTPExecutor{
+		URL: "https://example.invalid", Headers: map[string]string{"Authorization": "one", "authorization": "two"},
+	})
+	require.EqualError(t, err, `static headers "Authorization" and "authorization" collide case-insensitively`)
+	_, err = NewHTTPExecutor(HTTPExecutor{
+		URL: "https://example.invalid", Headers: map[string]string{"X-Trace": "one", "x-trace": "two"},
+	})
+	require.ErrorContains(t, err, "collide case-insensitively")
+	_, err = NewHTTPExecutor(HTTPExecutor{
+		URL: "https://example.invalid", Headers: map[string]string{"X-EFFECTUS-VERB": "forged"},
+	})
+	require.ErrorContains(t, err, "reserved")
+}
+
+func TestHTTPExecutorRejectsCollidingHeadersBeforeRequestEmission(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	defer server.Close()
+	// HTTPExecutor is a public struct, so Invoke must revalidate callers that
+	// bypass NewHTTPExecutor before it constructs or sends a request.
+	executor := &HTTPExecutor{
+		URL: server.URL, Method: http.MethodPost,
+		Headers: map[string]string{"X-Trace": "one", "x-trace": "two"},
+		Client:  server.Client(),
+	}
+	outcome := executor.Invoke(t.Context(), Request{})
+	require.Equal(t, OutcomePermanentFailure, outcome.Class)
+	require.ErrorContains(t, outcome.Err, "collide case-insensitively")
+	require.Zero(t, requests.Load())
 }
 
 func TestHTTPExecutorRejectsReservedStaticHeaders(t *testing.T) {

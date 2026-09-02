@@ -7,9 +7,9 @@ import (
 	"os"
 	"testing"
 
-	kafkaadapter "github.com/josephjohncox/effectus/adapters/kafka"
-	"github.com/josephjohncox/effectus/schema"
 	"github.com/google/uuid"
+	kafkaadapter "github.com/josephjohncox/effectus/internal/adapters/kafka"
+	"github.com/josephjohncox/effectus/schema"
 	_ "github.com/lib/pq"
 	segmentio "github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/require"

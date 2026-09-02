@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT_DIR"
 
-COMPOSE_FILE=${COMPOSE_FILE:-examples/saga_stack/docker-compose.yml}
+COMPOSE_FILE=${COMPOSE_FILE:-tests/fixtures/durable-stack/docker-compose.yml}
 SOURCE_DATABASE=${SOURCE_DATABASE:-effectus_saga}
 RESTORE_DATABASE=${RESTORE_DATABASE:-effectus_restore_drill}
 OUTPUT_DIR=${RESTORE_DRILL_OUTPUT:-out/restore-drill}
@@ -60,7 +60,7 @@ sha256sum "$OUTPUT_DIR/postgres.dump" "$OUTPUT_DIR/non-postgres-dependencies.tar
 
 kafka_result="not configured"
 if [ -n "${KAFKA_BROKERS:-}" ]; then
-  KAFKA_BROKERS="$KAFKA_BROKERS" go test -count=1 -tags=integration ./adapters/kafka \
+  KAFKA_BROKERS="$KAFKA_BROKERS" go test -count=1 -tags=integration ./internal/adapters/kafka \
     -run '^TestKafkaConsumerGroupCommitAndRestart$'
   kafka_result="commit/restart reconciliation passed"
 fi

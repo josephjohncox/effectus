@@ -25,41 +25,25 @@ External systems must enforce each supplied idempotency key or fencing token. Co
 
 Read [Runtime Guarantees](GUARANTEES.md) before a production deployment.
 
-## Start here
+## Select a first-run path
 
 <div class="grid cards" markdown>
 
-- :material-rocket-launch-outline:{ .lg .middle } **Run the checked demo**
+- :material-language-go:{ .lg .middle } **Embedded Go**
 
     ---
 
-    Build a bundle, start PostgreSQL, run `effectusd`, and submit facts.
+    Run checked rules and business handlers in one Go process. The demo state is ephemeral.
 
-    [:octicons-arrow-right-24: Getting started](GETTING_STARTED.md)
+    [:octicons-arrow-right-24: Run the embedded path](GETTING_STARTED.md#path-1-embedded-go)
 
-- :material-connection:{ .lg .middle } **Choose an integration model**
-
-    ---
-
-    Embed the checked Go runtime or deploy `effectusd` with business executors.
-
-    [:octicons-arrow-right-24: Integration guide](INTEGRATION.md)
-
-- :material-console:{ .lg .middle } **Build and inspect bundles**
+- :material-docker:{ .lg .middle } **Durable Docker**
 
     ---
 
-    Use `effectusc` to check, compile, format, graph, and package rules.
+    Run `effectusd`, PostgreSQL, and a separate business executor. The demo proves restart-safe replay.
 
-    [:octicons-arrow-right-24: CLI reference](COMMANDS.md)
-
-- :material-server-security:{ .lg .middle } **Operate the runtime**
-
-    ---
-
-    Configure storage, authentication, probes, migrations, recovery, and shutdown.
-
-    [:octicons-arrow-right-24: Production runbook](PRODUCTION_RUNBOOK.md)
+    [:octicons-arrow-right-24: Run the durable path](GETTING_STARTED.md#path-2-durable-docker)
 
 </div>
 

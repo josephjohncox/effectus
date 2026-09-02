@@ -13,7 +13,7 @@ type Effect struct {
 // Executor handles execution of effects
 type Executor interface {
 	// Do executes an effect without cancellation support.
-	// Deprecated: production executors should also implement ContextExecutor.
+	// Deprecated: production executors should also implement ContextExecutor. Removal deadline: 2027-09-01.
 	Do(effect Effect) (result interface{}, err error)
 }
 

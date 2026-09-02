@@ -117,37 +117,11 @@ It applies URL, host, redirect, DNS, timeout, and response-size controls. These 
 
 The destination receives invocation, idempotency, attempt, contract, and fencing metadata.
 
-### gRPC
+No gRPC, stream, Kafka, or OCI executor resolver is a supported production target. The generated gRPC service is an inbound API, and OCI can distribute source bundles; neither is an outbound verb executor resolver.
 
-The gRPC executor invokes a configured unary method with typed `Struct` payloads.
+## Embedded handlers
 
-It applies transport security policy, deadlines, message limits, and strict result validation.
-
-### Stream and Kafka
-
-Stream targets publish checked payloads to a configured publisher. Kafka publication waits for the configured broker acknowledgement.
-
-Publication acknowledgement does not prove that a downstream consumer applied the operation.
-
-### OCI-resolved executor
-
-An OCI target resolves executor configuration from a verified extension bundle.
-
-The reference must use a digest. The operator-provided verifier must approve that digest before activation.
-
-## Static executors
-
-A trusted embedded application can register a `loader.VerbExecutor`:
-
-```go
-type VerbExecutor interface {
-    Execute(ctx context.Context, args map[string]interface{}) (interface{}, error)
-}
-```
-
-Static executors can contain arbitrary Go code and process state. They cannot become checked protobuf IR.
-
-Do not expose this path as an untrusted plugin system.
+A trusted application can use the documented `embedded` package to register invocation-aware Go handlers. This process-local path is separate from the daemon. It cannot become checked protobuf IR or an untrusted plugin system.
 
 ## Immutable snapshots
 
@@ -157,9 +131,9 @@ A snapshot contains declarations, executor instances, checked artifacts, and con
 
 Retirement waits until no execution uses the old snapshot. A failed candidate closes its own resources without changing the active generation.
 
-## OCI distribution
+## Source-bundle distribution
 
-Create and push an extension bundle with `effectusc`:
+`effectusc bundle` writes one canonical JSON source bundle. It can also publish the deterministic source-bundle layer to OCI.
 
 ```bash
 effectusc bundle \
@@ -168,12 +142,11 @@ effectusc bundle \
   --schema-dir ./schemas \
   --verb-dir ./verbs \
   --rules-dir ./rules \
+  --output payments.json \
   --oci-ref ghcr.io/acme/effectus-payments:1.0.0
 ```
 
-Resolve the published tag to a digest. Sign that digest with the operator trust system.
-
-Run effectusd with the immutable reference:
+The command prints a verified `repository@sha256:...` reference after publication. Sign and deploy that digest; never deploy the mutable tag.
 
 ```bash
 EFFECTUS_POSTGRES_DSN="$POSTGRES_DSN" \
@@ -182,7 +155,7 @@ EFFECTUS_POSTGRES_DSN="$POSTGRES_DSN" \
   --oci-signature-verifier /usr/local/bin/effectus-verify-oci
 ```
 
-Effectusd does not poll a mutable OCI tag. Deploy a new digest to publish a new generation.
+Effectusd verifies the digest and signature before it decodes the source-bundle layer.
 
 ## Archive safety
 
@@ -234,4 +207,4 @@ The runtime blocks automatic compensation when a forward operation has an unknow
 - [Runtime Guarantees](GUARANTEES.md)
 - [Runtime Lifecycle](LIFECYCLE.md)
 - [Durable Saga Protocol](DURABLE_SAGA_PROTOCOL.md)
-- [Loader Package](https://github.com/josephjohncox/effectus/blob/main/loader/README.md)
+- [Loader Package](https://github.com/josephjohncox/effectus/blob/main/internal/loader/README.md)

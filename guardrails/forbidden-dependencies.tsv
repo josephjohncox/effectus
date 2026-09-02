@@ -1,0 +1,10 @@
+# FROM<TAB>TO<TAB>REASON. Patterns are exact or end in /....
+github.com/josephjohncox/effectus/compiler/...	github.com/josephjohncox/effectus/runtime/...	compiler must remain independent from runtime execution
+github.com/josephjohncox/effectus/compiler/...	github.com/josephjohncox/effectus/internal/adapters/...	compiler must not acquire transport or storage adapters
+github.com/josephjohncox/effectus/schema/...	github.com/josephjohncox/effectus/runtime/...	schema definitions must remain independent from runtime execution
+github.com/josephjohncox/effectus/schema/...	github.com/josephjohncox/effectus/internal/adapters/...	schema definitions must not acquire adapters
+github.com/josephjohncox/effectus/embedded	github.com/josephjohncox/effectus/internal/adapters/...	embedded facade must not acquire service adapters
+github.com/josephjohncox/effectus/embedded	github.com/josephjohncox/effectus/internal/unified/...	embedded facade must not expose legacy bundle models
+github.com/josephjohncox/effectus/runtime/...	github.com/josephjohncox/effectus/cmd/...	runtime packages must not depend on CLI implementations
+github.com/josephjohncox/effectus	github.com/josephjohncox/effectus/internal/...	root compatibility interfaces must not depend on internal implementations
+github.com/josephjohncox/effectus/compat/...	github.com/josephjohncox/effectus/internal/...	publishable compatibility packages must use public root APIs only

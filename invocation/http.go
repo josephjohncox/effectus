@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
 const (
+	HeaderVerb           = "X-Effectus-Verb"
+	HeaderRequestID      = "X-Effectus-Request-ID"
 	HeaderExecutionID    = "X-Effectus-Execution-ID"
 	HeaderSagaID         = "X-Effectus-Saga-ID"
 	HeaderEffectID       = "X-Effectus-Effect-ID"
@@ -27,7 +30,7 @@ const (
 )
 
 var reservedHTTPHeaders = map[string]struct{}{
-	strings.ToLower(HeaderExecutionID): {}, strings.ToLower(HeaderSagaID): {},
+	strings.ToLower(HeaderVerb): {}, strings.ToLower(HeaderRequestID): {}, strings.ToLower(HeaderExecutionID): {}, strings.ToLower(HeaderSagaID): {},
 	strings.ToLower(HeaderEffectID): {}, strings.ToLower(HeaderAttempt): {},
 	strings.ToLower(HeaderDirection): {}, strings.ToLower(HeaderArgumentHash): {},
 	strings.ToLower(HeaderContractHash): {}, strings.ToLower(HeaderFencingGrants): {},
@@ -44,6 +47,8 @@ type HTTPExecutor struct {
 	MaxResponseBytes int64
 }
 
+const HTTPResolverID = "effectus/http/v1"
+
 func NewHTTPExecutor(executor HTTPExecutor) (*HTTPExecutor, error) {
 	if strings.TrimSpace(executor.URL) == "" {
 		return nil, fmt.Errorf("invocation HTTP URL is required")
@@ -51,10 +56,8 @@ func NewHTTPExecutor(executor HTTPExecutor) (*HTTPExecutor, error) {
 	if executor.Method == "" {
 		executor.Method = http.MethodPost
 	}
-	for name := range executor.Headers {
-		if _, reserved := reservedHTTPHeaders[strings.ToLower(http.CanonicalHeaderKey(name))]; reserved {
-			return nil, fmt.Errorf("static header %q is reserved for Effectus invocation metadata", name)
-		}
+	if err := validateStaticHTTPHeaders(executor.Headers); err != nil {
+		return nil, err
 	}
 	if executor.Client == nil {
 		executor.Client = &http.Client{Timeout: 30 * time.Second}
@@ -65,7 +68,28 @@ func NewHTTPExecutor(executor HTTPExecutor) (*HTTPExecutor, error) {
 	return &executor, nil
 }
 
+// InvocationResolverDescriptor returns the immutable transport configuration.
+func (executor *HTTPExecutor) InvocationResolverDescriptor() (Descriptor, error) {
+	if executor == nil {
+		return Descriptor{}, fmt.Errorf("invocation HTTP executor is nil")
+	}
+	return NewDescriptor(DescriptorSpec{
+		Type: DescriptorHTTP, ResolverID: HTTPResolverID, Reference: executor.URL,
+		Headers: executor.Headers,
+		Settings: map[string]string{
+			"method":             executor.Method,
+			"max_response_bytes": strconv.FormatInt(executor.MaxResponseBytes, 10),
+		},
+	})
+}
+
 func (executor *HTTPExecutor) Invoke(ctx context.Context, request Request) Outcome {
+	if executor == nil {
+		return Outcome{Class: OutcomePermanentFailure, Err: fmt.Errorf("invocation HTTP executor is nil")}
+	}
+	if err := validateStaticHTTPHeaders(executor.Headers); err != nil {
+		return Outcome{Class: OutcomePermanentFailure, Err: err}
+	}
 	payload, err := json.Marshal(request.Arguments)
 	if err != nil {
 		return Outcome{Class: OutcomePermanentFailure, Err: fmt.Errorf("encode invocation arguments: %w", err)}
@@ -115,8 +139,32 @@ func (executor *HTTPExecutor) Invoke(ctx context.Context, request Request) Outco
 	return outcome
 }
 
+// validateStaticHTTPHeaders rejects collisions before a map can be canonicalized
+// or emitted. HTTP field names are case-insensitive, including reserved names.
+func validateStaticHTTPHeaders(headers map[string]string) error {
+	names := make([]string, 0, len(headers))
+	for name := range headers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	seenFoldedNames := make(map[string]string, len(names))
+	for _, name := range names {
+		foldedName := strings.ToLower(name)
+		if previous, duplicate := seenFoldedNames[foldedName]; duplicate {
+			return fmt.Errorf("static headers %q and %q collide case-insensitively", previous, name)
+		}
+		seenFoldedNames[foldedName] = name
+		if _, reserved := reservedHTTPHeaders[foldedName]; reserved || strings.HasPrefix(foldedName, "x-effectus-") {
+			return fmt.Errorf("static header %q is reserved for Effectus invocation metadata", name)
+		}
+	}
+	return nil
+}
+
 func setInvocationHeaders(headers http.Header, request Request) {
 	grants, _ := json.Marshal(request.Metadata.FencingGrants)
+	headers.Set(HeaderVerb, request.Verb)
+	headers.Set(HeaderRequestID, request.Metadata.RequestID)
 	headers.Set(HeaderExecutionID, request.Metadata.ExecutionID)
 	headers.Set(HeaderSagaID, request.Metadata.Saga.SagaID)
 	headers.Set(HeaderEffectID, request.Metadata.Saga.EffectID)

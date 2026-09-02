@@ -5,8 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
-	"strconv"
-	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -28,9 +26,13 @@ func (closer *generationTestCloser) Close() error { closer.count.Add(1); return 
 
 func TestGenerationDigestDeterministicAndProductionRejectsCallbacks(t *testing.T) {
 	environment, checked := generationTestArtifact(t)
+	descriptor, err := invocation.NewDescriptor(invocation.DescriptorSpec{
+		Type: invocation.DescriptorHTTP, ResolverID: "resolver-v1", Settings: map[string]string{"b": "2", "a": "1"},
+	})
+	require.NoError(t, err)
 	config := GenerationConfig{
 		Checked: checked, Environment: environment, Ruleset: "orders", Version: "1", SourceDigest: "source",
-		ExecutorDescriptors: map[string]ExecutorDescriptor{"write": {Type: "http", ResolverID: "resolver-v1", Config: map[string]string{"b": "2", "a": "1"}}},
+		ExecutorDescriptors: map[string]invocation.Descriptor{"write": descriptor},
 		FunctionIDs:         map[string]string{"lower": "stdlib/lower/v1"}, Executors: map[string]invocation.Executor{"write": generationTestExecutor{}}, Production: true,
 	}
 	first, err := NewGeneration(config)
@@ -39,58 +41,24 @@ func TestGenerationDigestDeterministicAndProductionRejectsCallbacks(t *testing.T
 	require.NoError(t, err)
 	require.Equal(t, first.Digest(), second.Digest())
 
-	config.ExecutorDescriptors["write"] = ExecutorDescriptor{Type: "local"}
+	callback, descriptorErr := invocation.NewDescriptor(invocation.DescriptorSpec{Type: invocation.DescriptorEmbedded})
+	require.NoError(t, descriptorErr)
+	config.ExecutorDescriptors["write"] = callback
 	_, err = NewGeneration(config)
 	require.ErrorContains(t, err, "callback-only")
 }
 
-func TestGenerationManagerRetiresAfterLastHandle(t *testing.T) {
+func TestGenerationCloseRetiresResourcesExactlyOnce(t *testing.T) {
 	environment, checked := generationTestArtifact(t)
-	firstCloser := &generationTestCloser{}
-	first, err := NewGeneration(GenerationConfig{Checked: checked, Environment: environment, Ruleset: "orders", Version: "1", Closers: []io.Closer{firstCloser}})
+	closer := &generationTestCloser{}
+	generation, err := NewGeneration(GenerationConfig{
+		Checked: checked, Environment: environment, Ruleset: "orders", Version: "1", Closers: []io.Closer{closer},
+	})
 	require.NoError(t, err)
-	second, err := NewGeneration(GenerationConfig{Checked: checked, Environment: environment, Ruleset: "orders", Version: "2"})
-	require.NoError(t, err)
-	manager := &GenerationManager{}
-	require.NoError(t, manager.Publish(first))
-	handle, err := manager.Acquire()
-	require.NoError(t, err)
-	require.Same(t, first, handle.Generation())
-	require.NoError(t, manager.Publish(second))
-	require.True(t, first.Retired())
-	require.Zero(t, firstCloser.count.Load())
-	require.NoError(t, handle.Release())
-	require.Equal(t, int32(1), firstCloser.count.Load())
-	require.True(t, first.Closed())
-}
-
-func TestGenerationManagerConcurrentAcquireAndPublish(t *testing.T) {
-	environment, checked := generationTestArtifact(t)
-	manager := &GenerationManager{}
-	makeGeneration := func(version string) *Generation {
-		generation, err := NewGeneration(GenerationConfig{Checked: checked, Environment: environment, Ruleset: "orders", Version: version})
-		require.NoError(t, err)
-		return generation
-	}
-	require.NoError(t, manager.Publish(makeGeneration("0")))
-	var wait sync.WaitGroup
-	for worker := 0; worker < 8; worker++ {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			for iteration := 0; iteration < 100; iteration++ {
-				handle, err := manager.Acquire()
-				if err == nil {
-					require.NotEmpty(t, handle.Generation().Digest())
-					require.NoError(t, handle.Release())
-				}
-			}
-		}()
-	}
-	for version := 1; version <= 20; version++ {
-		require.NoError(t, manager.Publish(makeGeneration(strconv.Itoa(version))))
-	}
-	wait.Wait()
+	require.NoError(t, generation.Close())
+	require.NoError(t, generation.Close())
+	require.Equal(t, int32(1), closer.count.Load())
+	require.True(t, generation.Closed())
 }
 
 func generationTestArtifact(t *testing.T) (ir.Environment, *ir.Checked) {

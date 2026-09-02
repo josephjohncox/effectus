@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/josephjohncox/effectus/unified"
+	"github.com/josephjohncox/effectus/internal/unified"
 )
 
 func newResolveCommand() *Command {

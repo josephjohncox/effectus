@@ -1,22 +1,7 @@
-# Generated gRPC execution client
+# Generated gRPC Execution Client
 
-This client calls the stable `RulesetExecutionService`. The local smoke starts PostgreSQL, applies migrations, builds a matching checked bundle, starts `effectusd` with explicit plaintext localhost gRPC, and runs the client.
+`main.go` is a small client for `RulesetExecutionService`. It accepts a daemon
+address, bearer token, ruleset, and version, then sends typed facts over gRPC.
 
-From the repository root:
-
-```bash
-just grpc-execution-smoke
-```
-
-To call an existing local daemon from the examples module:
-
-```bash
-cd examples
-go run ./grpc_execution \
-  --address 127.0.0.1:8081 \
-  --token local-demo-token \
-  --ruleset orders \
-  --version 1.0.0
-```
-
-Plaintext transport is for localhost development only. Use TLS credentials in production.
+Plaintext transport is suitable only for a loopback development daemon. Supply
+TLS credentials for a deployed daemon.

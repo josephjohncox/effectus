@@ -332,13 +332,7 @@ Approved actions are cause correction, dependency restoration, fence repair, or 
 
 Do not mark blocked work as completed. Do not delete it. Escalate an unknown external outcome before a replay.
 
-Run the repository restore harness before a release drill:
-
-```bash
-KAFKA_BROKERS=localhost:9092 just restore-drill
-```
-
-The harness creates an isolated restore database, validates migrations and relational integrity, compares blocked-state counts, archives non-PostgreSQL inputs, optionally exercises Kafka commit/restart reconciliation, and writes `out/restore-drill/evidence.md`. Set `RESTORE_INPUTS` to the environment's immutable chart values, ConfigMaps, Secret exports, certificates, verifier policy, extension inventory, and PVC export. Set `FACTS_PROJECTION_PATH` when the optional facts projection volume is enabled.
+Use `scripts/restore-drill.sh` with an explicit production-equivalent DSN before a release drill. The harness creates an isolated restore database, validates migrations and relational integrity, compares blocked-state counts, archives non-PostgreSQL inputs, optionally exercises Kafka commit/restart reconciliation, and writes `out/restore-drill/evidence.md`. Set `RESTORE_INPUTS` to the environment's immutable chart values, ConfigMaps, Secret exports, certificates, verifier policy, extension inventory, and PVC export. Set `FACTS_PROJECTION_PATH` when the optional facts projection volume is enabled.
 
 ## Release failure cleanup
 

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/josephjohncox/effectus/internal/loader"
 	"github.com/josephjohncox/effectus/ir"
-	"github.com/josephjohncox/effectus/loader"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/josephjohncox/effectus/schema/verb"
 )
@@ -39,16 +39,19 @@ type CompilationWarning struct {
 
 // CompiledUnit represents a fully validated and ready-to-execute unit
 type CompiledUnit struct {
-	VerbSpecs              map[string]*CompiledVerbSpec
-	Functions              map[string]*CompiledFunction
-	TypeSystem             *TypeSystem
-	ExecutionPlan          *ExecutionPlan
-	CheckedIR              *ir.Checked
-	IREnvironment          ir.Environment
-	InitialData            map[string]interface{}
-	Dependencies           []string // External dependencies required
-	Capabilities           []string // Required capabilities
-	ExtensionSnapshot      *loader.ExtensionSnapshot
+	VerbSpecs     map[string]*CompiledVerbSpec
+	Functions     map[string]*CompiledFunction
+	TypeSystem    *TypeSystem
+	ExecutionPlan *ExecutionPlan
+	CheckedIR     *ir.Checked
+	IREnvironment ir.Environment
+	SourceDigest  string
+	InitialData   map[string]interface{}
+	Dependencies  []string // External dependencies required
+	Capabilities  []string // Required capabilities
+	// ExtensionSnapshot owns resources for the compiled unit. It is opaque to
+	// callers; the runtime validates and manages its concrete lifecycle.
+	ExtensionSnapshot      any
 	ExecutionOwnedSnapshot bool // retired after recovery acquires its execution handle
 }
 
@@ -57,7 +60,7 @@ type CompiledVerbSpec struct {
 	Spec               *verb.Spec
 	ExecutorType       ExecutorType
 	ExecutorConfig     ExecutorConfig
-	ExecutorDescriptor *loader.ExecutorDescriptor
+	ExecutorDescriptor *ExecutorDescriptor
 	Dependencies       []string // Other verbs this depends on
 	TypeSignature      *TypeSignature
 	ValidationRules    []ValidationRule
@@ -83,10 +86,26 @@ type ExecutorConfig interface {
 	Validate() error
 }
 
-// DescriptorExecutorConfig carries immutable loader output until runtime
+// ExecutorDescriptor carries immutable transport configuration until runtime
+// constructs and owns the transport resource.
+type ExecutorDescriptor struct {
+	Type     string
+	VerbName string
+	Config   map[string]interface{}
+}
+
+func executorDescriptorFromLoader(descriptor loader.ExecutorDescriptor) ExecutorDescriptor {
+	config := make(map[string]interface{}, len(descriptor.Config))
+	for key, value := range descriptor.Config {
+		config[key] = value
+	}
+	return ExecutorDescriptor{Type: descriptor.Type, VerbName: descriptor.VerbName, Config: config}
+}
+
+// DescriptorExecutorConfig carries immutable descriptor output until runtime
 // constructs and owns the transport resource.
 type DescriptorExecutorConfig struct {
-	Descriptor loader.ExecutorDescriptor
+	Descriptor ExecutorDescriptor
 }
 
 func (config *DescriptorExecutorConfig) GetType() ExecutorType {
@@ -104,7 +123,7 @@ func (config *DescriptorExecutorConfig) Validate() error {
 
 // LocalExecutorConfig for in-process execution
 type LocalExecutorConfig struct {
-	Implementation loader.VerbExecutor
+	Implementation verb.Executor
 }
 
 func (lec *LocalExecutorConfig) GetType() ExecutorType { return ExecutorLocal }
@@ -355,8 +374,9 @@ func NewExtensionCompiler() *ExtensionCompiler {
 
 // Compile stages mutable loaders before it compiles. Production callers should
 // use Stage and CompileSnapshot as separate bounded phases.
-func (c *ExtensionCompiler) Compile(ctx context.Context, em *loader.ExtensionManager) (*CompilationResult, error) {
-	if em == nil {
+func (c *ExtensionCompiler) Compile(ctx context.Context, input any) (*CompilationResult, error) {
+	em, ok := input.(*loader.ExtensionManager)
+	if !ok || em == nil {
 		return nil, fmt.Errorf("extension manager is required")
 	}
 	snapshot, err := em.Stage(ctx, loader.StageOptions{})
@@ -373,16 +393,17 @@ func (c *ExtensionCompiler) Compile(ctx context.Context, em *loader.ExtensionMan
 
 // CompileSnapshot compiles only immutable in-memory loader output. It does not
 // call mutable filesystem, HTTP, DNS, or OCI loaders.
-func (c *ExtensionCompiler) CompileSnapshot(ctx context.Context, snapshot *loader.ExtensionSnapshot) (*CompilationResult, error) {
+func (c *ExtensionCompiler) CompileSnapshot(ctx context.Context, input any) (*CompilationResult, error) {
+	snapshot, ok := input.(*loader.ExtensionSnapshot)
+	if !ok || snapshot == nil {
+		return nil, fmt.Errorf("extension snapshot is required")
+	}
 	result := &CompilationResult{
 		Success:  true,
 		Errors:   make([]CompilationError, 0),
 		Warnings: make([]CompilationWarning, 0),
 	}
 
-	if snapshot == nil {
-		return nil, fmt.Errorf("extension snapshot is required")
-	}
 	// Phase 1: Load immutable data into candidate-only registries.
 	registry := schema.NewRegistry()
 	verbRegistry := verb.NewRegistry(registry)
@@ -578,7 +599,7 @@ func (c *ExtensionCompiler) compileVerbSpec(name string, spec *verb.Spec, descri
 		Dependencies:   c.extractVerbDependencies(spec),
 	}
 	if strings.TrimSpace(descriptor.Type) != "" {
-		captured := descriptor
+		captured := executorDescriptorFromLoader(descriptor)
 		compiled.ExecutorDescriptor = &captured
 	}
 	return compiled, errors, warnings
@@ -586,7 +607,7 @@ func (c *ExtensionCompiler) compileVerbSpec(name string, spec *verb.Spec, descri
 
 func (c *ExtensionCompiler) determineExecutorConfig(spec *verb.Spec, descriptor loader.ExecutorDescriptor) (ExecutorType, ExecutorConfig, error) {
 	if strings.TrimSpace(descriptor.Type) != "" {
-		config := &DescriptorExecutorConfig{Descriptor: descriptor}
+		config := &DescriptorExecutorConfig{Descriptor: executorDescriptorFromLoader(descriptor)}
 		return config.GetType(), config, nil
 	}
 	if spec.Executor != nil {

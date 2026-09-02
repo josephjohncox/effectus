@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	kafkaadapter "github.com/josephjohncox/effectus/adapters/kafka"
+	kafkaadapter "github.com/josephjohncox/effectus/internal/adapters/kafka"
 	effectusruntime "github.com/josephjohncox/effectus/runtime"
 	segmentio "github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/require"

@@ -3,12 +3,11 @@ FROM golang:1.25.13-alpine@sha256:1e0126852075c9c60731c8ba49088448b91f63e2aed97c
 
 WORKDIR /src
 COPY go.mod go.sum ./
-COPY examples/go.mod examples/go.sum ./examples/
-RUN cd examples && go mod download
+RUN go mod download
 COPY . .
-RUN cd examples && CGO_ENABLED=0 go build -trimpath \
+RUN CGO_ENABLED=0 go build -trimpath \
   -ldflags="-s -w -buildid=" \
-  -o /out/business-executor ./standalone_executor/executor
+  -o /out/business-executor ./examples/standalone_executor/executor
 
 FROM scratch
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt

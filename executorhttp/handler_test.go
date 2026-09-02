@@ -13,7 +13,8 @@ import (
 )
 
 func TestHandlerDecodesInvocationAndWritesSuccess(t *testing.T) {
-	handler, err := NewHandler(Options{}, func(_ context.Context, request Request) invocation.Outcome {
+	handler, err := NewHandler(Options{}, func(_ context.Context, request invocation.Request) invocation.Outcome {
+		require.Equal(t, "request-1", request.Metadata.RequestID)
 		require.Equal(t, "execution-1", request.Metadata.ExecutionID)
 		require.Equal(t, "effect-1", request.Metadata.Saga.EffectID)
 		require.Equal(t, "key-1", request.Metadata.Saga.IdempotencyKey)
@@ -32,7 +33,7 @@ func TestHandlerDecodesInvocationAndWritesSuccess(t *testing.T) {
 }
 
 func TestHandlerWritesExplicitRetryableOutcome(t *testing.T) {
-	handler, err := NewHandler(Options{}, func(_ context.Context, _ Request) invocation.Outcome {
+	handler, err := NewHandler(Options{}, func(_ context.Context, _ invocation.Request) invocation.Outcome {
 		return Retryable(errors.New("database unavailable before commit"))
 	})
 	require.NoError(t, err)
@@ -45,7 +46,7 @@ func TestHandlerWritesExplicitRetryableOutcome(t *testing.T) {
 }
 
 func TestHandlerRejectsUnencodableSuccessResult(t *testing.T) {
-	handler, err := NewHandler(Options{}, func(_ context.Context, _ Request) invocation.Outcome {
+	handler, err := NewHandler(Options{}, func(_ context.Context, _ invocation.Request) invocation.Outcome {
 		return Success(make(chan int))
 	})
 	require.NoError(t, err)
@@ -58,7 +59,7 @@ func TestHandlerRejectsUnencodableSuccessResult(t *testing.T) {
 }
 
 func TestHandlerRejectsMissingSagaID(t *testing.T) {
-	handler, err := NewHandler(Options{}, func(_ context.Context, _ Request) invocation.Outcome {
+	handler, err := NewHandler(Options{}, func(_ context.Context, _ invocation.Request) invocation.Outcome {
 		t.Fatal("invalid request must not reach the business handler")
 		return Success(nil)
 	})
@@ -74,7 +75,7 @@ func TestHandlerRejectsMissingSagaID(t *testing.T) {
 }
 
 func TestHandlerRejectsMissingIdempotencyKey(t *testing.T) {
-	handler, err := NewHandler(Options{}, func(_ context.Context, _ Request) invocation.Outcome {
+	handler, err := NewHandler(Options{}, func(_ context.Context, _ invocation.Request) invocation.Outcome {
 		t.Fatal("invalid request must not reach the business handler")
 		return Success(nil)
 	})
@@ -90,7 +91,7 @@ func TestHandlerRejectsMissingIdempotencyKey(t *testing.T) {
 }
 
 func TestHandlerRejectsOversizedBody(t *testing.T) {
-	handler, err := NewHandler(Options{MaxRequestBytes: 8}, func(_ context.Context, _ Request) invocation.Outcome {
+	handler, err := NewHandler(Options{MaxRequestBytes: 8}, func(_ context.Context, _ invocation.Request) invocation.Outcome {
 		t.Fatal("oversized request must not reach the business handler")
 		return Success(nil)
 	})
@@ -105,6 +106,8 @@ func TestHandlerRejectsOversizedBody(t *testing.T) {
 
 func validRequest(body string) *http.Request {
 	request := httptest.NewRequest(http.MethodPost, "/execute", strings.NewReader(body))
+	request.Header.Set(invocation.HeaderVerb, "RequestReview")
+	request.Header.Set(invocation.HeaderRequestID, "request-1")
 	request.Header.Set(invocation.HeaderExecutionID, "execution-1")
 	request.Header.Set(invocation.HeaderSagaID, "saga-1")
 	request.Header.Set(invocation.HeaderEffectID, "effect-1")

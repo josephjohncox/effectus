@@ -28,11 +28,21 @@ jobs:
       packages: write
       id-token: write
     steps:
+      # The dispatcher runs this workflow from the default branch while the
+      # release source below is a historical tag. Keep recovery helpers from
+      # the workflow revision so they remain available after that checkout.
+      - name: Checkout recovery helpers
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .recovery-helper
+
       - name: Checkout exact release tag
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.tag }}
           fetch-depth: 0
+          clean: false
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -63,7 +73,7 @@ jobs:
           OWNER=${OWNER:-}
           TAG=${TAG:-}
           test -n "$OWNER"
-          printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
+          .recovery-helper/.github/scripts/validate-release-version.sh --tag "$TAG"
           source_sha=$(git rev-parse HEAD)
           test "$(git rev-parse "refs/tags/${TAG}^{commit}")" = "$source_sha"
           version=${TAG#v}
@@ -74,12 +84,21 @@ jobs:
             exit 1
           fi
           owner=$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')
+          bundle_layout=$(mktemp)
+          .recovery-helper/.github/scripts/recovery-bundle-layout.sh "$PWD" "$version" > "$bundle_layout"
+          bundle_name=$(awk -F= '$1 == "bundle_name" { print $2 }' "$bundle_layout")
+          bundle_repo_path=$(awk -F= '$1 == "bundle_repo_path" { print $2 }' "$bundle_layout")
+          bundle_asset=$(awk -F= '$1 == "bundle_asset" { print $2 }' "$bundle_layout")
+          rm -f "$bundle_layout"
+          test -n "$bundle_name" && test -n "$bundle_repo_path" && test -n "$bundle_asset"
           {
             echo "tag=$TAG"
             echo "version=$version"
             echo "source_sha=$source_sha"
+            echo "bundle_name=$bundle_name"
+            echo "bundle_asset=$bundle_asset"
             echo "image_repo=ghcr.io/$owner/effectusd"
-            echo "bundle_repo=ghcr.io/$owner/bundles/flow-ui-demo"
+            echo "bundle_repo=ghcr.io/$owner/$bundle_repo_path"
             echo "chart_repo=ghcr.io/$owner/helm/effectusd"
             echo "chart_stage_repo=ghcr.io/$owner/helm-staging-${source_sha}/effectusd"
             echo "original_identity=https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${TAG}"
@@ -96,11 +115,12 @@ jobs:
         env:
           VERSION: ${{ steps.release.outputs.version }}
           SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+          BUNDLE_NAME: ${{ steps.release.outputs.bundle_name }}
+          BUNDLE_ASSET: ${{ steps.release.outputs.bundle_asset }}
+          SOURCE_DATE_EPOCH: "0"
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          export SOURCE_DATE_EPOCH
-          SOURCE_DATE_EPOCH=$(git show -s --format=%ct)
           mkdir -p dist
           for target in \
             linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
@@ -121,7 +141,7 @@ jobs:
               go build -trimpath -ldflags="-s -w -buildid=" \
               -o "$work/effectusd$suffix" ./cmd/effectusd
             if [ "$os" = windows ]; then
-              (cd "$work" && zip -q "../$archive" ./*)
+              (cd "$work" && touch -d "@$SOURCE_DATE_EPOCH" ./* && zip -X -q "../$archive" ./*)
             else
               tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" \
                 --owner=0 --group=0 --numeric-owner -C "$work" \
@@ -129,16 +149,32 @@ jobs:
             fi
             rm -rf "$work"
           done
-          go run ./cmd/effectusc bundle \
-            --name flow-ui-demo --version "$VERSION" \
-            --schema-dir examples/flow_ui_demo/schema \
-            --verb-dir examples/flow_ui_demo/verbs \
-            --verbschema examples/flow_ui_demo/schema/flow_verbs.json \
-            --rules-dir examples/flow_ui_demo/rules \
-            --output "dist/flow-ui-demo-${VERSION}.json"
+          case "$BUNDLE_NAME" in
+            order-review)
+              go run ./cmd/effectusc bundle \
+                --name "$BUNDLE_NAME" --version "$VERSION" \
+                --schema-dir examples/standalone_executor/schema \
+                --verb-dir examples/standalone_executor/extensions \
+                --rules-dir examples/order_review/rules \
+                --output "dist/$BUNDLE_ASSET"
+              ;;
+            flow-ui-demo)
+              go run ./cmd/effectusc bundle \
+                --name "$BUNDLE_NAME" --version "$VERSION" \
+                --schema-dir examples/flow_ui_demo/schema \
+                --verb-dir examples/flow_ui_demo/verbs \
+                --verbschema examples/flow_ui_demo/schema/flow_verbs.json \
+                --rules-dir examples/flow_ui_demo/rules \
+                --output "dist/$BUNDLE_ASSET"
+              ;;
+            *)
+              echo "unsupported bundle layout: $BUNDLE_NAME" >&2
+              exit 1
+              ;;
+          esac
           helm package charts/effectusd --destination dist \
             --version "$VERSION" --app-version "$VERSION"
-          docker build --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+          docker build --build-arg SOURCE_DATE_EPOCH=0 \
             --tag effectus:release .
 
       - name: Build VS Code extension
@@ -158,6 +194,7 @@ jobs:
           SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
           TAG: ${{ steps.release.outputs.tag }}
           VERSION: ${{ steps.release.outputs.version }}
+          BUNDLE_ASSET: ${{ steps.release.outputs.bundle_asset }}
         run: |
           set -euo pipefail
           trivy="aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c"
@@ -167,7 +204,7 @@ jobs:
           syft effectus:release -o cyclonedx-json=dist/image-sbom.cdx.json
           syft "dir:charts/effectusd" \
             -o cyclonedx-json=dist/chart-sbom.cdx.json
-          syft "file:dist/flow-ui-demo-${VERSION}.json" \
+          syft "file:dist/${BUNDLE_ASSET}" \
             -o cyclonedx-json=dist/bundle-sbom.cdx.json
           jq -n \
             --arg buildType \

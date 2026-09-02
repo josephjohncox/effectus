@@ -1,5 +1,0 @@
-module github.com/josephjohncox/effectus/tools/vscode-extension
-
-go 1.25.0
-
-toolchain go1.25.13

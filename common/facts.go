@@ -76,7 +76,7 @@ func TryNewBasicFacts(data map[string]interface{}, schema SchemaInfo) (*BasicFac
 }
 
 // NewBasicFacts creates a new facts instance from data and schema.
-// Deprecated: use TryNewBasicFacts. This compatibility constructor panics when
+// Deprecated: use TryNewBasicFacts. Removal deadline: 2027-09-01. This compatibility constructor panics when
 // data is not JSON encodable.
 func NewBasicFacts(data map[string]interface{}, schema SchemaInfo) *BasicFacts {
 	facts, err := TryNewBasicFacts(data, schema)
@@ -175,7 +175,7 @@ func (f *BasicFacts) TryWithData(updatedData map[string]interface{}) (*BasicFact
 }
 
 // WithData creates a new Facts instance with updated data.
-// Deprecated: use TryWithData.
+// Deprecated: use TryWithData. Removal deadline: 2027-09-01.
 func (f *BasicFacts) WithData(updatedData map[string]interface{}) *BasicFacts {
 	facts, err := f.TryWithData(updatedData)
 	if err != nil {

@@ -1,0 +1,20 @@
+# Approved visible Just recipe names.
+# Do not update this file without an intentional surface review.
+build
+clean
+default
+dev
+docs
+docs-serve
+fmt
+guardrails
+install
+lint
+setup-db
+smoke-compat
+test
+test-examples
+test-integration
+test-modules
+vscode-lint
+vscode-test

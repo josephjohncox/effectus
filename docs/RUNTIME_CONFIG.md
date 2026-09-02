@@ -1,96 +1,84 @@
 # Runtime Configuration (Non-Library Mode)
 
-Use a YAML or JSON config to run the checked `effectusd` runtime without embedding Effectus in a Go program. Effectusd compiles embedded `.eff` and `.effx` sources into checked IR and requires PostgreSQL for durable admission, recovery, the V2 outbox, and fencing.
+`effectusd` accepts one immutable `effectus.source-bundle.v1` source bundle.
+The daemon compiles that bundle once at startup and rejects legacy bundle
+formats, extension directories, extension OCI bundles, plugins, and reload
+configuration. The source bundle contains the complete checked declarations and
+executor descriptor manifest.
 
-Run with:
+PostgreSQL is required for daemon admission, recovery, outbox processing, and
+fencing. Set `EFFECTUS_POSTGRES_DSN` or configure `database.dsn`.
 
-```bash
-EFFECTUS_API_TOKEN="..." EFFECTUS_API_READ_TOKEN="..." \
-EFFECTUS_POSTGRES_DSN="postgres://effectus:...@db/effectus?sslmode=require" \
-  effectusd --config effectusd.yaml \
-  --oci-signature-verifier /usr/local/bin/effectus-verify-oci
-```
+## Load a source bundle file
 
-`EFFECTUS_SAGA_POSTGRES_DSN` and `saga.postgres.dsn` are warning-producing aliases for one compatibility window. New deployments must use `EFFECTUS_POSTGRES_DSN` or protected `database.dsn`.
-
-## Example: Mixed HTTP + OCI verb sources
+Build the bundle with the current `effectusc bundle` command. Deploy the output
+file without changing it:
 
 ```yaml
 bundle:
-  oci: "ghcr.io/myorg/bundles/fraud-demo@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  file: "/etc/effectus/order-review.json"
 
 http:
   addr: ":8080"
 metrics:
   addr: ":9090"
-
 api:
   auth: "token"
-  rate_limit: 120
-  rate_burst: 60
-  hotload_rules: false
-
-facts:
-  store: "file"
-  path: "./data/facts.json"
-  merge_default: "last"
-  merge_namespace:
-    customer: "first"
-  cache:
-    policy: "lru"
-    max_universes: 200
-    max_namespaces: 50
-
-schema_sources:
-  - name: "fraud-db"
-    type: "sql_introspect"
-    namespace: "fraud"
-    version: "v1"
-    config:
-      driver: "postgres"
-      dsn: "postgres://user:pass@localhost:5432/fraud?sslmode=disable"
-      schema: "public"
-      table: "transactions"
-      schema_name: "transaction"
-
-  - name: "buf-registry"
-    type: "buf"
-    namespace: "acme"
-    version: "v2"
-    config:
-      module: "buf.build/acme/facts"
-      schema_dir: "schemas"
-
-extensions:
-  # Local extension manifests (HTTP/stream/gRPC targets)
-  dirs:
-    - "./extensions"
-
-  # OCI bundles that contain *.verbs.json / *.schema.json
-  oci:
-    - "ghcr.io/myorg/extension-bundles/payments@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
-  # The checked daemon requires immutable extensions. Reload is disabled.
-  reload_interval: "0s"
-
-verbs:
-  duplicate_policy: "error" # error | replace | ignore
-  oci_warmup: false
-  strict: true
-
-fixed_time: "" # Optional RFC3339 timestamp for deterministic runs
+database:
+  dsn: "postgres://effectus:...@db/effectus?sslmode=require"
 ```
+
+Start the daemon:
+
+```bash
+EFFECTUS_API_TOKEN="..." EFFECTUS_API_READ_TOKEN="..." \
+  effectusd --config effectusd.yaml
+```
+
+The file must identify `format_version: effectus.source-bundle.v1`. A legacy
+OCI or directory-style bundle is rejected before the daemon opens listeners.
+
+## Load a verified OCI source bundle
+
+The daemon also accepts a SourceBundle OCI image only through a digest-pinned
+reference. `effectusd` verifies that the fetched image digest equals the
+reference, requires exactly one SourceBundle layer, and runs the fixed verifier
+executable before it decodes that layer. A tag such as `:latest` is rejected.
+
+```yaml
+bundle:
+  oci: "ghcr.io/myorg/bundles/order-review@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  cache_dir: "/var/lib/effectus/bundles"
+
+http:
+  addr: ":8080"
+api:
+  auth: "token"
+database:
+  dsn: "postgres://effectus:...@db/effectus?sslmode=require"
+```
+
+```bash
+EFFECTUS_API_TOKEN="..." EFFECTUS_API_READ_TOKEN="..." \
+  effectusd --config effectusd.yaml \
+  --oci-signature-verifier /usr/local/bin/effectus-verify-oci
+```
+
+The verifier is mandatory for OCI loading. It receives the repository name and
+the verified digest. Configure its trust policy outside the bundle. `bundle.cache_dir`
+stores the verified canonical source bundle and must be writable. File loading
+does not perform an OCI signature verification; protect the mounted file with
+your deployment and filesystem controls.
 
 ## Kafka fact ingestion
 
-Use a stable consumer group and cluster namespace. The daemon supports both completed-processing and durable-acceptance contracts through the checked engine and PostgreSQL ledger.
+Use a stable consumer group and cluster namespace. PostgreSQL is the sole
+attempt and poison ledger.
 
 ```yaml
 fact_source: "kafka"
 kafka:
-  brokers:
-    - "kafka-1:9092"
-    - "kafka-2:9092"
+  brokers: ["kafka-1:9092", "kafka-2:9092"]
   topic: "facts"
   consumer_group: "effectusd-production"
   cluster_namespace: "production-kafka"
@@ -101,224 +89,21 @@ kafka:
   poison_policy: "halt"
 ```
 
-PostgreSQL table `effectus_kafka_deliveries` is the sole daemon attempt and poison ledger.
-It records each failed handler call. Attempt limits survive rebalances and process restarts.
-Back up this table with the other `effectus_*` tables.
-The daemon rejects `delivery_ledger` and `poison_audit`. Remove these obsolete settings. PostgreSQL remains authoritative.
-The default poison policy leaves the failed offset uncommitted and stops the daemon.
-For `skip`, the PostgreSQL ledger records and deduplicates the poison acknowledgement.
-For `dlq`, set `dlq_topic` to a Kafka topic.
-Effectus waits for DLQ publication before it commits the source offset.
+Each message contains `namespace`, `universe`, and `facts`. New clients should
+send both identities when they differ.
 
-Each message value uses this JSON shape. `namespace` is the durable tenant identity; `universe` selects projection storage. HTTP compatibility uses `universe` as the namespace when `namespace` is omitted (or `default` when both are empty), but new clients should send both when the identities differ.
+## Immutable deployment rules
 
-```json
-{
-  "universe": "default",
-  "namespace": "tenant-a",
-  "facts": {
-    "order": {
-      "id": "order-42"
-    }
-  }
-}
-```
+- Use exactly one of `bundle.file` and `bundle.oci` (or `--bundle` and
+  `--oci-ref`).
+- Do not configure `extensions.dirs`, `extensions.oci`, `--extensions-dir`, or
+  `--extensions-oci` with a SourceBundle. The daemon rejects them.
+- Do not configure `bundle.reload_interval`, `extensions.reload_interval`, or
+  `--reload-interval`. Deploy a new process with a new file or OCI digest.
+- Do not configure Go plugins, legacy saga stores, or Redis daemon state.
+- CLI flags override configuration values when both are present.
+- `/api/*` endpoints require a token; `/healthz` and `/readyz` are open by
+  default.
 
-## Production deployment example
-
-Use this as a starting point for a checked deployment with persisted projections, ACLs, and metrics:
-
-```yaml
-bundle:
-  oci: "ghcr.io/myorg/bundles/fraud-demo@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
-http:
-  addr: ":8080"
-metrics:
-  addr: ":9090"
-
-# Supply EFFECTUS_API_TOKEN and EFFECTUS_API_READ_TOKEN through the secret manager.
-api:
-  auth: "token"
-  acl_file: "/etc/effectus/acl.yaml"
-  rate_limit: 300
-  rate_burst: 120
-  limiter_capacity: 10000
-  limiter_idle_ttl: "10m"
-  trusted_proxy_cidrs: "10.0.0.0/8"
-  hotload_rules: false
-
-facts:
-  store: "file"
-  path: "/var/lib/effectus/facts.json"
-  merge_default: "last"
-  cache:
-    policy: "lru"
-    max_universes: 500
-    max_namespaces: 100
-
-schema_sources:
-  - name: "warehouse"
-    type: "sql_introspect"
-    namespace: "warehouse"
-    version: "v1"
-    config:
-      driver: "postgres"
-      dsn: "postgres://effectus:effectus@db:5432/warehouse?sslmode=disable"
-      schema: "public"
-      table: "orders"
-      schema_name: "order"
-
-extensions:
-  dirs:
-    - "/etc/effectus/extensions"
-  oci:
-    - "ghcr.io/myorg/extension-bundles/payments@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
-database:
-  migrations: "validate"
-  max_open: 20
-  max_idle: 5
-  max_lifetime: "30m"
-  max_idle_time: "5m"
-
-verbs:
-  duplicate_policy: "error"
-  oci_warmup: true
-  strict: true
-
-# Supply EFFECTUS_POSTGRES_DSN from the secret manager.
-# Run effectusd --database-migrations=apply with a DDL credential before normal startup.
-# The old saga.enabled mode is rejected; checked execution always uses V2.
-```
-
-## Local extension manifest (HTTP verbs)
-
-Put this file in `./extensions/external.verbs.json`:
-
-```json
-{
-  "name": "ExternalAPI",
-  "version": "1.0.0",
-  "verbs": [
-    {
-      "name": "ValidateAccount",
-      "description": "Calls external validation service",
-      "capabilities": ["write", "idempotent"],
-      "resources": [
-        { "resource": "account_validation", "capabilities": ["write", "idempotent"] }
-      ],
-      "argTypes": { "accountId": "string" },
-      "requiredArgs": ["accountId"],
-      "returnType": "ValidationResult",
-      "target": {
-        "type": "http",
-        "config": {
-          "url": "https://api.validation.com/check",
-          "method": "POST",
-          "timeout": "5s"
-        }
-      }
-    }
-  ]
-}
-```
-
-## OCI extension bundles
-
-OCI extension bundles are directories containing `*.verbs.json` / `*.schema.json` files, pushed with an OCI tool
-such as `oras`:
-
-```bash
-oras push ghcr.io/myorg/extension-bundles/payments:1.2.0 ./extensions
-```
-
-Resolve the published digest, sign it under the deployment trust policy, and list the digest reference under `extensions.oci`. Pass the fixed verifier executable with `--oci-signature-verifier` before startup.
-
-## Notes
-
-- CLI flags override config values when both are provided.
-- `/api/*` endpoints require a token; `/healthz` and `/readyz` are open by default.
-- The checked daemon rejects `extensions.reload_interval` and `bundle.reload_interval` before it opens a database or listener.
-- Candidate validation is always available at `/api/rules/validate`. The daemon rejects `api.hotload_rules`. Deploy a new immutable digest for activation.
-- Production effectusd rejects Go plugin executors and explicitly supplied legacy saga or Redis settings. PostgreSQL is required for HTTP, gRPC, Kafka, and stream daemon transports.
-- Use `extensions.dirs` and `--extensions-dir` for local declarations. `verbs.spec_dirs` and `--verb-dir` are deprecated compatibility aliases.
-- Deploy a new OCI digest to publish another generation. Effectusd does not poll mutable OCI tags.
-- Schema sources and extension manifests load at startup. A change requires a pod replacement.
-- `verbs.duplicate_policy` controls how duplicate verb names are resolved; `verbs.oci_warmup` prefetches OCI verb bundles at startup.
-- `verbs.strict` controls runtime argument and return checks. The default is `true`. Use `false` only for unchecked development code.
-- `fixed_time` pins deterministic time for expression evaluation (useful for tests and canary runs).
-- Effectusd requires `EFFECTUS_POSTGRES_DSN`. Redis remains available for tested library recovery scenarios but does not replace atomic PostgreSQL admission.
-
-## External Schema Sources (Buf, SQL, Catalogs)
-
-Use `schema_sources` to load schemas directly at startup (and optionally on reload). The built-in providers are:
-
-- `sql_introspect`: Reads `information_schema` (Postgres/MySQL) or `PRAGMA table_info` (SQLite drivers) and emits a
-  JSON schema from table columns.
-- `buf`: Runs `buf export` and reads generated `*.schema.json` / `*.jsonschema` files (or `schema_dir`/`schema_files`
-  you provide). If no JSON schemas are present, it falls back to `buf build` to derive JSON schemas from proto
-  descriptors (requires `buf` on PATH).
-
-If your registry only exposes protobuf, the `buf` provider can now generate JSON schemas from descriptors; you can
-still supply a custom generator and point `schema_dir` at the output if you need tighter control.
-
-## Kubernetes (ConfigMap)
-
-Create a ConfigMap with the runtime YAML and mount it into the pod:
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: effectusd-config
-data:
-  effectusd.yaml: |
-    bundle:
-      oci: "ghcr.io/myorg/bundles/fraud-demo@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-      cache_dir: "/data/bundles"
-    http:
-      addr: ":8080"
-    api:
-      auth: "token"
-```
-
-Deployment snippet:
-
-```yaml
-containers:
-  - name: effectusd
-    image: ghcr.io/myorg/effectusd:1.0.0
-    args:
-      - "--config=/etc/effectus/effectusd.yaml"
-      - "--oci-signature-verifier=/usr/local/bin/effectus-verify-oci"
-    env:
-      - name: EFFECTUS_API_TOKEN
-        valueFrom:
-          secretKeyRef:
-            name: effectusd-api
-            key: api-token
-      - name: EFFECTUS_POSTGRES_DSN
-        valueFrom:
-          secretKeyRef:
-            name: effectus-postgres
-            key: dsn
-    volumeMounts:
-      - name: config
-        mountPath: /etc/effectus
-volumes:
-  - name: config
-    configMap:
-      name: effectusd-config
-```
-
-## Prometheus scrape
-
-Expose `metrics.addr` and scrape `/metrics`:
-
-```yaml
-annotations:
-  prometheus.io/scrape: "true"
-  prometheus.io/port: "9090"
-  prometheus.io/path: "/metrics"
-```
+Use [COMMANDS.md](COMMANDS.md) for the executable flag inventory and
+[GUARANTEES.md](GUARANTEES.md) for the runtime boundary.

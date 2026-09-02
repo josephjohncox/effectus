@@ -29,8 +29,18 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Go test
-        run: go test ./...
+      - name: Enforce repository guardrails
+        run: |
+          go test ./internal/guardrails/...
+          go run ./internal/guardrails/cmd check
+
+      - name: Test every discovered Go module
+        run: |
+          set -eu
+          go run ./internal/guardrails/cmd modules | while IFS= read -r module; do
+            echo "==> $module"
+            (cd "$module" && go test ./...)
+          done
 
       - name: Go vet
         run: go vet ./...
@@ -69,8 +79,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes protobuf-compiler
-          cargo install just --locked --version 1.38.0
-          just test-docs
+          go test ./cmd/effectusc ./cmd/effectusd -run 'TestDocumented'
 
   sql:
     runs-on: ubuntu-latest
@@ -120,18 +129,11 @@ jobs:
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
 
-      - name: Audit Go modules
+      - name: Audit every discovered Go module
         run: |
-          set -e
-          govulncheck ./...
-          for module in \
-            examples \
-            examples/buf_integration \
-            examples/business_facts \
-            examples/business_verbs \
-            examples/coherent_flow \
-            examples/extension_system \
-            examples/fraud_e2e/mocks; do
+          set -eu
+          go run ./internal/guardrails/cmd modules | while IFS= read -r module; do
+            echo "==> $module"
             (cd "$module" && govulncheck ./...)
           done
 
@@ -154,13 +156,6 @@ jobs:
         with:
           github_token: ${{ github.token }}
 
-      - name: Check generated protobuf examples
-        run: |
-          cd examples/proto_driven_development/company_example
-          buf lint
-          buf generate
-          git diff --exit-code -- gen
-
       - name: Install pinned just
         run: cargo install just --locked --version 1.38.0
 
@@ -177,9 +172,8 @@ jobs:
           go run ./cmd/effectusc bundle \
             --name order-review --version 1.0.0 \
             --schema-dir examples/standalone_executor/schema \
-            --verb-dir examples/standalone_executor/verbs \
-            --verbschema examples/standalone_executor/schema/order_verbs.json \
-            --rules-dir examples/standalone_executor/rules \
+            --verb-dir examples/standalone_executor/extensions \
+            --rules-dir examples/order_review/rules \
             --output out/standalone_executor/bundle.json
 
   standalone-demo:
@@ -214,8 +208,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Install pinned just
-        run: cargo install just --locked --version 1.38.0
       - name: Start pinned Redpanda service
         run: |
           image="docker.redpanda.com/redpandadata/redpanda:v24.2.10@sha256:6d627e3ebdc05438d1e8e3b55695ac1a7a0f79e7d5ca90b3b0f12dc984633e83"
@@ -233,7 +225,7 @@ jobs:
       - name: Run Kafka commit and restart harness
         env:
           KAFKA_BROKERS: localhost:9092
-        run: just test-kafka-integration
+        run: go test -v -count=1 -tags=integration ./internal/adapters/kafka -run '^TestKafkaConsumerGroupCommitAndRestart$'
 
   vscode:
     runs-on: ubuntu-latest
@@ -318,18 +310,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: fraud-mocks
-            context: examples/fraud_e2e/mocks
-          - name: postgres-wal2json
-            context: examples/cdc_stack/postgres
-          - name: mysql
-            context: examples/cdc_stack/mysql
-          - name: rabbitmq
-            context: examples/cdc_stack/rabbitmq
-          - name: minio
-            context: examples/warehouse_sources/devstack/minio
-          - name: minio-mc
-            context: examples/warehouse_sources/devstack/minio-mc
           - name: business-executor
             context: .
             dockerfile: examples/standalone_executor/Dockerfile
@@ -377,6 +357,9 @@ jobs:
             .github/workflows/publish.yml \
             .github/workflows/recover-release.yml
           .github/scripts/release-preflight_test.sh
+          .github/scripts/recovery-bundle-layout_test.sh
+          .github/scripts/reproducible-archive_test.sh
+          scripts/compat-proxy-smoke_test.sh
           if grep -Eq 'workflow_dispatch|--clobber|--generate-notes' .github/workflows/publish.yml; then
             echo "unsafe release workflow path detected" >&2
             exit 1
@@ -385,10 +368,27 @@ jobs:
           grep -Fq -- 'docs/releases/v' .github/workflows/publish.yml
           grep -Fq -- "cosign sign --yes \"\$chart_ref\"" \
             .github/workflows/publish.yml
+          publish_bundle="bundle=ghcr.io/\$owner/bundles/order-review:\$version"
+          bundle_repo="bundle_repo=ghcr.io/\$owner/bundles/order-review"
+          grep -Fq -- "$publish_bundle" .github/workflows/publish.yml
+          grep -Fq -- "$bundle_repo" .github/workflows/publish.yml
+          grep -Fq -- 'recovery-bundle-layout.sh' .github/workflows/recover-release.yml
+          grep -Fq -- "bundle_repo=ghcr.io/\$owner/\$bundle_repo_path" \
+            .github/workflows/recover-release.yml
+          grep -Fq -- 'SOURCE_DATE_EPOCH: "0"' .github/workflows/publish.yml \
+            .github/workflows/recover-release.yml
           grep -Fq -- 'Validate promoted references' \
             .github/workflows/recover-release.yml
           grep -Fq -- 'Create GitHub release completion marker last' \
             .github/workflows/recover-release.yml
+          grep -Fq -- 'Create GitHub release completion marker last' .github/workflows/publish.yml
+          grep -Fq -- 'compatibility-proxy-smoke:' .github/workflows/publish.yml
+          grep -Fq -- 'needs: release' .github/workflows/publish.yml
+          grep -Fq -- 'scripts/compat-proxy-smoke.sh' .github/workflows/publish.yml
+          if grep -Fq -- 'EFFECTUS_COMPAT_TEST_GOPROXY' .github/workflows/publish.yml; then
+            echo "publish workflow must use the default public compatibility proxy" >&2
+            exit 1
+          fi
 
   helm:
     runs-on: ubuntu-latest
@@ -405,13 +405,10 @@ jobs:
         with:
           version: v3.17.3
       - name: Install pinned chart tools
-        run: |
-          cargo install just --locked --version 1.38.0
-          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
       - name: Run the chart recipe and validate contract fixtures
         run: |
           set -euo pipefail
-          just test-helm
           image="ghcr.io/yannh/kubeconform:v0.6.7@sha256:0925177fb05b44ce18574076141b5c3d83235e1904d3f952182ac99ddc45762c"
           docker pull "$image"
           for file in charts/effectusd/test-values/*.yaml; do
@@ -451,17 +448,16 @@ jobs:
       - name: Race-sensitive runtime and adapter tests
         run: >-
           go test -race ./runtime ./schema ./cmd/effectusd
-          ./adapters/postgres ./adapters/amqp ./adapters/mysql ./adapters/grpc
+          ./internal/adapters/postgres ./internal/adapters/amqp ./internal/adapters/mysql ./internal/adapters/grpc
 
   formal:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install pinned TLC and Just
+      - name: Install pinned TLC
         run: |
           set -euo pipefail
-          cargo install just --version 1.38.0 --locked
           curl --fail --location --output /tmp/tla2tools.jar \
             https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
           echo "dbcc75552f21978a4846688b8e23be1a6b6c0b3fcee35d78fec2df167958ec94  /tmp/tla2tools.jar" | sha256sum --check
@@ -469,7 +465,9 @@ jobs:
             sudo tee /usr/local/bin/tlc >/dev/null
           sudo chmod 0755 /usr/local/bin/tlc
       - name: Model checks
-        run: just formal-check
+        run: |
+          tlc formal/Saga.tla -config formal/Saga.cfg
+          tlc formal/GenerationSwap.tla -config formal/GenerationSwap.cfg
 
   integration:
     runs-on: ubuntu-latest
@@ -483,28 +481,28 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Start CDC stack
-        run: docker compose -f examples/cdc_stack/docker-compose.yml up -d
+      - name: Start CDC fixture stack
+        run: docker compose -f tests/fixtures/cdc-stack/docker-compose.yml up -d
 
       - name: Wait for services
         run: |
           set -e
           for _ in $(seq 1 30); do
-            if docker compose -f examples/cdc_stack/docker-compose.yml \
+            if docker compose -f tests/fixtures/cdc-stack/docker-compose.yml \
               exec -T postgres pg_isready -U effectus >/dev/null 2>&1; then
               break
             fi
             sleep 2
           done
           for _ in $(seq 1 30); do
-            if docker compose -f examples/cdc_stack/docker-compose.yml \
+            if docker compose -f tests/fixtures/cdc-stack/docker-compose.yml \
               exec -T mysql mysqladmin ping -proot >/dev/null 2>&1; then
               break
             fi
             sleep 2
           done
           for _ in $(seq 1 30); do
-            if docker compose -f examples/cdc_stack/docker-compose.yml \
+            if docker compose -f tests/fixtures/cdc-stack/docker-compose.yml \
               exec -T rabbitmq rabbitmq-diagnostics -q ping \
               >/dev/null 2>&1; then
               break
@@ -523,11 +521,11 @@ jobs:
           MYSQL_DATABASE: effectus_cdc
           MYSQL_DSN: >-
             effectus:effectus@tcp(localhost:3306)/effectus_cdc?parseTime=true
-        run: go test -race -tags=integration ./adapters/postgres ./adapters/mysql
+        run: go test -race -tags=integration ./internal/adapters/postgres ./internal/adapters/mysql
 
-      - name: Stop CDC stack
+      - name: Stop CDC fixture stack
         if: always()
-        run: docker compose -f examples/cdc_stack/docker-compose.yml down -v
+        run: docker compose -f tests/fixtures/cdc-stack/docker-compose.yml down -v
 
   saga:
     runs-on: ubuntu-latest
@@ -541,21 +539,21 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Start saga stack
-        run: docker compose -f examples/saga_stack/docker-compose.yml up -d
+      - name: Start durable fixture stack
+        run: docker compose -f tests/fixtures/durable-stack/docker-compose.yml up -d
 
       - name: Wait for services
         run: |
           set -e
           for _ in $(seq 1 30); do
-            if docker compose -f examples/saga_stack/docker-compose.yml \
+            if docker compose -f tests/fixtures/durable-stack/docker-compose.yml \
               exec -T postgres pg_isready -U effectus >/dev/null 2>&1; then
               break
             fi
             sleep 2
           done
           for _ in $(seq 1 30); do
-            if docker compose -f examples/saga_stack/docker-compose.yml \
+            if docker compose -f tests/fixtures/durable-stack/docker-compose.yml \
               exec -T redis redis-cli ping >/dev/null 2>&1; then
               break
             fi
@@ -580,11 +578,11 @@ jobs:
       - name: Redis Streams adapter integration tests
         env:
           REDIS_ADDR: localhost:56379
-        run: go test -race -tags=integration ./adapters/redis
+        run: go test -race -tags=integration ./internal/adapters/redis
 
-      - name: Stop saga stack
+      - name: Stop durable fixture stack
         if: always()
-        run: docker compose -f examples/saga_stack/docker-compose.yml down -v
+        run: docker compose -f tests/fixtures/durable-stack/docker-compose.yml down -v
 
   runtime-race:
     runs-on: ubuntu-latest
@@ -598,47 +596,3 @@ jobs:
           cache: true
       - name: Race-enabled runtime checks
         run: go test -race ./runtime ./schema ./schema/verb ./cmd/effectusd
-
-  s3-adapter:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Start MinIO
-        run: >-
-          docker compose -f examples/warehouse_sources/devstack/docker-compose.yml
-          up -d minio minio-mc
-
-      - name: Wait for MinIO
-        run: |
-          set -e
-          for _ in $(seq 1 30); do
-            if curl --fail --silent http://localhost:9000/minio/health/live \
-              >/dev/null; then
-              exit 0
-            fi
-            sleep 2
-          done
-          exit 1
-
-      - name: S3 adapter integration tests
-        env:
-          S3_ENDPOINT: http://localhost:9000
-          S3_REGION: us-east-1
-          S3_BUCKET: exports
-          S3_ACCESS_KEY: minioadmin
-          S3_SECRET_KEY: minioadmin
-        run: go test -race -tags=integration ./adapters/s3
-
-      - name: Stop MinIO
-        if: always()
-        run: >-
-          docker compose -f examples/warehouse_sources/devstack/docker-compose.yml
-          down -v

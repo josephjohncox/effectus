@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
-	"github.com/josephjohncox/effectus/unified"
 	"github.com/google/uuid"
+	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
+	"github.com/josephjohncox/effectus/internal/unified"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -45,7 +45,7 @@ func TestEffectusdGeneratedGRPCServiceUsesDurableEngine(t *testing.T) {
 	require.NoError(t, err)
 	defer execution.Close()
 	defer db.Close()
-	server, err := configureDaemonGRPCServer(execution, bundle)
+	server, err := configureDaemonGRPCServer(execution)
 	require.NoError(t, err)
 	serveErrors := make(chan error, 1)
 	go func() { serveErrors <- server.Start() }()

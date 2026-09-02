@@ -27,7 +27,7 @@ import (
 type Source struct {
 	Path    string
 	Content []byte
-	Data    []byte // Deprecated: use Content.
+	Data    []byte // Deprecated: use Content. Removal deadline: 2027-09-01.
 }
 
 // CompileOptions controls properties that must be frozen into checked IR.
