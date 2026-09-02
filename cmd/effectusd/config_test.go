@@ -9,14 +9,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestValidateBundleArgumentsRejectsOCIReloadBeforeStartup(t *testing.T) {
+func TestValidateBundleArgumentsRejectsSourceBundleReload(t *testing.T) {
 	err := validateBundleArguments("", "ghcr.io/acme/rules@sha256:digest", time.Minute)
-	require.EqualError(t, err, "--reload-interval cannot poll an immutable OCI reference; publish and deploy a new digest instead")
+	require.EqualError(t, err, "--reload-interval cannot poll an immutable source bundle; deploy a new process instead")
 }
 
 func TestApplyRuntimeConfigRejectsLegacyStoresAndPlugins(t *testing.T) {
 	require.ErrorContains(t, applyRuntimeConfig(&runtimeConfig{Saga: sagaConfig{Store: "redis"}}, map[string]bool{}), "legacy saga/Redis")
 	require.ErrorContains(t, applyRuntimeConfig(&runtimeConfig{Verbs: verbConfig{PluginDirs: []string{"plugins"}}}, map[string]bool{}), "plugin_dirs")
+}
+
+func TestApplyRuntimeConfigSourceSelectorFlagsOverrideConfiguredSource(t *testing.T) {
+	originalBundleFile, originalOCIRef := *bundleFile, *ociRef
+	t.Cleanup(func() {
+		*bundleFile, *ociRef = originalBundleFile, originalOCIRef
+	})
+
+	config := &runtimeConfig{Bundle: bundleConfig{File: "configured.json", OCI: "registry.example/configured@sha256:digest"}}
+	for _, test := range []struct {
+		name       string
+		bundleFile string
+		ociRef     string
+		setFlags   map[string]bool
+	}{
+		{name: "bundle flag overrides configured OCI", bundleFile: "command-line.json", setFlags: map[string]bool{"bundle": true}},
+		{name: "OCI flag overrides configured file", ociRef: "registry.example/command-line@sha256:digest", setFlags: map[string]bool{"oci-ref": true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			*bundleFile, *ociRef = test.bundleFile, test.ociRef
+			require.NoError(t, applyRuntimeConfig(config, test.setFlags))
+			require.Equal(t, test.bundleFile, *bundleFile)
+			require.Equal(t, test.ociRef, *ociRef)
+		})
+	}
 }
 
 func TestLoadRuntimeConfigRejectsUnknownFields(t *testing.T) {

@@ -6,15 +6,15 @@ import (
 	"strings"
 
 	effectusruntime "github.com/josephjohncox/effectus/runtime"
-	"github.com/josephjohncox/effectus/unified"
 )
 
-func configureDaemonGRPCServer(execution *effectusruntime.ExecutionRuntime, bundle *unified.Bundle) (*effectusruntime.RulesetExecutionServer, error) {
-	if execution == nil || bundle == nil {
-		return nil, fmt.Errorf("gRPC checked runtime and bundle are required")
+func configureDaemonGRPCServer(execution *effectusruntime.ExecutionRuntime) (*effectusruntime.RulesetExecutionServer, error) {
+	if execution == nil || execution.Engine().GenerationView() == nil {
+		return nil, fmt.Errorf("active checked generation is required for gRPC")
 	}
+	generation := execution.Engine().GenerationView()
 	options := effectusruntime.RulesetExecutionServerOptions{
-		RulesetName: bundle.Name, Version: bundle.Version,
+		RulesetName: generation.Ruleset, Version: generation.Version,
 		AllowInsecureTransport: *grpcAllowInsecure,
 		MaxReceiveBytes:        *grpcMaxReceive, MaxSendBytes: *grpcMaxSend,
 		MaxExecutionDuration: *grpcMaxDuration, MaxConcurrentRPCs: *grpcMaxConcurrent,

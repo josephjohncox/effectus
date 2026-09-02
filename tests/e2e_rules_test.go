@@ -6,7 +6,7 @@ import (
 
 	"github.com/josephjohncox/effectus"
 	"github.com/josephjohncox/effectus/compiler"
-	"github.com/josephjohncox/effectus/list"
+	"github.com/josephjohncox/effectus/internal/list"
 	"github.com/josephjohncox/effectus/pathutil"
 	"github.com/josephjohncox/effectus/schema/types"
 	"github.com/josephjohncox/effectus/schema/verb"

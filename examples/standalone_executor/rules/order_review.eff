@@ -1,8 +1,0 @@
-rule "ReviewLargeOrder" priority 10 {
-  when {
-    order.total > 1000 || order.risk_score > 75
-  }
-  then {
-    RequestManualReview(orderId: order.id, reason: "value_or_risk")
-  }
-}

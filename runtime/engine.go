@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/josephjohncox/effectus/compiler"
+	"github.com/josephjohncox/effectus/internal/loader"
 	"github.com/josephjohncox/effectus/invocation"
 	"github.com/josephjohncox/effectus/ir"
-	"github.com/josephjohncox/effectus/loader"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/josephjohncox/effectus/schema/ledger"
 )
@@ -341,9 +341,14 @@ func (engine *Engine) admit(ctx context.Context, admission *Admission) (*engineE
 		engine.runtime.mu.RUnlock()
 		return nil, false, false, err
 	}
+	unitSnapshot, snapshotErr := extensionSnapshot(unit)
+	if snapshotErr != nil {
+		engine.runtime.mu.RUnlock()
+		return nil, false, false, snapshotErr
+	}
 	var snapshotHandle *loader.ExtensionSnapshotHandle
-	if unit.ExtensionSnapshot != nil {
-		snapshotHandle, err = unit.ExtensionSnapshot.Acquire()
+	if unitSnapshot != nil {
+		snapshotHandle, err = unitSnapshot.Acquire()
 		if err != nil {
 			engine.runtime.mu.RUnlock()
 			return nil, false, false, fmt.Errorf("acquire extension snapshot: %w", err)
@@ -475,9 +480,13 @@ func (engine *Engine) loadExecutionRecord(ctx context.Context, record schema.Exe
 	}
 	if preferred != nil {
 		if artifact, artifactErr := executionArtifactForUnit(preferred); artifactErr == nil && artifact.GenerationDigest == record.GenerationDigest {
+			preferredSnapshot, snapshotErr := extensionSnapshot(preferred)
+			if snapshotErr != nil {
+				return engine.blockDependency(ctx, record, facts, selected, snapshotErr)
+			}
 			var handle *loader.ExtensionSnapshotHandle
-			if preferred.ExtensionSnapshot != nil {
-				handle, err = preferred.ExtensionSnapshot.Acquire()
+			if preferredSnapshot != nil {
+				handle, err = preferredSnapshot.Acquire()
 				if err != nil {
 					return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("acquire preferred extension snapshot: %w", err))
 				}
@@ -524,14 +533,18 @@ func (engine *Engine) loadExecutionRecord(ctx context.Context, record schema.Exe
 	if err != nil {
 		return engine.blockDependency(ctx, record, facts, selected, err)
 	}
+	unitSnapshot, snapshotErr := extensionSnapshot(unit)
+	if snapshotErr != nil {
+		return engine.blockDependency(ctx, record, facts, selected, snapshotErr)
+	}
 	var snapshotHandle *loader.ExtensionSnapshotHandle
-	if unit != nil && unit.ExtensionSnapshot != nil {
-		snapshotHandle, err = unit.ExtensionSnapshot.Acquire()
+	if unitSnapshot != nil {
+		snapshotHandle, err = unitSnapshot.Acquire()
 		if err != nil {
 			return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("acquire resolved extension snapshot: %w", err))
 		}
 		if unit.ExecutionOwnedSnapshot {
-			if retireErr := unit.ExtensionSnapshot.Retire(); retireErr != nil {
+			if retireErr := unitSnapshot.Retire(); retireErr != nil {
 				_ = snapshotHandle.Release()
 				return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("retire execution-owned snapshot: %w", retireErr))
 			}

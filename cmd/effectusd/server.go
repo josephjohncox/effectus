@@ -21,14 +21,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/josephjohncox/effectus/adapters"
+	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
+	"github.com/josephjohncox/effectus/internal/adapters"
+	"github.com/josephjohncox/effectus/internal/unified"
 	"github.com/josephjohncox/effectus/pathutil"
 	effectusruntime "github.com/josephjohncox/effectus/runtime"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/josephjohncox/effectus/schema/capability"
 	"github.com/josephjohncox/effectus/schema/types"
 	"github.com/josephjohncox/effectus/schema/verb"
-	"github.com/josephjohncox/effectus/unified"
 )
 
 type factEnvelope struct {
@@ -1387,6 +1388,27 @@ func (s *serverState) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	runtimeFacts := summarizeRuntimeFacts(generation.schemaTypes)
 	combinedFacts := mergeFactTypeSummaries(runtimeFacts, bundle.FactTypes)
+	if view := s.checkedGenerationView(); view != nil {
+		engineDigest = view.GenerationDigest
+		if view.SourceDigest != "" {
+			bundleDigest = view.SourceDigest
+		}
+		bundle = &unified.Bundle{Name: view.Ruleset, Version: view.Version}
+		for path, typeName := range view.Environment.Facts {
+			bundle.FactTypes = append(bundle.FactTypes, unified.FactTypeSummary{Path: path, Type: typeName})
+		}
+		sort.Slice(bundle.FactTypes, func(i, j int) bool { return bundle.FactTypes[i].Path < bundle.FactTypes[j].Path })
+		for name, contract := range view.Environment.Verbs {
+			bundle.VerbSpecs = append(bundle.VerbSpecs, unified.VerbSpecSummary{Name: name, ArgTypes: contract.Arguments, RequiredArgs: contract.RequiredArgs, ReturnType: contract.ResultType, InverseVerb: contract.InverseVerb})
+		}
+		sort.Slice(bundle.VerbSpecs, func(i, j int) bool { return bundle.VerbSpecs[i].Name < bundle.VerbSpecs[j].Name })
+		bundle.Rules, bundle.Flows = checkedRuleSummaries(view), checkedFlowSummaries(view)
+		for path := range view.Environment.Facts {
+			bundle.RequiredFacts = append(bundle.RequiredFacts, path)
+		}
+		sort.Strings(bundle.RequiredFacts)
+		combinedFacts = bundle.FactTypes
+	}
 	resp := statusResponse{
 		GenerationID:           generation.id,
 		ArtifactDigest:         generation.bundleDigest,
@@ -1494,6 +1516,10 @@ func (s *serverState) handleRules(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if view := s.checkedGenerationView(); view != nil {
+		writeJSON(w, http.StatusOK, checkedRuleSummaries(view))
+		return
+	}
 	bundle := s.Bundle()
 	if bundle == nil {
 		writeJSON(w, http.StatusOK, []unified.RuleSummary{})
@@ -1504,6 +1530,51 @@ func (s *serverState) handleRules(w http.ResponseWriter, r *http.Request) {
 		rules = unified.SummarizeRules(bundle.ListSpec)
 	}
 	writeJSON(w, http.StatusOK, rules)
+}
+
+func (s *serverState) checkedGenerationView() *effectusruntime.GenerationView {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	engine := s.checkedEngine
+	s.mu.RUnlock()
+	if engine == nil {
+		return nil
+	}
+	return engine.GenerationView()
+}
+
+func checkedRuleSummaries(view *effectusruntime.GenerationView) []unified.RuleSummary {
+	if view == nil {
+		return []unified.RuleSummary{}
+	}
+	result := make([]unified.RuleSummary, 0)
+	for _, plan := range view.Plans {
+		if plan.Dialect != effectusv1.SourceDialect_SOURCE_DIALECT_LIST {
+			continue
+		}
+		effects := make([]unified.RuleEffectSummary, 0, len(plan.Verbs))
+		for _, name := range plan.Verbs {
+			effects = append(effects, unified.RuleEffectSummary{Verb: name})
+		}
+		result = append(result, unified.RuleSummary{Name: plan.ID, Priority: int(plan.Priority), Predicates: []string{plan.Predicate}, Effects: effects})
+	}
+	return result
+}
+
+func checkedFlowSummaries(view *effectusruntime.GenerationView) []unified.FlowSummary {
+	if view == nil {
+		return []unified.FlowSummary{}
+	}
+	result := make([]unified.FlowSummary, 0)
+	for _, plan := range view.Plans {
+		if plan.Dialect != effectusv1.SourceDialect_SOURCE_DIALECT_FLOW {
+			continue
+		}
+		result = append(result, unified.FlowSummary{Name: plan.ID, Priority: int(plan.Priority), Predicates: []string{plan.Predicate}, Verbs: append([]string(nil), plan.Verbs...)})
+	}
+	return result
 }
 
 func (s *serverState) handleRuleSources(w http.ResponseWriter, r *http.Request) {
@@ -1532,6 +1603,10 @@ func (s *serverState) handleRuleSources(w http.ResponseWriter, r *http.Request) 
 func (s *serverState) handleFlows(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if view := s.checkedGenerationView(); view != nil {
+		writeJSON(w, http.StatusOK, checkedFlowSummaries(view))
 		return
 	}
 	bundle := s.Bundle()
@@ -1584,7 +1659,9 @@ func (s *serverState) handleGraph(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rules := bundle.Rules
-	if len(rules) == 0 && bundle.ListSpec != nil {
+	if view := s.checkedGenerationView(); view != nil {
+		rules = checkedRuleSummaries(view)
+	} else if len(rules) == 0 && bundle.ListSpec != nil {
 		rules = unified.SummarizeRules(bundle.ListSpec)
 	}
 	for _, rule := range rules {
@@ -1603,7 +1680,9 @@ func (s *serverState) handleGraph(w http.ResponseWriter, r *http.Request) {
 	}
 
 	flows := bundle.Flows
-	if len(flows) == 0 && bundle.FlowSpec != nil {
+	if view := s.checkedGenerationView(); view != nil {
+		flows = checkedFlowSummaries(view)
+	} else if len(flows) == 0 && bundle.FlowSpec != nil {
 		flows = unified.SummarizeFlows(bundle.FlowSpec)
 	}
 	for _, flowSpec := range flows {
@@ -1635,6 +1714,15 @@ func (s *serverState) handleVerbs(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if view := s.checkedGenerationView(); view != nil {
+		result := make([]verbSpecResponse, 0, len(view.Environment.Verbs))
+		for name, contract := range view.Environment.Verbs {
+			result = append(result, verbSpecResponse{Name: name, ArgTypes: contract.Arguments, RequiredArgs: contract.RequiredArgs, ReturnType: contract.ResultType, InverseVerb: contract.InverseVerb})
+		}
+		sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
 	generation := s.generationSnapshot()
 	if generation.verbs != nil && generation.verbs.Count() > 0 {
 		writeJSON(w, http.StatusOK, summarizeVerbRegistry(generation.verbs))
@@ -1655,6 +1743,15 @@ func (s *serverState) handleVerbs(w http.ResponseWriter, r *http.Request) {
 func (s *serverState) handleSchema(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if view := s.checkedGenerationView(); view != nil {
+		facts := make([]unified.FactTypeSummary, 0, len(view.Environment.Facts))
+		for path, typeName := range view.Environment.Facts {
+			facts = append(facts, unified.FactTypeSummary{Path: path, Type: typeName})
+		}
+		sort.Slice(facts, func(i, j int) bool { return facts[i].Path < facts[j].Path })
+		writeJSON(w, http.StatusOK, schemaResponse{Bundle: facts, Combined: facts, Sources: summarizeSchemaSources(s.sources)})
 		return
 	}
 	generation := s.generationSnapshot()
@@ -1889,7 +1986,9 @@ func (s *serverState) handleDryRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req dryRunRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
@@ -1900,55 +1999,79 @@ func (s *serverState) handleDryRun(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = "list"
 	}
+	if mode != "list" && mode != "flow" && mode != "both" {
+		writeJSONError(w, http.StatusBadRequest, "mode must be list, flow, or both")
+		return
+	}
 	facts := req.Facts
-	if len(facts) == 0 && req.UseStored {
-		if s.factStore != nil {
-			if snapshot, ok := s.factStore.Snapshot(req.Universe); ok {
-				facts = snapshot
-			}
-		}
+	if len(facts) == 0 && req.UseStored && s.factStore != nil {
+		facts, _ = s.factStore.Snapshot(req.Universe)
 	}
 	if len(facts) == 0 {
 		writeJSONError(w, http.StatusBadRequest, "facts are required")
 		return
 	}
+	// The production endpoint has no speculative executor. It only evaluates
+	// the exact checked plans pinned by the active engine and never admits work.
+	if view := s.checkedGenerationView(); view != nil {
+		s.mu.RLock()
+		engine := s.checkedEngine
+		s.mu.RUnlock()
+		evaluations, err := engine.DryRun(r.Context(), facts)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		resp := dryRunResponse{Universe: req.Universe, Mode: mode, Facts: map[string]int{"namespaces": len(facts)}}
+		for _, evaluation := range evaluations {
+			plan := evaluation.Plan
+			predicate := []predicateEval{{Expression: plan.Predicate, Value: evaluation.Matched}}
+			switch plan.Dialect {
+			case effectusv1.SourceDialect_SOURCE_DIALECT_LIST:
+				if mode == "flow" {
+					continue
+				}
+				effects := make([]effectInfo, 0, len(plan.Verbs))
+				for _, name := range plan.Verbs {
+					effects = append(effects, effectInfo{Verb: name})
+				}
+				resp.Rules = append(resp.Rules, dryRunRule{Name: plan.ID, Priority: int(plan.Priority), Matched: evaluation.Matched, Predicates: predicate, Effects: effects})
+				resp.Summary.RulesTotal++
+				if evaluation.Matched {
+					resp.Summary.RulesMatched++
+				}
+			case effectusv1.SourceDialect_SOURCE_DIALECT_FLOW:
+				if mode == "list" {
+					continue
+				}
+				resp.Flows = append(resp.Flows, dryRunFlow{Name: plan.ID, Priority: int(plan.Priority), Matched: evaluation.Matched, Predicates: predicate, Verbs: append([]string(nil), plan.Verbs...)})
+				resp.Summary.FlowsTotal++
+				if evaluation.Matched {
+					resp.Summary.FlowsMatched++
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
 
+	// Compatibility-only server states retain the historical in-memory view.
 	bundle := s.Bundle()
 	if bundle == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "bundle not loaded")
 		return
 	}
-
 	registry := schema.NewRegistry()
 	registry.LoadFromMap(facts)
-
-	resp := dryRunResponse{
-		Universe: req.Universe,
-		Mode:     mode,
-		Facts:    map[string]int{"namespaces": len(facts)},
-	}
-
+	resp := dryRunResponse{Universe: req.Universe, Mode: mode, Facts: map[string]int{"namespaces": len(facts)}}
 	if mode == "list" || mode == "both" {
-		rules := bundle.Rules
-		if len(rules) == 0 && bundle.ListSpec != nil {
-			rules = unified.SummarizeRules(bundle.ListSpec)
-		}
-		evaluated, matched := evaluateRules(rules, registry)
-		resp.Rules = evaluated
-		resp.Summary.RulesMatched = matched
-		resp.Summary.RulesTotal = len(evaluated)
+		evaluated, matched := evaluateRules(bundle.Rules, registry)
+		resp.Rules, resp.Summary.RulesMatched, resp.Summary.RulesTotal = evaluated, matched, len(evaluated)
 	}
 	if mode == "flow" || mode == "both" {
-		flows := bundle.Flows
-		if len(flows) == 0 && bundle.FlowSpec != nil {
-			flows = unified.SummarizeFlows(bundle.FlowSpec)
-		}
-		evaluated, matched := evaluateFlows(flows, registry)
-		resp.Flows = evaluated
-		resp.Summary.FlowsMatched = matched
-		resp.Summary.FlowsTotal = len(evaluated)
+		evaluated, matched := evaluateFlows(bundle.Flows, registry)
+		resp.Flows, resp.Summary.FlowsMatched, resp.Summary.FlowsTotal = evaluated, matched, len(evaluated)
 	}
-
 	writeJSON(w, http.StatusOK, resp)
 }
 

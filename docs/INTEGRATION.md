@@ -20,13 +20,20 @@ Use the embedded library for a local decision boundary. Use `effectusd` for dura
 
 The `embedded` package hides compiler, loader, generation, and engine setup. It still uses checked IR and `runtime.Engine`.
 
-Add the module from the public repository:
+This section uses the current embedded API. It requires the first published root
+release that contains this branch. Published `v0.3.0` is not that release, so do
+not combine its install command with the code below.
+
+Set `EFFECTUS_VERSION` to the exact, immutable release tag that contains this
+API, then install that tag:
 
 ```bash
-go get github.com/josephjohncox/effectus@main
+: "${EFFECTUS_VERSION:?set this to the published release tag that contains the current embedded API}"
+go get github.com/josephjohncox/effectus@"${EFFECTUS_VERSION}"
 ```
 
-Pin a release tag or commit in production. Use `@main` only until the next tagged SDK release.
+The command deliberately has no `@main` fallback. Pin the same release tag in
+your module file and test the integration against that release before deployment.
 
 Build one runtime during application startup:
 
@@ -34,6 +41,7 @@ Build one runtime during application startup:
 application, err := embedded.New("order-review", "1.0.0").
   AddFact("order.id", "").
   AddFact("order.total", 0.0).
+  AddFact("order.risk_score", int64(0)).
   AddSource("order_review.eff", ruleSource).
   AddVerb(embedded.Verb{
     Name:         "RequestManualReview",
@@ -59,9 +67,11 @@ Execute facts with a tenant namespace and an idempotency key:
 ```go
 result, err := application.Execute(ctx, embedded.Request{
   Namespace:      "merchant-42",
-  IdempotencyKey: "order-100-created",
+  IdempotencyKey: "order-200-created",
   Facts: map[string]any{
-    "order": map[string]any{"id": "order-100", "total": 2499.00},
+    "order": map[string]any{
+      "id": "order-200", "total": 2499.00, "risk_score": int64(82),
+    },
   },
 })
 ```
@@ -74,14 +84,9 @@ The same namespace, key, ruleset, version, and facts return the same execution I
 
 The default embedded ledger and outbox are process-local. They do not survive an application restart.
 
-Run the complete example:
+The [Getting Started guide](GETTING_STARTED.md#path-1-embedded-go) contains the tested command and expected replay output.
 
-```bash
-cd examples
-go run ./embedded_orders
-```
-
-Read [`examples/embedded_orders`](https://github.com/josephjohncox/effectus/tree/main/examples/embedded_orders) for the full handler and replay check.
+Read [`examples/embedded_orders`](https://github.com/josephjohncox/effectus/tree/main/examples/embedded_orders) for the handler and runtime structure.
 
 ## Standalone business executor
 
@@ -98,7 +103,7 @@ client or event source
 business executor ----> business database or external API
 ```
 
-A verb manifest connects each verb to an HTTP, gRPC, stream, or OCI target.
+A verb manifest connects each production verb to the canonical HTTP target.
 
 ### HTTP target
 
@@ -131,7 +136,7 @@ The `executorhttp` package validates the request and writes protocol outcomes:
 ```go
 handler, err := executorhttp.NewHandler(
   executorhttp.Options{},
-  func(ctx context.Context, request executorhttp.Request) executorhttp.Outcome {
+  func(ctx context.Context, request invocation.Request) invocation.Outcome {
     stored, err := reviews.InsertOnce(
       ctx,
       request.Metadata.Saga.IdempotencyKey,
@@ -178,23 +183,13 @@ Do not report a retryable failure after an unknown commit. Report `unknown_outco
 
 The response also includes `X-Effectus-Outcome` for every failure.
 
-## Run the standalone example
+## Run the durable example
 
-The standalone example uses real `effectusd`, PostgreSQL, Docker Compose, and a separate business executor.
+The durable example uses `effectusd`, PostgreSQL, Docker Compose, and a separate business executor.
 
-```bash
-examples/standalone_executor/scripts/run.sh
-```
+The [Getting Started guide](GETTING_STARTED.md#path-2-durable-docker) contains the tested command, restart proof, conflict output, and cleanup warning.
 
-The script submits one order twice. It confirms one Effectus execution and one business database row.
-
-Stop the stack after inspection:
-
-```bash
-examples/standalone_executor/scripts/down.sh
-```
-
-Read [`examples/standalone_executor`](https://github.com/josephjohncox/effectus/tree/main/examples/standalone_executor) for the complete deployment.
+Read [`examples/standalone_executor`](https://github.com/josephjohncox/effectus/tree/main/examples/standalone_executor) for the service and file maps.
 
 ## Deployment structure
 

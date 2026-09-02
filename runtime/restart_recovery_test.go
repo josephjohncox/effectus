@@ -2,15 +2,67 @@ package runtime
 
 import (
 	"context"
+	"io"
 	"sync/atomic"
 	"testing"
 
+	"github.com/josephjohncox/effectus/bundle"
 	"github.com/josephjohncox/effectus/compiler"
+	"github.com/josephjohncox/effectus/internal/loader"
+	"github.com/josephjohncox/effectus/invocation"
 	"github.com/josephjohncox/effectus/ir"
-	"github.com/josephjohncox/effectus/loader"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/stretchr/testify/require"
 )
+
+func TestManifestArtifactResolverReadsCanonicalDescriptorWrittenAtAdmission(t *testing.T) {
+	descriptor, err := invocation.NewDescriptor(invocation.DescriptorSpec{
+		Type: invocation.DescriptorHTTP, ResolverID: "test/restart/v1", Reference: "https://executor.invalid/review",
+	})
+	require.NoError(t, err)
+	registry, err := invocation.NewRegistry([]invocation.ResolverRegistration{{
+		ID: "test/restart/v1", Resolver: invocation.ResolverFunc(func(context.Context, invocation.Descriptor) (invocation.Executor, io.Closer, error) {
+			return generationTestExecutor{}, nil, nil
+		}),
+	}})
+	require.NoError(t, err)
+	sourceBundle, err := bundle.New(bundle.Spec{
+		Name: "orders", Version: "1",
+		Sources: []bundle.Source{{Path: "review.eff", Content: `rule "Review" priority 1 { when { true } then { RequestReview(orderId: order.id) } }`}},
+		Environment: ir.Environment{
+			Facts: map[string]string{"order.id": "string"},
+			Verbs: map[string]ir.VerbContract{"RequestReview": {
+				Arguments: map[string]string{"orderId": "string"}, RequiredArgs: []string{"orderId"}, ResultType: "string",
+			}},
+		},
+		Executors: map[string]invocation.Descriptor{"RequestReview": descriptor},
+	})
+	require.NoError(t, err)
+	generation, err := CompileGeneration(t.Context(), GenerationBuildConfig{Bundle: sourceBundle, Resolvers: registry, Production: true})
+	require.NoError(t, err)
+
+	ledger := schema.NewInMemoryExecutionLedger()
+	outbox := schema.NewInMemoryOutboxStore()
+	first := NewExecutionRuntime()
+	require.NoError(t, first.PublishGeneration(generation))
+	require.NoError(t, first.ConfigureDurableWorkflowExecution(outbox, nil, schema.DispatcherOptions{Owner: "first"}))
+	require.NoError(t, first.ConfigureExecutionLedger(ledger, NewManifestArtifactResolver(registry)))
+	accepted, err := first.Engine().Execute(t.Context(), ExecuteRequest{Admission: &Admission{
+		ExecutionID: "canonical-restart", AdmissionID: "canonical-delivery", TenantNamespace: "tenant",
+		Ruleset: "orders", Version: "1", Facts: map[string]any{"order.id": "one"},
+	}, WaitMode: WaitAccepted})
+	require.NoError(t, err)
+	require.NoError(t, first.Close())
+
+	second := NewExecutionRuntime()
+	require.NoError(t, second.ConfigureDurableWorkflowExecution(outbox, nil, schema.DispatcherOptions{Owner: "second"}))
+	require.NoError(t, second.ConfigureExecutionLedger(ledger, NewManifestArtifactResolver(registry)))
+	result, err := second.Engine().Execute(t.Context(), ExecuteRequest{ResumeExecutionID: "canonical-restart", WaitMode: WaitTerminal})
+	require.NoError(t, err)
+	require.True(t, result.Completed)
+	require.Equal(t, accepted.GenerationDigest, result.GenerationDigest)
+	require.NoError(t, second.Close())
+}
 
 func TestRestartRecoveryLoadsExactArtifactAndResolver(t *testing.T) {
 	first := newEngineTestRuntime(t, loader.NewStaticSourceLoader("workflow", "workflow.effx", []byte(validWorkflowSource("1"))))

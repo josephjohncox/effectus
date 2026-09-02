@@ -1,20 +1,42 @@
 {
   "RequestManualReview": {
-    "Name": "RequestManualReview",
-    "Description": "Create a durable manual review for a high-value order",
-    "ArgTypes": {
-      "orderId": {"PrimType": 4, "Name": "string"},
-      "reason": {"PrimType": 4, "Name": "string"}
+    "arg_types": {
+      "orderId": "string",
+      "reason": "string"
     },
-    "RequiredArgs": ["orderId", "reason"]
+    "return_type": "string",
+    "capability": 44,
+    "required_args": [
+      "orderId",
+      "reason"
+    ],
+    "inverse": "CancelManualReview",
+    "description": "Create a durable manual review for a high-value order",
+    "resources": [
+      {
+        "Resource": "order_review",
+        "Cap": 44
+      }
+    ]
   },
   "CancelManualReview": {
-    "Name": "CancelManualReview",
-    "Description": "Cancel a manual review during compensation",
-    "ArgTypes": {
-      "orderId": {"PrimType": 4, "Name": "string"},
-      "reason": {"PrimType": 4, "Name": "string"}
+    "arg_types": {
+      "orderId": "string",
+      "reason": "string"
     },
-    "RequiredArgs": ["orderId", "reason"]
+    "return_type": "string",
+    "capability": 52,
+    "required_args": [
+      "orderId",
+      "reason"
+    ],
+    "inverse": "RequestManualReview",
+    "description": "Cancel a manual review during compensation",
+    "resources": [
+      {
+        "Resource": "order_review",
+        "Cap": 52
+      }
+    ]
   }
 }

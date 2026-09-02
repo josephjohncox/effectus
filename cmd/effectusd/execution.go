@@ -9,12 +9,14 @@ import (
 	"github.com/josephjohncox/effectus"
 	"github.com/josephjohncox/effectus/common"
 	"github.com/josephjohncox/effectus/compiler"
+	"github.com/josephjohncox/effectus/internal/flow"
+	"github.com/josephjohncox/effectus/internal/list"
+	"github.com/josephjohncox/effectus/internal/unified"
 	"github.com/josephjohncox/effectus/pathutil"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/josephjohncox/effectus/schema/capability"
 	"github.com/josephjohncox/effectus/schema/types"
 	"github.com/josephjohncox/effectus/schema/verb"
-	"github.com/josephjohncox/effectus/unified"
 )
 
 const requestIDContextKey = "request_id"
@@ -157,14 +159,41 @@ func compileBundleRules(bundle *unified.Bundle, baseTS *types.TypeSystem, verbRe
 		return nil, err
 	}
 
+	listSpec, flowSpec, err := compiledLegacySpecs(spec)
+	if err != nil {
+		return nil, err
+	}
 	next := *bundle
-	next.ListSpec = spec.ListSpec()
-	next.FlowSpec = spec.FlowSpec()
+	next.ListSpec = listSpec
+	next.FlowSpec = flowSpec
 	next.Rules = unified.SummarizeRules(next.ListSpec)
 	next.Flows = unified.SummarizeFlows(next.FlowSpec)
 	next.RequiredFacts = spec.RequiredFacts()
 
 	return &next, nil
+}
+
+func compiledLegacySpecs(spec *compiler.CompiledSpec) (*list.Spec, *flow.Spec, error) {
+	if spec == nil {
+		return nil, nil, fmt.Errorf("compiled specification is required")
+	}
+	var listSpec *list.Spec
+	if value := spec.ListSpec(); value != nil {
+		var ok bool
+		listSpec, ok = value.(*list.Spec)
+		if !ok {
+			return nil, nil, fmt.Errorf("compiler returned an unexpected list specification")
+		}
+	}
+	var flowSpec *flow.Spec
+	if value := spec.FlowSpec(); value != nil {
+		var ok bool
+		flowSpec, ok = value.(*flow.Spec)
+		if !ok {
+			return nil, nil, fmt.Errorf("compiler returned an unexpected flow specification")
+		}
+	}
+	return listSpec, flowSpec, nil
 }
 
 func configuredBundleCopy(bundle *unified.Bundle, verbReg *verb.Registry, sagaEnabled bool, sagaStore schema.SagaStore, capSystem *capability.CapabilitySystem) *unified.Bundle {

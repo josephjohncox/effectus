@@ -2,18 +2,15 @@ package main
 
 import (
 	"context"
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
 
 	"github.com/josephjohncox/effectus/embedded"
+	orderreview "github.com/josephjohncox/effectus/internal/demo/orderreview"
 	"github.com/josephjohncox/effectus/invocation"
 )
-
-//go:embed rules/order_review.eff
-var orderRules []byte
 
 type reviewService struct {
 	mu      sync.Mutex
@@ -43,11 +40,16 @@ func (service *reviewService) requestReview(_ context.Context, request invocatio
 func main() {
 	ctx := context.Background()
 	reviews := &reviewService{reviews: make(map[string]map[string]any)}
+	ruleSource, err := orderreview.RuleSource()
+	if err != nil {
+		log.Fatal(err)
+	}
 	application, err := embedded.New("order-review", "1.0.0").
 		AddFact("order.id", "").
 		AddFact("order.total", 0.0).
+		AddFact("order.currency", "").
 		AddFact("order.risk_score", int64(0)).
-		AddSource("order_review.eff", orderRules).
+		AddSource("order_review.eff", ruleSource).
 		AddVerb(embedded.Verb{
 			Name:         "RequestManualReview",
 			Description:  "Create a manual review for a risky order",
@@ -66,14 +68,14 @@ func main() {
 	}
 	defer application.Close()
 
+	scenario, err := orderreview.CanonicalScenario()
+	if err != nil {
+		log.Fatal(err)
+	}
 	request := embedded.Request{
-		Namespace:      "merchant-42",
-		IdempotencyKey: "order-100-created",
-		Facts: map[string]any{
-			"order": map[string]any{
-				"id": "order-100", "total": 2499.00, "risk_score": int64(82),
-			},
-		},
+		Namespace:      scenario.Request.Namespace,
+		IdempotencyKey: scenario.IdempotencyKey,
+		Facts:          scenario.Facts(),
 	}
 	first, err := application.Execute(ctx, request)
 	if err != nil {
@@ -84,11 +86,22 @@ func main() {
 		log.Fatal(err)
 	}
 
+	reviewCount := len(reviews.reviews)
+	if !first.Completed || !second.Completed {
+		log.Fatalf("execution did not complete: first=%t replay=%t", first.Completed, second.Completed)
+	}
+	if first.ExecutionID == "" || first.ExecutionID != second.ExecutionID {
+		log.Fatalf("replay execution ID mismatch: first=%q replay=%q", first.ExecutionID, second.ExecutionID)
+	}
+	if reviewCount != 1 {
+		log.Fatalf("review count = %d, want 1", reviewCount)
+	}
+
 	output := map[string]any{
 		"execution_id":       first.ExecutionID,
 		"replayed_execution": second.ExecutionID,
 		"completed":          first.Completed,
-		"review_count":       len(reviews.reviews),
+		"review_count":       reviewCount,
 	}
 	encoded, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/josephjohncox/effectus/compiler"
-	"github.com/josephjohncox/effectus/flow"
+	"github.com/josephjohncox/effectus/internal/flow"
 	"github.com/josephjohncox/effectus/pathutil"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/josephjohncox/effectus/schema/capability"

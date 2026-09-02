@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net"
@@ -16,17 +17,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/josephjohncox/effectus/adapters"
-	kafkaadapter "github.com/josephjohncox/effectus/adapters/kafka"
+	sourcebundle "github.com/josephjohncox/effectus/bundle"
+	"github.com/josephjohncox/effectus/internal/adapters"
+	kafkaadapter "github.com/josephjohncox/effectus/internal/adapters/kafka"
+	"github.com/josephjohncox/effectus/internal/loader"
 	"github.com/josephjohncox/effectus/internal/schemasources"
-	"github.com/josephjohncox/effectus/loader"
+	"github.com/josephjohncox/effectus/internal/unified"
 	"github.com/josephjohncox/effectus/pathutil"
 	effectusruntime "github.com/josephjohncox/effectus/runtime"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/josephjohncox/effectus/schema/capability"
 	"github.com/josephjohncox/effectus/schema/types"
 	"github.com/josephjohncox/effectus/schema/verb"
-	"github.com/josephjohncox/effectus/unified"
 )
 
 type namespaceStrategyFlag struct {
@@ -64,7 +66,7 @@ var (
 	// Configuration flags
 	configPath               = flag.String("config", "", "Path to YAML/JSON config file")
 	bundleFile               = flag.String("bundle", "", "Path to bundle file")
-	ociRef                   = flag.String("oci-ref", "", "OCI reference for bundle (e.g., ghcr.io/user/bundle:v1)")
+	ociRef                   = flag.String("oci-ref", "", "Digest-pinned OCI source bundle (for example, ghcr.io/user/bundle@sha256:...)")
 	ociCacheDir              = flag.String("oci-cache-dir", "./bundles", "Writable directory for OCI bundle cache")
 	ociSignatureVerifier     = flag.String("oci-signature-verifier", "", "Fixed executable used to verify an OCI reference and digest")
 	verbDir                  = flag.String("verb-dir", "", "Deprecated alias for --extensions-dir")
@@ -314,15 +316,35 @@ func main() {
 		}
 	}
 
-	// Load bundle
+	// Load either the canonical source bundle or the legacy compatibility bundle.
 	var bundle *unified.Bundle
+	var checkedSourceBundle *sourcebundle.SourceBundle
 	var err error
 
 	if *bundleFile != "" {
 		if *verbose {
 			fmt.Printf("Loading bundle from file: %s\n", *bundleFile)
 		}
-		bundle, err = unified.LoadBundle(*bundleFile)
+		data, readErr := os.ReadFile(*bundleFile)
+		if readErr != nil {
+			fmt.Fprintf(os.Stderr, "Error loading bundle: %v\n", readErr)
+			os.Exit(1)
+		}
+		var formatProbe struct {
+			FormatVersion string `json:"format_version"`
+		}
+		if probeErr := json.Unmarshal(data, &formatProbe); probeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error loading bundle: %v\n", probeErr)
+			os.Exit(1)
+		}
+		if formatProbe.FormatVersion == "" {
+			fmt.Fprintln(os.Stderr, "Error loading bundle: effectusd accepts only effectus.source-bundle.v1 files; use the compat module to read legacy bundles")
+			os.Exit(1)
+		}
+		checkedSourceBundle, err = sourcebundle.Parse(data)
+		if err == nil {
+			bundle = &unified.Bundle{Name: checkedSourceBundle.Name(), Version: checkedSourceBundle.Version()}
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading bundle: %v\n", err)
 			os.Exit(1)
@@ -335,12 +357,19 @@ func main() {
 		if *verbose {
 			fmt.Printf("Pulling bundle from OCI registry: %s\n", *ociRef)
 		}
-		puller := unified.NewOCIBundlePullerWithPolicy(*ociCacheDir, daemonOCIVerificationPolicy())
-		bundle, err = puller.Pull(*ociRef)
+		verification := daemonOCIVerificationPolicy()
+		checkedSourceBundle, err = sourcebundle.PullOCI(ctx, *ociRef, func(verifyContext context.Context, reference, digest string) error {
+			return verification.Verifier.Verify(verifyContext, reference, digest)
+		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error pulling bundle: %v\n", err)
 			os.Exit(1)
 		}
+		if err := cacheVerifiedSourceBundle(*ociCacheDir, checkedSourceBundle); err != nil {
+			fmt.Fprintf(os.Stderr, "Error caching verified source bundle: %v\n", err)
+			os.Exit(1)
+		}
+		bundle = &unified.Bundle{Name: checkedSourceBundle.Name(), Version: checkedSourceBundle.Version()}
 	}
 
 	fmt.Printf("Loaded bundle: %s v%s\n", bundle.Name, bundle.Version)
@@ -367,15 +396,27 @@ func main() {
 		}
 	}
 	extensionOCIs := splitCommaList(*extensionsOCI)
-	if err := loadVerbsAndExtensions(verbReg, extensionDirs, extensionOCIs); err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading verbs/extensions: %v\n", err)
+	// Source bundles contain their complete checked declaration and invocation
+	// manifests. Reject compatibility extensions before any legacy loader can
+	// construct an executor.
+	if checkedSourceBundle != nil && (len(extensionDirs) != 0 || len(extensionOCIs) != 0) {
+		fmt.Fprintln(os.Stderr, "Source bundles already contain immutable executor descriptors; external extension directories and OCI extensions are not allowed")
 		os.Exit(1)
 	}
+	if checkedSourceBundle == nil {
+		if err := loadVerbsAndExtensions(verbReg, extensionDirs, extensionOCIs); err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading verbs/extensions: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
-	// Verify the active contract before starting listeners or execution engines.
-	if err := validateBundleVerbHash(bundle.VerbHash, verbReg); err != nil {
-		fmt.Fprintf(os.Stderr, "Verb contract admission failed: %v\n", err)
-		os.Exit(1)
+	// Legacy bundles bind against the compatibility registry. Canonical source
+	// bundles carry and check their own declaration environment.
+	if checkedSourceBundle == nil {
+		if err := validateBundleVerbHash(bundle.VerbHash, verbReg); err != nil {
+			fmt.Fprintf(os.Stderr, "Verb contract admission failed: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	if bundle.ListSpec != nil || bundle.FlowSpec != nil {
@@ -416,7 +457,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	auth, err := buildAPIAuth(*apiAuthMode, *apiToken, *apiReadToken)
+	authMode := *apiAuthMode
+	if strings.TrimSpace(*httpAddr) == "" {
+		authMode = "disabled"
+	}
+	auth, err := buildAPIAuth(authMode, *apiToken, *apiReadToken)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error configuring API auth: %v\n", err)
 		os.Exit(1)
@@ -456,7 +501,7 @@ func main() {
 	needsCheckedEngine := true // HTTP, Kafka, and gRPC share one checked durable engine.
 	if needsCheckedEngine {
 		var configureErr error
-		execution, executionDB, configureErr = configureDaemonExecutionEngine(ctx, bundle, extensionDirs, extensionOCIs)
+		execution, executionDB, configureErr = configureDaemonSourceExecutionEngine(ctx, checkedSourceBundle)
 		if configureErr != nil {
 			fmt.Fprintf(os.Stderr, "Error creating checked execution engine: %v\n", configureErr)
 			os.Exit(1)
@@ -476,7 +521,7 @@ func main() {
 		}
 	}
 	if strings.EqualFold(strings.TrimSpace(*factSource), "kafka") {
-		kafkaHandler, err = newDaemonKafkaHandler(bundle, execution)
+		kafkaHandler, err = newDaemonKafkaHandler(execution)
 		if err == nil {
 			kafkaSource, err = configureDaemonKafkaSource(executionDB)
 		}
@@ -489,7 +534,7 @@ func main() {
 		setMetricsKafkaSource(kafkaSource)
 	}
 	if strings.TrimSpace(*grpcAddr) != "" {
-		grpcExecutionServer, err = configureDaemonGRPCServer(execution, bundle)
+		grpcExecutionServer, err = configureDaemonGRPCServer(execution)
 		if err == nil {
 			state.SetGRPCServer(grpcExecutionServer)
 		}
@@ -737,7 +782,7 @@ func loadVerbsAndExtensions(verbReg *verb.Registry, extensionDirs []string, exte
 		}
 
 		registry := schema.NewRegistry()
-		if err := schema.LoadExtensionsIntoRegistries(em, registry, verbReg); err != nil {
+		if err := em.LoadExtensions(context.Background(), loader.NewRegistryAdapter(registry, verbReg)); err != nil {
 			return fmt.Errorf("loading extension manifests: %w", err)
 		}
 	}
@@ -767,13 +812,13 @@ func validateBundleVerbHash(bundleHash string, registry *verb.Registry) error {
 
 func validateBundleArguments(bundle, oci string, reload time.Duration) error {
 	if bundle == "" && oci == "" {
-		return fmt.Errorf("either -bundle or -oci-ref must be specified")
+		return fmt.Errorf("either --bundle or --oci-ref must specify a source bundle")
 	}
 	if bundle != "" && oci != "" {
-		return fmt.Errorf("use either -bundle or -oci-ref, not both")
+		return fmt.Errorf("use either --bundle or --oci-ref, not both")
 	}
-	if oci != "" && reload > 0 {
-		return fmt.Errorf("--reload-interval cannot poll an immutable OCI reference; publish and deploy a new digest instead")
+	if reload > 0 {
+		return fmt.Errorf("--reload-interval cannot poll an immutable source bundle; deploy a new process instead")
 	}
 	return nil
 }

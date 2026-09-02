@@ -12,8 +12,6 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
-    ports:
-      - "55434:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
@@ -23,17 +21,18 @@ services:
       dockerfile: examples/standalone_executor/Dockerfile
     environment:
       BUSINESS_POSTGRES_DSN: postgres://effectus:effectus@postgres:5432/effectus?sslmode=disable
-      EXECUTOR_TOKEN: ${EXECUTOR_TOKEN:-local-example-only}
+      EXECUTOR_TOKEN: ${EXECUTOR_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - "8090:8090"
+      - "127.0.0.1:${EXECUTOR_DEMO_HTTP_PORT:-8090}:8090"
 
   migrate:
     build:
       context: ../..
       dockerfile: Dockerfile
+    image: ${EFFECTUS_IMAGE:-effectus-demo-current}
     environment:
       EFFECTUS_POSTGRES_DSN: postgres://effectus:effectus@postgres:5432/effectus?sslmode=disable
     command: ["--database-migrations=apply"]
@@ -47,14 +46,13 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
+    image: ${EFFECTUS_IMAGE:-effectus-demo-current}
     environment:
-      EFFECTUS_API_TOKEN: ${EFFECTUS_API_TOKEN:-effectus-demo-token}
+      EFFECTUS_API_TOKEN: ${EFFECTUS_API_TOKEN:-}
       EFFECTUS_POSTGRES_DSN: postgres://effectus:effectus@postgres:5432/effectus?sslmode=disable
     command:
       - --bundle
       - /config/bundle.json
-      - --extensions-dir
-      - /config/extensions
       - --facts-store
       - memory
       - --http-addr
@@ -67,13 +65,12 @@ services:
       migrate:
         condition: service_completed_successfully
     ports:
-      - "18080:8080"
+      - "127.0.0.1:${EFFECTUS_DEMO_HTTP_PORT:-18080}:8080"
     read_only: true
     tmpfs:
       - /data:mode=1777
     volumes:
       - ../../out/standalone_executor/bundle.json:/config/bundle.json:ro
-      - ../../out/standalone_executor/extensions:/config/extensions:ro
 
 volumes:
   postgres-data:

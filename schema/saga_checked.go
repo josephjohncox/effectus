@@ -17,7 +17,7 @@ type CheckedEnqueueRequest struct {
 	EffectID              string
 	Facts                 map[string]any
 	ResultSlots           []any
-	Arguments             map[string]any // Deprecated: accepted only when identical to resolved checked arguments.
+	Arguments             map[string]any // Deprecated: accepted only when identical to resolved checked arguments. Removal deadline: 2027-09-01.
 	CompensationVerb      string
 	CompensationContract  string
 	CompensationArguments map[string]any

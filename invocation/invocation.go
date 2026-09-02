@@ -84,12 +84,6 @@ type Executor interface {
 	Invoke(context.Context, Request) Outcome
 }
 
-// ResolverDescriptorProvider returns immutable, JSON-serializable resolver
-// input covered by a generation digest.
-type ResolverDescriptorProvider interface {
-	InvocationResolverDescriptor() any
-}
-
 // ValidateOutcome rejects incomplete or contradictory classifications.
 func ValidateOutcome(outcome Outcome) error {
 	switch outcome.Class {

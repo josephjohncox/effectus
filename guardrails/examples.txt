@@ -1,0 +1,5 @@
+# Approved immediate example directories.
+# Do not update this file without an intentional surface review.
+embedded_orders
+grpc_execution
+standalone_executor

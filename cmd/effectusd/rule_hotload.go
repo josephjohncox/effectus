@@ -17,12 +17,12 @@ import (
 	"github.com/alecthomas/participle/v2/lexer"
 	"github.com/josephjohncox/effectus"
 	"github.com/josephjohncox/effectus/compiler"
+	"github.com/josephjohncox/effectus/internal/unified"
 	"github.com/josephjohncox/effectus/lint"
 	"github.com/josephjohncox/effectus/pathutil"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/josephjohncox/effectus/schema/types"
 	"github.com/josephjohncox/effectus/schema/verb"
-	"github.com/josephjohncox/effectus/unified"
 )
 
 var positionPattern = regexp.MustCompile(`:(\d+):(\d+)`)
@@ -344,9 +344,17 @@ func (s *serverState) evaluateRuleHotload(req ruleHotloadRequest, apply bool) ru
 		}
 		recordRuleCompile()
 
+		listSpec, flowSpec, err := compiledLegacySpecs(spec)
+		if err != nil {
+			issues = append(issues, issueFromError("compile", err))
+			if apply {
+				recordHotloadFailure()
+			}
+			return ruleCheckResponse{OK: false, Diagnostics: issuesToDiagnostics(issues), SourceDiff: sourceDiff}
+		}
 		next := *bundle
-		next.ListSpec = spec.ListSpec()
-		next.FlowSpec = spec.FlowSpec()
+		next.ListSpec = listSpec
+		next.FlowSpec = flowSpec
 		next.Rules = unified.SummarizeRules(next.ListSpec)
 		next.Flows = unified.SummarizeFlows(next.FlowSpec)
 		next.RequiredFacts = spec.RequiredFacts()

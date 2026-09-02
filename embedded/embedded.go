@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/josephjohncox/effectus/internal/loader"
 	"github.com/josephjohncox/effectus/invocation"
-	"github.com/josephjohncox/effectus/loader"
 	effectusruntime "github.com/josephjohncox/effectus/runtime"
 	"github.com/josephjohncox/effectus/schema"
 )
@@ -323,8 +323,14 @@ func (executor *localExecutor) Invoke(ctx context.Context, request invocation.Re
 	return outcome
 }
 
-func (executor *localExecutor) InvocationResolverDescriptor() any {
-	return map[string]any{"type": "embedded", "handler_id": executor.handlerID}
+func (executor *localExecutor) InvocationResolverDescriptor() (invocation.Descriptor, error) {
+	if executor == nil {
+		return invocation.Descriptor{}, fmt.Errorf("embedded executor is nil")
+	}
+	return invocation.NewDescriptor(invocation.DescriptorSpec{
+		Type: invocation.DescriptorEmbedded, Reference: executor.handlerID,
+		Settings: map[string]string{"handler_id": executor.handlerID},
+	})
 }
 
 func validateVerb(verb Verb) error {

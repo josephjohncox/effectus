@@ -77,10 +77,10 @@ jobs:
           {
             echo "version=$version"
             echo "image=ghcr.io/$owner/effectusd:$version"
-            echo "bundle=ghcr.io/$owner/bundles/flow-ui-demo:$version"
+            echo "bundle=ghcr.io/$owner/bundles/order-review:$version"
             echo "chart=ghcr.io/$owner/helm/effectusd:$version"
             echo "image_repo=ghcr.io/$owner/effectusd"
-            echo "bundle_repo=ghcr.io/$owner/bundles/flow-ui-demo"
+            echo "bundle_repo=ghcr.io/$owner/bundles/order-review"
             echo "chart_repo=ghcr.io/$owner/helm/effectusd"
             echo "chart_stage_repo=ghcr.io/$owner/helm-staging-${GITHUB_SHA}/effectusd"
           } >> "$GITHUB_OUTPUT"
@@ -98,6 +98,7 @@ jobs:
       - name: Build all local release inputs
         env:
           VERSION: ${{ steps.release.outputs.version }}
+          SOURCE_DATE_EPOCH: "0"
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -120,24 +121,23 @@ jobs:
               go build -trimpath -ldflags="-s -w -buildid=" \
               -o "$work/effectusd$suffix" ./cmd/effectusd
             if [ "$os" = windows ]; then
-              (cd "$work" && zip -q "../$archive" ./*)
+              (cd "$work" && touch -d "@$SOURCE_DATE_EPOCH" ./* && zip -X -q "../$archive" ./*)
             else
-              tar --sort=name --mtime="@${SOURCE_DATE_EPOCH:-0}" \
+              tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" \
                 --owner=0 --group=0 --numeric-owner -C "$work" \
                 -czf "dist/$archive" .
             fi
             rm -rf "$work"
           done
           go run ./cmd/effectusc bundle \
-            --name flow-ui-demo --version "$VERSION" \
-            --schema-dir examples/flow_ui_demo/schema \
-            --verb-dir examples/flow_ui_demo/verbs \
-            --verbschema examples/flow_ui_demo/schema/flow_verbs.json \
-            --rules-dir examples/flow_ui_demo/rules \
-            --output "dist/flow-ui-demo-${VERSION}.json"
+            --name order-review --version "$VERSION" \
+            --schema-dir examples/standalone_executor/schema \
+            --verb-dir examples/standalone_executor/extensions \
+            --rules-dir examples/order_review/rules \
+            --output "dist/order-review-${VERSION}.json"
           helm package charts/effectusd --destination dist \
             --version "$VERSION" --app-version "$VERSION"
-          docker build --build-arg SOURCE_DATE_EPOCH="$(git show -s --format=%ct)" \
+          docker build --build-arg SOURCE_DATE_EPOCH=0 \
             --tag effectus:release .
 
       - name: Build VS Code extension
@@ -163,7 +163,7 @@ jobs:
             --ignore-unfixed --exit-code 1 effectus:release
           syft effectus:release -o cyclonedx-json=dist/image-sbom.cdx.json
           syft "dir:charts/effectusd" -o cyclonedx-json=dist/chart-sbom.cdx.json
-          syft "file:dist/flow-ui-demo-${VERSION}.json" \
+          syft "file:dist/order-review-${VERSION}.json" \
             -o cyclonedx-json=dist/bundle-sbom.cdx.json
           printf '{"buildType":"https://github.com/%s/.github/workflows/publish.yml","builder":{"id":"https://github.com/actions/runner"},"invocation":{"configSource":{"uri":"git+https://github.com/%s@%s","digest":{"sha1":"%s"}}}}\n' \
             "$GITHUB_REPOSITORY" "$GITHUB_REPOSITORY" "$GITHUB_REF" "$GITHUB_SHA" \
@@ -206,14 +206,15 @@ jobs:
           image_stage="${IMAGE_REPO}:staging-${GITHUB_SHA}"
           bundle_stage="${BUNDLE_REPO}:staging-${GITHUB_SHA}"
           docker buildx build --platform linux/amd64,linux/arm64 \
-            --build-arg SOURCE_DATE_EPOCH="$(git show -s --format=%ct)" \
+            --build-arg SOURCE_DATE_EPOCH=0 \
             --provenance=mode=max --sbom=true --push --tag "$image_stage" .
           go run ./cmd/effectusc bundle \
-            --name flow-ui-demo --version "$VERSION" \
-            --schema-dir examples/flow_ui_demo/schema \
-            --verb-dir examples/flow_ui_demo/verbs \
-            --verbschema examples/flow_ui_demo/schema/flow_verbs.json \
-            --rules-dir examples/flow_ui_demo/rules --oci-ref "$bundle_stage"
+            --name order-review --version "$VERSION" \
+            --schema-dir examples/standalone_executor/schema \
+            --verb-dir examples/standalone_executor/extensions \
+            --rules-dir examples/order_review/rules \
+            --output "dist/order-review-${VERSION}.json" \
+            --oci-ref "$bundle_stage"
           helm push "dist/effectusd-${VERSION}.tgz" \
             "oci://${CHART_STAGE_REPO%/effectusd}"
           image_digest=$(crane digest "$image_stage")
@@ -353,3 +354,36 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --verify-tag --notes-file "docs/releases/v${VERSION}.md" \
             --title "Effectus $GITHUB_REF_NAME"
+
+  # The release job creates the root release completion marker as its last step.
+  # Do not resolve the public module before that release exists.
+  compatibility-proxy-smoke:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout released root module
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Resolve v0.3 compatibility packages from the Go proxy after root release
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME#v}"
+          for attempt in $(seq 1 20); do
+            if scripts/compat-proxy-smoke.sh "$version"; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 20 ]; then
+              exit 1
+            fi
+            sleep 15
+          done

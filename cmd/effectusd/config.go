@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/josephjohncox/effectus/adapters"
+	"github.com/josephjohncox/effectus/internal/adapters"
 	"gopkg.in/yaml.v3"
 )
 
@@ -202,10 +202,10 @@ func applyRuntimeConfig(cfg *runtimeConfig, setFlags map[string]bool) error {
 		return fmt.Errorf("kafka.poison_audit and kafka.delivery_ledger are no longer supported; remove them because PostgreSQL table effectus_kafka_deliveries is authoritative")
 	}
 
-	if cfg.Bundle.File != "" && !setFlags["bundle"] {
+	// The source selectors are mutually exclusive. A CLI selector overrides the
+	// complete configured source, not merely its matching configuration field.
+	if !setFlags["bundle"] && !setFlags["oci-ref"] {
 		*bundleFile = cfg.Bundle.File
-	}
-	if cfg.Bundle.OCI != "" && !setFlags["oci-ref"] {
 		*ociRef = cfg.Bundle.OCI
 	}
 	if cfg.Bundle.CacheDir != "" && !setFlags["oci-cache-dir"] {

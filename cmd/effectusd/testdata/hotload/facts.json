@@ -1,0 +1,18 @@
+[
+  {
+    "path": "transaction.id",
+    "type": {"PrimType": 4, "Name": "string"}
+  },
+  {
+    "path": "transaction.amount",
+    "type": {"PrimType": 3, "Name": "float"}
+  },
+  {
+    "path": "customer.id",
+    "type": {"PrimType": 4, "Name": "string"}
+  },
+  {
+    "path": "customer.risk_score",
+    "type": {"PrimType": 2, "Name": "int"}
+  }
+]

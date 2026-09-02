@@ -1,33 +1,27 @@
 # Embedded Order Review
 
-This example embeds the checked Effectus runtime in a Go service. It does not start `effectusd`.
+This example is the embedded first-run implementation. Use the [Getting Started guide](../../docs/GETTING_STARTED.md) for the tested command and expected output.
+
+## Runtime behavior
 
 The application performs these actions:
 
-1. Declares typed order facts.
-2. Registers an invocation-aware Go business handler.
-3. Compiles an embedded `.eff` rule into checked IR.
-4. Executes a high-value order through `runtime.Engine`.
-5. Replays the same idempotency key without a duplicate review.
+1. It loads the shared order-review rule.
+2. It declares typed order facts.
+3. It registers an invocation-aware Go handler.
+4. It compiles the rule to checked IR.
+5. It derives the embedded request and idempotency key from the shared scenario artifact.
+6. It replays the idempotency key without a duplicate review.
 
-Run the example from the repository root:
+The default ledger and outbox are process-local. The application creates no persistent state.
 
-```bash
-cd examples
-go run ./embedded_orders
-```
+## File map
 
-The output contains one execution ID and one review:
+| File | Purpose |
+| --- | --- |
+| `main.go` | Defines the handler, builds the checked application, and checks replay |
+| `../../internal/demo/orderreview/` | Provides the internal demo reader for the shared scenario assets |
+| `../order_review/rules/order_review.eff` | Contains the shared checked rule |
+| `../order_review/data/order.json` | Contains the shared idempotency key and HTTP request |
 
-```json
-{
-  "completed": true,
-  "execution_id": "...",
-  "replayed_execution": "...",
-  "review_count": 1
-}
-```
-
-Use embedded mode when the host application owns process lifecycle and business handlers. The default embedded stores are process-local.
-
-Use `effectusd` when executions must survive a process or host restart. See the [standalone executor example](../standalone_executor/README.md).
+Use the durable path when execution state must survive a process restart.

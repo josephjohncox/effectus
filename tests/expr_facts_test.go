@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/josephjohncox/effectus/pathutil"
 	"github.com/expr-lang/expr"
+	"github.com/josephjohncox/effectus/pathutil"
 	"github.com/stretchr/testify/assert"
 )
 

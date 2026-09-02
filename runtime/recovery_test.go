@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/josephjohncox/effectus/internal/loader"
 	"github.com/josephjohncox/effectus/invocation"
-	"github.com/josephjohncox/effectus/loader"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/stretchr/testify/require"
 )

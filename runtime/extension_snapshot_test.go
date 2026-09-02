@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/josephjohncox/effectus/loader"
+	"github.com/josephjohncox/effectus/internal/loader"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/stretchr/testify/require"
 )
@@ -89,8 +89,10 @@ func TestHotReloadPublicationSurvivesPreviousCloserFailure(t *testing.T) {
 
 	require.NoError(t, runtime.HotReload(t.Context()), "cleanup failure cannot reject a committed publication")
 	require.Equal(t, StateReady, runtime.GetRuntimeInfo().State)
-	require.False(t, runtime.activeGeneration.unit.ExtensionSnapshot.Closed())
-	handle, err := runtime.activeGeneration.unit.ExtensionSnapshot.Acquire()
+	snapshot, err := extensionSnapshot(runtime.activeGeneration.unit)
+	require.NoError(t, err)
+	require.False(t, snapshot.Closed())
+	handle, err := snapshot.Acquire()
 	require.NoError(t, err, "installed candidate must remain acquirable")
 	require.NoError(t, handle.Release())
 	require.Equal(t, int32(1), first.closed.Load())

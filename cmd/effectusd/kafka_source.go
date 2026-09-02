@@ -14,12 +14,14 @@ import (
 	"sync"
 	"time"
 
-	kafkaadapter "github.com/josephjohncox/effectus/adapters/kafka"
-	"github.com/josephjohncox/effectus/loader"
+	"github.com/josephjohncox/effectus/bundle"
+	kafkaadapter "github.com/josephjohncox/effectus/internal/adapters/kafka"
+	"github.com/josephjohncox/effectus/internal/loader"
+	"github.com/josephjohncox/effectus/internal/unified"
+	"github.com/josephjohncox/effectus/invocation"
 	effectusruntime "github.com/josephjohncox/effectus/runtime"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/josephjohncox/effectus/schema/fencing"
-	"github.com/josephjohncox/effectus/unified"
 	_ "github.com/lib/pq"
 )
 
@@ -94,16 +96,55 @@ func configureDaemonExecutionEngine(ctx context.Context, bundle *unified.Bundle,
 	if execution.GetRuntimeInfo().PlanCount == 0 {
 		return nil, nil, fmt.Errorf("checked transport execution requires at least one canonical .eff or .effx plan")
 	}
+	return configureDaemonPersistence(ctx, execution, nil)
+}
+
+func daemonInvocationRegistry() (*invocation.Registry, error) {
+	return invocation.NewRegistry([]invocation.ResolverRegistration{{
+		ID: invocation.HTTPResolverID, Resolver: invocation.HTTPResolver{},
+	}})
+}
+
+func configureDaemonSourceExecutionEngine(ctx context.Context, sourceBundle *bundle.SourceBundle) (*effectusruntime.ExecutionRuntime, *sql.DB, error) {
+	if sourceBundle == nil {
+		return nil, nil, fmt.Errorf("source bundle is required")
+	}
+	registry, err := daemonInvocationRegistry()
+	if err != nil {
+		return nil, nil, fmt.Errorf("configure invocation resolvers: %w", err)
+	}
+	generation, err := effectusruntime.CompileGeneration(ctx, effectusruntime.GenerationBuildConfig{
+		Bundle: sourceBundle, Resolvers: registry, Production: true,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("compile source-bundle generation: %w", err)
+	}
+	execution := effectusruntime.NewExecutionRuntime()
+	if err := execution.PublishGeneration(generation); err != nil {
+		_ = generation.Close()
+		_ = execution.Close()
+		return nil, nil, err
+	}
+	return configureDaemonPersistence(ctx, execution, registry)
+}
+
+func configureDaemonPersistence(ctx context.Context, execution *effectusruntime.ExecutionRuntime, registry *invocation.Registry) (*effectusruntime.ExecutionRuntime, *sql.DB, error) {
+	if strings.TrimSpace(*postgresDSN) == "" {
+		_ = execution.Close()
+		return nil, nil, fmt.Errorf("checked transport execution requires EFFECTUS_POSTGRES_DSN or protected database.dsn configuration")
+	}
 	db, err := openDaemonDatabase()
 	if err != nil {
+		_ = execution.Close()
 		return nil, nil, err
 	}
 	closeOnError := func(err error) (*effectusruntime.ExecutionRuntime, *sql.DB, error) {
 		_ = db.Close()
+		_ = execution.Close()
 		return nil, nil, err
 	}
 	if err := db.PingContext(ctx); err != nil {
-		return closeOnError(fmt.Errorf("connect Kafka execution ledger: %w", err))
+		return closeOnError(fmt.Errorf("connect execution ledger: %w", err))
 	}
 	switch strings.ToLower(strings.TrimSpace(*databaseMigrations)) {
 	case "validate":
@@ -130,7 +171,7 @@ func configureDaemonExecutionEngine(ctx context.Context, bundle *unified.Bundle,
 	if err := execution.ConfigureDurableWorkflowExecution(store, fencingProvider, schema.DispatcherOptions{Owner: "effectusd", RequireDurableFencing: true}); err != nil {
 		return closeOnError(err)
 	}
-	if err := execution.ConfigureExecutionLedger(store, effectusruntime.NewManifestArtifactResolver()); err != nil {
+	if err := execution.ConfigureExecutionLedger(store, effectusruntime.NewManifestArtifactResolver(registry)); err != nil {
 		return closeOnError(err)
 	}
 	return execution, db, nil
@@ -418,16 +459,17 @@ func newDaemonRecoveryWorker(execution *effectusruntime.ExecutionRuntime, db *sq
 	return &effectusruntime.RecoveryWorker{Engine: execution.Engine(), Store: store, Owner: "effectusd-kafka-recovery", BatchSize: 32, LeaseDuration: 30 * time.Second, PollInterval: 250 * time.Millisecond}, nil
 }
 
-func newDaemonKafkaHandler(bundle *unified.Bundle, execution *effectusruntime.ExecutionRuntime) (kafkaadapter.Handler, error) {
-	if bundle == nil || execution == nil {
-		return nil, fmt.Errorf("Kafka checked runtime and bundle are required")
+func newDaemonKafkaHandler(execution *effectusruntime.ExecutionRuntime) (kafkaadapter.Handler, error) {
+	if execution == nil || execution.Engine().GenerationView() == nil {
+		return nil, fmt.Errorf("active checked generation is required for Kafka")
 	}
+	generation := execution.Engine().GenerationView()
 	wait := effectusruntime.WaitTerminal
 	if kafkaadapter.AckContract(strings.TrimSpace(*kafkaAckContract)) == kafkaadapter.AckAfterDurableAcceptance {
 		wait = effectusruntime.WaitAccepted
 	}
 	return kafkaadapter.NewEngineHandler(kafkaadapter.EngineHandlerConfig{
-		Ruleset: bundle.Name, Version: bundle.Version, DefaultTenant: "default", WaitMode: wait,
+		Ruleset: generation.Ruleset, Version: generation.Version, DefaultTenant: "default", WaitMode: wait,
 	}, execution.Engine())
 }
 

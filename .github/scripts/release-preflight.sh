@@ -14,11 +14,24 @@ if [ "${GITHUB_REF_TYPE:-}" != "tag" ] || [ "${GITHUB_REF_NAME:-}" != "v$version
   echo "release source must be the v$version tag" >&2
   exit 1
 fi
-case "$version" in
-  *[!0-9A-Za-z.+-]*|"") echo "invalid release version: $version" >&2; exit 1 ;;
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+"$script_dir/validate-release-version.sh" "$version"
+bundle_prefix="ghcr.io/"
+bundle_suffix="/bundles/order-review:$version"
+case "$bundle_ref" in
+  "$bundle_prefix"*"$bundle_suffix")
+    bundle_owner=${bundle_ref#"$bundle_prefix"}
+    bundle_owner=${bundle_owner%"$bundle_suffix"}
+    ;;
+  *)
+    echo "release bundle must use ghcr.io/OWNER/bundles/order-review:$version" >&2
+    exit 1
+    ;;
 esac
-if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'; then
-  echo "release version is not semantic: $version" >&2
+# GHCR owners are exactly one lowercase repository path component. Checking
+# the extracted owner, rather than a glob, prevents empty and nested owners.
+if ! printf '%s\n' "$bundle_owner" | grep -Eq '^[a-z0-9]+([._-][a-z0-9]+)*$'; then
+  echo "release bundle must use a single lowercase ghcr.io owner" >&2
   exit 1
 fi
 

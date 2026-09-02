@@ -15,13 +15,13 @@ import (
 	"strings"
 
 	"github.com/josephjohncox/effectus"
+	"github.com/josephjohncox/effectus/bundle"
 	"github.com/josephjohncox/effectus/compiler"
 	"github.com/josephjohncox/effectus/internal/schemasources"
 	"github.com/josephjohncox/effectus/lint"
 	"github.com/josephjohncox/effectus/pathutil"
 	"github.com/josephjohncox/effectus/schema/types"
 	"github.com/josephjohncox/effectus/schema/verb"
-	"github.com/josephjohncox/effectus/unified"
 )
 
 // Command represents a sub-command of effectusc
@@ -284,7 +284,7 @@ func defineCommands() {
 	bVerbMode := bundleCmd.FlagSet.String("verbs", "error", "Verb lint policy: error, warn, ignore")
 	bFailOnWarn := bundleCmd.FlagSet.Bool("fail-on-warn", false, "Return non-zero exit code when warnings are present")
 	bOutput := bundleCmd.FlagSet.String("output", "bundle.json", "Output file for bundle")
-	bOciRef := bundleCmd.FlagSet.String("oci-ref", "", "OCI reference to push bundle to (e.g., ghcr.io/user/bundle:v1)")
+	bOciRef := bundleCmd.FlagSet.String("oci-ref", "", "OCI publication target; prints the digest-pinned source-bundle reference to deploy")
 	bPiiMasks := bundleCmd.FlagSet.String("pii-masks", "", "Comma-separated list of PII paths to mask")
 	bVerbose := bundleCmd.FlagSet.Bool("verbose", false, "Show detailed output")
 
@@ -298,50 +298,36 @@ func defineCommands() {
 			return fmt.Errorf("at least one of schema-dir, verb-dir, or rules-dir must be specified")
 		}
 
-		// Create a bundle builder
-		builder := unified.NewBundleBuilder(*bName, *bVersion)
-		builder.WithDescription(*bDesc)
-
-		if *bSchemaDir != "" {
-			if *bVerbose {
-				fmt.Printf("Using schema directory: %s\n", *bSchemaDir)
-			}
-			builder.WithSchemaDir(*bSchemaDir)
+		ruleFiles, err := collectRuleFiles(*bRulesDir)
+		if err != nil {
+			return fmt.Errorf("collecting rule files: %w", err)
 		}
-
-		if *bVerbSchemas != "" {
-			paths := expandSchemaPaths(strings.Split(*bVerbSchemas, ","))
-			verbSpecFiles := make([]string, 0, len(paths))
-			for _, path := range paths {
-				if filepath.Ext(path) == ".json" {
-					verbSpecFiles = append(verbSpecFiles, path)
-				}
+		_, typeSystem, schemaErr := createEmptyFacts(*bSchemaDir, *bVerbose)
+		if strings.TrimSpace(*bSchemaSources) != "" {
+			declarations, sourceErr := schemasources.LoadFromFile(*bSchemaSources)
+			if sourceErr != nil {
+				schemaErr = errors.Join(schemaErr, sourceErr)
+			} else {
+				schemaErr = errors.Join(schemaErr, schemasources.Apply(context.Background(), typeSystem, declarations, *bVerbose))
 			}
-			if *bVerbose {
-				fmt.Printf("Loading %d verb spec files\n", len(verbSpecFiles))
-			}
-			builder.WithVerbSpecFiles(verbSpecFiles)
 		}
-
-		if *bVerbDir != "" {
-			if *bVerbose {
-				fmt.Printf("Using verb directory: %s\n", *bVerbDir)
-			}
-			builder.WithVerbDir(*bVerbDir)
+		verbSchemaInputs := splitCommaList(*bVerbSchemas)
+		registry, verbErr := loadVerbRegistry(verbSchemaInputs, *bVerbose)
+		if registry == nil {
+			registry = verb.NewRegistry(typeSystem)
 		}
-
-		if *bRulesDir != "" {
-			if *bVerbose {
-				fmt.Printf("Using rules directory: %s\n", *bRulesDir)
-			}
-			builder.WithRulesDir(*bRulesDir)
+		manifestInputs := []string{}
+		if strings.TrimSpace(*bVerbDir) != "" {
+			manifestInputs = append(manifestInputs, *bVerbDir)
+		}
+		manifestErr := loadSourceManifestVerbs(manifestInputs, registry)
+		descriptorInputs := append(append([]string(nil), verbSchemaInputs...), manifestInputs...)
+		descriptors, descriptorErr := loadBundleDescriptors(descriptorInputs)
+		if err := errors.Join(schemaErr, verbErr, manifestErr, descriptorErr); err != nil {
+			return err
 		}
 
 		if *bCheck {
-			ruleFiles, err := collectRuleFiles(*bRulesDir)
-			if err != nil {
-				return fmt.Errorf("collecting rule files: %w", err)
-			}
 			if len(ruleFiles) > 0 {
 				unsafeMode, err := lint.ParseUnsafeMode(*bUnsafe)
 				if err != nil {
@@ -350,15 +336,6 @@ func defineCommands() {
 				verbMode, err := lint.ParseVerbMode(*bVerbMode)
 				if err != nil {
 					return err
-				}
-
-				var registry *verb.Registry
-				if *bVerbDir != "" {
-					verbFiles := expandSchemaPaths([]string{*bVerbDir})
-					registry, err = loadVerbRegistry(verbFiles, *bVerbose)
-					if err != nil {
-						return err
-					}
 				}
 
 				if verbMode != lint.VerbIgnore && registry == nil {
@@ -388,60 +365,68 @@ func defineCommands() {
 			}
 		}
 
-		// Add PII masks if specified
-		if *bPiiMasks != "" {
-			masks := strings.Split(*bPiiMasks, ",")
-			if *bVerbose {
-				fmt.Printf("Adding %d PII masks\n", len(masks))
-			}
-			builder.WithPIIMasks(masks)
-		}
-
-		// Build the bundle
-		bundle, err := builder.Build()
+		environment, err := compiler.BuildIREnvironment(typeSystem, registry)
 		if err != nil {
-			return fmt.Errorf("building bundle: %w", err)
+			return err
 		}
-
-		// Show bundle info
-		fmt.Printf("Created bundle: %s v%s\n", bundle.Name, bundle.Version)
-		fmt.Printf("Schema files: %d\n", len(bundle.SchemaFiles))
-		fmt.Printf("Verb files: %d\n", len(bundle.VerbFiles))
-		fmt.Printf("Rule files: %d\n", len(bundle.RuleFiles))
-
-		// Save the bundle
-		if err := unified.SaveBundle(bundle, *bOutput); err != nil {
-			return fmt.Errorf("saving bundle to %s: %w", *bOutput, err)
+		compilerSources, err := compiler.LoadSources(ruleFiles)
+		if err != nil {
+			return err
 		}
+		if _, err := compiler.CompileChecked(context.Background(), compilerSources, environment, compiler.CompileOptions{}); err != nil {
+			return fmt.Errorf("validate source bundle: %w", err)
+		}
+		sources := make([]bundle.Source, 0, len(ruleFiles))
+		for _, filename := range ruleFiles {
+			content, err := os.ReadFile(filename)
+			if err != nil {
+				return fmt.Errorf("read bundle source %s: %w", filename, err)
+			}
+			relative := filepath.Base(filename)
+			if strings.TrimSpace(*bRulesDir) != "" {
+				relative, err = filepath.Rel(*bRulesDir, filename)
+				if err != nil {
+					return fmt.Errorf("normalize bundle source %s: %w", filename, err)
+				}
+			}
+			sources = append(sources, bundle.Source{Path: filepath.ToSlash(relative), Content: string(content)})
+		}
+		metadata := map[string]string{}
+		if strings.TrimSpace(*bDesc) != "" {
+			metadata["description"] = strings.TrimSpace(*bDesc)
+		}
+		if strings.TrimSpace(*bPiiMasks) != "" {
+			metadata["pii_masks"] = strings.Join(splitCommaList(*bPiiMasks), ",")
+		}
+		sourceBundle, err := bundle.New(bundle.Spec{
+			Name: *bName, Version: *bVersion, Sources: sources, Environment: environment,
+			Executors: descriptors, Metadata: metadata,
+		})
+		if err != nil {
+			return fmt.Errorf("build source bundle: %w", err)
+		}
+		data, err := sourceBundle.Bytes()
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(*bOutput, data, 0o644); err != nil {
+			return fmt.Errorf("write source bundle %s: %w", *bOutput, err)
+		}
+		digest, err := sourceBundle.Digest()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Created source bundle: %s v%s\n", sourceBundle.Name(), sourceBundle.Version())
+		fmt.Printf("Source files: %d\n", len(sourceBundle.Sources()))
+		fmt.Printf("Bundle digest: %s\n", digest)
 		fmt.Printf("Bundle saved to %s\n", *bOutput)
-
-		// Push to OCI registry if specified
-		if *bOciRef != "" {
-			if *bVerbose {
-				fmt.Printf("Pushing bundle to %s\n", *bOciRef)
+		if reference := strings.TrimSpace(*bOciRef); reference != "" {
+			pinned, err := sourceBundle.PublishOCI(context.Background(), reference)
+			if err != nil {
+				return err
 			}
-
-			pusher := unified.NewOCIBundlePusher(bundle)
-
-			if *bSchemaDir != "" {
-				pusher.WithSchemaDir(*bSchemaDir)
-			}
-
-			if *bVerbDir != "" {
-				pusher.WithVerbDir(*bVerbDir)
-			}
-
-			if *bRulesDir != "" {
-				pusher.WithRulesDir(*bRulesDir)
-			}
-
-			if err := pusher.Push(*bOciRef); err != nil {
-				return fmt.Errorf("pushing bundle to %s: %w", *bOciRef, err)
-			}
-
-			fmt.Printf("Bundle pushed to %s\n", *bOciRef)
+			fmt.Printf("Bundle published; deploy only this digest-pinned reference: %s\n", pinned)
 		}
-
 		return nil
 	}
 

@@ -1,0 +1,31 @@
+# Approved top-level product directories.
+# Do not update this file without an intentional surface review.
+.cursor
+.github
+analysis
+ast
+bundle
+charts
+cmd
+common
+compat
+compiler
+docs
+effectus
+embedded
+examples
+executorhttp
+formal
+gen
+guardrails
+internal
+invocation
+ir
+lint
+pathutil
+runtime
+schema
+scripts
+tests
+tools
+util

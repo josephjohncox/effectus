@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/josephjohncox/effectus/flow"
-	"github.com/josephjohncox/effectus/list"
-	"github.com/josephjohncox/effectus/unified"
+	"github.com/josephjohncox/effectus/internal/flow"
+	"github.com/josephjohncox/effectus/internal/list"
+	"github.com/josephjohncox/effectus/internal/unified"
 )
 
 type bundleHistory struct {

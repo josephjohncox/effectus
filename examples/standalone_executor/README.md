@@ -1,95 +1,44 @@
-# Standalone Business Executor
+# Durable Order Review
 
-This example runs Effectus as infrastructure. A separate Go service owns the business mutation.
+This example is the durable first-run implementation. Use the [Getting Started guide](../../docs/GETTING_STARTED.md) for prerequisites, commands, output, ports, cleanup, and troubleshooting.
 
-The stack contains these services:
+## Service map
 
-- `effectusd` compiles and executes the checked order rule.
-- PostgreSQL stores Effectus execution state and business review records.
-- `business-executor` receives invocation-aware HTTP calls from `effectusd`.
-- The executor enforces the Effectus idempotency key in a PostgreSQL table.
+| Service | Purpose | State |
+| --- | --- | --- |
+| `effectusd` | Admits the order and dispatches checked invocations | PostgreSQL |
+| `migrate` | Applies the Effectus schema before daemon startup | Exits after success |
+| `business-executor` | Applies the review mutation and enforces idempotency | PostgreSQL |
+| `postgres` | Stores Effectus state and business review records | Named volume |
 
-## Run the complete path
+PostgreSQL has no host port. Containers connect to it at `postgres:5432`.
 
-Run this command from the repository root:
+## File map
 
-```bash
-examples/standalone_executor/scripts/run.sh
-```
+| Path | Purpose |
+| --- | --- |
+| `docker-compose.yml` | Defines the loopback-only service stack and migration order |
+| `Dockerfile` | Builds the separate Go business executor |
+| `executor/main.go` | Implements review creation, compensation, and business idempotency |
+| `extensions/` | Contains non-secret HTTP executor templates |
+| `schema/` | Declares fact and compiler verb types |
+| `verbs/` | Declares capabilities, resources, and compensation pairs |
+| `scripts/run.sh` | Derives the request from the shared scenario and runs replay, restart, and conflict checks |
+| `scripts/down.sh` | Removes containers, the network, and the data volume |
+| `../order_review/` | Owns the shared rule and scenario artifact |
 
-Override both demonstration tokens when required:
+## Integration boundary
 
-```bash
-EFFECTUS_API_TOKEN='api-token' \
-EXECUTOR_TOKEN='executor-token' \
-  examples/standalone_executor/scripts/run.sh
-```
+Effectus sends verb arguments in the HTTP body. Reserved headers carry execution and saga identity.
 
-The script renders the executor token into a generated extension manifest under `out/standalone_executor`. The source manifest contains a non-secret placeholder.
+The business executor stores the idempotency key and argument hash with the review. A matching replay returns the stored result.
 
-The script performs these actions:
+A conflicting replay returns a permanent failure. An unknown database commit returns an unknown outcome.
 
-1. Builds a checked order-review bundle.
-2. Builds the daemon and business executor images.
-3. Starts PostgreSQL and applies Effectus migrations.
-4. Starts `effectusd` and the business executor.
-5. Submits one high-value order twice with the same idempotency key.
-6. Confirms that both requests use one Effectus execution.
-7. Confirms that the business database contains one review.
-
-Open [http://127.0.0.1:18080/ui](http://127.0.0.1:18080/ui) after the script completes.
-
-Inspect the business records:
-
-```bash
-export EXECUTOR_TOKEN='local-example-only'
-curl --fail --silent \
-  --header "X-Demo-Token: $EXECUTOR_TOKEN" \
-  http://127.0.0.1:8090/reviews | python3 -m json.tool
-```
-
-Stop and remove the stack:
-
-```bash
-examples/standalone_executor/scripts/down.sh
-```
-
-## Integration contract
-
-The verb manifest points to an HTTP endpoint:
-
-```json
-{
-  "type": "http",
-  "config": {
-    "url": "http://business-executor:8090/reviews",
-    "method": "POST",
-    "timeout": "5s",
-    "allowPrivateNetwork": true
-  }
-}
-```
-
-Effectus sends the declared verb arguments as the JSON body. It sends execution, saga, idempotency, hash, deadline, and fencing metadata in reserved headers.
-
-The `executorhttp` package validates these headers and maps explicit outcomes to the Effectus protocol. The business handler must enforce the idempotency key before it changes external state.
-
-The example stores these fields with each review:
-
-- Execution ID
-- Effect ID
-- Idempotency key
-- Argument hash
-- Business result
-
-A repeated idempotency key with the same argument hash returns the stored result. A repeated key with a different hash returns a permanent failure.
+The committed extension manifest contains a token placeholder. The run script writes the actual demo token only under `out/standalone_executor`.
 
 ## Production changes
 
-Replace the demonstration credentials before deployment. Use TLS and a secret manager for both service credentials.
+Use TLS and a secret manager. Restrict network access between `effectusd` and each executor.
 
-Run PostgreSQL with backups and high availability. Restrict network access between `effectusd` and each executor.
-
-Use an external fencing authority when a destination needs stale-writer rejection. Monitor blocked outcomes, retries, lease age, and executor latency.
-
-This demo assumes that order IDs are globally unique. In a multi-tenant system, pass the tenant identity as a checked verb argument and include it in review IDs, database keys, and cancellation queries.
+Run PostgreSQL with backups and high availability. Monitor blocked outcomes, retries, lease age, and executor latency.

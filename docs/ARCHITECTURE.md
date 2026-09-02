@@ -12,13 +12,16 @@ External verb destinations remain separate systems. They control their own trans
 Rule sources and contracts
           |
           v
-  compiler.CompileChecked
+ source bundle from effectusc
           |
           v
-   checked protobuf IR
+ runtime.CompileGeneration
           |
           v
- immutable generation  <----- schema and verb refresh
+ immutable generation
+          |
+          v
+ ExecutionRuntime.PublishGeneration
           |
           v
  HTTP / Kafka / generated gRPC / recovery
@@ -33,13 +36,13 @@ Rule sources and contracts
 
 ## Compile path
 
-The production compile path has four stages:
+The production compile path has five stages:
 
-1. Load `.eff` and `.effx` source files.
-2. Parse and normalize each source with the shared compiler front end.
-3. Build an immutable environment from fact types, functions, and verb contracts.
-4. Compile the normalized sources with `compiler.CompileChecked`.
-5. Validate and serialize the artifact through the `ir` package.
+1. `effectusc` loads `.eff` and `.effx` source files.
+2. `effectusc` builds an immutable declaration environment.
+3. `effectusc` writes a canonical `bundle.SourceBundle`.
+4. `effectusd` calls `runtime.CompileGeneration` once.
+5. `effectusd` publishes that generation before it starts a listener.
 
 The checked artifact contains no Go callbacks. It uses the protobuf schema in `effectus/v1/ir.proto`.
 
@@ -57,15 +60,15 @@ A runtime generation contains a coherent snapshot of:
 - Checked rule artifacts
 - Content and environment digests
 
-`ExecutionRuntime` publishes this state with one expected-generation comparison. A stale candidate cannot replace the active generation.
+`CompileGeneration` resolves each required executor before publication. Production compilation rejects missing and callback-only descriptors.
 
-The publication contains checked IR, bundle metadata, and one executor snapshot. The runtime retires these values together.
+`ExecutionRuntime.PublishGeneration` publishes the checked IR, source digest, descriptors, and executor snapshot together.
 
 Each accepted execution records and pins its generation. A later library publication does not change that execution.
 
-Effectusd uses immutable deployment. It validates rule candidates, but it rejects rule activation, rollback, and extension polling.
+Effectusd uses immutable deployment. It rejects source-bundle extension directories, activation, rollback, and extension polling.
 
-`runtime.GenerationManager` remains a deprecated embedded compatibility API. It does not publish production daemon state.
+The runtime snapshot pins generation resources for each accepted execution. Restart recovery resolves the persisted canonical descriptor manifest.
 
 Read [Runtime Lifecycle](LIFECYCLE.md) for publication, drain, and shutdown rules.
 
@@ -138,11 +141,11 @@ The deprecated `runtime/ruleset_execution.proto` remains a schema-compatibility 
 
 ## Verb execution
 
-A checked plan can invoke supported HTTP, gRPC, stream, Kafka, or OCI-resolved executors.
+The canonical source-bundle daemon path supports only `invocation.HTTPExecutor` with resolver ID `effectus/http/v1`. gRPC, stream, Kafka, and OCI resolver descriptors are rejected rather than selected as fallback transports.
 
-Loaders return immutable executor descriptors. `ExecutionRuntime` constructs the transport resources when it publishes a generation.
+`effectusc` stores immutable HTTP invocation descriptors. `CompileGeneration` resolves them before `ExecutionRuntime` publishes the generation.
 
-The executor snapshot owns each transport resource. Generation handles delay resource retirement until active executions finish.
+The executor snapshot owns each transport resource. Snapshot handles delay resource retirement until active executions finish.
 
 Each invocation carries stable identity, attempt, contract, and fencing metadata. The destination must enforce metadata that affects correctness.
 

@@ -11,12 +11,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/josephjohncox/effectus/loader"
+	"github.com/josephjohncox/effectus/internal/loader"
+	"github.com/josephjohncox/effectus/internal/unified"
 	effectusruntime "github.com/josephjohncox/effectus/runtime"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/josephjohncox/effectus/schema/types"
 	"github.com/josephjohncox/effectus/schema/verb"
-	"github.com/josephjohncox/effectus/unified"
 	"github.com/stretchr/testify/require"
 )
 

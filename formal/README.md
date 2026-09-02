@@ -20,4 +20,4 @@ tlc formal/Saga.tla -config formal/Saga.cfg
 tlc formal/GenerationSwap.tla -config formal/GenerationSwap.cfg
 ```
 
-The `just formal-check` command runs both models.
+Run both commands before changing their modeled state transitions.

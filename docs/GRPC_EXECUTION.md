@@ -68,20 +68,6 @@ grpc:
 The gRPC service uses the PostgreSQL execution ledger.
 Set `database.dsn` before you enable the service.
 
-## Outbound gRPC verbs
+## Outbound verbs
 
-The outbound executor uses TLS by default.
-Set `insecure: true` only for a trusted plaintext test endpoint.
-
-A verb can supply a protobuf descriptor set with these fields:
-
-- `descriptorSet`
-- `requestType`
-- `responseType`
-
-The executor validates the descriptor set before the first call.
-It uses dynamic protobuf messages for the unary request and response.
-
-The executor retries only an explicitly retry-safe call.
-It retries only transient gRPC status codes.
-The connection pool replaces closed connections and closes all connections during runtime shutdown.
+The generated gRPC service is an inbound API only. Production outbound verb execution uses the canonical HTTP executor. It does not resolve gRPC executor descriptors.

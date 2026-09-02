@@ -18,6 +18,7 @@ nav:
       - Glossary: GLOSSARY.md
   - Build and integrate:
       - Integration models: INTEGRATION.md
+      - v0.3 compatibility: COMPATIBILITY.md
       - CLI reference: COMMANDS.md
       - gRPC execution: GRPC_EXECUTION.md
       - Client examples: CLIENT_EXAMPLES.md

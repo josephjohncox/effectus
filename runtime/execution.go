@@ -16,7 +16,8 @@ import (
 	"time"
 
 	"github.com/josephjohncox/effectus/compiler"
-	"github.com/josephjohncox/effectus/loader"
+	"github.com/josephjohncox/effectus/internal/loader"
+	"github.com/josephjohncox/effectus/invocation"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/josephjohncox/effectus/schema/fencing"
 	"github.com/josephjohncox/effectus/schema/ledger"
@@ -143,8 +144,14 @@ func (er *ExecutionRuntime) Close() error {
 				execution.mu.Unlock()
 			}
 		}
-		if generation != nil && generation.unit != nil && generation.unit.ExtensionSnapshot != nil {
-			er.closeErr = errors.Join(er.closeErr, generation.unit.ExtensionSnapshot.Retire())
+		var generationUnit *compiler.CompiledUnit
+		if generation != nil {
+			generationUnit = generation.unit
+		}
+		if snapshot, snapshotErr := extensionSnapshot(generationUnit); snapshotErr != nil {
+			er.closeErr = errors.Join(er.closeErr, snapshotErr)
+		} else if snapshot != nil {
+			er.closeErr = errors.Join(er.closeErr, snapshot.Retire())
 		}
 		for _, factory := range factories {
 			if closer, ok := factory.(interface{ Close() error }); ok {
@@ -158,9 +165,27 @@ func (er *ExecutionRuntime) Close() error {
 	return er.closeErr
 }
 
-// RegisterExtensionLoader adds an extension loader to the runtime.
-func (er *ExecutionRuntime) RegisterExtensionLoader(extensionLoader loader.Loader) {
+// RegisterExtensionLoader adds an internal extension loader to the runtime.
+// The runtime validates the opaque input before accepting it so public callers
+// cannot depend on internal loader implementation types.
+func (er *ExecutionRuntime) RegisterExtensionLoader(input any) error {
+	extensionLoader, ok := input.(loader.Loader)
+	if !ok || extensionLoader == nil {
+		return fmt.Errorf("extension loader is required")
+	}
 	er.extensionManager.AddLoader(extensionLoader)
+	return nil
+}
+
+func extensionSnapshot(unit *compiler.CompiledUnit) (*loader.ExtensionSnapshot, error) {
+	if unit == nil || unit.ExtensionSnapshot == nil {
+		return nil, nil
+	}
+	snapshot, ok := unit.ExtensionSnapshot.(*loader.ExtensionSnapshot)
+	if !ok || snapshot == nil {
+		return nil, fmt.Errorf("compiled unit has an invalid extension snapshot")
+	}
+	return snapshot, nil
 }
 
 // ConfigureGenerationMetadata freezes bundle metadata into the next executable
@@ -201,8 +226,82 @@ func (er *ExecutionRuntime) ActiveGeneration() *ExecutionGeneration {
 	return &copy
 }
 
+// PublishGeneration installs the checked source-bundle generation as the sole
+// production publication. The runtime snapshot owns the generation resources
+// and keeps them pinned until all acquired executions release their handles.
+func (er *ExecutionRuntime) PublishGeneration(generation *Generation) error {
+	if er == nil || generation == nil {
+		return fmt.Errorf("execution runtime and generation are required")
+	}
+	if generation.Closed() {
+		return fmt.Errorf("generation is closed")
+	}
+	if len(generation.FunctionIDs()) != 0 {
+		return fmt.Errorf("source-bundle function resolvers are not configured")
+	}
+	descriptors := generation.ExecutorDescriptors()
+	specs := make(map[string]*compiler.CompiledVerbSpec, len(descriptors))
+	strict := true
+	for name, descriptor := range descriptors {
+		executor, ok := generation.Executor(name)
+		if !ok || executor == nil {
+			return fmt.Errorf("generation executor %q is unresolved", name)
+		}
+		contract, ok := generation.environment.Verbs[name]
+		if !ok {
+			return fmt.Errorf("generation executor %q has no checked contract", name)
+		}
+		adapter := &generationInvocationExecutor{executor: executor, descriptor: descriptor}
+		spec := &verb.Spec{
+			Name: name, ArgTypes: cloneGenerationStringMap(contract.Arguments), RequiredArgs: append([]string(nil), contract.RequiredArgs...),
+			ReturnType: contract.ResultType, Inverse: contract.InverseVerb, Executor: adapter, StrictArgs: &strict, StrictReturn: &strict,
+		}
+		specs[name] = &compiler.CompiledVerbSpec{
+			Spec: spec, ExecutorType: compiler.ExecutorLocal,
+			ExecutorConfig: &compiler.LocalExecutorConfig{Implementation: adapter},
+			TypeSignature:  &compiler.TypeSignature{InputTypes: cloneGenerationStringMap(contract.Arguments), OutputType: contract.ResultType},
+		}
+	}
+	snapshot, err := loader.NewResourceSnapshot(generation)
+	if err != nil {
+		return fmt.Errorf("own source-bundle generation: %w", err)
+	}
+	unit := &compiler.CompiledUnit{
+		VerbSpecs: specs, Functions: map[string]*compiler.CompiledFunction{}, CheckedIR: generation.checked,
+		IREnvironment: generation.Environment(), SourceDigest: generation.SourceDigest(), InitialData: map[string]interface{}{},
+		ExtensionSnapshot: snapshot,
+	}
+	if err := er.ConfigureGenerationMetadata(GenerationMetadata{
+		Ruleset: generation.Ruleset(), Version: generation.Version(), BundleDigest: generation.SourceDigest(),
+	}); err != nil {
+		_ = snapshot.Retire()
+		return err
+	}
+	if err := er.publishGeneration(unit, snapshot, ""); err != nil {
+		_ = snapshot.Retire()
+		return fmt.Errorf("publish source-bundle generation: %w", err)
+	}
+	return nil
+}
+
+type generationInvocationExecutor struct {
+	executor   invocation.Executor
+	descriptor invocation.Descriptor
+}
+
+func (executor *generationInvocationExecutor) Execute(context.Context, map[string]interface{}) (interface{}, error) {
+	return nil, fmt.Errorf("invocation metadata is required; use Engine.Execute")
+}
+func (executor *generationInvocationExecutor) Invoke(ctx context.Context, request invocation.Request) invocation.Outcome {
+	return executor.executor.Invoke(ctx, request)
+}
+func (executor *generationInvocationExecutor) InvocationResolverDescriptor() (invocation.Descriptor, error) {
+	return executor.descriptor, nil
+}
+
 func (er *ExecutionRuntime) publishGeneration(unit *compiler.CompiledUnit, snapshot *loader.ExtensionSnapshot, expectedDigest string) error {
-	if unit == nil || unit.CheckedIR == nil || snapshot == nil || unit.ExtensionSnapshot != snapshot {
+	unitSnapshot, err := extensionSnapshot(unit)
+	if err != nil || unit == nil || unit.CheckedIR == nil || snapshot == nil || unitSnapshot != snapshot {
 		return fmt.Errorf("complete checked unit and executor snapshot are required")
 	}
 	if err := materializeExecutorDescriptors(unit, snapshot); err != nil {
@@ -239,12 +338,19 @@ func (er *ExecutionRuntime) publishGeneration(unit *compiler.CompiledUnit, snaps
 	}
 	er.state = StateReady
 	er.mu.Unlock()
-	if previous != nil && previous.unit != nil && previous.unit.ExtensionSnapshot != nil && previous.unit.ExtensionSnapshot != snapshot {
+	var previousUnit *compiler.CompiledUnit
+	if previous != nil {
+		previousUnit = previous.unit
+	}
+	previousSnapshot, previousSnapshotErr := extensionSnapshot(previousUnit)
+	if previousSnapshotErr != nil {
+		log.Printf("read previous execution generation %s snapshot: %v", previous.GenerationDigest, previousSnapshotErr)
+	} else if previousSnapshot != nil && previousSnapshot != snapshot {
 		// Publication has committed. A previous generation cleanup failure must
 		// never be reported as candidate rejection because callers would retire
 		// the now-active snapshot. Cleanup is best-effort and independently
 		// observable through the runtime log.
-		if err := previous.unit.ExtensionSnapshot.Retire(); err != nil {
+		if err := previousSnapshot.Retire(); err != nil {
 			log.Printf("retire previous execution generation %s: %v", previous.GenerationDigest, err)
 		}
 	}
@@ -292,7 +398,7 @@ func materializeExecutorDescriptors(unit *compiler.CompiledUnit, snapshot *loade
 }
 
 // RegisterExecutorFactory registers a factory for creating executors.
-// Deprecated: descriptor-backed checked execution is constructed by runtime publication.
+// Deprecated: descriptor-backed checked execution is constructed by runtime publication. Removal deadline: 2027-09-01.
 func (er *ExecutionRuntime) RegisterExecutorFactory(executorType compiler.ExecutorType, factory ExecutorFactory) {
 	er.executors[executorType] = factory
 }

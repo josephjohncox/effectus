@@ -1,9 +1,0 @@
-flow "VAR_REFERENCE" priority 1 {
-    when {
-        test.value == "test"
-    }
-    steps {
-        result = first_step(param1: "value1")
-        second_step(input: $result)
-    }
-} 

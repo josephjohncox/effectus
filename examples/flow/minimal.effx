@@ -1,8 +1,0 @@
-flow "MINIMAL" priority 1 {
-    when {
-        test.value == "test"
-    }
-    steps {
-        do_nothing()
-    }
-} 

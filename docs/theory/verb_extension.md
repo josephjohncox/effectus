@@ -51,9 +51,7 @@ $W$ represents external state. The runtime does not assume that this function is
 
 ## Supported production targets
 
-Production effectusd supports checked HTTP, gRPC, stream, Kafka, and OCI-resolved targets.
-
-OCI loading requires a digest and an operator-provided signature verifier. HTTP targets apply host, redirect, DNS, and response-size controls.
+Production effectusd supports the checked HTTP executor target. HTTP targets apply host, redirect, DNS, and response-size controls. gRPC, stream, Kafka, and OCI resolver descriptors are not supported production executor targets.
 
 In-process Go plugins are rejected by the production daemon.
 

@@ -17,27 +17,9 @@ import (
 
 const defaultMaxRequestBytes int64 = 1 << 20
 
-// Request contains business arguments and immutable Effectus metadata.
-type Request struct {
-	Arguments    map[string]any
-	Metadata     invocation.Context
-	ArgumentHash string
-	ContractHash string
-}
-
-// Outcome is the explicit result returned by a business executor.
-type Outcome = invocation.Outcome
-
-// Direction identifies forward and compensation calls.
-type Direction = invocation.Direction
-
-const (
-	DirectionForward      = invocation.DirectionForward
-	DirectionCompensation = invocation.DirectionCompensation
-)
-
-// HandlerFunc performs one idempotent business operation.
-type HandlerFunc func(context.Context, Request) Outcome
+// HandlerFunc performs one idempotent business operation using the canonical
+// invocation request and outcome vocabulary.
+type HandlerFunc func(context.Context, invocation.Request) invocation.Outcome
 
 // Options controls the HTTP boundary.
 type Options struct {
@@ -77,38 +59,42 @@ func NewHandler(options Options, handler HandlerFunc) (http.Handler, error) {
 	}), nil
 }
 
-func decodeRequest(request *http.Request, maxBytes int64) (Request, error) {
+func decodeRequest(request *http.Request, maxBytes int64) (invocation.Request, error) {
 	metadata, err := decodeMetadata(request.Header)
 	if err != nil {
-		return Request{}, err
+		return invocation.Request{}, err
 	}
 	reader := io.LimitReader(request.Body, maxBytes+1)
 	body, err := io.ReadAll(reader)
 	if err != nil {
-		return Request{}, fmt.Errorf("read executor request: %w", err)
+		return invocation.Request{}, fmt.Errorf("read executor request: %w", err)
 	}
 	if int64(len(body)) > maxBytes {
-		return Request{}, fmt.Errorf("executor request exceeds %d bytes", maxBytes)
+		return invocation.Request{}, fmt.Errorf("executor request exceeds %d bytes", maxBytes)
 	}
 	arguments := make(map[string]any)
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	if err := decoder.Decode(&arguments); err != nil {
-		return Request{}, fmt.Errorf("decode executor arguments: %w", err)
+		return invocation.Request{}, fmt.Errorf("decode executor arguments: %w", err)
 	}
 	if err := rejectTrailingJSON(decoder); err != nil {
-		return Request{}, err
+		return invocation.Request{}, err
+	}
+	verb := strings.TrimSpace(request.Header.Get(invocation.HeaderVerb))
+	if verb == "" {
+		return invocation.Request{}, fmt.Errorf("%s header is required", invocation.HeaderVerb)
 	}
 	argumentHash := strings.TrimSpace(request.Header.Get(invocation.HeaderArgumentHash))
 	if argumentHash == "" {
-		return Request{}, fmt.Errorf("%s header is required", invocation.HeaderArgumentHash)
+		return invocation.Request{}, fmt.Errorf("%s header is required", invocation.HeaderArgumentHash)
 	}
 	contractHash := strings.TrimSpace(request.Header.Get(invocation.HeaderContractHash))
 	if contractHash == "" {
-		return Request{}, fmt.Errorf("%s header is required", invocation.HeaderContractHash)
+		return invocation.Request{}, fmt.Errorf("%s header is required", invocation.HeaderContractHash)
 	}
-	return Request{
-		Arguments: arguments, Metadata: metadata,
+	return invocation.Request{
+		Verb: verb, Arguments: arguments, Metadata: metadata,
 		ArgumentHash: argumentHash, ContractHash: contractHash,
 	}, nil
 }
@@ -138,8 +124,12 @@ func decodeMetadata(headers http.Header) (invocation.Context, error) {
 	if direction != invocation.DirectionForward && direction != invocation.DirectionCompensation {
 		return invocation.Context{}, fmt.Errorf("%s header must be forward or compensation", invocation.HeaderDirection)
 	}
+	requestID := strings.TrimSpace(headers.Get(invocation.HeaderRequestID))
+	if requestID == "" {
+		return invocation.Context{}, fmt.Errorf("%s header is required", invocation.HeaderRequestID)
+	}
 	metadata := invocation.Context{
-		RequestID:   executionID,
+		RequestID:   requestID,
 		ExecutionID: executionID,
 		Saga: invocation.Saga{
 			SagaID:         sagaID,
