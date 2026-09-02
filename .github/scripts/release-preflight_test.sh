@@ -106,6 +106,18 @@ PATH="$temp:$PATH" GITHUB_REF_TYPE=tag GITHUB_REF_NAME="v$version" \
 
 cat >"$temp/crane" <<'EOF'
 #!/bin/sh
+echo "crane: not found" >&2
+exit 127
+EOF
+chmod +x "$temp/crane"
+if PATH="$temp:$PATH" GITHUB_REF_TYPE=tag GITHUB_REF_NAME="v$version" \
+  "$script_dir/release-preflight.sh" "$version" image "$bundle" chart >/dev/null 2>&1; then
+  echo "a failed crane command passed as an absent release reference" >&2
+  exit 1
+fi
+
+cat >"$temp/crane" <<'EOF'
+#!/bin/sh
 echo sha256:existing
 EOF
 chmod +x "$temp/crane"
