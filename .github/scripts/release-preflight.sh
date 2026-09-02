@@ -10,6 +10,13 @@ image_ref=$2
 bundle_ref=$3
 chart_ref=$4
 
+for command in crane gh git node; do
+  if ! command -v "$command" >/dev/null 2>&1; then
+    echo "release preflight requires $command" >&2
+    exit 1
+  fi
+done
+
 if [ "${GITHUB_REF_TYPE:-}" != "tag" ] || [ "${GITHUB_REF_NAME:-}" != "v$version" ]; then
   echo "release source must be the v$version tag" >&2
   exit 1
@@ -74,7 +81,7 @@ check_absent() {
     rm -f "$error_file"
     exit 1
   fi
-  if ! grep -Eqi 'MANIFEST_UNKNOWN|NAME_UNKNOWN|manifest unknown|not found|404' "$error_file"; then
+  if ! grep -Eqi 'MANIFEST_UNKNOWN|NAME_UNKNOWN|manifest unknown|404 Not Found|status code 404' "$error_file"; then
     echo "cannot prove release reference is absent: $ref" >&2
     cat "$error_file" >&2
     rm -f "$error_file"

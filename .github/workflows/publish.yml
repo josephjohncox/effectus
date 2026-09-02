@@ -89,6 +89,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          preflight_docker_config=$(mktemp -d)
+          trap 'rm -rf "$preflight_docker_config"' EXIT
+          export DOCKER_CONFIG=$preflight_docker_config
+          printf '%s' "$GH_TOKEN" | crane auth login ghcr.io \
+            --username "$GITHUB_ACTOR" --password-stdin
           .github/scripts/release-preflight.sh \
             "${{ steps.release.outputs.version }}" \
             "${{ steps.release.outputs.image }}" \
@@ -270,7 +276,7 @@ jobs:
               rm -f "$error_file"
               exit 1
             fi
-            grep -Eqi 'MANIFEST_UNKNOWN|NAME_UNKNOWN|manifest unknown|not found|404' "$error_file" || {
+            grep -Eqi 'MANIFEST_UNKNOWN|NAME_UNKNOWN|manifest unknown|404 Not Found|status code 404' "$error_file" || {
               echo "cannot prove release destination is absent: $ref" >&2
               cat "$error_file" >&2
               rm -f "$error_file"
