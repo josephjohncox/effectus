@@ -9,6 +9,8 @@ export EFFECTUS_API_TOKEN="${EFFECTUS_API_TOKEN:-effectus-demo-token}"
 export EXECUTOR_TOKEN="${EXECUTOR_TOKEN:-executor-demo-token}"
 export EFFECTUS_DEMO_HTTP_PORT="${EFFECTUS_DEMO_HTTP_PORT:-18080}"
 export EXECUTOR_DEMO_HTTP_PORT="${EXECUTOR_DEMO_HTTP_PORT:-8090}"
+export EFFECTUS_DEMO_UID="${EFFECTUS_DEMO_UID:-$(id -u)}"
+export EFFECTUS_DEMO_GID="${EFFECTUS_DEMO_GID:-$(id -g)}"
 # Compose builds this image from the checked-out source tree. A caller can
 # change only the local tag, not substitute a prebuilt release image.
 EFFECTUS_IMAGE="${EFFECTUS_IMAGE:-effectus-demo-current}"
@@ -46,7 +48,7 @@ fail() {
   exit 1
 }
 
-for command in docker curl python3 go; do
+for command in docker curl python3 go id; do
   command -v "$command" >/dev/null 2>&1 || fail "missing required command: $command"
 done
 [[ -n "${BASH_VERSION:-}" ]] || fail "run this script with Bash"
@@ -62,6 +64,10 @@ validate_port() {
 }
 validate_port EFFECTUS_DEMO_HTTP_PORT "$EFFECTUS_DEMO_HTTP_PORT"
 validate_port EXECUTOR_DEMO_HTTP_PORT "$EXECUTOR_DEMO_HTTP_PORT"
+[[ "$EFFECTUS_DEMO_UID" =~ ^[1-9][0-9]*$ ]] ||
+  fail "run the durable demo as a non-root user"
+[[ "$EFFECTUS_DEMO_GID" =~ ^[0-9]+$ ]] ||
+  fail "EFFECTUS_DEMO_GID must be a nonnegative integer"
 [[ "$EFFECTUS_DEMO_HTTP_PORT" != "$EXECUTOR_DEMO_HTTP_PORT" ]] ||
   fail "EFFECTUS_DEMO_HTTP_PORT and EXECUTOR_DEMO_HTTP_PORT must be different"
 

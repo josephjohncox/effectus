@@ -51,6 +51,9 @@ services:
       context: ../..
       dockerfile: Dockerfile
     image: ${EFFECTUS_IMAGE:-effectus-demo-current}
+    # Match the invoking non-root user so the daemon can read the owner-only
+    # generated bundle without exposing its executor credential on the host.
+    user: "${EFFECTUS_DEMO_UID:-10001}:${EFFECTUS_DEMO_GID:-10001}"
     environment:
       EFFECTUS_API_TOKEN: ${EFFECTUS_API_TOKEN:-}
       EFFECTUS_POSTGRES_DSN: postgres://effectus:effectus@postgres:5432/effectus?sslmode=disable
