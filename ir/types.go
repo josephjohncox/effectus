@@ -36,6 +36,13 @@ type typeChecker struct {
 }
 
 func (c typeChecker) parse(name string, allowVoid bool) (*typeRef, error) {
+	return c.parseDepth(name, allowVoid, 0)
+}
+
+func (c typeChecker) parseDepth(name string, allowVoid bool, depth int) (*typeRef, error) {
+	if depth > 64 {
+		return nil, fmt.Errorf("type depth limit exceeded")
+	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("type name is empty")
@@ -63,21 +70,21 @@ func (c typeChecker) parse(name string, allowVoid bool) (*typeRef, error) {
 		return nil, fmt.Errorf("open type %q is forbidden in checked IR", name)
 	}
 	if strings.HasPrefix(name, "[]") {
-		element, err := c.parse(strings.TrimSpace(name[2:]), false)
+		element, err := c.parseDepth(strings.TrimSpace(name[2:]), false, depth+1)
 		if err != nil {
 			return nil, fmt.Errorf("list element: %w", err)
 		}
 		return &typeRef{kind: typeList, element: element}, nil
 	}
 	if inner, ok := genericInner(name, "list"); ok {
-		element, err := c.parse(inner, false)
+		element, err := c.parseDepth(inner, false, depth+1)
 		if err != nil {
 			return nil, fmt.Errorf("list element: %w", err)
 		}
 		return &typeRef{kind: typeList, element: element}, nil
 	}
 	if inner, ok := genericInner(name, "map"); ok {
-		element, err := c.parse(inner, false)
+		element, err := c.parseDepth(inner, false, depth+1)
 		if err != nil {
 			return nil, fmt.Errorf("map element: %w", err)
 		}
@@ -177,9 +184,17 @@ func (c typeChecker) assignableDepth(actual, expected *typeRef, depth int) bool 
 	case typeList, typeMap:
 		return c.assignableDepth(actual.element, expected.element, depth+1)
 	case typeObject:
-		for name, expectedField := range expected.fields {
-			actualField, ok := actual.fields[name]
+		// Objects are closed: a wider source could send undeclared fields to a
+		// narrower contract, and optional source fields cannot promise required ones.
+		for name, actualField := range actual.fields {
+			expectedField, ok := expected.fields[name]
 			if !ok || !c.assignableDepth(actualField, expectedField, depth+1) {
+				return false
+			}
+		}
+		actualRequired := c.requiredObjectFields(actual)
+		for name := range c.requiredObjectFields(expected) {
+			if _, ok := actualRequired[name]; !ok {
 				return false
 			}
 		}
@@ -187,6 +202,20 @@ func (c typeChecker) assignableDepth(actual, expected *typeRef, depth int) bool 
 	default:
 		return actual.kind != typeInvalid && actual.kind != typeVoid
 	}
+}
+
+func (c typeChecker) requiredObjectFields(ref *typeRef) map[string]struct{} {
+	fields := make(map[string]struct{})
+	if ref.name != "" {
+		for _, name := range c.environment.Types[ref.name].RequiredFields {
+			fields[name] = struct{}{}
+		}
+	} else {
+		for name := range ref.fields {
+			fields[name] = struct{}{}
+		}
+	}
+	return fields
 }
 
 func (c typeChecker) literalType(literal *effectusv1.Literal, depth int) (*typeRef, error) {

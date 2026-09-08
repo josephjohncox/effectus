@@ -10,6 +10,12 @@ import (
 	"github.com/josephjohncox/effectus/schema/ledger"
 )
 
+// RecoveryWorker resumes durable executions serially. BatchSize bounds work per
+// poll, not the number of leases held at once. Configure fields before Run.
+// Built-in stores renew live leases. Custom stores without renewal support must
+// finish each execution within the original lease's safe window.
+// Zero BatchSize, LeaseDuration, and PollInterval select 32, 30s, and 1s.
+// Negative settings are invalid; leases must be at least one microsecond.
 type RecoveryWorker struct {
 	Engine        *Engine
 	Store         ledger.ExecutionLedger
@@ -20,11 +26,37 @@ type RecoveryWorker struct {
 	Observer      Observer
 }
 
+func (worker *RecoveryWorker) settings(ctx context.Context) (int, time.Duration, time.Duration, error) {
+	if worker == nil || ctx == nil || worker.Engine == nil || worker.Store == nil {
+		return 0, 0, 0, fmt.Errorf("recovery engine, execution ledger, and context are required")
+	}
+	if strings.TrimSpace(worker.Owner) == "" {
+		return 0, 0, 0, fmt.Errorf("recovery worker owner is required")
+	}
+	if worker.BatchSize < 0 || worker.LeaseDuration < 0 || worker.PollInterval < 0 {
+		return 0, 0, 0, fmt.Errorf("recovery sizes and durations must not be negative")
+	}
+	batch, duration, interval := worker.BatchSize, worker.LeaseDuration, worker.PollInterval
+	if batch == 0 {
+		batch = 32
+	}
+	if duration == 0 {
+		duration = 30 * time.Second
+	}
+	if duration < time.Microsecond {
+		return 0, 0, 0, fmt.Errorf("recovery lease must be at least one microsecond")
+	}
+	if interval == 0 {
+		interval = time.Second
+	}
+	return batch, duration, interval, nil
+}
+
 // Run polls until cancellation. Each poll is bounded by BatchSize.
 func (worker *RecoveryWorker) Run(ctx context.Context) error {
-	interval := worker.PollInterval
-	if interval <= 0 {
-		interval = time.Second
+	_, _, interval, err := worker.settings(ctx)
+	if err != nil {
+		return err
 	}
 	for {
 		if _, err := worker.RunOnce(ctx); err != nil {
@@ -43,22 +75,12 @@ func (worker *RecoveryWorker) Run(ctx context.Context) error {
 	}
 }
 
-// RunOnce leases a bounded set of nonterminal executions and resumes each only
-// through Engine.Execute. Lease completion is a CAS performed by the engine.
+// RunOnce acquires a lease only when it can start that execution. It resumes
+// work through Engine.Execute and leaves terminal persistence to the engine.
 func (worker *RecoveryWorker) RunOnce(ctx context.Context) (int, error) {
-	if worker == nil || worker.Engine == nil || worker.Store == nil {
-		return 0, fmt.Errorf("recovery engine and execution ledger are required")
-	}
-	if strings.TrimSpace(worker.Owner) == "" {
-		return 0, fmt.Errorf("recovery worker owner is required")
-	}
-	batchSize := worker.BatchSize
-	if batchSize <= 0 {
-		batchSize = 32
-	}
-	leaseDuration := worker.LeaseDuration
-	if leaseDuration <= 0 {
-		leaseDuration = 30 * time.Second
+	batchSize, leaseDuration, _, err := worker.settings(ctx)
+	if err != nil {
+		return 0, err
 	}
 	if reader, ok := worker.Store.(ledger.RecoveryStatsReader); ok {
 		stats, statsErr := reader.RecoveryStats(ctx)
@@ -76,36 +98,108 @@ func (worker *RecoveryWorker) RunOnce(ctx context.Context) (int, error) {
 		}
 		worker.observe(observation)
 	}
-	leases, err := worker.Store.LeaseExecutions(ctx, worker.Owner, batchSize, leaseDuration)
-	if err != nil {
-		worker.observe(RecoveryObservation{Err: err})
-		return 0, fmt.Errorf("lease recovery executions: %w", err)
-	}
-	if len(leases) > batchSize {
-		return 0, fmt.Errorf("recovery lease store returned %d executions, limit is %d", len(leases), batchSize)
-	}
 	processed := 0
-	for index := range leases {
+	for processed < batchSize {
 		if err := ctx.Err(); err != nil {
 			return processed, err
 		}
-		lease := leases[index]
-		result, executeErr := worker.Engine.Execute(ctx, ExecuteRequest{ResumeExecutionID: lease.ExecutionID, WaitMode: WaitTerminal, RecoveryLease: &lease})
-		processed++
-		if executeErr == nil {
-			worker.observe(RecoveryObservation{ExecutionID: lease.ExecutionID, State: result.State})
-			continue
+		localDeadline := time.Now().Add(leaseDuration)
+		leases, err := worker.Store.LeaseExecutions(ctx, worker.Owner, 1, leaseDuration)
+		if err != nil {
+			worker.observe(RecoveryObservation{Err: err})
+			return processed, fmt.Errorf("lease recovery execution: %w", err)
 		}
-		observation := RecoveryObservation{ExecutionID: lease.ExecutionID, State: result.State, Err: executeErr}
-		worker.observe(observation)
+		if len(leases) == 0 {
+			break
+		}
+		if len(leases) != 1 {
+			return processed, fmt.Errorf("recovery lease store returned %d executions, limit is 1", len(leases))
+		}
+		lease := leases[0]
+		result, executeErr := worker.executeLease(ctx, lease, leaseDuration, localDeadline)
+		processed++
+		worker.observe(RecoveryObservation{ExecutionID: lease.ExecutionID, State: result.State, Err: executeErr})
+		if errors.Is(executeErr, errRecoveryLeaseLost) {
+			// Back off until the next poll instead of reacquiring and invoking
+			// the same execution repeatedly during a renewal outage.
+			return processed, nil
+		}
 		if errors.Is(executeErr, ErrDurableDisposition) {
 			return processed, executeErr
 		}
-		// Terminal business failures and transient workflow/store errors are
-		// per-execution outcomes. Engine.Execute has durably terminalized or
-		// released the lease, so unrelated recovery work must continue.
+		// Known business failures do not stop unrelated recovery work.
 	}
 	return processed, nil
+}
+
+var errRecoveryLeaseLost = errors.New("recovery lease authority lost")
+
+func (worker *RecoveryWorker) executeLease(ctx context.Context, lease ledger.ExecutionLease, duration time.Duration, localDeadline time.Time) (ExecuteResult, error) {
+	renewer, ok := worker.Store.(ledger.ExecutionLeaseRenewer)
+	if !ok {
+		callCtx, cancel := context.WithDeadline(ctx, localDeadline.Add(-duration/10))
+		defer cancel()
+		return worker.Engine.Execute(callCtx, ExecuteRequest{ResumeExecutionID: lease.ExecutionID, WaitMode: WaitTerminal, RecoveryLease: &lease})
+	}
+	// Confirm authority synchronously, before loading or invoking the workflow.
+	// Derive deadlines from local monotonic time before each RPC, never from
+	// database wall-clock timestamps. The store remains the CAS authority.
+	var err error
+	localDeadline, err = renewRecoveryLease(ctx, renewer, lease, duration, localDeadline)
+	if err != nil {
+		return ExecuteResult{}, err
+	}
+	callCtx, cancel := context.WithCancelCause(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		deadline := localDeadline
+		for {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				cancel(errRecoveryLeaseLost)
+				return
+			}
+			timer := time.NewTimer(remaining / 3)
+			select {
+			case <-callCtx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			next, err := renewRecoveryLease(callCtx, renewer, lease, duration, deadline)
+			if err != nil {
+				cancel(err)
+				return
+			}
+			deadline = next
+		}
+	}()
+	result, err := worker.Engine.Execute(callCtx, ExecuteRequest{ResumeExecutionID: lease.ExecutionID, WaitMode: WaitTerminal, RecoveryLease: &lease})
+	cause := context.Cause(callCtx)
+	cancel(nil)
+	<-done
+	if err != nil && cause != nil {
+		err = errors.Join(err, cause)
+	}
+	return result, err
+}
+
+func renewRecoveryLease(ctx context.Context, renewer ledger.ExecutionLeaseRenewer, lease ledger.ExecutionLease, duration time.Duration, deadline time.Time) (time.Time, error) {
+	renewCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	nextDeadline := time.Now().Add(duration)
+	renewed, err := renewer.RenewExecutionLease(renewCtx, lease, duration)
+	if err != nil {
+		return time.Time{}, errors.Join(errRecoveryLeaseLost, err)
+	}
+	if err := renewCtx.Err(); err != nil {
+		return time.Time{}, errors.Join(errRecoveryLeaseLost, err)
+	}
+	if renewed.ExecutionID != lease.ExecutionID || renewed.Owner != lease.Owner || renewed.Token != lease.Token || renewed.Revision != lease.Revision || !nextDeadline.After(time.Now()) {
+		return time.Time{}, fmt.Errorf("%w: renewal changed lease identity or exceeded its duration", errRecoveryLeaseLost)
+	}
+	return nextDeadline, nil
 }
 
 func (worker *RecoveryWorker) observe(observation RecoveryObservation) {

@@ -73,6 +73,77 @@ func (ExecutionWaitMode) EnumDescriptor() ([]byte, []int) {
 	return file_effectus_v1_execution_proto_rawDescGZIP(), []int{0}
 }
 
+// ExecutionState is the durable execution disposition, not an RPC status.
+type ExecutionState int32
+
+const (
+	ExecutionState_EXECUTION_STATE_UNSPECIFIED          ExecutionState = 0
+	ExecutionState_EXECUTION_STATE_ADMITTING            ExecutionState = 1
+	ExecutionState_EXECUTION_STATE_ACCEPTED             ExecutionState = 2
+	ExecutionState_EXECUTION_STATE_RUNNING              ExecutionState = 3
+	ExecutionState_EXECUTION_STATE_COMPLETED            ExecutionState = 4
+	ExecutionState_EXECUTION_STATE_FAILED               ExecutionState = 5
+	ExecutionState_EXECUTION_STATE_BLOCKED_UNKNOWN      ExecutionState = 6
+	ExecutionState_EXECUTION_STATE_BLOCKED_FENCE        ExecutionState = 7
+	ExecutionState_EXECUTION_STATE_BLOCKED_DEPENDENCY   ExecutionState = 8
+	ExecutionState_EXECUTION_STATE_BLOCKED_COMPENSATION ExecutionState = 9
+)
+
+// Enum value maps for ExecutionState.
+var (
+	ExecutionState_name = map[int32]string{
+		0: "EXECUTION_STATE_UNSPECIFIED",
+		1: "EXECUTION_STATE_ADMITTING",
+		2: "EXECUTION_STATE_ACCEPTED",
+		3: "EXECUTION_STATE_RUNNING",
+		4: "EXECUTION_STATE_COMPLETED",
+		5: "EXECUTION_STATE_FAILED",
+		6: "EXECUTION_STATE_BLOCKED_UNKNOWN",
+		7: "EXECUTION_STATE_BLOCKED_FENCE",
+		8: "EXECUTION_STATE_BLOCKED_DEPENDENCY",
+		9: "EXECUTION_STATE_BLOCKED_COMPENSATION",
+	}
+	ExecutionState_value = map[string]int32{
+		"EXECUTION_STATE_UNSPECIFIED":          0,
+		"EXECUTION_STATE_ADMITTING":            1,
+		"EXECUTION_STATE_ACCEPTED":             2,
+		"EXECUTION_STATE_RUNNING":              3,
+		"EXECUTION_STATE_COMPLETED":            4,
+		"EXECUTION_STATE_FAILED":               5,
+		"EXECUTION_STATE_BLOCKED_UNKNOWN":      6,
+		"EXECUTION_STATE_BLOCKED_FENCE":        7,
+		"EXECUTION_STATE_BLOCKED_DEPENDENCY":   8,
+		"EXECUTION_STATE_BLOCKED_COMPENSATION": 9,
+	}
+)
+
+func (x ExecutionState) Enum() *ExecutionState {
+	p := new(ExecutionState)
+	*p = x
+	return p
+}
+
+func (x ExecutionState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ExecutionState) Descriptor() protoreflect.EnumDescriptor {
+	return file_effectus_v1_execution_proto_enumTypes[1].Descriptor()
+}
+
+func (ExecutionState) Type() protoreflect.EnumType {
+	return &file_effectus_v1_execution_proto_enumTypes[1]
+}
+
+func (x ExecutionState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ExecutionState.Descriptor instead.
+func (ExecutionState) EnumDescriptor() ([]byte, []int) {
+	return file_effectus_v1_execution_proto_rawDescGZIP(), []int{1}
+}
+
 // EffectStatus represents the execution status of an effect
 type EffectStatus int32
 
@@ -119,11 +190,11 @@ func (x EffectStatus) String() string {
 }
 
 func (EffectStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_effectus_v1_execution_proto_enumTypes[1].Descriptor()
+	return file_effectus_v1_execution_proto_enumTypes[2].Descriptor()
 }
 
 func (EffectStatus) Type() protoreflect.EnumType {
-	return &file_effectus_v1_execution_proto_enumTypes[1]
+	return &file_effectus_v1_execution_proto_enumTypes[2]
 }
 
 func (x EffectStatus) Number() protoreflect.EnumNumber {
@@ -132,7 +203,7 @@ func (x EffectStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use EffectStatus.Descriptor instead.
 func (EffectStatus) EnumDescriptor() ([]byte, []int) {
-	return file_effectus_v1_execution_proto_rawDescGZIP(), []int{1}
+	return file_effectus_v1_execution_proto_rawDescGZIP(), []int{2}
 }
 
 // RuleType defines the type of rule
@@ -169,11 +240,11 @@ func (x RuleType) String() string {
 }
 
 func (RuleType) Descriptor() protoreflect.EnumDescriptor {
-	return file_effectus_v1_execution_proto_enumTypes[2].Descriptor()
+	return file_effectus_v1_execution_proto_enumTypes[3].Descriptor()
 }
 
 func (RuleType) Type() protoreflect.EnumType {
-	return &file_effectus_v1_execution_proto_enumTypes[2]
+	return &file_effectus_v1_execution_proto_enumTypes[3]
 }
 
 func (x RuleType) Number() protoreflect.EnumNumber {
@@ -182,7 +253,7 @@ func (x RuleType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use RuleType.Descriptor instead.
 func (RuleType) EnumDescriptor() ([]byte, []int) {
-	return file_effectus_v1_execution_proto_rawDescGZIP(), []int{2}
+	return file_effectus_v1_execution_proto_rawDescGZIP(), []int{3}
 }
 
 // ExecutionPhase represents the current phase of execution
@@ -231,11 +302,11 @@ func (x ExecutionPhase) String() string {
 }
 
 func (ExecutionPhase) Descriptor() protoreflect.EnumDescriptor {
-	return file_effectus_v1_execution_proto_enumTypes[3].Descriptor()
+	return file_effectus_v1_execution_proto_enumTypes[4].Descriptor()
 }
 
 func (ExecutionPhase) Type() protoreflect.EnumType {
-	return &file_effectus_v1_execution_proto_enumTypes[3]
+	return &file_effectus_v1_execution_proto_enumTypes[4]
 }
 
 func (x ExecutionPhase) Number() protoreflect.EnumNumber {
@@ -244,7 +315,7 @@ func (x ExecutionPhase) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ExecutionPhase.Descriptor instead.
 func (ExecutionPhase) EnumDescriptor() ([]byte, []int) {
-	return file_effectus_v1_execution_proto_rawDescGZIP(), []int{3}
+	return file_effectus_v1_execution_proto_rawDescGZIP(), []int{4}
 }
 
 // ExecutionRequest represents a request to execute rules
@@ -252,20 +323,29 @@ type ExecutionRequest struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	RulesetName string                 `protobuf:"bytes,1,opt,name=ruleset_name,json=rulesetName,proto3" json:"ruleset_name,omitempty"`
 	Version     string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
-	Facts       *anypb.Any             `protobuf:"bytes,3,opt,name=facts,proto3" json:"facts,omitempty"`
+	// Compatibility alias. Must wrap google.protobuf.Struct. typed_facts wins
+	// when both fields are present. New clients must use typed_facts.
+	//
+	// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
+	Facts *anypb.Any `protobuf:"bytes,3,opt,name=facts,proto3" json:"facts,omitempty"`
 	// Typed facts for checked execution. New clients must use this field.
 	TypedFacts *structpb.Struct `protobuf:"bytes,11,opt,name=typed_facts,json=typedFacts,proto3" json:"typed_facts,omitempty"`
 	// Only options.timeout_seconds is supported by effectusd.
 	Options *ExecutionOptions `protobuf:"bytes,4,opt,name=options,proto3" json:"options,omitempty"`
-	TraceId string            `protobuf:"bytes,5,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
+	// Reserved and ignored. This field does not enable tracing.
+	//
+	// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
+	TraceId string `protobuf:"bytes,5,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
 	// Unsupported by effectusd. Preserved for wire compatibility.
 	//
 	// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
 	SchemaValidation *SchemaValidation `protobuf:"bytes,6,opt,name=schema_validation,json=schemaValidation,proto3" json:"schema_validation,omitempty"`
-	Namespace        string            `protobuf:"bytes,7,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	IdempotencyKey   string            `protobuf:"bytes,8,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
-	WaitMode         ExecutionWaitMode `protobuf:"varint,9,opt,name=wait_mode,json=waitMode,proto3,enum=effectus.v1.ExecutionWaitMode" json:"wait_mode,omitempty"`
-	// Optional exact generation constraint. A mismatch is rejected before admission.
+	// Required. Whitespace is trimmed; no implicit namespace is selected.
+	Namespace      string            `protobuf:"bytes,7,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	IdempotencyKey string            `protobuf:"bytes,8,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	WaitMode       ExecutionWaitMode `protobuf:"varint,9,opt,name=wait_mode,json=waitMode,proto3,enum=effectus.v1.ExecutionWaitMode" json:"wait_mode,omitempty"`
+	// Optional exact generation constraint, checked against the pinned replay
+	// artifact or the active generation for a new identity.
 	GenerationDigest string `protobuf:"bytes,10,opt,name=generation_digest,json=generationDigest,proto3" json:"generation_digest,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
@@ -315,6 +395,7 @@ func (x *ExecutionRequest) GetVersion() string {
 	return ""
 }
 
+// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
 func (x *ExecutionRequest) GetFacts() *anypb.Any {
 	if x != nil {
 		return x.Facts
@@ -336,6 +417,7 @@ func (x *ExecutionRequest) GetOptions() *ExecutionOptions {
 	return nil
 }
 
+// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
 func (x *ExecutionRequest) GetTraceId() string {
 	if x != nil {
 		return x.TraceId
@@ -556,21 +638,39 @@ func (x *SchemaValidation) GetIgnoredFields() []string {
 	return nil
 }
 
-// ExecutionResponse represents the response from rule execution
+// ExecutionResponse reports admission separately from successful completion.
+// A failed terminal call returns a non-OK RPC status with this message attached
+// as a status detail. Business error causes are not exposed.
 type ExecutionResponse struct {
-	state       protoimpl.MessageState `protogen:"open.v1"`
-	Success     bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	Effects     []*TypedEffect         `protobuf:"bytes,2,rep,name=effects,proto3" json:"effects,omitempty"`
-	ExecutionId string                 `protobuf:"bytes,3,opt,name=execution_id,json=executionId,proto3" json:"execution_id,omitempty"`
-	StartTime   *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=start_time,json=startTime,proto3" json:"start_time,omitempty"`
-	EndTime     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=end_time,json=endTime,proto3" json:"end_time,omitempty"`
-	Metadata    map[string]string      `protobuf:"bytes,6,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Errors      []string               `protobuf:"bytes,7,rep,name=errors,proto3" json:"errors,omitempty"`
-	Warnings    []string               `protobuf:"bytes,8,rep,name=warnings,proto3" json:"warnings,omitempty"`
-	// Schema information used in execution
-	SchemaInfo    *SchemaInfo `protobuf:"bytes,9,opt,name=schema_info,json=schemaInfo,proto3" json:"schema_info,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// True only for successfully completed executions, not mere admission.
+	Success bool `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	// Reserved. The shipped server does not return effect payloads.
+	//
+	// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
+	Effects     []*TypedEffect `protobuf:"bytes,2,rep,name=effects,proto3" json:"effects,omitempty"`
+	ExecutionId string         `protobuf:"bytes,3,opt,name=execution_id,json=executionId,proto3" json:"execution_id,omitempty"`
+	// Observation times for this call, not persisted execution times.
+	// Replay receives new observation times.
+	StartTime *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=start_time,json=startTime,proto3" json:"start_time,omitempty"`
+	EndTime   *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=end_time,json=endTime,proto3" json:"end_time,omitempty"`
+	Metadata  map[string]string      `protobuf:"bytes,6,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Errors    []string               `protobuf:"bytes,7,rep,name=errors,proto3" json:"errors,omitempty"`
+	// Reserved. The shipped server does not populate these fields.
+	//
+	// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
+	Warnings []string `protobuf:"bytes,8,rep,name=warnings,proto3" json:"warnings,omitempty"`
+	// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
+	SchemaInfo *SchemaInfo `protobuf:"bytes,9,opt,name=schema_info,json=schemaInfo,proto3" json:"schema_info,omitempty"`
+	// True once this identity has a durable execution record.
+	DurablyAccepted bool `protobuf:"varint,10,opt,name=durably_accepted,json=durablyAccepted,proto3" json:"durably_accepted,omitempty"`
+	// True only for EXECUTION_STATE_COMPLETED. Failed/blocked states are terminal
+	// but are not successful completion.
+	Completed        bool           `protobuf:"varint,11,opt,name=completed,proto3" json:"completed,omitempty"`
+	State            ExecutionState `protobuf:"varint,12,opt,name=state,proto3,enum=effectus.v1.ExecutionState" json:"state,omitempty"`
+	GenerationDigest string         `protobuf:"bytes,13,opt,name=generation_digest,json=generationDigest,proto3" json:"generation_digest,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ExecutionResponse) Reset() {
@@ -610,6 +710,7 @@ func (x *ExecutionResponse) GetSuccess() bool {
 	return false
 }
 
+// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
 func (x *ExecutionResponse) GetEffects() []*TypedEffect {
 	if x != nil {
 		return x.Effects
@@ -652,6 +753,7 @@ func (x *ExecutionResponse) GetErrors() []string {
 	return nil
 }
 
+// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
 func (x *ExecutionResponse) GetWarnings() []string {
 	if x != nil {
 		return x.Warnings
@@ -659,11 +761,40 @@ func (x *ExecutionResponse) GetWarnings() []string {
 	return nil
 }
 
+// Deprecated: Marked as deprecated in effectus/v1/execution.proto.
 func (x *ExecutionResponse) GetSchemaInfo() *SchemaInfo {
 	if x != nil {
 		return x.SchemaInfo
 	}
 	return nil
+}
+
+func (x *ExecutionResponse) GetDurablyAccepted() bool {
+	if x != nil {
+		return x.DurablyAccepted
+	}
+	return false
+}
+
+func (x *ExecutionResponse) GetCompleted() bool {
+	if x != nil {
+		return x.Completed
+	}
+	return false
+}
+
+func (x *ExecutionResponse) GetState() ExecutionState {
+	if x != nil {
+		return x.State
+	}
+	return ExecutionState_EXECUTION_STATE_UNSPECIFIED
+}
+
+func (x *ExecutionResponse) GetGenerationDigest() string {
+	if x != nil {
+		return x.GenerationDigest
+	}
+	return ""
 }
 
 // TypedEffect represents an effect with full type information
@@ -1551,7 +1682,8 @@ func (x *UnregisterRulesetResponse) GetAffectedRulesets() []string {
 	return nil
 }
 
-// CompiledRuleset represents a compiled and validated ruleset
+// CompiledRuleset is a reserved legacy registration payload.
+// It is not the checked IR artifact produced by effectusc.
 type CompiledRuleset struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -2338,15 +2470,15 @@ var File_effectus_v1_execution_proto protoreflect.FileDescriptor
 
 const file_effectus_v1_execution_proto_rawDesc = "" +
 	"\n" +
-	"\x1beffectus/v1/execution.proto\x12\veffectus.v1\x1a\x18effectus/v1/common.proto\x1a\x19google/protobuf/any.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x8a\x04\n" +
+	"\x1beffectus/v1/execution.proto\x12\veffectus.v1\x1a\x18effectus/v1/common.proto\x1a\x19google/protobuf/any.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x92\x04\n" +
 	"\x10ExecutionRequest\x12!\n" +
 	"\fruleset_name\x18\x01 \x01(\tR\vrulesetName\x12\x18\n" +
-	"\aversion\x18\x02 \x01(\tR\aversion\x12*\n" +
-	"\x05facts\x18\x03 \x01(\v2\x14.google.protobuf.AnyR\x05facts\x128\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion\x12.\n" +
+	"\x05facts\x18\x03 \x01(\v2\x14.google.protobuf.AnyB\x02\x18\x01R\x05facts\x128\n" +
 	"\vtyped_facts\x18\v \x01(\v2\x17.google.protobuf.StructR\n" +
 	"typedFacts\x127\n" +
-	"\aoptions\x18\x04 \x01(\v2\x1d.effectus.v1.ExecutionOptionsR\aoptions\x12\x19\n" +
-	"\btrace_id\x18\x05 \x01(\tR\atraceId\x12N\n" +
+	"\aoptions\x18\x04 \x01(\v2\x1d.effectus.v1.ExecutionOptionsR\aoptions\x12\x1d\n" +
+	"\btrace_id\x18\x05 \x01(\tB\x02\x18\x01R\atraceId\x12N\n" +
 	"\x11schema_validation\x18\x06 \x01(\v2\x1d.effectus.v1.SchemaValidationB\x02\x18\x01R\x10schemaValidation\x12\x1c\n" +
 	"\tnamespace\x18\a \x01(\tR\tnamespace\x12'\n" +
 	"\x0fidempotency_key\x18\b \x01(\tR\x0eidempotencyKey\x12;\n" +
@@ -2367,19 +2499,24 @@ const file_effectus_v1_execution_proto_rawDesc = "" +
 	"strictMode\x120\n" +
 	"\x14allow_unknown_fields\x18\x02 \x01(\bR\x12allowUnknownFields\x128\n" +
 	"\x18validate_required_fields\x18\x03 \x01(\bR\x16validateRequiredFields\x12%\n" +
-	"\x0eignored_fields\x18\x04 \x03(\tR\rignoredFields\"\xeb\x03\n" +
+	"\x0eignored_fields\x18\x04 \x03(\tR\rignoredFields\"\xa0\x05\n" +
 	"\x11ExecutionResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\x122\n" +
-	"\aeffects\x18\x02 \x03(\v2\x18.effectus.v1.TypedEffectR\aeffects\x12!\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x126\n" +
+	"\aeffects\x18\x02 \x03(\v2\x18.effectus.v1.TypedEffectB\x02\x18\x01R\aeffects\x12!\n" +
 	"\fexecution_id\x18\x03 \x01(\tR\vexecutionId\x129\n" +
 	"\n" +
 	"start_time\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tstartTime\x125\n" +
 	"\bend_time\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\aendTime\x12H\n" +
 	"\bmetadata\x18\x06 \x03(\v2,.effectus.v1.ExecutionResponse.MetadataEntryR\bmetadata\x12\x16\n" +
-	"\x06errors\x18\a \x03(\tR\x06errors\x12\x1a\n" +
-	"\bwarnings\x18\b \x03(\tR\bwarnings\x128\n" +
-	"\vschema_info\x18\t \x01(\v2\x17.effectus.v1.SchemaInfoR\n" +
-	"schemaInfo\x1a;\n" +
+	"\x06errors\x18\a \x03(\tR\x06errors\x12\x1e\n" +
+	"\bwarnings\x18\b \x03(\tB\x02\x18\x01R\bwarnings\x12<\n" +
+	"\vschema_info\x18\t \x01(\v2\x17.effectus.v1.SchemaInfoB\x02\x18\x01R\n" +
+	"schemaInfo\x12)\n" +
+	"\x10durably_accepted\x18\n" +
+	" \x01(\bR\x0fdurablyAccepted\x12\x1c\n" +
+	"\tcompleted\x18\v \x01(\bR\tcompleted\x121\n" +
+	"\x05state\x18\f \x01(\x0e2\x1b.effectus.v1.ExecutionStateR\x05state\x12+\n" +
+	"\x11generation_digest\x18\r \x01(\tR\x10generationDigest\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb6\x02\n" +
@@ -2555,7 +2692,18 @@ const file_effectus_v1_execution_proto_rawDesc = "" +
 	"\x11ExecutionWaitMode\x12#\n" +
 	"\x1fEXECUTION_WAIT_MODE_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cEXECUTION_WAIT_MODE_ACCEPTED\x10\x01\x12 \n" +
-	"\x1cEXECUTION_WAIT_MODE_TERMINAL\x10\x02*\xd5\x01\n" +
+	"\x1cEXECUTION_WAIT_MODE_TERMINAL\x10\x02*\xe0\x02\n" +
+	"\x0eExecutionState\x12\x1f\n" +
+	"\x1bEXECUTION_STATE_UNSPECIFIED\x10\x00\x12\x1d\n" +
+	"\x19EXECUTION_STATE_ADMITTING\x10\x01\x12\x1c\n" +
+	"\x18EXECUTION_STATE_ACCEPTED\x10\x02\x12\x1b\n" +
+	"\x17EXECUTION_STATE_RUNNING\x10\x03\x12\x1d\n" +
+	"\x19EXECUTION_STATE_COMPLETED\x10\x04\x12\x1a\n" +
+	"\x16EXECUTION_STATE_FAILED\x10\x05\x12#\n" +
+	"\x1fEXECUTION_STATE_BLOCKED_UNKNOWN\x10\x06\x12!\n" +
+	"\x1dEXECUTION_STATE_BLOCKED_FENCE\x10\a\x12&\n" +
+	"\"EXECUTION_STATE_BLOCKED_DEPENDENCY\x10\b\x12(\n" +
+	"$EXECUTION_STATE_BLOCKED_COMPENSATION\x10\t*\xd5\x01\n" +
 	"\fEffectStatus\x12\x1d\n" +
 	"\x19EFFECT_STATUS_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15EFFECT_STATUS_PENDING\x10\x01\x12\x1a\n" +
@@ -2575,16 +2723,16 @@ const file_effectus_v1_execution_proto_rawDesc = "" +
 	"\x1bEXECUTION_PHASE_COMPILATION\x10\x03\x12\x1d\n" +
 	"\x19EXECUTION_PHASE_EXECUTION\x10\x04\x12\x1e\n" +
 	"\x1aEXECUTION_PHASE_COMPLETION\x10\x05\x12\x19\n" +
-	"\x15EXECUTION_PHASE_ERROR\x10\x062\xd6\x05\n" +
+	"\x15EXECUTION_PHASE_ERROR\x10\x062\xf9\x05\n" +
 	"\x17RulesetExecutionService\x12O\n" +
-	"\x0eExecuteRuleset\x12\x1d.effectus.v1.ExecutionRequest\x1a\x1e.effectus.v1.ExecutionResponse\x12K\n" +
-	"\x0eGetRulesetInfo\x12\x1f.effectus.v1.RulesetInfoRequest\x1a\x18.effectus.v1.RulesetInfo\x12S\n" +
-	"\fListRulesets\x12 .effectus.v1.ListRulesetsRequest\x1a!.effectus.v1.ListRulesetsResponse\x12\\\n" +
-	"\x0fRegisterRuleset\x12#.effectus.v1.RegisterRulesetRequest\x1a$.effectus.v1.RegisterRulesetResponse\x12b\n" +
-	"\x11UnregisterRuleset\x12%.effectus.v1.UnregisterRulesetRequest\x1a&.effectus.v1.UnregisterRulesetResponse\x12P\n" +
-	"\x0fStreamExecution\x12\x1d.effectus.v1.ExecutionRequest\x1a\x1c.effectus.v1.ExecutionUpdate0\x01\x12Y\n" +
-	"\x0eValidateSchema\x12\".effectus.v1.ValidateSchemaRequest\x1a#.effectus.v1.ValidateSchemaResponse\x12Y\n" +
-	"\x10GetSchemaVersion\x12!.effectus.v1.SchemaVersionRequest\x1a\".effectus.v1.SchemaVersionResponseB>Z<github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1b\x06proto3"
+	"\x0eExecuteRuleset\x12\x1d.effectus.v1.ExecutionRequest\x1a\x1e.effectus.v1.ExecutionResponse\x12P\n" +
+	"\x0eGetRulesetInfo\x12\x1f.effectus.v1.RulesetInfoRequest\x1a\x18.effectus.v1.RulesetInfo\"\x03\x88\x02\x01\x12X\n" +
+	"\fListRulesets\x12 .effectus.v1.ListRulesetsRequest\x1a!.effectus.v1.ListRulesetsResponse\"\x03\x88\x02\x01\x12a\n" +
+	"\x0fRegisterRuleset\x12#.effectus.v1.RegisterRulesetRequest\x1a$.effectus.v1.RegisterRulesetResponse\"\x03\x88\x02\x01\x12g\n" +
+	"\x11UnregisterRuleset\x12%.effectus.v1.UnregisterRulesetRequest\x1a&.effectus.v1.UnregisterRulesetResponse\"\x03\x88\x02\x01\x12U\n" +
+	"\x0fStreamExecution\x12\x1d.effectus.v1.ExecutionRequest\x1a\x1c.effectus.v1.ExecutionUpdate\"\x03\x88\x02\x010\x01\x12^\n" +
+	"\x0eValidateSchema\x12\".effectus.v1.ValidateSchemaRequest\x1a#.effectus.v1.ValidateSchemaResponse\"\x03\x88\x02\x01\x12^\n" +
+	"\x10GetSchemaVersion\x12!.effectus.v1.SchemaVersionRequest\x1a\".effectus.v1.SchemaVersionResponse\"\x03\x88\x02\x01B>Z<github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1b\x06proto3"
 
 var (
 	file_effectus_v1_execution_proto_rawDescOnce sync.Once
@@ -2598,117 +2746,119 @@ func file_effectus_v1_execution_proto_rawDescGZIP() []byte {
 	return file_effectus_v1_execution_proto_rawDescData
 }
 
-var file_effectus_v1_execution_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_effectus_v1_execution_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
 var file_effectus_v1_execution_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
 var file_effectus_v1_execution_proto_goTypes = []any{
 	(ExecutionWaitMode)(0),            // 0: effectus.v1.ExecutionWaitMode
-	(EffectStatus)(0),                 // 1: effectus.v1.EffectStatus
-	(RuleType)(0),                     // 2: effectus.v1.RuleType
-	(ExecutionPhase)(0),               // 3: effectus.v1.ExecutionPhase
-	(*ExecutionRequest)(nil),          // 4: effectus.v1.ExecutionRequest
-	(*ExecutionOptions)(nil),          // 5: effectus.v1.ExecutionOptions
-	(*SchemaValidation)(nil),          // 6: effectus.v1.SchemaValidation
-	(*ExecutionResponse)(nil),         // 7: effectus.v1.ExecutionResponse
-	(*TypedEffect)(nil),               // 8: effectus.v1.TypedEffect
-	(*SchemaInfo)(nil),                // 9: effectus.v1.SchemaInfo
-	(*RulesetInfoRequest)(nil),        // 10: effectus.v1.RulesetInfoRequest
-	(*RulesetInfo)(nil),               // 11: effectus.v1.RulesetInfo
-	(*SchemaVersionInfo)(nil),         // 12: effectus.v1.SchemaVersionInfo
-	(*ListRulesetsRequest)(nil),       // 13: effectus.v1.ListRulesetsRequest
-	(*ListRulesetsResponse)(nil),      // 14: effectus.v1.ListRulesetsResponse
-	(*SchemaRegistryInfo)(nil),        // 15: effectus.v1.SchemaRegistryInfo
-	(*RegisterRulesetRequest)(nil),    // 16: effectus.v1.RegisterRulesetRequest
-	(*RegisterRulesetResponse)(nil),   // 17: effectus.v1.RegisterRulesetResponse
-	(*UnregisterRulesetRequest)(nil),  // 18: effectus.v1.UnregisterRulesetRequest
-	(*UnregisterRulesetResponse)(nil), // 19: effectus.v1.UnregisterRulesetResponse
-	(*CompiledRuleset)(nil),           // 20: effectus.v1.CompiledRuleset
-	(*CompiledRule)(nil),              // 21: effectus.v1.CompiledRule
-	(*CompiledPredicate)(nil),         // 22: effectus.v1.CompiledPredicate
-	(*CompiledEffect)(nil),            // 23: effectus.v1.CompiledEffect
-	(*ExecutionUpdate)(nil),           // 24: effectus.v1.ExecutionUpdate
-	(*SchemaCompatibilityStatus)(nil), // 25: effectus.v1.SchemaCompatibilityStatus
-	(*ValidateSchemaRequest)(nil),     // 26: effectus.v1.ValidateSchemaRequest
-	(*ValidateSchemaResponse)(nil),    // 27: effectus.v1.ValidateSchemaResponse
-	(*SchemaVersionRequest)(nil),      // 28: effectus.v1.SchemaVersionRequest
-	(*SchemaVersionResponse)(nil),     // 29: effectus.v1.SchemaVersionResponse
-	nil,                               // 30: effectus.v1.ExecutionResponse.MetadataEntry
-	nil,                               // 31: effectus.v1.SchemaInfo.EffectSchemaVersionsEntry
-	nil,                               // 32: effectus.v1.RulesetInfo.EffectSchemasEntry
-	nil,                               // 33: effectus.v1.RulesetInfo.MetadataEntry
-	nil,                               // 34: effectus.v1.SchemaVersionInfo.EffectSchemaVersionsEntry
-	nil,                               // 35: effectus.v1.CompiledRuleset.EffectSchemasEntry
-	nil,                               // 36: effectus.v1.CompiledRuleset.MetadataEntry
-	nil,                               // 37: effectus.v1.CompiledEffect.ArgsEntry
-	nil,                               // 38: effectus.v1.SchemaVersionResponse.VersionMetadataEntry
-	(*anypb.Any)(nil),                 // 39: google.protobuf.Any
-	(*structpb.Struct)(nil),           // 40: google.protobuf.Struct
-	(*timestamppb.Timestamp)(nil),     // 41: google.protobuf.Timestamp
-	(*Schema)(nil),                    // 42: effectus.v1.Schema
+	(ExecutionState)(0),               // 1: effectus.v1.ExecutionState
+	(EffectStatus)(0),                 // 2: effectus.v1.EffectStatus
+	(RuleType)(0),                     // 3: effectus.v1.RuleType
+	(ExecutionPhase)(0),               // 4: effectus.v1.ExecutionPhase
+	(*ExecutionRequest)(nil),          // 5: effectus.v1.ExecutionRequest
+	(*ExecutionOptions)(nil),          // 6: effectus.v1.ExecutionOptions
+	(*SchemaValidation)(nil),          // 7: effectus.v1.SchemaValidation
+	(*ExecutionResponse)(nil),         // 8: effectus.v1.ExecutionResponse
+	(*TypedEffect)(nil),               // 9: effectus.v1.TypedEffect
+	(*SchemaInfo)(nil),                // 10: effectus.v1.SchemaInfo
+	(*RulesetInfoRequest)(nil),        // 11: effectus.v1.RulesetInfoRequest
+	(*RulesetInfo)(nil),               // 12: effectus.v1.RulesetInfo
+	(*SchemaVersionInfo)(nil),         // 13: effectus.v1.SchemaVersionInfo
+	(*ListRulesetsRequest)(nil),       // 14: effectus.v1.ListRulesetsRequest
+	(*ListRulesetsResponse)(nil),      // 15: effectus.v1.ListRulesetsResponse
+	(*SchemaRegistryInfo)(nil),        // 16: effectus.v1.SchemaRegistryInfo
+	(*RegisterRulesetRequest)(nil),    // 17: effectus.v1.RegisterRulesetRequest
+	(*RegisterRulesetResponse)(nil),   // 18: effectus.v1.RegisterRulesetResponse
+	(*UnregisterRulesetRequest)(nil),  // 19: effectus.v1.UnregisterRulesetRequest
+	(*UnregisterRulesetResponse)(nil), // 20: effectus.v1.UnregisterRulesetResponse
+	(*CompiledRuleset)(nil),           // 21: effectus.v1.CompiledRuleset
+	(*CompiledRule)(nil),              // 22: effectus.v1.CompiledRule
+	(*CompiledPredicate)(nil),         // 23: effectus.v1.CompiledPredicate
+	(*CompiledEffect)(nil),            // 24: effectus.v1.CompiledEffect
+	(*ExecutionUpdate)(nil),           // 25: effectus.v1.ExecutionUpdate
+	(*SchemaCompatibilityStatus)(nil), // 26: effectus.v1.SchemaCompatibilityStatus
+	(*ValidateSchemaRequest)(nil),     // 27: effectus.v1.ValidateSchemaRequest
+	(*ValidateSchemaResponse)(nil),    // 28: effectus.v1.ValidateSchemaResponse
+	(*SchemaVersionRequest)(nil),      // 29: effectus.v1.SchemaVersionRequest
+	(*SchemaVersionResponse)(nil),     // 30: effectus.v1.SchemaVersionResponse
+	nil,                               // 31: effectus.v1.ExecutionResponse.MetadataEntry
+	nil,                               // 32: effectus.v1.SchemaInfo.EffectSchemaVersionsEntry
+	nil,                               // 33: effectus.v1.RulesetInfo.EffectSchemasEntry
+	nil,                               // 34: effectus.v1.RulesetInfo.MetadataEntry
+	nil,                               // 35: effectus.v1.SchemaVersionInfo.EffectSchemaVersionsEntry
+	nil,                               // 36: effectus.v1.CompiledRuleset.EffectSchemasEntry
+	nil,                               // 37: effectus.v1.CompiledRuleset.MetadataEntry
+	nil,                               // 38: effectus.v1.CompiledEffect.ArgsEntry
+	nil,                               // 39: effectus.v1.SchemaVersionResponse.VersionMetadataEntry
+	(*anypb.Any)(nil),                 // 40: google.protobuf.Any
+	(*structpb.Struct)(nil),           // 41: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil),     // 42: google.protobuf.Timestamp
+	(*Schema)(nil),                    // 43: effectus.v1.Schema
 }
 var file_effectus_v1_execution_proto_depIdxs = []int32{
-	39, // 0: effectus.v1.ExecutionRequest.facts:type_name -> google.protobuf.Any
-	40, // 1: effectus.v1.ExecutionRequest.typed_facts:type_name -> google.protobuf.Struct
-	5,  // 2: effectus.v1.ExecutionRequest.options:type_name -> effectus.v1.ExecutionOptions
-	6,  // 3: effectus.v1.ExecutionRequest.schema_validation:type_name -> effectus.v1.SchemaValidation
+	40, // 0: effectus.v1.ExecutionRequest.facts:type_name -> google.protobuf.Any
+	41, // 1: effectus.v1.ExecutionRequest.typed_facts:type_name -> google.protobuf.Struct
+	6,  // 2: effectus.v1.ExecutionRequest.options:type_name -> effectus.v1.ExecutionOptions
+	7,  // 3: effectus.v1.ExecutionRequest.schema_validation:type_name -> effectus.v1.SchemaValidation
 	0,  // 4: effectus.v1.ExecutionRequest.wait_mode:type_name -> effectus.v1.ExecutionWaitMode
-	8,  // 5: effectus.v1.ExecutionResponse.effects:type_name -> effectus.v1.TypedEffect
-	41, // 6: effectus.v1.ExecutionResponse.start_time:type_name -> google.protobuf.Timestamp
-	41, // 7: effectus.v1.ExecutionResponse.end_time:type_name -> google.protobuf.Timestamp
-	30, // 8: effectus.v1.ExecutionResponse.metadata:type_name -> effectus.v1.ExecutionResponse.MetadataEntry
-	9,  // 9: effectus.v1.ExecutionResponse.schema_info:type_name -> effectus.v1.SchemaInfo
-	39, // 10: effectus.v1.TypedEffect.args:type_name -> google.protobuf.Any
-	39, // 11: effectus.v1.TypedEffect.result:type_name -> google.protobuf.Any
-	41, // 12: effectus.v1.TypedEffect.timestamp:type_name -> google.protobuf.Timestamp
-	1,  // 13: effectus.v1.TypedEffect.status:type_name -> effectus.v1.EffectStatus
-	31, // 14: effectus.v1.SchemaInfo.effect_schema_versions:type_name -> effectus.v1.SchemaInfo.EffectSchemaVersionsEntry
-	42, // 15: effectus.v1.RulesetInfo.fact_schema:type_name -> effectus.v1.Schema
-	32, // 16: effectus.v1.RulesetInfo.effect_schemas:type_name -> effectus.v1.RulesetInfo.EffectSchemasEntry
-	33, // 17: effectus.v1.RulesetInfo.metadata:type_name -> effectus.v1.RulesetInfo.MetadataEntry
-	12, // 18: effectus.v1.RulesetInfo.schema_versions:type_name -> effectus.v1.SchemaVersionInfo
-	34, // 19: effectus.v1.SchemaVersionInfo.effect_schema_versions:type_name -> effectus.v1.SchemaVersionInfo.EffectSchemaVersionsEntry
-	11, // 20: effectus.v1.ListRulesetsResponse.rulesets:type_name -> effectus.v1.RulesetInfo
-	15, // 21: effectus.v1.ListRulesetsResponse.schema_registry:type_name -> effectus.v1.SchemaRegistryInfo
-	20, // 22: effectus.v1.RegisterRulesetRequest.ruleset:type_name -> effectus.v1.CompiledRuleset
-	42, // 23: effectus.v1.CompiledRuleset.fact_schema:type_name -> effectus.v1.Schema
-	35, // 24: effectus.v1.CompiledRuleset.effect_schemas:type_name -> effectus.v1.CompiledRuleset.EffectSchemasEntry
-	21, // 25: effectus.v1.CompiledRuleset.rules:type_name -> effectus.v1.CompiledRule
-	36, // 26: effectus.v1.CompiledRuleset.metadata:type_name -> effectus.v1.CompiledRuleset.MetadataEntry
-	12, // 27: effectus.v1.CompiledRuleset.schema_versions:type_name -> effectus.v1.SchemaVersionInfo
-	2,  // 28: effectus.v1.CompiledRule.type:type_name -> effectus.v1.RuleType
-	22, // 29: effectus.v1.CompiledRule.predicates:type_name -> effectus.v1.CompiledPredicate
-	23, // 30: effectus.v1.CompiledRule.effects:type_name -> effectus.v1.CompiledEffect
-	39, // 31: effectus.v1.CompiledPredicate.value:type_name -> google.protobuf.Any
-	37, // 32: effectus.v1.CompiledEffect.args:type_name -> effectus.v1.CompiledEffect.ArgsEntry
-	3,  // 33: effectus.v1.ExecutionUpdate.phase:type_name -> effectus.v1.ExecutionPhase
-	8,  // 34: effectus.v1.ExecutionUpdate.current_effect:type_name -> effectus.v1.TypedEffect
-	41, // 35: effectus.v1.ExecutionUpdate.timestamp:type_name -> google.protobuf.Timestamp
-	25, // 36: effectus.v1.ExecutionUpdate.schema_status:type_name -> effectus.v1.SchemaCompatibilityStatus
-	39, // 37: effectus.v1.ValidateSchemaRequest.schema_definition:type_name -> google.protobuf.Any
-	38, // 38: effectus.v1.SchemaVersionResponse.version_metadata:type_name -> effectus.v1.SchemaVersionResponse.VersionMetadataEntry
-	42, // 39: effectus.v1.RulesetInfo.EffectSchemasEntry.value:type_name -> effectus.v1.Schema
-	42, // 40: effectus.v1.CompiledRuleset.EffectSchemasEntry.value:type_name -> effectus.v1.Schema
-	39, // 41: effectus.v1.CompiledEffect.ArgsEntry.value:type_name -> google.protobuf.Any
-	4,  // 42: effectus.v1.RulesetExecutionService.ExecuteRuleset:input_type -> effectus.v1.ExecutionRequest
-	10, // 43: effectus.v1.RulesetExecutionService.GetRulesetInfo:input_type -> effectus.v1.RulesetInfoRequest
-	13, // 44: effectus.v1.RulesetExecutionService.ListRulesets:input_type -> effectus.v1.ListRulesetsRequest
-	16, // 45: effectus.v1.RulesetExecutionService.RegisterRuleset:input_type -> effectus.v1.RegisterRulesetRequest
-	18, // 46: effectus.v1.RulesetExecutionService.UnregisterRuleset:input_type -> effectus.v1.UnregisterRulesetRequest
-	4,  // 47: effectus.v1.RulesetExecutionService.StreamExecution:input_type -> effectus.v1.ExecutionRequest
-	26, // 48: effectus.v1.RulesetExecutionService.ValidateSchema:input_type -> effectus.v1.ValidateSchemaRequest
-	28, // 49: effectus.v1.RulesetExecutionService.GetSchemaVersion:input_type -> effectus.v1.SchemaVersionRequest
-	7,  // 50: effectus.v1.RulesetExecutionService.ExecuteRuleset:output_type -> effectus.v1.ExecutionResponse
-	11, // 51: effectus.v1.RulesetExecutionService.GetRulesetInfo:output_type -> effectus.v1.RulesetInfo
-	14, // 52: effectus.v1.RulesetExecutionService.ListRulesets:output_type -> effectus.v1.ListRulesetsResponse
-	17, // 53: effectus.v1.RulesetExecutionService.RegisterRuleset:output_type -> effectus.v1.RegisterRulesetResponse
-	19, // 54: effectus.v1.RulesetExecutionService.UnregisterRuleset:output_type -> effectus.v1.UnregisterRulesetResponse
-	24, // 55: effectus.v1.RulesetExecutionService.StreamExecution:output_type -> effectus.v1.ExecutionUpdate
-	27, // 56: effectus.v1.RulesetExecutionService.ValidateSchema:output_type -> effectus.v1.ValidateSchemaResponse
-	29, // 57: effectus.v1.RulesetExecutionService.GetSchemaVersion:output_type -> effectus.v1.SchemaVersionResponse
-	50, // [50:58] is the sub-list for method output_type
-	42, // [42:50] is the sub-list for method input_type
-	42, // [42:42] is the sub-list for extension type_name
-	42, // [42:42] is the sub-list for extension extendee
-	0,  // [0:42] is the sub-list for field type_name
+	9,  // 5: effectus.v1.ExecutionResponse.effects:type_name -> effectus.v1.TypedEffect
+	42, // 6: effectus.v1.ExecutionResponse.start_time:type_name -> google.protobuf.Timestamp
+	42, // 7: effectus.v1.ExecutionResponse.end_time:type_name -> google.protobuf.Timestamp
+	31, // 8: effectus.v1.ExecutionResponse.metadata:type_name -> effectus.v1.ExecutionResponse.MetadataEntry
+	10, // 9: effectus.v1.ExecutionResponse.schema_info:type_name -> effectus.v1.SchemaInfo
+	1,  // 10: effectus.v1.ExecutionResponse.state:type_name -> effectus.v1.ExecutionState
+	40, // 11: effectus.v1.TypedEffect.args:type_name -> google.protobuf.Any
+	40, // 12: effectus.v1.TypedEffect.result:type_name -> google.protobuf.Any
+	42, // 13: effectus.v1.TypedEffect.timestamp:type_name -> google.protobuf.Timestamp
+	2,  // 14: effectus.v1.TypedEffect.status:type_name -> effectus.v1.EffectStatus
+	32, // 15: effectus.v1.SchemaInfo.effect_schema_versions:type_name -> effectus.v1.SchemaInfo.EffectSchemaVersionsEntry
+	43, // 16: effectus.v1.RulesetInfo.fact_schema:type_name -> effectus.v1.Schema
+	33, // 17: effectus.v1.RulesetInfo.effect_schemas:type_name -> effectus.v1.RulesetInfo.EffectSchemasEntry
+	34, // 18: effectus.v1.RulesetInfo.metadata:type_name -> effectus.v1.RulesetInfo.MetadataEntry
+	13, // 19: effectus.v1.RulesetInfo.schema_versions:type_name -> effectus.v1.SchemaVersionInfo
+	35, // 20: effectus.v1.SchemaVersionInfo.effect_schema_versions:type_name -> effectus.v1.SchemaVersionInfo.EffectSchemaVersionsEntry
+	12, // 21: effectus.v1.ListRulesetsResponse.rulesets:type_name -> effectus.v1.RulesetInfo
+	16, // 22: effectus.v1.ListRulesetsResponse.schema_registry:type_name -> effectus.v1.SchemaRegistryInfo
+	21, // 23: effectus.v1.RegisterRulesetRequest.ruleset:type_name -> effectus.v1.CompiledRuleset
+	43, // 24: effectus.v1.CompiledRuleset.fact_schema:type_name -> effectus.v1.Schema
+	36, // 25: effectus.v1.CompiledRuleset.effect_schemas:type_name -> effectus.v1.CompiledRuleset.EffectSchemasEntry
+	22, // 26: effectus.v1.CompiledRuleset.rules:type_name -> effectus.v1.CompiledRule
+	37, // 27: effectus.v1.CompiledRuleset.metadata:type_name -> effectus.v1.CompiledRuleset.MetadataEntry
+	13, // 28: effectus.v1.CompiledRuleset.schema_versions:type_name -> effectus.v1.SchemaVersionInfo
+	3,  // 29: effectus.v1.CompiledRule.type:type_name -> effectus.v1.RuleType
+	23, // 30: effectus.v1.CompiledRule.predicates:type_name -> effectus.v1.CompiledPredicate
+	24, // 31: effectus.v1.CompiledRule.effects:type_name -> effectus.v1.CompiledEffect
+	40, // 32: effectus.v1.CompiledPredicate.value:type_name -> google.protobuf.Any
+	38, // 33: effectus.v1.CompiledEffect.args:type_name -> effectus.v1.CompiledEffect.ArgsEntry
+	4,  // 34: effectus.v1.ExecutionUpdate.phase:type_name -> effectus.v1.ExecutionPhase
+	9,  // 35: effectus.v1.ExecutionUpdate.current_effect:type_name -> effectus.v1.TypedEffect
+	42, // 36: effectus.v1.ExecutionUpdate.timestamp:type_name -> google.protobuf.Timestamp
+	26, // 37: effectus.v1.ExecutionUpdate.schema_status:type_name -> effectus.v1.SchemaCompatibilityStatus
+	40, // 38: effectus.v1.ValidateSchemaRequest.schema_definition:type_name -> google.protobuf.Any
+	39, // 39: effectus.v1.SchemaVersionResponse.version_metadata:type_name -> effectus.v1.SchemaVersionResponse.VersionMetadataEntry
+	43, // 40: effectus.v1.RulesetInfo.EffectSchemasEntry.value:type_name -> effectus.v1.Schema
+	43, // 41: effectus.v1.CompiledRuleset.EffectSchemasEntry.value:type_name -> effectus.v1.Schema
+	40, // 42: effectus.v1.CompiledEffect.ArgsEntry.value:type_name -> google.protobuf.Any
+	5,  // 43: effectus.v1.RulesetExecutionService.ExecuteRuleset:input_type -> effectus.v1.ExecutionRequest
+	11, // 44: effectus.v1.RulesetExecutionService.GetRulesetInfo:input_type -> effectus.v1.RulesetInfoRequest
+	14, // 45: effectus.v1.RulesetExecutionService.ListRulesets:input_type -> effectus.v1.ListRulesetsRequest
+	17, // 46: effectus.v1.RulesetExecutionService.RegisterRuleset:input_type -> effectus.v1.RegisterRulesetRequest
+	19, // 47: effectus.v1.RulesetExecutionService.UnregisterRuleset:input_type -> effectus.v1.UnregisterRulesetRequest
+	5,  // 48: effectus.v1.RulesetExecutionService.StreamExecution:input_type -> effectus.v1.ExecutionRequest
+	27, // 49: effectus.v1.RulesetExecutionService.ValidateSchema:input_type -> effectus.v1.ValidateSchemaRequest
+	29, // 50: effectus.v1.RulesetExecutionService.GetSchemaVersion:input_type -> effectus.v1.SchemaVersionRequest
+	8,  // 51: effectus.v1.RulesetExecutionService.ExecuteRuleset:output_type -> effectus.v1.ExecutionResponse
+	12, // 52: effectus.v1.RulesetExecutionService.GetRulesetInfo:output_type -> effectus.v1.RulesetInfo
+	15, // 53: effectus.v1.RulesetExecutionService.ListRulesets:output_type -> effectus.v1.ListRulesetsResponse
+	18, // 54: effectus.v1.RulesetExecutionService.RegisterRuleset:output_type -> effectus.v1.RegisterRulesetResponse
+	20, // 55: effectus.v1.RulesetExecutionService.UnregisterRuleset:output_type -> effectus.v1.UnregisterRulesetResponse
+	25, // 56: effectus.v1.RulesetExecutionService.StreamExecution:output_type -> effectus.v1.ExecutionUpdate
+	28, // 57: effectus.v1.RulesetExecutionService.ValidateSchema:output_type -> effectus.v1.ValidateSchemaResponse
+	30, // 58: effectus.v1.RulesetExecutionService.GetSchemaVersion:output_type -> effectus.v1.SchemaVersionResponse
+	51, // [51:59] is the sub-list for method output_type
+	43, // [43:51] is the sub-list for method input_type
+	43, // [43:43] is the sub-list for extension type_name
+	43, // [43:43] is the sub-list for extension extendee
+	0,  // [0:43] is the sub-list for field type_name
 }
 
 func init() { file_effectus_v1_execution_proto_init() }
@@ -2722,7 +2872,7 @@ func file_effectus_v1_execution_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_effectus_v1_execution_proto_rawDesc), len(file_effectus_v1_execution_proto_rawDesc)),
-			NumEnums:      4,
+			NumEnums:      5,
 			NumMessages:   35,
 			NumExtensions: 0,
 			NumServices:   1,

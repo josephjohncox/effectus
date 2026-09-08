@@ -695,6 +695,9 @@ func binaryExpression(operator effectusv1.BinaryOperator, left, right *effectusv
 func lowerPredicate(expression string) (*effectusv1.Expression, error) {
 	tree, err := exprparser.Parse(expression)
 	if err != nil {
+		if strings.Contains(err.Error(), "invalid integer literal") {
+			return nil, fmt.Errorf("parse expression: integer literal magnitude must fit int64; spell the minimum int64 value as (-9223372036854775807 - 1): %w", err)
+		}
 		return nil, fmt.Errorf("parse expression: %w", err)
 	}
 	return lowerExprNode(tree.Node)
@@ -768,26 +771,18 @@ func lowerExprNode(node exprast.Node) (*effectusv1.Expression, error) {
 	case *exprast.CallNode:
 		callee, ok := node.Callee.(*exprast.IdentifierNode)
 		if !ok {
-			return nil, fmt.Errorf("only named function calls are supported")
+			return nil, fmt.Errorf("predicate method calls are unavailable in immutable generations")
 		}
-		return lowerFunctionCall(callee.Value, node.Arguments)
+		return lowerFunctionCall(callee.Value)
 	case *exprast.BuiltinNode:
-		return lowerFunctionCall(node.Name, node.Arguments)
+		return lowerFunctionCall(node.Name)
 	default:
 		return nil, fmt.Errorf("unsupported predicate AST node %T", node)
 	}
 }
 
-func lowerFunctionCall(name string, sourceArguments []exprast.Node) (*effectusv1.Expression, error) {
-	arguments := make([]*effectusv1.Expression, len(sourceArguments))
-	for index, argument := range sourceArguments {
-		lowered, err := lowerExprNode(argument)
-		if err != nil {
-			return nil, fmt.Errorf("function %q argument %d: %w", name, index, err)
-		}
-		arguments[index] = lowered
-	}
-	return &effectusv1.Expression{Kind: &effectusv1.Expression_Call{Call: &effectusv1.FunctionCall{Function: name, Arguments: arguments}}}, nil
+func lowerFunctionCall(name string) (*effectusv1.Expression, error) {
+	return nil, fmt.Errorf("predicate function %q is unavailable in immutable generations", name)
 }
 
 func expressionFactPath(node exprast.Node) (string, error) {

@@ -14,32 +14,52 @@ service RulesetExecutionService {
   // ExecuteRuleset executes a ruleset with provided facts.
   rpc ExecuteRuleset(ExecutionRequest) returns (ExecutionResponse);
 
-  // Management RPCs are reserved and return Unimplemented in effectusd.
-  rpc GetRulesetInfo(RulesetInfoRequest) returns (RulesetInfo);
-  rpc ListRulesets(ListRulesetsRequest) returns (ListRulesetsResponse);
-  rpc RegisterRuleset(RegisterRulesetRequest) returns (RegisterRulesetResponse);
-  rpc UnregisterRuleset(UnregisterRulesetRequest) returns (UnregisterRulesetResponse);
-  rpc StreamExecution(ExecutionRequest) returns (stream ExecutionUpdate);
-  rpc ValidateSchema(ValidateSchemaRequest) returns (ValidateSchemaResponse);
-  rpc GetSchemaVersion(SchemaVersionRequest) returns (SchemaVersionResponse);
+  // Reserved. These RPCs return Unimplemented in the shipped server.
+  // Their names and payload field numbers remain frozen for compatibility.
+  rpc GetRulesetInfo(RulesetInfoRequest) returns (RulesetInfo) {
+    option deprecated = true;
+  }
+  rpc ListRulesets(ListRulesetsRequest) returns (ListRulesetsResponse) {
+    option deprecated = true;
+  }
+  rpc RegisterRuleset(RegisterRulesetRequest) returns (RegisterRulesetResponse) {
+    option deprecated = true;
+  }
+  rpc UnregisterRuleset(UnregisterRulesetRequest) returns (UnregisterRulesetResponse) {
+    option deprecated = true;
+  }
+  rpc StreamExecution(ExecutionRequest) returns (stream ExecutionUpdate) {
+    option deprecated = true;
+  }
+  rpc ValidateSchema(ValidateSchemaRequest) returns (ValidateSchemaResponse) {
+    option deprecated = true;
+  }
+  rpc GetSchemaVersion(SchemaVersionRequest) returns (SchemaVersionResponse) {
+    option deprecated = true;
+  }
 }
 
 // ExecutionRequest represents a request to execute rules
 message ExecutionRequest {
   string ruleset_name = 1;
   string version = 2;
-  google.protobuf.Any facts = 3;
+  // Compatibility alias. Must wrap google.protobuf.Struct. typed_facts wins
+  // when both fields are present. New clients must use typed_facts.
+  google.protobuf.Any facts = 3 [deprecated = true];
   // Typed facts for checked execution. New clients must use this field.
   google.protobuf.Struct typed_facts = 11;
   // Only options.timeout_seconds is supported by effectusd.
   ExecutionOptions options = 4;
-  string trace_id = 5;
+  // Reserved and ignored. This field does not enable tracing.
+  string trace_id = 5 [deprecated = true];
   // Unsupported by effectusd. Preserved for wire compatibility.
   SchemaValidation schema_validation = 6 [deprecated = true];
+  // Required. Whitespace is trimmed; no implicit namespace is selected.
   string namespace = 7;
   string idempotency_key = 8;
   ExecutionWaitMode wait_mode = 9;
-  // Optional exact generation constraint. A mismatch is rejected before admission.
+  // Optional exact generation constraint, checked against the pinned replay
+  // artifact or the active generation for a new identity.
   string generation_digest = 10;
 }
 
@@ -70,18 +90,45 @@ message SchemaValidation {
   repeated string ignored_fields = 4;
 }
 
-// ExecutionResponse represents the response from rule execution
+// ExecutionState is the durable execution disposition, not an RPC status.
+enum ExecutionState {
+  EXECUTION_STATE_UNSPECIFIED = 0;
+  EXECUTION_STATE_ADMITTING = 1;
+  EXECUTION_STATE_ACCEPTED = 2;
+  EXECUTION_STATE_RUNNING = 3;
+  EXECUTION_STATE_COMPLETED = 4;
+  EXECUTION_STATE_FAILED = 5;
+  EXECUTION_STATE_BLOCKED_UNKNOWN = 6;
+  EXECUTION_STATE_BLOCKED_FENCE = 7;
+  EXECUTION_STATE_BLOCKED_DEPENDENCY = 8;
+  EXECUTION_STATE_BLOCKED_COMPENSATION = 9;
+}
+
+// ExecutionResponse reports admission separately from successful completion.
+// A failed terminal call returns a non-OK RPC status with this message attached
+// as a status detail. Business error causes are not exposed.
 message ExecutionResponse {
+  // True only for successfully completed executions, not mere admission.
   bool success = 1;
-  repeated TypedEffect effects = 2;
+  // Reserved. The shipped server does not return effect payloads.
+  repeated TypedEffect effects = 2 [deprecated = true];
   string execution_id = 3;
+  // Observation times for this call, not persisted execution times.
+  // Replay receives new observation times.
   google.protobuf.Timestamp start_time = 4;
   google.protobuf.Timestamp end_time = 5;
   map<string, string> metadata = 6;
   repeated string errors = 7;
-  repeated string warnings = 8;
-  // Schema information used in execution
-  SchemaInfo schema_info = 9;
+  // Reserved. The shipped server does not populate these fields.
+  repeated string warnings = 8 [deprecated = true];
+  SchemaInfo schema_info = 9 [deprecated = true];
+  // True once this identity has a durable execution record.
+  bool durably_accepted = 10;
+  // True only for EXECUTION_STATE_COMPLETED. Failed/blocked states are terminal
+  // but are not successful completion.
+  bool completed = 11;
+  ExecutionState state = 12;
+  string generation_digest = 13;
 }
 
 // TypedEffect represents an effect with full type information
@@ -206,7 +253,8 @@ message UnregisterRulesetResponse {
   repeated string affected_rulesets = 3;
 }
 
-// CompiledRuleset represents a compiled and validated ruleset
+// CompiledRuleset is a reserved legacy registration payload.
+// It is not the checked IR artifact produced by effectusc.
 message CompiledRuleset {
   string name = 1;
   string version = 2;

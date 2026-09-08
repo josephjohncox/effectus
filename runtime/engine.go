@@ -3,10 +3,12 @@ package runtime
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -72,9 +74,10 @@ type ExecuteResult struct {
 	Completed        bool   `json:"completed"`
 }
 
-// Engine owns exactly one immutable Generation. A process must be replaced to
-// execute a changed bundle; durable recovery resolves the generation pinned in
-// the execution artifact rather than consulting mutable process state.
+// Engine owns its active generation and historical generations returned by its
+// resolver. Execute is concurrent-safe and always reads durable execution state.
+// Only in-flight calls and resolutions are retained; idle cache retention is zero.
+// Close stops admission and waits for active calls before closing owned resources.
 type Engine struct {
 	generation      *Generation
 	workflowStore   workflow.OutboxStore
@@ -84,36 +87,46 @@ type Engine struct {
 	resolver        ArtifactResolver
 	observer        Observer
 	mu              sync.Mutex
-	executions      map[string]*engineExecution
+	executions      map[string]*executionGate
+	historical      map[string]*historicalGeneration
+	active          sync.WaitGroup
+	closeOnce       sync.Once
+	closeErr        error
+	started         bool
 	closed          bool
 }
 type engineExecution struct {
-	mu         sync.Mutex
-	record     schema.ExecutionRecord
-	facts      map[string]any
-	selected   map[string]struct{}
-	generation *Generation
+	record            schema.ExecutionRecord
+	facts             map[string]any
+	selected          map[string]struct{}
+	generation        *Generation
+	releaseGeneration func()
 }
 
 func NewEngine(generation *Generation) (*Engine, error) {
-	if generation == nil || generation.Checked() == nil {
-		return nil, fmt.Errorf("immutable generation is required")
+	if generation == nil || generation.Checked() == nil || generation.Closed() {
+		return nil, fmt.Errorf("open immutable generation is required")
 	}
-	return &Engine{generation: generation, ledger: schema.NewInMemoryExecutionLedger(), executions: make(map[string]*engineExecution)}, nil
+	return &Engine{generation: generation, ledger: schema.NewInMemoryExecutionLedger(), executions: make(map[string]*executionGate), historical: make(map[string]*historicalGeneration)}, nil
 }
+
+// Close waits for calls that already entered Execute, then closes resources.
+// Do not call Close from an executor invoked by this engine. Repeated calls
+// return the first resource-close error; borrowed stores are not closed.
 func (engine *Engine) Close() error {
 	if engine == nil {
 		return nil
 	}
-	engine.mu.Lock()
-	if engine.closed {
+	engine.closeOnce.Do(func() {
+		engine.mu.Lock()
+		engine.closed = true
 		engine.mu.Unlock()
-		return nil
-	}
-	engine.closed = true
-	generation := engine.generation
-	engine.mu.Unlock()
-	return generation.Close()
+		engine.active.Wait()
+		engine.recordCloseError(engine.generation.Close())
+	})
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	return engine.closeErr
 }
 func (engine *Engine) ConfigureWorkflow(store workflow.OutboxStore, provider fencing.Provider, options schema.DispatcherOptions) error {
 	if engine == nil || store == nil {
@@ -121,8 +134,8 @@ func (engine *Engine) ConfigureWorkflow(store workflow.OutboxStore, provider fen
 	}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
-	if engine.closed || len(engine.executions) != 0 {
-		return fmt.Errorf("workflow cannot change after admission")
+	if engine.closed || engine.started {
+		return fmt.Errorf("workflow cannot change after execution begins")
 	}
 	engine.workflowStore, engine.workflowFencing, engine.workflowOptions = store, provider, options
 	return nil
@@ -133,8 +146,8 @@ func (engine *Engine) ConfigureLedger(durable ledger.ExecutionLedger, resolver A
 	}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
-	if engine.closed || len(engine.executions) != 0 {
-		return fmt.Errorf("execution ledger cannot change after admission")
+	if engine.closed || engine.started {
+		return fmt.Errorf("execution ledger cannot change after execution begins")
 	}
 	engine.ledger, engine.resolver = durable, resolver
 	return nil
@@ -146,6 +159,9 @@ func (engine *Engine) SetObserver(observer Observer) {
 		engine.mu.Unlock()
 	}
 }
+
+// Generation returns a borrowed immutable reference. Do not close it separately
+// or use its executor resources after Engine.Close.
 func (engine *Engine) Generation() *Generation {
 	if engine == nil {
 		return nil
@@ -158,46 +174,56 @@ func (engine *Engine) Execute(ctx context.Context, request ExecuteRequest) (resu
 	if engine == nil || ctx == nil {
 		return result, fmt.Errorf("%w: engine and context are required", ErrInvalidExecuteRequest)
 	}
-	engine.mu.Lock()
-	closed := engine.closed
-	observer := engine.observer
-	engine.mu.Unlock()
-	if closed {
-		return result, fmt.Errorf("engine is closed")
-	}
-	defer func() {
-		if observer != nil {
-			observer.ObserveExecution(result, resultErr)
-		}
-	}()
 	if request.WaitMode == "" {
 		request.WaitMode = WaitTerminal
 	}
 	if request.WaitMode != WaitAccepted && request.WaitMode != WaitTerminal {
 		return result, fmt.Errorf("%w: unknown wait mode", ErrInvalidExecuteRequest)
 	}
-	if (request.Admission == nil) == (strings.TrimSpace(request.ResumeExecutionID) == "") {
+	id := strings.TrimSpace(request.ResumeExecutionID)
+	if (request.Admission == nil) == (id == "") {
 		return result, fmt.Errorf("%w: set exactly one of admission or resume execution ID", ErrInvalidExecuteRequest)
 	}
+	if lease := request.RecoveryLease; lease != nil && (request.Admission != nil || request.WaitMode != WaitTerminal || lease.ExecutionID != id) {
+		return result, fmt.Errorf("%w: recovery leases require terminal resume of the same execution", ErrInvalidExecuteRequest)
+	}
+	if request.Admission != nil {
+		id = strings.TrimSpace(request.Admission.ExecutionID)
+	}
+	release, observer, beginErr := engine.beginExecution(ctx, id)
+	if beginErr != nil {
+		return result, beginErr
+	}
+	defer func() {
+		release()
+		if observer != nil {
+			observer.ObserveExecution(result, resultErr)
+		}
+	}()
 	var execution *engineExecution
 	var created, atomic bool
 	var err error
 	if request.Admission != nil {
-		execution, created, atomic, err = engine.admit(ctx, request.Admission)
+		execution, created, atomic, err = engine.admit(ctx, request.Admission, request.WaitMode == WaitTerminal)
 	} else {
-		execution, err = engine.loadExecution(ctx, request.ResumeExecutionID)
+		execution, err = engine.loadExecution(ctx, strings.TrimSpace(request.ResumeExecutionID), request.WaitMode == WaitTerminal)
+	}
+	if execution != nil && execution.releaseGeneration != nil {
+		defer execution.releaseGeneration()
 	}
 	if err != nil {
+		if execution != nil && errors.Is(err, ErrBlockedDependency) && request.WaitMode == WaitTerminal && !schema.IsTerminalExecutionState(execution.record.State) {
+			persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if persist := engine.persistExecutionState(persistCtx, execution, schema.ExecutionBlockedDependency, err.Error(), request.RecoveryLease); persist != nil {
+				return engineResult(execution.record), errors.Join(err, fmt.Errorf("%w: %w", ErrDurableDisposition, persist))
+			}
+			return terminalExecutionResult(execution.record, request.WaitMode, err)
+		}
 		return engineFailureResult(execution), err
 	}
-	execution.mu.Lock()
-	defer execution.mu.Unlock()
 	if schema.IsTerminalExecutionState(execution.record.State) {
-		return engineResult(execution.record), nil
-	}
-	if created && !selectedExecutionHasSteps(execution) {
-		err = engine.persistExecutionState(ctx, execution, schema.ExecutionCompleted, "", request.RecoveryLease)
-		return engineResult(execution.record), err
+		return terminalExecutionResult(execution.record, request.WaitMode, nil)
 	}
 	// Durable-admission callers never execute a replay synchronously. A matching
 	// retry observes the recorded identity even after a worker has failed, while
@@ -205,17 +231,35 @@ func (engine *Engine) Execute(ctx context.Context, request ExecuteRequest) (resu
 	if request.WaitMode == WaitAccepted && (!created || atomic) {
 		return engineResult(execution.record), nil
 	}
+	if err := engine.refreshExecution(ctx, execution, request.RecoveryLease); err != nil {
+		return engineResult(execution.record), err
+	}
+	if schema.IsTerminalExecutionState(execution.record.State) {
+		return terminalExecutionResult(execution.record, request.WaitMode, nil)
+	}
+	if created && !selectedExecutionHasSteps(execution) {
+		err = engine.persistExecutionState(ctx, execution, schema.ExecutionCompleted, "", request.RecoveryLease)
+		if err != nil {
+			return engineResult(execution.record), err
+		}
+		return terminalExecutionResult(execution.record, request.WaitMode, nil)
+	}
 	if execution.generation == nil || execution.generation.Checked() == nil {
 		return engineResult(execution.record), fmt.Errorf("%w: generation %s", ErrBlockedDependency, execution.record.GenerationDigest)
 	}
 	if request.WaitMode == WaitTerminal && execution.record.State == schema.ExecutionAccepted && request.RecoveryLease == nil {
-		if updated, e := engine.ledger.SetExecutionState(ctx, execution.record.ExecutionID, execution.record.Revision, schema.ExecutionRunning, ""); e == nil {
-			execution.record = updated
-		} else if !errors.Is(e, schema.ErrOptimisticConflict) {
-			return engineResult(execution.record), e
+		if err := engine.persistExecutionState(ctx, execution, schema.ExecutionRunning, "", nil); err != nil {
+			return engineResult(execution.record), err
+		}
+		if schema.IsTerminalExecutionState(execution.record.State) {
+			return terminalExecutionResult(execution.record, request.WaitMode, nil)
 		}
 	}
 	err = engine.executeCheckedWorkflow(ctx, execution.generation, execution.record.TenantNamespace, execution.record.ExecutionID, execution.facts, execution.selected, request.WaitMode)
+	// A caller deadline must not prevent recording an already observed outcome
+	// or releasing recovery authority. The store still enforces the lease CAS.
+	ctx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer persistCancel()
 	if err != nil {
 		state, disposition := engine.executionFailureState(ctx, execution)
 		if disposition != nil {
@@ -224,12 +268,15 @@ func (engine *Engine) Execute(ctx context.Context, request ExecuteRequest) (resu
 		if persist := engine.persistExecutionState(ctx, execution, state, err.Error(), request.RecoveryLease); persist != nil {
 			return engineResult(execution.record), errors.Join(err, disposition, fmt.Errorf("%w: %v", ErrDurableDisposition, persist))
 		}
-		return engineResult(execution.record), err
+		return terminalExecutionResult(execution.record, request.WaitMode, err)
 	}
 	if request.WaitMode == WaitTerminal {
 		err = engine.persistExecutionState(ctx, execution, schema.ExecutionCompleted, "", request.RecoveryLease)
 	}
-	return engineResult(execution.record), err
+	if err != nil {
+		return engineResult(execution.record), err
+	}
+	return terminalExecutionResult(execution.record, request.WaitMode, nil)
 }
 func engineFailureResult(execution *engineExecution) ExecuteResult {
 	if execution == nil {
@@ -238,41 +285,32 @@ func engineFailureResult(execution *engineExecution) ExecuteResult {
 	return engineResult(execution.record)
 }
 
-func (engine *Engine) admit(ctx context.Context, admission *Admission) (*engineExecution, bool, bool, error) {
-	if admission == nil {
-		return nil, false, false, fmt.Errorf("%w: admission is nil", ErrInvalidExecuteRequest)
-	}
-	admission.ExecutionID = strings.TrimSpace(admission.ExecutionID)
-	admission.TenantNamespace = strings.TrimSpace(admission.TenantNamespace)
-	admission.AdmissionID = strings.TrimSpace(admission.AdmissionID)
-	if admission.ExecutionID == "" || admission.TenantNamespace == "" {
-		return nil, false, false, fmt.Errorf("%w: stable execution ID and tenant namespace are required", ErrInvalidExecuteRequest)
-	}
-	hash, err := admissionHash(admission)
+func (engine *Engine) admit(ctx context.Context, input *Admission, resolve bool) (*engineExecution, bool, bool, error) {
+	admission, err := prepareAdmission(input)
 	if err != nil {
 		return nil, false, false, err
 	}
-	identity := admission.AdmissionID
-	if identity == "" {
-		identity = admission.ExecutionID
-	}
+	identity := admissionIdentity(admission)
 	if existing, e := engine.ledger.GetExecutionByAdmission(ctx, identity); e == nil {
-		if admission.ExpectedGenerationDigest != "" && admission.ExpectedGenerationDigest != existing.GenerationDigest {
-			return nil, false, false, ErrGenerationMismatch
+		if err := engine.matchReplay(ctx, admission, existing); err != nil {
+			return &engineExecution{record: existing}, false, false, err
 		}
-		if existing.ExecutionID != admission.ExecutionID || existing.RequestHash != hash {
-			return nil, false, false, fmt.Errorf("%w: admission identity %s", ErrIdentityConflict, identity)
-		}
-		x, e := engine.loadExecutionRecord(ctx, existing)
+		x, e := engine.loadExecutionRecord(ctx, existing, resolve)
 		return x, false, false, e
 	} else if !errors.Is(e, schema.ErrExecutionNotFound) {
 		return nil, false, false, e
 	}
-	engine.mu.Lock()
 	generation, store := engine.generation, engine.workflowStore
-	engine.mu.Unlock()
 	if generation == nil || store == nil {
 		return nil, false, false, fmt.Errorf("checked durable workflow is not configured")
+	}
+	if admission.Ruleset != generation.Ruleset() || admission.Version != generation.Version() ||
+		(admission.ExpectedGenerationDigest != "" && admission.ExpectedGenerationDigest != generation.Digest()) {
+		return nil, false, false, ErrGenerationMismatch
+	}
+	hash, err := semanticAdmissionHash(admission, generation.Environment())
+	if err != nil {
+		return nil, false, false, err
 	}
 	durable, selected, facts, err := buildDurableAdmission(ctx, generation, admission, hash)
 	if err != nil {
@@ -296,11 +334,11 @@ func (engine *Engine) admit(ctx context.Context, admission *Admission) (*engineE
 		if errors.Is(err, ErrIdentityConflict) || isPostgresConcurrencyError(err) {
 			existing, getErr := engine.ledger.GetExecutionByAdmission(ctx, durable.Execution.AdmissionIdentity)
 			if getErr == nil {
-				if existing.ExecutionID == durable.Execution.ExecutionID && existing.RequestHash == durable.Execution.RequestHash {
-					x, loadErr := engine.loadExecutionRecord(ctx, existing)
-					return x, false, atomic, loadErr
+				if err := engine.matchReplay(ctx, admission, existing); err != nil {
+					return &engineExecution{record: existing}, false, atomic, err
 				}
-				return nil, false, atomic, fmt.Errorf("%w: admission identity %s", ErrIdentityConflict, durable.Execution.AdmissionIdentity)
+				x, loadErr := engine.loadExecutionRecord(ctx, existing, resolve)
+				return x, false, atomic, loadErr
 			}
 			if errors.Is(err, ErrIdentityConflict) {
 				return nil, false, atomic, fmt.Errorf("%w: %v", ErrIdentityConflict, err)
@@ -309,22 +347,16 @@ func (engine *Engine) admit(ctx context.Context, admission *Admission) (*engineE
 		return nil, false, atomic, err
 	}
 	if !created {
-		x, e := engine.loadExecutionRecord(ctx, record)
+		if err := engine.matchReplay(ctx, admission, record); err != nil {
+			return &engineExecution{record: record}, false, atomic, err
+		}
+		x, e := engine.loadExecutionRecord(ctx, record, resolve)
 		return x, false, atomic, e
 	}
 	x := &engineExecution{record: record, facts: facts, selected: selected, generation: generation}
-	engine.mu.Lock()
-	engine.executions[record.ExecutionID] = x
-	engine.mu.Unlock()
 	return x, true, atomic, nil
 }
-func (engine *Engine) loadExecution(ctx context.Context, id string) (*engineExecution, error) {
-	engine.mu.Lock()
-	x := engine.executions[id]
-	engine.mu.Unlock()
-	if x != nil {
-		return x, nil
-	}
+func (engine *Engine) loadExecution(ctx context.Context, id string, resolve bool) (*engineExecution, error) {
 	record, err := engine.ledger.GetExecution(ctx, id)
 	if errors.Is(err, schema.ErrExecutionNotFound) {
 		return nil, fmt.Errorf("%w: %s", ErrExecutionNotFound, id)
@@ -332,14 +364,11 @@ func (engine *Engine) loadExecution(ctx context.Context, id string) (*engineExec
 	if err != nil {
 		return nil, err
 	}
-	return engine.loadExecutionRecord(ctx, record)
+	return engine.loadExecutionRecord(ctx, record, resolve)
 }
-func (engine *Engine) loadExecutionRecord(ctx context.Context, record schema.ExecutionRecord) (*engineExecution, error) {
-	engine.mu.Lock()
-	cached := engine.executions[record.ExecutionID]
-	engine.mu.Unlock()
-	if cached != nil {
-		return cached, nil
+func (engine *Engine) loadExecutionRecord(ctx context.Context, record schema.ExecutionRecord, resolve bool) (*engineExecution, error) {
+	if !resolve || schema.IsTerminalExecutionState(record.State) {
+		return &engineExecution{record: record}, nil
 	}
 	facts, err := decodeExecutionFacts(record.EffectiveFacts)
 	if err != nil {
@@ -350,66 +379,37 @@ func (engine *Engine) loadExecutionRecord(ctx context.Context, record schema.Exe
 		selected[plan.PlanID] = struct{}{}
 	}
 	generation := engine.generation
+	var release func()
 	if generation == nil || generation.Digest() != record.GenerationDigest {
 		artifact, e := engine.ledger.GetArtifact(ctx, record.GenerationDigest)
 		if e != nil {
 			return engine.blockDependency(ctx, record, facts, selected, e)
 		}
-		if engine.resolver == nil {
-			return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("no immutable artifact resolver is configured"))
+		if err := validateArtifactIdentity(record, artifact); err != nil {
+			return &engineExecution{record: record}, err
 		}
-		generation, e = engine.resolver.ResolveGeneration(ctx, artifact)
+		generation, release, e = engine.acquireHistorical(ctx, artifact)
 		if e != nil {
 			return engine.blockDependency(ctx, record, facts, selected, e)
 		}
 	}
-	if generation.Checked() == nil {
-		return engine.blockDependency(ctx, record, facts, selected, fmt.Errorf("resolved generation has no checked IR"))
+	if generation.Checked() == nil || generation.Ruleset() != record.Ruleset || generation.Version() != record.Version {
+		if release != nil {
+			release()
+		}
+		return &engineExecution{record: record}, ErrGenerationMismatch
 	}
-	x := &engineExecution{record: record, facts: facts, selected: selected, generation: generation}
-	engine.mu.Lock()
-	engine.executions[record.ExecutionID] = x
-	engine.mu.Unlock()
+	x := &engineExecution{record: record, facts: facts, selected: selected, generation: generation, releaseGeneration: release}
 	return x, nil
 }
-func (engine *Engine) blockDependency(ctx context.Context, record schema.ExecutionRecord, facts map[string]any, selected map[string]struct{}, cause error) (*engineExecution, error) {
-	if record.State != schema.ExecutionBlockedDependency {
-		if record.RecoveryToken != "" {
-			lease := schema.ExecutionLease{ExecutionID: record.ExecutionID, Owner: record.RecoveryOwner, Token: record.RecoveryToken, Deadline: record.RecoveryDeadline, Revision: record.Revision}
-			if err := engine.ledger.FinishExecutionLease(ctx, lease, schema.ExecutionBlockedDependency, cause.Error()); err == nil {
-				record, _ = engine.ledger.GetExecution(ctx, record.ExecutionID)
-			}
-		} else if updated, err := engine.ledger.SetExecutionState(ctx, record.ExecutionID, record.Revision, schema.ExecutionBlockedDependency, cause.Error()); err == nil {
-			record = updated
-		}
-	}
+func (engine *Engine) blockDependency(_ context.Context, record schema.ExecutionRecord, facts map[string]any, selected map[string]struct{}, cause error) (*engineExecution, error) {
+	// Execute decides disposition using the caller's authority. A lease read
+	// from a record is not permission to impersonate its owner.
 	x := &engineExecution{record: record, facts: facts, selected: selected}
-	engine.mu.Lock()
-	engine.executions[record.ExecutionID] = x
-	engine.mu.Unlock()
 	return x, fmt.Errorf("%w: %v", ErrBlockedDependency, cause)
 }
 func (engine *Engine) persistExecutionState(ctx context.Context, x *engineExecution, state schema.ExecutionState, message string, lease *schema.ExecutionLease) error {
-	if lease != nil {
-		next := state
-		if !schema.IsTerminalExecutionState(state) {
-			next = ""
-		}
-		if err := engine.ledger.FinishExecutionLease(ctx, *lease, next, message); err != nil {
-			return fmt.Errorf("%w: %v", ErrDurableDisposition, err)
-		}
-		updated, err := engine.ledger.GetExecution(ctx, x.record.ExecutionID)
-		if err != nil {
-			return err
-		}
-		x.record = updated
-		return nil
-	}
-	updated, err := engine.ledger.SetExecutionState(ctx, x.record.ExecutionID, x.record.Revision, state, message)
-	if err == nil {
-		x.record = updated
-	}
-	return err
+	return engine.commitExecutionState(ctx, x, state, message, lease)
 }
 func (engine *Engine) executionFailureState(ctx context.Context, x *engineExecution) (schema.ExecutionState, error) {
 	for _, plan := range x.record.Plans {
@@ -481,46 +481,88 @@ func canonicalJSONValue(value any) ([]byte, error) {
 	return json.Marshal(normalized)
 }
 func normalizeAdmissionValue(value any) (any, error) {
-	switch value := value.(type) {
-	case nil, bool, string, json.Number, float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		data, err := json.Marshal(value)
-		if err != nil {
-			return nil, err
+	nodes := 0
+	return normalizeAdmissionValueDepth(value, 0, &nodes)
+}
+
+func normalizeAdmissionValueDepth(value any, depth int, nodes *int) (any, error) {
+	*nodes++
+	if depth > 64 || *nodes > 10000 {
+		return nil, fmt.Errorf("admission value depth or node limit exceeded")
+	}
+	if value == nil {
+		return nil, nil
+	}
+	if raw, ok := value.([]byte); ok {
+		return base64.StdEncoding.EncodeToString(raw), nil
+	}
+	rv := reflect.ValueOf(value)
+	// Do not invoke caller-supplied marshalers. Preserve the original nil map/slice
+	// identities ({} and []), including nested occurrences.
+	switch rv.Kind() {
+	case reflect.Map:
+		if rv.Type().Key().Kind() != reflect.String {
+			return nil, fmt.Errorf("admission map keys must be strings")
 		}
-		var out any
-		decoder := json.NewDecoder(strings.NewReader(string(data)))
-		decoder.UseNumber()
-		err = decoder.Decode(&out)
-		return out, err
-	case map[string]any:
-		keys := make([]string, 0, len(value))
-		for k := range value {
-			keys = append(keys, k)
+		if rv.Len() > 10000 {
+			return nil, fmt.Errorf("admission field limit exceeded")
 		}
-		sort.Strings(keys)
-		out := make(map[string]any, len(value))
-		for _, k := range keys {
-			v, e := normalizeAdmissionValue(value[k])
-			if e != nil {
-				return nil, e
+		keys := rv.MapKeys()
+		sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
+		out := make(map[string]any, len(keys))
+		for _, key := range keys {
+			item, err := normalizeAdmissionValueDepth(rv.MapIndex(key).Interface(), depth+1, nodes)
+			if err != nil {
+				return nil, fmt.Errorf("field %q: %w", key.String(), err)
 			}
-			out[k] = v
+			out[key.String()] = item
 		}
 		return out, nil
-	case []any:
-		out := make([]any, len(value))
-		for i := range value {
-			v, e := normalizeAdmissionValue(value[i])
-			if e != nil {
-				return nil, e
+	case reflect.Slice, reflect.Array:
+		if rv.Len() > 10000 {
+			return nil, fmt.Errorf("admission item limit exceeded")
+		}
+		out := make([]any, rv.Len())
+		for i := range out {
+			item, err := normalizeAdmissionValueDepth(rv.Index(i).Interface(), depth+1, nodes)
+			if err != nil {
+				return nil, fmt.Errorf("list item %d: %w", i, err)
 			}
-			out[i] = v
+			out[i] = item
 		}
 		return out, nil
+	case reflect.Bool:
+		value = rv.Bool()
+	case reflect.String:
+		if number, ok := value.(json.Number); ok {
+			value = number
+		} else {
+			value = rv.String()
+		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		value = rv.Int()
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		value = rv.Uint()
+	case reflect.Float32:
+		value = float32(rv.Float())
+	case reflect.Float64:
+		value = rv.Float()
 	default:
 		return nil, fmt.Errorf("unsupported value type %T", value)
 	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.UseNumber()
+	var out any
+	if err := decoder.Decode(&out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
+
 func isPostgresConcurrencyError(err error) bool {
 	var value interface{ SQLState() string }
 	return errors.As(err, &value) && (value.SQLState() == "40001" || value.SQLState() == "23505")

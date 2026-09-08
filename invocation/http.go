@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -38,7 +39,11 @@ var reservedHTTPHeaders = map[string]struct{}{
 	strings.ToLower(HeaderIdempotencyKey): {},
 }
 
-// HTTPExecutor sends one invocation without an internal retry loop.
+// HTTPExecutor sends one invocation without an internal retry loop. Do not
+// mutate its fields during use. The constructor copies Headers; Invoke also
+// validates callers that construct the public struct directly.
+// A zero response limit selects 1 MiB. Limits must be nonnegative and smaller
+// than MaxInt64 so overflow detection can read one additional byte.
 type HTTPExecutor struct {
 	URL              string
 	Method           string
@@ -62,9 +67,17 @@ func NewHTTPExecutor(executor HTTPExecutor) (*HTTPExecutor, error) {
 	if executor.Client == nil {
 		executor.Client = &http.Client{Timeout: 30 * time.Second}
 	}
-	if executor.MaxResponseBytes <= 0 {
+	if executor.MaxResponseBytes < 0 || executor.MaxResponseBytes == math.MaxInt64 {
+		return nil, fmt.Errorf("invocation response limit must be nonnegative and smaller than MaxInt64")
+	}
+	if executor.MaxResponseBytes == 0 {
 		executor.MaxResponseBytes = 1 << 20
 	}
+	ownedHeaders := make(map[string]string, len(executor.Headers))
+	for name, value := range executor.Headers {
+		ownedHeaders[name] = value
+	}
+	executor.Headers = ownedHeaders
 	return &executor, nil
 }
 
@@ -73,6 +86,11 @@ func (executor *HTTPExecutor) InvocationResolverDescriptor() (Descriptor, error)
 	if executor == nil {
 		return Descriptor{}, fmt.Errorf("invocation HTTP executor is nil")
 	}
+	resolved, err := NewHTTPExecutor(*executor)
+	if err != nil {
+		return Descriptor{}, err
+	}
+	executor = resolved
 	return NewDescriptor(DescriptorSpec{
 		Type: DescriptorHTTP, ResolverID: HTTPResolverID, Reference: executor.URL,
 		Headers: executor.Headers,
@@ -84,11 +102,16 @@ func (executor *HTTPExecutor) InvocationResolverDescriptor() (Descriptor, error)
 }
 
 func (executor *HTTPExecutor) Invoke(ctx context.Context, request Request) Outcome {
-	if executor == nil {
-		return Outcome{Class: OutcomePermanentFailure, Err: fmt.Errorf("invocation HTTP executor is nil")}
+	if executor == nil || ctx == nil {
+		return Outcome{Class: OutcomePermanentFailure, Err: fmt.Errorf("invocation HTTP executor and context are required")}
 	}
-	if err := validateStaticHTTPHeaders(executor.Headers); err != nil {
+	resolved, err := NewHTTPExecutor(*executor)
+	if err != nil {
 		return Outcome{Class: OutcomePermanentFailure, Err: err}
+	}
+	executor = resolved
+	if err := ctx.Err(); err != nil {
+		return Outcome{Class: OutcomeRetryableKnownNotCommitted, Err: err}
 	}
 	payload, err := json.Marshal(request.Arguments)
 	if err != nil {
@@ -116,14 +139,18 @@ func (executor *HTTPExecutor) Invoke(ctx context.Context, request Request) Outco
 		return Outcome{Class: OutcomeUnknown, Err: fmt.Errorf("invocation response exceeds %d bytes", executor.MaxResponseBytes)}
 	}
 	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
-		if len(body) == 0 {
-			return Outcome{Class: OutcomeSuccess, Result: nil}
-		}
 		var result any
 		decoder := json.NewDecoder(bytes.NewReader(body))
 		decoder.UseNumber()
 		if err := decoder.Decode(&result); err != nil {
 			return Outcome{Class: OutcomeUnknown, Err: fmt.Errorf("decode successful invocation response: %w", err)}
+		}
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			if err == nil {
+				err = fmt.Errorf("more than one JSON value")
+			}
+			return Outcome{Class: OutcomeUnknown, Err: fmt.Errorf("trailing successful invocation response: %w", err)}
 		}
 		return Outcome{Class: OutcomeSuccess, Result: result}
 	}

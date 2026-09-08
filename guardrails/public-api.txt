@@ -152,6 +152,16 @@ github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionPhase_EXECUTION
 github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionPolicy_EXECUTION_POLICY_DURABLE_COMPENSATING ExecutionPolicy = 2
 github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionPolicy_EXECUTION_POLICY_DURABLE_FAIL_FAST ExecutionPolicy = 1
 github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionPolicy_EXECUTION_POLICY_UNSPECIFIED ExecutionPolicy = 0
+github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionState_EXECUTION_STATE_ACCEPTED ExecutionState = 2
+github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionState_EXECUTION_STATE_ADMITTING ExecutionState = 1
+github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionState_EXECUTION_STATE_BLOCKED_COMPENSATION ExecutionState = 9
+github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionState_EXECUTION_STATE_BLOCKED_DEPENDENCY ExecutionState = 8
+github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionState_EXECUTION_STATE_BLOCKED_FENCE ExecutionState = 7
+github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionState_EXECUTION_STATE_BLOCKED_UNKNOWN ExecutionState = 6
+github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionState_EXECUTION_STATE_COMPLETED ExecutionState = 4
+github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionState_EXECUTION_STATE_FAILED ExecutionState = 5
+github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionState_EXECUTION_STATE_RUNNING ExecutionState = 3
+github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionState_EXECUTION_STATE_UNSPECIFIED ExecutionState = 0
 github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionWaitMode_EXECUTION_WAIT_MODE_ACCEPTED ExecutionWaitMode = 1
 github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionWaitMode_EXECUTION_WAIT_MODE_TERMINAL ExecutionWaitMode = 2
 github.com/josephjohncox/effectus/gen/effectus/v1	const ExecutionWaitMode_EXECUTION_WAIT_MODE_UNSPECIFIED ExecutionWaitMode = 0
@@ -437,19 +447,29 @@ github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionRequest.ProtoR
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionRequest.Reset()
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionRequest.String() string
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.Descriptor() ([]byte, []int)
+github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.GetCompleted() bool
+github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.GetDurablyAccepted() bool
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.GetEffects() []*TypedEffect
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.GetEndTime() *timestamppb.Timestamp
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.GetErrors() []string
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.GetExecutionId() string
+github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.GetGenerationDigest() string
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.GetMetadata() map[string]string
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.GetSchemaInfo() *SchemaInfo
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.GetStartTime() *timestamppb.Timestamp
+github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.GetState() ExecutionState
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.GetSuccess() bool
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.GetWarnings() []string
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.ProtoMessage()
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.ProtoReflect() protoreflect.Message
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.Reset()
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionResponse.String() string
+github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionState.Descriptor() protoreflect.EnumDescriptor
+github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionState.Enum() *ExecutionState
+github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionState.EnumDescriptor() ([]byte, []int)
+github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionState.Number() protoreflect.EnumNumber
+github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionState.String() string
+github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionState.Type() protoreflect.EnumType
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionUpdate.Descriptor() ([]byte, []int)
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionUpdate.GetCurrentEffect() *TypedEffect
 github.com/josephjohncox/effectus/gen/effectus/v1	method ExecutionUpdate.GetExecutionId() string
@@ -1185,7 +1205,8 @@ github.com/josephjohncox/effectus/gen/effectus/v1	type ExecutionOptions struct{D
 github.com/josephjohncox/effectus/gen/effectus/v1	type ExecutionPhase int32
 github.com/josephjohncox/effectus/gen/effectus/v1	type ExecutionPolicy int32
 github.com/josephjohncox/effectus/gen/effectus/v1	type ExecutionRequest struct{RulesetName string; Version string; Facts *anypb.Any; TypedFacts *structpb.Struct; Options *ExecutionOptions; TraceId string; SchemaValidation *SchemaValidation; Namespace string; IdempotencyKey string; WaitMode ExecutionWaitMode; GenerationDigest string}
-github.com/josephjohncox/effectus/gen/effectus/v1	type ExecutionResponse struct{Success bool; Effects []*TypedEffect; ExecutionId string; StartTime *timestamppb.Timestamp; EndTime *timestamppb.Timestamp; Metadata map[string]string; Errors []string; Warnings []string; SchemaInfo *SchemaInfo}
+github.com/josephjohncox/effectus/gen/effectus/v1	type ExecutionResponse struct{Success bool; Effects []*TypedEffect; ExecutionId string; StartTime *timestamppb.Timestamp; EndTime *timestamppb.Timestamp; Metadata map[string]string; Errors []string; Warnings []string; SchemaInfo *SchemaInfo; DurablyAccepted bool; Completed bool; State ExecutionState; GenerationDigest string}
+github.com/josephjohncox/effectus/gen/effectus/v1	type ExecutionState int32
 github.com/josephjohncox/effectus/gen/effectus/v1	type ExecutionUpdate struct{ExecutionId string; Phase ExecutionPhase; CurrentEffect *TypedEffect; ProgressPercent int32; Message string; Timestamp *timestamppb.Timestamp; SchemaStatus *SchemaCompatibilityStatus}
 github.com/josephjohncox/effectus/gen/effectus/v1	type ExecutionWaitMode int32
 github.com/josephjohncox/effectus/gen/effectus/v1	type Expression struct{Kind isExpression_Kind}
@@ -1303,6 +1324,8 @@ github.com/josephjohncox/effectus/gen/effectus/v1	var ExecutionPhase_name = map[
 github.com/josephjohncox/effectus/gen/effectus/v1	var ExecutionPhase_value = map[string]int32{ "EXECUTION_PHASE_UNSPECIFIED": 0, "EXECUTION_PHASE_VALIDATION": 1, "EXECUTION_PHASE_SCHEMA_CHECK": 2, "EXECUTION_PHASE_COMPILATION": 3, "EXECUTION_PHASE_EXECUTION": 4, "EXECUTION_PHASE_COMPLETION": 5, "EXECUTION_PHASE_ERROR": 6, }
 github.com/josephjohncox/effectus/gen/effectus/v1	var ExecutionPolicy_name = map[int32]string{ 0: "EXECUTION_POLICY_UNSPECIFIED", 1: "EXECUTION_POLICY_DURABLE_FAIL_FAST", 2: "EXECUTION_POLICY_DURABLE_COMPENSATING", }
 github.com/josephjohncox/effectus/gen/effectus/v1	var ExecutionPolicy_value = map[string]int32{ "EXECUTION_POLICY_UNSPECIFIED": 0, "EXECUTION_POLICY_DURABLE_FAIL_FAST": 1, "EXECUTION_POLICY_DURABLE_COMPENSATING": 2, }
+github.com/josephjohncox/effectus/gen/effectus/v1	var ExecutionState_name = map[int32]string{ 0: "EXECUTION_STATE_UNSPECIFIED", 1: "EXECUTION_STATE_ADMITTING", 2: "EXECUTION_STATE_ACCEPTED", 3: "EXECUTION_STATE_RUNNING", 4: "EXECUTION_STATE_COMPLETED", 5: "EXECUTION_STATE_FAILED", 6: "EXECUTION_STATE_BLOCKED_UNKNOWN", 7: "EXECUTION_STATE_BLOCKED_FENCE", 8: "EXECUTION_STATE_BLOCKED_DEPENDENCY", 9: "EXECUTION_STATE_BLOCKED_COMPENSATION", }
+github.com/josephjohncox/effectus/gen/effectus/v1	var ExecutionState_value = map[string]int32{ "EXECUTION_STATE_UNSPECIFIED": 0, "EXECUTION_STATE_ADMITTING": 1, "EXECUTION_STATE_ACCEPTED": 2, "EXECUTION_STATE_RUNNING": 3, "EXECUTION_STATE_COMPLETED": 4, "EXECUTION_STATE_FAILED": 5, "EXECUTION_STATE_BLOCKED_UNKNOWN": 6, "EXECUTION_STATE_BLOCKED_FENCE": 7, "EXECUTION_STATE_BLOCKED_DEPENDENCY": 8, "EXECUTION_STATE_BLOCKED_COMPENSATION": 9, }
 github.com/josephjohncox/effectus/gen/effectus/v1	var ExecutionWaitMode_name = map[int32]string{ 0: "EXECUTION_WAIT_MODE_UNSPECIFIED", 1: "EXECUTION_WAIT_MODE_ACCEPTED", 2: "EXECUTION_WAIT_MODE_TERMINAL", }
 github.com/josephjohncox/effectus/gen/effectus/v1	var ExecutionWaitMode_value = map[string]int32{ "EXECUTION_WAIT_MODE_UNSPECIFIED": 0, "EXECUTION_WAIT_MODE_ACCEPTED": 1, "EXECUTION_WAIT_MODE_TERMINAL": 2, }
 github.com/josephjohncox/effectus/gen/effectus/v1	var FactRegistryService_ServiceDesc = grpc.ServiceDesc{ ServiceName: "effectus.v1.FactRegistryService", HandlerType: (*FactRegistryServiceServer)(nil), Methods: []grpc.MethodDesc{ { MethodName: "RegisterFactSchema", Handler: _FactRegistryService_RegisterFactSchema_Handler, }, { MethodName: "GetFactSchema", Handler: _FactRegistryService_GetFactSchema_Handler, }, { MethodName: "ListFactSchemas", Handler: _FactRegistryService_ListFactSchemas_Handler, }, { MethodName: "ValidateFactData", Handler: _FactRegistryService_ValidateFactData_Handler, }, { MethodName: "CheckCompatibility", Handler: _FactRegistryService_CheckCompatibility_Handler, }, }, Streams: []grpc.StreamDesc{}, Metadata: "effectus/v1/facts.proto", }
@@ -1409,7 +1432,9 @@ github.com/josephjohncox/effectus/ir	func CanonicalPlanOrder(plans []*effectusv1
 github.com/josephjohncox/effectus/ir	func Check(artifact *effectusv1.RuleArtifact, environment Environment, limits Limits) (*Checked, error)
 github.com/josephjohncox/effectus/ir	func ContractHash(contract VerbContract) (string, error)
 github.com/josephjohncox/effectus/ir	func EnvironmentDigest(environment Environment) (string, error)
+github.com/josephjohncox/effectus/ir	func NormalizeValue(environment Environment, typeName string, value any) (any, error)
 github.com/josephjohncox/effectus/ir	func Parse(data []byte, environment Environment, limits Limits) (*Checked, error)
+github.com/josephjohncox/effectus/ir	func ValidationDefaults() Limits
 github.com/josephjohncox/effectus/ir	method Checked.CloneArtifact() *effectusv1.RuleArtifact
 github.com/josephjohncox/effectus/ir	method Checked.Digest() string
 github.com/josephjohncox/effectus/ir	method Checked.Marshal() []byte
@@ -1425,7 +1450,7 @@ github.com/josephjohncox/effectus/ir	type RetryPolicy struct{MaxAttempts uint32;
 github.com/josephjohncox/effectus/ir	type TypeDefinition struct{Kind TypeKind; ElementType string; Fields map[string]string; RequiredFields []string}
 github.com/josephjohncox/effectus/ir	type TypeKind string
 github.com/josephjohncox/effectus/ir	type VerbContract struct{Arguments map[string]string; RequiredArgs []string; ResultType string; InverseVerb string; RetryPolicy RetryPolicy; IdempotencyPolicy IdempotencyPolicy; FencingRequired bool}
-github.com/josephjohncox/effectus/ir	var DefaultLimits = Limits{ MaxArtifactBytes: 4 << 20, MaxPlans: 1_000, MaxSteps: 10_000, MaxStepsPerPlan: 1_000, MaxArgumentsPerStep: 128, MaxPredicateNodes: 1_024, MaxLiteralNodes: 10_000, MaxDepth: 64, MaxStringBytes: 1 << 20, MaxBytesValue: 1 << 20, MaxCollectionItems: 10_000, MaxObjectFields: 1_024, MaxTotalStringBytes: 4 << 20, }
+github.com/josephjohncox/effectus/ir	var DefaultLimits = ValidationDefaults()
 github.com/josephjohncox/effectus/ir	var ErrInvalidArtifact = errors.New("invalid checked IR artifact")
 github.com/josephjohncox/effectus/ir	var ErrLimitExceeded = errors.New("checked IR limit exceeded")
 github.com/josephjohncox/effectus/runtime	const WaitAccepted WaitMode = "accepted"
@@ -1471,6 +1496,9 @@ github.com/josephjohncox/effectus/runtime	method RulesetExecutionServer.Address(
 github.com/josephjohncox/effectus/runtime	method RulesetExecutionServer.Ready() error
 github.com/josephjohncox/effectus/runtime	method RulesetExecutionServer.Start() error
 github.com/josephjohncox/effectus/runtime	method RulesetExecutionServer.Stop()
+github.com/josephjohncox/effectus/runtime	method TerminalExecutionError.Error() string
+github.com/josephjohncox/effectus/runtime	method TerminalExecutionError.Is(target error) bool
+github.com/josephjohncox/effectus/runtime	method TerminalExecutionError.Unwrap() error
 github.com/josephjohncox/effectus/runtime	type Admission struct{ExecutionID string; AdmissionID string; TenantNamespace string; Ruleset string; Version string; Facts map[string]any; MergePolicy string; ExpectedGenerationDigest string}
 github.com/josephjohncox/effectus/runtime	type ArtifactResolver interface{ResolveGenerationfunc(context.Context, ledger.ExecutionArtifact) (*Generation, error)}
 github.com/josephjohncox/effectus/runtime	type ArtifactResolverFunc func(context.Context, ledger.ExecutionArtifact) (*Generation, error)
@@ -1494,9 +1522,11 @@ github.com/josephjohncox/effectus/runtime	type RecoveryObservation struct{Backlo
 github.com/josephjohncox/effectus/runtime	type RecoveryWorker struct{Engine *Engine; Store ledger.ExecutionLedger; Owner string; BatchSize int; LeaseDuration time.Duration; PollInterval time.Duration; Observer Observer}
 github.com/josephjohncox/effectus/runtime	type RulesetExecutionServer struct{}
 github.com/josephjohncox/effectus/runtime	type RulesetExecutionServerOptions struct{MaxReceiveBytes int; MaxSendBytes int; MaxExecutionDuration time.Duration; MaxConcurrentRPCs int; Authenticator GRPCAuthenticator; AllowUnauthenticated bool; TLSConfig *tls.Config; AllowInsecureTransport bool; RulesetName string; Version string}
+github.com/josephjohncox/effectus/runtime	type TerminalExecutionError struct{State schema.ExecutionState; Cause error}
 github.com/josephjohncox/effectus/runtime	type WaitMode string
 github.com/josephjohncox/effectus/runtime	var ErrBlockedDependency = errors.New("execution blocked by missing dependency")
 github.com/josephjohncox/effectus/runtime	var ErrDurableDisposition = errors.New("durable execution disposition failed")
+github.com/josephjohncox/effectus/runtime	var ErrExecutionBusy = errors.New("execution has a recovery owner")
 github.com/josephjohncox/effectus/runtime	var ErrExecutionNotFound = errors.New("engine execution not found")
 github.com/josephjohncox/effectus/runtime	var ErrGRPCInvalidInput = errors.New("invalid gRPC execution input")
 github.com/josephjohncox/effectus/runtime	var ErrGRPCResourceExhausted = errors.New("gRPC execution resource exhausted")
@@ -1505,6 +1535,7 @@ github.com/josephjohncox/effectus/runtime	var ErrGRPCUnavailable = errors.New("g
 github.com/josephjohncox/effectus/runtime	var ErrGenerationMismatch = errors.New("engine generation mismatch")
 github.com/josephjohncox/effectus/runtime	var ErrIdentityConflict = schema.ErrIdentityConflict
 github.com/josephjohncox/effectus/runtime	var ErrInvalidExecuteRequest = errors.New("invalid engine execute request")
+github.com/josephjohncox/effectus/runtime	var ErrTerminalExecution = errors.New("execution ended unsuccessfully")
 github.com/josephjohncox/effectus/schema	const DispatchBlockedFence = workflow.DispatchBlockedFence
 github.com/josephjohncox/effectus/schema	const DispatchBlockedUnknown = workflow.DispatchBlockedUnknown
 github.com/josephjohncox/effectus/schema	const DispatchFailedPermanent = workflow.DispatchFailedPermanent
@@ -1567,6 +1598,7 @@ github.com/josephjohncox/effectus/schema	method InMemoryExecutionLedger.GetExecu
 github.com/josephjohncox/effectus/schema	method InMemoryExecutionLedger.GetExecutionByAdmission(ctx context.Context, identity string) (ExecutionRecord, error)
 github.com/josephjohncox/effectus/schema	method InMemoryExecutionLedger.LeaseExecutions(ctx context.Context, owner string, limit int, duration time.Duration) ([]ExecutionLease, error)
 github.com/josephjohncox/effectus/schema	method InMemoryExecutionLedger.PutArtifact(ctx context.Context, artifact ExecutionArtifact) error
+github.com/josephjohncox/effectus/schema	method InMemoryExecutionLedger.RenewExecutionLease(ctx context.Context, lease ExecutionLease, duration time.Duration) (ExecutionLease, error)
 github.com/josephjohncox/effectus/schema	method InMemoryExecutionLedger.SetExecutionState(ctx context.Context, id string, revision uint64, state ExecutionState, message string) (ExecutionRecord, error)
 github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.ClaimDispatch(ctx context.Context, options ClaimOptions) (*Dispatch, error)
 github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.CompleteDispatch(ctx context.Context, completion Completion) error
@@ -1597,6 +1629,7 @@ github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.ListAttempts
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.ListDispatches(ctx context.Context, sagaID string) ([]*Dispatch, error)
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.PutArtifact(ctx context.Context, artifact ExecutionArtifact) error
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.RecoveryStats(ctx context.Context) (RecoveryStats, error)
+github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.RenewExecutionLease(ctx context.Context, lease ExecutionLease, duration time.Duration) (ExecutionLease, error)
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.SaveFencingGrants(ctx context.Context, dispatchID string, attempt uint64, leaseToken string, grants []invocation.FencingGrant) error
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.SetExecutionState(ctx context.Context, id string, revision uint64, state ExecutionState, message string) (ExecutionRecord, error)
 github.com/josephjohncox/effectus/schema	type AtomicAdmissionStore = ledger.AtomicAdmissionStore
@@ -1693,6 +1726,7 @@ github.com/josephjohncox/effectus/schema/ledger	type AtomicAdmissionStore interf
 github.com/josephjohncox/effectus/schema/ledger	type DurableAdmission struct{Artifact ExecutionArtifact; Execution ExecutionRecord; FactApplication FactApplication; Plans []ExecutionPlanRecord; Sagas []workflow.CreateSagaRequest; InitialSteps []workflow.EnqueueStepRequest}
 github.com/josephjohncox/effectus/schema/ledger	type ExecutionArtifact struct{GenerationDigest string; IRDigest string; IRBytes []byte; Environment json.RawMessage; ExecutorManifest json.RawMessage; FunctionManifest json.RawMessage; SourceDigest string; CompilerMetadata json.RawMessage; CreatedAt time.Time}
 github.com/josephjohncox/effectus/schema/ledger	type ExecutionLease struct{ExecutionID string; Owner string; Token string; Deadline time.Time; Revision uint64}
+github.com/josephjohncox/effectus/schema/ledger	type ExecutionLeaseRenewer interface{RenewExecutionLeasefunc(context.Context, ExecutionLease, time.Duration) (ExecutionLease, error)}
 github.com/josephjohncox/effectus/schema/ledger	type ExecutionLedger interface{PutArtifactfunc(context.Context, ExecutionArtifact) error; GetArtifactfunc(context.Context, string) (ExecutionArtifact, error); AdmitExecutionfunc(context.Context, DurableAdmission) (ExecutionRecord, bool, error); GetExecutionfunc(context.Context, string) (ExecutionRecord, error); GetExecutionByAdmissionfunc(context.Context, string) (ExecutionRecord, error); SetExecutionStatefunc(context.Context, string, uint64, ExecutionState, string) (ExecutionRecord, error); LeaseExecutionsfunc(context.Context, string, int, time.Duration) ([]ExecutionLease, error); FinishExecutionLeasefunc(context.Context, ExecutionLease, ExecutionState, string) error}
 github.com/josephjohncox/effectus/schema/ledger	type ExecutionPlanRecord struct{ExecutionID string; PlanID string; SagaID string; Ordinal int; State string}
 github.com/josephjohncox/effectus/schema/ledger	type ExecutionRecord struct{ExecutionID string; AdmissionIdentity string; RequestHash string; Ruleset string; Version string; TenantNamespace string; MergePolicy string; GenerationDigest string; EffectiveFacts json.RawMessage; State ExecutionState; Revision uint64; RecoveryOwner string; RecoveryToken string; RecoveryDeadline time.Time; LastError string; CreatedAt time.Time; UpdatedAt time.Time; Plans []ExecutionPlanRecord}

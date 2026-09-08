@@ -37,13 +37,21 @@ const (
 type RulesetExecutionServiceClient interface {
 	// ExecuteRuleset executes a ruleset with provided facts.
 	ExecuteRuleset(ctx context.Context, in *ExecutionRequest, opts ...grpc.CallOption) (*ExecutionResponse, error)
-	// Management RPCs are reserved and return Unimplemented in effectusd.
+	// Deprecated: Do not use.
+	// Reserved. These RPCs return Unimplemented in the shipped server.
+	// Their names and payload field numbers remain frozen for compatibility.
 	GetRulesetInfo(ctx context.Context, in *RulesetInfoRequest, opts ...grpc.CallOption) (*RulesetInfo, error)
+	// Deprecated: Do not use.
 	ListRulesets(ctx context.Context, in *ListRulesetsRequest, opts ...grpc.CallOption) (*ListRulesetsResponse, error)
+	// Deprecated: Do not use.
 	RegisterRuleset(ctx context.Context, in *RegisterRulesetRequest, opts ...grpc.CallOption) (*RegisterRulesetResponse, error)
+	// Deprecated: Do not use.
 	UnregisterRuleset(ctx context.Context, in *UnregisterRulesetRequest, opts ...grpc.CallOption) (*UnregisterRulesetResponse, error)
+	// Deprecated: Do not use.
 	StreamExecution(ctx context.Context, in *ExecutionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecutionUpdate], error)
+	// Deprecated: Do not use.
 	ValidateSchema(ctx context.Context, in *ValidateSchemaRequest, opts ...grpc.CallOption) (*ValidateSchemaResponse, error)
+	// Deprecated: Do not use.
 	GetSchemaVersion(ctx context.Context, in *SchemaVersionRequest, opts ...grpc.CallOption) (*SchemaVersionResponse, error)
 }
 
@@ -65,6 +73,7 @@ func (c *rulesetExecutionServiceClient) ExecuteRuleset(ctx context.Context, in *
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *rulesetExecutionServiceClient) GetRulesetInfo(ctx context.Context, in *RulesetInfoRequest, opts ...grpc.CallOption) (*RulesetInfo, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RulesetInfo)
@@ -75,6 +84,7 @@ func (c *rulesetExecutionServiceClient) GetRulesetInfo(ctx context.Context, in *
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *rulesetExecutionServiceClient) ListRulesets(ctx context.Context, in *ListRulesetsRequest, opts ...grpc.CallOption) (*ListRulesetsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListRulesetsResponse)
@@ -85,6 +95,7 @@ func (c *rulesetExecutionServiceClient) ListRulesets(ctx context.Context, in *Li
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *rulesetExecutionServiceClient) RegisterRuleset(ctx context.Context, in *RegisterRulesetRequest, opts ...grpc.CallOption) (*RegisterRulesetResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RegisterRulesetResponse)
@@ -95,6 +106,7 @@ func (c *rulesetExecutionServiceClient) RegisterRuleset(ctx context.Context, in 
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *rulesetExecutionServiceClient) UnregisterRuleset(ctx context.Context, in *UnregisterRulesetRequest, opts ...grpc.CallOption) (*UnregisterRulesetResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(UnregisterRulesetResponse)
@@ -105,6 +117,7 @@ func (c *rulesetExecutionServiceClient) UnregisterRuleset(ctx context.Context, i
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *rulesetExecutionServiceClient) StreamExecution(ctx context.Context, in *ExecutionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecutionUpdate], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &RulesetExecutionService_ServiceDesc.Streams[0], RulesetExecutionService_StreamExecution_FullMethodName, cOpts...)
@@ -124,6 +137,7 @@ func (c *rulesetExecutionServiceClient) StreamExecution(ctx context.Context, in 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RulesetExecutionService_StreamExecutionClient = grpc.ServerStreamingClient[ExecutionUpdate]
 
+// Deprecated: Do not use.
 func (c *rulesetExecutionServiceClient) ValidateSchema(ctx context.Context, in *ValidateSchemaRequest, opts ...grpc.CallOption) (*ValidateSchemaResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ValidateSchemaResponse)
@@ -134,6 +148,7 @@ func (c *rulesetExecutionServiceClient) ValidateSchema(ctx context.Context, in *
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *rulesetExecutionServiceClient) GetSchemaVersion(ctx context.Context, in *SchemaVersionRequest, opts ...grpc.CallOption) (*SchemaVersionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SchemaVersionResponse)
@@ -152,13 +167,21 @@ func (c *rulesetExecutionServiceClient) GetSchemaVersion(ctx context.Context, in
 type RulesetExecutionServiceServer interface {
 	// ExecuteRuleset executes a ruleset with provided facts.
 	ExecuteRuleset(context.Context, *ExecutionRequest) (*ExecutionResponse, error)
-	// Management RPCs are reserved and return Unimplemented in effectusd.
+	// Deprecated: Do not use.
+	// Reserved. These RPCs return Unimplemented in the shipped server.
+	// Their names and payload field numbers remain frozen for compatibility.
 	GetRulesetInfo(context.Context, *RulesetInfoRequest) (*RulesetInfo, error)
+	// Deprecated: Do not use.
 	ListRulesets(context.Context, *ListRulesetsRequest) (*ListRulesetsResponse, error)
+	// Deprecated: Do not use.
 	RegisterRuleset(context.Context, *RegisterRulesetRequest) (*RegisterRulesetResponse, error)
+	// Deprecated: Do not use.
 	UnregisterRuleset(context.Context, *UnregisterRulesetRequest) (*UnregisterRulesetResponse, error)
+	// Deprecated: Do not use.
 	StreamExecution(*ExecutionRequest, grpc.ServerStreamingServer[ExecutionUpdate]) error
+	// Deprecated: Do not use.
 	ValidateSchema(context.Context, *ValidateSchemaRequest) (*ValidateSchemaResponse, error)
+	// Deprecated: Do not use.
 	GetSchemaVersion(context.Context, *SchemaVersionRequest) (*SchemaVersionResponse, error)
 	mustEmbedUnimplementedRulesetExecutionServiceServer()
 }

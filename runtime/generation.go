@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
 	"github.com/josephjohncox/effectus/invocation"
 	"github.com/josephjohncox/effectus/ir"
 )
@@ -62,6 +63,11 @@ func NewGeneration(config GenerationConfig) (*Generation, error) {
 	if config.Checked.CloneArtifact().EnvironmentDigest != environmentDigest {
 		return nil, fmt.Errorf("generation environment does not match checked IR")
 	}
+	for _, plan := range config.Checked.CloneArtifact().Plans {
+		if err := validateGenerationExpression(plan.Predicate.Expression); err != nil {
+			return nil, fmt.Errorf("generation plan %q: %w", plan.Id, err)
+		}
+	}
 	if config.Production && strings.TrimSpace(config.SourceDigest) == "" {
 		return nil, fmt.Errorf("production generation source digest is required")
 	}
@@ -112,6 +118,23 @@ func NewGeneration(config GenerationConfig) (*Generation, error) {
 		sourceDigest: config.SourceDigest, digest: hex.EncodeToString(digest[:]), executors: cloneExecutors(config.Executors),
 		closers: append([]io.Closer(nil), config.Closers...),
 	}, nil
+}
+
+// Generic IR can describe pure functions, but this runtime has no immutable
+// function implementation registry. Check all branches, including unreachable ones.
+func validateGenerationExpression(expression *effectusv1.Expression) error {
+	switch kind := expression.Kind.(type) {
+	case *effectusv1.Expression_Call:
+		return fmt.Errorf("predicate function %q is unavailable in immutable generations", kind.Call.Function)
+	case *effectusv1.Expression_Unary:
+		return validateGenerationExpression(kind.Unary.Operand)
+	case *effectusv1.Expression_Binary:
+		if err := validateGenerationExpression(kind.Binary.Left); err != nil {
+			return err
+		}
+		return validateGenerationExpression(kind.Binary.Right)
+	}
+	return nil
 }
 
 func validateResolvedGenerationVerb(verb string, descriptors map[string]invocation.Descriptor, executors map[string]invocation.Executor) error {

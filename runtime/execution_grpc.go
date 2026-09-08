@@ -2,8 +2,11 @@ package runtime
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -44,13 +47,14 @@ func (service *EngineExecutionService) ExecuteRuleset(ctx context.Context, reque
 	if service == nil || service.Engine == nil {
 		return nil, status.Error(codes.Unavailable, "execution engine is unavailable")
 	}
-	if request == nil {
-		return nil, status.Error(codes.InvalidArgument, "execution request is required")
+	if request == nil || ctx == nil {
+		return nil, status.Error(codes.InvalidArgument, "execution request and context are required")
 	}
 	if request.RulesetName != service.options.RulesetName || request.Version != service.options.Version {
 		return nil, status.Error(codes.NotFound, "requested ruleset version is unavailable")
 	}
-	if strings.TrimSpace(request.IdempotencyKey) == "" {
+	idempotencyKey := strings.TrimSpace(request.IdempotencyKey)
+	if idempotencyKey == "" {
 		return nil, status.Error(codes.InvalidArgument, "idempotency_key is required")
 	}
 	typedFacts := request.TypedFacts
@@ -79,20 +83,18 @@ func (service *EngineExecutionService) ExecuteRuleset(ctx context.Context, reque
 		return nil, status.Error(codes.InvalidArgument, "invalid wait_mode")
 	}
 
-	generationDigest, err := service.activeGenerationDigest()
-	if err != nil {
+	if _, err := service.activeGenerationDigest(); err != nil {
 		return nil, status.Error(codes.Unavailable, "execution generation is unavailable")
 	}
-	if request.GenerationDigest != "" && request.GenerationDigest != generationDigest {
-		return nil, status.Error(codes.FailedPrecondition, "requested generation is not active")
-	}
-
+	// The engine checks an explicit digest against the pinned replay artifact
+	// or, for a new identity, against the active generation.
+	generationDigest := strings.TrimSpace(request.GenerationDigest)
 	namespace := strings.TrimSpace(request.Namespace)
 	if namespace == "" {
-		namespace = "default"
+		return nil, status.Error(codes.InvalidArgument, "namespace is required")
 	}
-	executionID := schema.StableExecutionID(namespace, request.IdempotencyKey, request.RulesetName, request.Version)
-	admissionID := schema.StableAdmissionID(namespace, request.IdempotencyKey, request.RulesetName, request.Version)
+	executionID := schema.StableExecutionID(namespace, idempotencyKey, request.RulesetName, request.Version)
+	admissionID := schema.StableAdmissionID(namespace, idempotencyKey, request.RulesetName, request.Version)
 	callContext := ctx
 	if request.Options != nil && request.Options.TimeoutSeconds > 0 {
 		var cancel context.CancelFunc
@@ -105,19 +107,32 @@ func (service *EngineExecutionService) ExecuteRuleset(ctx context.Context, reque
 		Ruleset: request.RulesetName, Version: request.Version, Facts: facts,
 		ExpectedGenerationDigest: generationDigest,
 	}, WaitMode: waitMode})
-	if executeErr != nil {
+	var terminal *TerminalExecutionError
+	if executeErr != nil && !errors.As(executeErr, &terminal) {
 		return nil, grpcEngineError(executeErr)
 	}
 	ended := time.Now().UTC()
-	return &effectusv1.ExecutionResponse{
-		Success: result.DurablyAccepted, ExecutionId: result.ExecutionID,
+	response := &effectusv1.ExecutionResponse{
+		Success: result.Completed, ExecutionId: result.ExecutionID,
+		DurablyAccepted: result.DurablyAccepted, Completed: result.Completed,
+		State: grpcExecutionState(result.State), GenerationDigest: result.GenerationDigest,
 		StartTime: timestamppb.New(started), EndTime: timestamppb.New(ended),
 		Metadata: map[string]string{"state": result.State, "generation_digest": result.GenerationDigest, "ruleset": request.RulesetName, "version": request.Version},
-	}, nil
+	}
+	if terminal != nil {
+		disposition := status.Convert(grpcEngineError(executeErr))
+		response.Errors = []string{disposition.Message()}
+		withDetails, err := disposition.WithDetails(response)
+		if err != nil {
+			return nil, status.Error(codes.Internal, "encode execution disposition")
+		}
+		return nil, withDetails.Err()
+	}
+	return response, nil
 }
 
 func (service *EngineExecutionService) activeGenerationDigest() (string, error) {
-	if service == nil || service.Engine == nil || service.Engine.Generation() == nil {
+	if service == nil || service.Engine == nil || service.Engine.Generation() == nil || service.Engine.Generation().Closed() {
 		return "", fmt.Errorf("no checked generation")
 	}
 	return service.Engine.Generation().Digest(), nil
@@ -163,6 +178,15 @@ func grpcWaitMode(mode effectusv1.ExecutionWaitMode) (WaitMode, error) {
 }
 
 func grpcEngineError(err error) error {
+	var terminal *TerminalExecutionError
+	if errors.As(err, &terminal) {
+		message := "execution is blocked"
+		if terminal.State == schema.ExecutionFailed {
+			message = "execution failed"
+		}
+		return status.Error(codes.FailedPrecondition, message)
+	}
+	var network net.Error
 	switch {
 	case errors.Is(err, context.Canceled):
 		return status.Error(codes.Canceled, "request canceled")
@@ -176,8 +200,11 @@ func grpcEngineError(err error) error {
 		return status.Error(codes.InvalidArgument, "invalid execution request")
 	case errors.Is(err, ErrExecutionNotFound):
 		return status.Error(codes.NotFound, "execution is not available")
-	case errors.Is(err, ErrBlockedDependency):
-		return status.Error(codes.FailedPrecondition, "execution dependency is unavailable")
+	case errors.Is(err, ErrBlockedDependency), errors.Is(err, ErrExecutionBusy), errors.Is(err, ErrGRPCUnavailable),
+		errors.Is(err, sql.ErrConnDone), errors.Is(err, driver.ErrBadConn), errors.As(err, &network):
+		return status.Error(codes.Unavailable, "execution dependency is unavailable")
+	case errors.Is(err, schema.ErrOptimisticConflict):
+		return status.Error(codes.Aborted, "execution state changed; retry the same identity")
 	default:
 		return status.Error(codes.Internal, "execution failed")
 	}

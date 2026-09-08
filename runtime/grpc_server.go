@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +40,9 @@ type GRPCAuthenticator interface {
 type GRPCAuthenticatorFunc func(context.Context, string) (context.Context, error)
 
 func (function GRPCAuthenticatorFunc) Authenticate(ctx context.Context, method string) (context.Context, error) {
+	if function == nil || ctx == nil {
+		return nil, ErrGRPCUnauthorized
+	}
 	return function(ctx, method)
 }
 
@@ -64,6 +68,9 @@ func NewBearerTokenAuthenticatorSet(tokens []string) (*BearerTokenAuthenticator,
 }
 
 func (authenticator *BearerTokenAuthenticator) Authenticate(ctx context.Context, _ string) (context.Context, error) {
+	if authenticator == nil || ctx == nil {
+		return nil, ErrGRPCUnauthorized
+	}
 	values := metadata.ValueFromIncomingContext(ctx, "authorization")
 	if len(values) != 1 || !strings.HasPrefix(values[0], "Bearer ") {
 		return nil, ErrGRPCUnauthorized
@@ -103,6 +110,9 @@ type RulesetExecutionServerOptions struct {
 func normalizeGRPCOptions(options RulesetExecutionServerOptions) (RulesetExecutionServerOptions, error) {
 	if options.MaxReceiveBytes < 0 || options.MaxSendBytes < 0 || options.MaxExecutionDuration < 0 || options.MaxConcurrentRPCs < 0 {
 		return RulesetExecutionServerOptions{}, fmt.Errorf("gRPC execution limits must not be negative")
+	}
+	if authenticator := reflect.ValueOf(options.Authenticator); !authenticator.IsValid() || ((authenticator.Kind() == reflect.Pointer || authenticator.Kind() == reflect.Func) && authenticator.IsNil()) {
+		options.Authenticator = nil
 	}
 	if options.Authenticator == nil && !options.AllowUnauthenticated {
 		return RulesetExecutionServerOptions{}, fmt.Errorf("gRPC authenticator is required unless unauthenticated access is explicitly allowed")
@@ -144,22 +154,59 @@ type RulesetExecutionServer struct {
 	mu       sync.Mutex
 	started  bool
 	stopped  bool
+	stopDone chan struct{}
 	serveErr error
 }
 
+// NewRulesetExecutionServer is retained for source compatibility but cannot
+// infer authentication or TLS policy. It returns an actionable configuration
+// error without binding. Use NewRulesetExecutionServerWithOptions instead.
 func NewRulesetExecutionServer(engine *Engine, addr string) (*RulesetExecutionServer, error) {
-	return NewRulesetExecutionServerWithOptions(engine, addr, RulesetExecutionServerOptions{})
+	server, err := NewRulesetExecutionServerWithOptions(engine, addr, RulesetExecutionServerOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("use NewRulesetExecutionServerWithOptions with explicit authentication, transport, and generation options: %w", err)
+	}
+	return server, nil
 }
 
+func validateGRPCRegistration(engine *Engine, options RulesetExecutionServerOptions) (RulesetExecutionServerOptions, error) {
+	if engine == nil || engine.Generation() == nil || engine.Generation().Closed() {
+		return RulesetExecutionServerOptions{}, fmt.Errorf("open checked execution engine is required")
+	}
+	engine.mu.Lock()
+	closed := engine.closed
+	engine.mu.Unlock()
+	if closed {
+		return RulesetExecutionServerOptions{}, fmt.Errorf("execution engine is closed")
+	}
+	resolved, err := normalizeGRPCOptions(options)
+	if err != nil {
+		return RulesetExecutionServerOptions{}, err
+	}
+	if resolved.RulesetName != engine.Generation().Ruleset() || resolved.Version != engine.Generation().Version() {
+		return RulesetExecutionServerOptions{}, fmt.Errorf("gRPC ruleset and version must match the immutable generation")
+	}
+	return resolved, nil
+}
+
+// NewRulesetExecutionServerWithOptions validates configuration before binding.
+// RulesetName and Version must match engine.Generation(). Configure Authenticator
+// and TLSConfig. Insecure or unauthenticated operation requires explicit opt-in.
+// Zero message limits use 4 MiB. Zero duration uses 30 seconds. Zero concurrency
+// uses 128 RPCs. Negative limits fail. Start once, then Stop before engine.Close.
 func NewRulesetExecutionServerWithOptions(engine *Engine, addr string, options RulesetExecutionServerOptions) (*RulesetExecutionServer, error) {
 	if strings.TrimSpace(addr) == "" {
 		return nil, fmt.Errorf("gRPC listen address is required")
+	}
+	resolved, err := validateGRPCRegistration(engine, options)
+	if err != nil {
+		return nil, err
 	}
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("listen for gRPC execution: %w", err)
 	}
-	server, err := NewRulesetExecutionServerOnListener(engine, listener, options)
+	server, err := NewRulesetExecutionServerOnListener(engine, listener, resolved)
 	if err != nil {
 		_ = listener.Close()
 		return nil, err
@@ -167,6 +214,9 @@ func NewRulesetExecutionServerWithOptions(engine *Engine, addr string, options R
 	return server, nil
 }
 
+// NewRulesetExecutionServerOnListener transfers listener ownership on success.
+// The caller retains the listener on configuration failure. Stop the server
+// before closing its engine.
 func NewRulesetExecutionServerOnListener(engine *Engine, listener net.Listener, options RulesetExecutionServerOptions) (*RulesetExecutionServer, error) {
 	if engine == nil || engine.Generation() == nil {
 		return nil, fmt.Errorf("checked execution runtime is required")
@@ -174,7 +224,7 @@ func NewRulesetExecutionServerOnListener(engine *Engine, listener net.Listener, 
 	if listener == nil {
 		return nil, fmt.Errorf("gRPC listener is required")
 	}
-	resolved, err := normalizeGRPCOptions(options)
+	resolved, err := validateGRPCRegistration(engine, options)
 	if err != nil {
 		return nil, err
 	}
@@ -232,8 +282,11 @@ func sanitizeGRPCStatus(err error) error {
 	if value, ok := status.FromError(err); ok {
 		switch value.Code() {
 		case codes.InvalidArgument, codes.Unauthenticated, codes.PermissionDenied, codes.NotFound, codes.AlreadyExists,
-			codes.FailedPrecondition, codes.ResourceExhausted, codes.Unimplemented, codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:
-			return status.Error(value.Code(), value.Message())
+			codes.FailedPrecondition, codes.Aborted, codes.ResourceExhausted, codes.Unimplemented, codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:
+			// The generated facade constructs these public statuses, including
+			// sanitized execution-disposition details. Rebuilding a status here
+			// would silently discard the durable state carried in those details.
+			return value.Err()
 		}
 	}
 	return status.Error(codes.Internal, "execution failed")
@@ -261,10 +314,17 @@ func (server *RulesetExecutionServer) Address() net.Addr {
 	return server.listener.Addr()
 }
 func (server *RulesetExecutionServer) Start() error {
+	if server == nil || server.server == nil || server.listener == nil {
+		return ErrGRPCUnavailable
+	}
 	server.mu.Lock()
-	if server.started || server.stopped {
+	if server.stopped {
 		server.mu.Unlock()
-		return fmt.Errorf("gRPC execution server cannot be started in its current state")
+		return grpc.ErrServerStopped
+	}
+	if server.started {
+		server.mu.Unlock()
+		return fmt.Errorf("gRPC execution server is already started")
 	}
 	server.started = true
 	server.mu.Unlock()
@@ -280,20 +340,31 @@ func (server *RulesetExecutionServer) Start() error {
 	}
 	return err
 }
+
+// Stop drains the server and joins concurrent Stop calls. After the configured
+// execution duration it cancels active RPCs, then waits for their handlers.
+// Handlers must honor cancellation. Do not call Stop from this server's handler.
 func (server *RulesetExecutionServer) Stop() {
 	if server == nil || server.server == nil {
 		return
 	}
 	server.mu.Lock()
 	if server.stopped {
+		done := server.stopDone
 		server.mu.Unlock()
+		if done != nil {
+			<-done
+		}
 		return
 	}
 	server.stopped = true
+	server.stopDone = make(chan struct{})
 	started := server.started
 	server.mu.Unlock()
+	defer close(server.stopDone)
 	if !started {
 		_ = server.listener.Close()
+		server.server.Stop()
 		return
 	}
 	done := make(chan struct{})
@@ -304,5 +375,6 @@ func (server *RulesetExecutionServer) Stop() {
 	case <-done:
 	case <-timer.C:
 		server.server.Stop()
+		<-done
 	}
 }

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"crypto/tls"
@@ -16,6 +17,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -29,29 +31,34 @@ import (
 )
 
 var (
-	bundleFile   = flag.String("bundle", "", "Path to effectus.source-bundle.v1 JSON")
-	ociRef       = flag.String("oci-ref", "", "Digest-pinned OCI source bundle")
-	ociVerifier  = flag.String("oci-signature-verifier", "", "Verifier executable; receives reference and digest")
-	postgresDSN  = flag.String("postgres-dsn", "", "PostgreSQL DSN (or EFFECTUS_POSTGRES_DSN)")
-	migrations   = flag.String("database-migrations", "validate", "validate or apply")
-	migrateOnly  = flag.Bool("migrate-only", false, "Apply PostgreSQL migrations and exit")
-	httpAddr     = flag.String("http-addr", ":8080", "HTTP listen address (empty disables HTTP)")
-	grpcAddr     = flag.String("grpc-addr", "", "gRPC execution listen address")
-	grpcCert     = flag.String("grpc-tls-cert", "", "gRPC TLS certificate PEM")
-	grpcKey      = flag.String("grpc-tls-key", "", "gRPC TLS private-key PEM")
-	grpcInsecure = flag.Bool("grpc-allow-insecure", false, "Allow plaintext gRPC")
-	factSource   = flag.String("fact-source", "http", "Fact source: http or kafka")
-	kafkaBrokers = flag.String("kafka-brokers", "localhost:9092", "Kafka brokers")
-	kafkaTopic   = flag.String("kafka-topic", "facts", "Kafka topic")
-	kafkaGroup   = flag.String("kafka-consumer-group", "effectusd", "Kafka consumer group")
-	kafkaAck     = flag.String("kafka-ack-contract", "completed_processing", "Kafka acknowledgement contract")
+	bundleFile          = flag.String("bundle", "", "Path to effectus.source-bundle.v1 JSON")
+	ociRef              = flag.String("oci-ref", "", "Digest-pinned OCI source bundle")
+	ociVerifier         = flag.String("oci-signature-verifier", "", "Verifier executable; receives reference and digest")
+	postgresDSN         = flag.String("postgres-dsn", "", "PostgreSQL DSN (or EFFECTUS_POSTGRES_DSN)")
+	runMode             = flag.String("mode", "serve", "Mode: serve or migrate; migrate honors --database-migrations")
+	migrations          = flag.String("database-migrations", "validate", "validate or apply")
+	migrateOnly         = flag.Bool("migrate-only", false, "Apply PostgreSQL migrations and exit")
+	httpAddr            = flag.String("http-addr", ":8080", "HTTP listen address (empty disables HTTP)")
+	httpShutdownTimeout = flag.Duration("http-shutdown-timeout", defaultHTTPShutdownGrace, "HTTP drain grace (zero: 30s); callbacks must honor cancellation")
+	grpcAddr            = flag.String("grpc-addr", "", "gRPC execution listen address")
+	grpcCert            = flag.String("grpc-tls-cert", "", "gRPC TLS certificate PEM")
+	grpcKey             = flag.String("grpc-tls-key", "", "gRPC TLS private-key PEM")
+	grpcInsecure        = flag.Bool("grpc-allow-insecure", false, "Allow plaintext gRPC")
+	factSource          = flag.String("fact-source", "http", "Fact source: http or kafka")
+	kafkaBrokers        = flag.String("kafka-brokers", "localhost:9092", "Kafka brokers")
+	kafkaTopic          = flag.String("kafka-topic", "facts", "Kafka topic")
+	kafkaGroup          = flag.String("kafka-consumer-group", "effectusd", "Kafka consumer group")
+	kafkaAck            = flag.String("kafka-ack-contract", "completed_processing", "Kafka acknowledgement contract")
 )
 
 type daemon struct {
-	engine     *runtime.Engine
-	generation *runtime.Generation
-	db         *sql.DB
-	recovery   *runtime.RecoveryWorker
+	engine       *runtime.Engine
+	generation   *runtime.Generation
+	db           *sql.DB
+	recovery     *runtime.RecoveryWorker
+	httpMu       sync.Mutex
+	httpDraining bool
+	httpHandlers sync.WaitGroup
 }
 type executeBody struct {
 	Namespace string         `json:"namespace"`
@@ -68,68 +75,46 @@ func main() {
 		os.Exit(1)
 	}
 }
-func run() error {
+func run() (runErr error) {
+	if err := validateDaemonMode(); err != nil {
+		return err
+	}
 	if *postgresDSN == "" {
 		*postgresDSN = os.Getenv("EFFECTUS_POSTGRES_DSN")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if *migrateOnly || (*bundleFile == "" && *ociRef == "" && (strings.EqualFold(*migrations, "apply") || strings.EqualFold(*migrations, "validate"))) {
+	if *migrateOnly || *runMode == "migrate" {
 		return migrate(ctx, *migrateOnly || strings.EqualFold(*migrations, "apply"))
+	}
+	apiToken := strings.TrimSpace(os.Getenv("EFFECTUS_API_TOKEN"))
+	if (*httpAddr != "" || *grpcAddr != "") && apiToken == "" {
+		return errors.New("EFFECTUS_API_TOKEN is required when HTTP or gRPC is enabled")
 	}
 	d, err := openDaemon(ctx)
 	if err != nil {
 		return err
 	}
-	defer d.close()
-
-	needsToken := *httpAddr != "" || *grpcAddr != ""
-	apiToken := strings.TrimSpace(os.Getenv("EFFECTUS_API_TOKEN"))
-	if needsToken && apiToken == "" {
-		return errors.New("EFFECTUS_API_TOKEN is required when HTTP or gRPC is enabled")
-	}
-	serviceErrors := make(chan error, 3)
-	reportServiceError := func(name string, err error) {
-		if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, http.ErrServerClosed) {
-			return
-		}
-		select {
-		case serviceErrors <- fmt.Errorf("%s: %w", name, err):
-		default:
-		}
-	}
-	if *httpAddr != "" {
-		server := &http.Server{Addr: *httpAddr, Handler: d.httpHandler(apiToken), ReadHeaderTimeout: 10 * time.Second}
-		go func() { reportServiceError("HTTP server", server.ListenAndServe()) }()
-	}
+	defer func() { runErr = errors.Join(runErr, d.close()) }()
+	config := daemonServiceConfig{httpAddress: *httpAddr, grpcAddress: *grpcAddr, token: apiToken, shutdownGrace: *httpShutdownTimeout, workers: []daemonWorker{{"recovery worker", d.recovery.Run}}}
 	if *grpcAddr != "" {
-		options, err := grpcServerOptions(d.generation, apiToken)
+		config.grpcOptions, err = grpcServerOptions(d.generation, apiToken)
 		if err != nil {
 			return err
 		}
-		server, err := runtime.NewRulesetExecutionServerWithOptions(d.engine, *grpcAddr, options)
-		if err != nil {
-			return err
-		}
-		go func() { <-ctx.Done(); server.Stop() }()
-		go func() { reportServiceError("gRPC server", server.Start()) }()
 	}
 	if strings.EqualFold(*factSource, "kafka") {
 		source, handler, err := d.kafkaSource()
 		if err != nil {
 			return err
 		}
-		go func() { reportServiceError("Kafka consumer", source.Run(ctx, handler)) }()
-	} else if !strings.EqualFold(*factSource, "http") {
-		return fmt.Errorf("fact-source must be http or kafka")
+		config.workers = append(config.workers, daemonWorker{"Kafka consumer", func(ctx context.Context) error { return source.Run(ctx, handler) }})
 	}
-	go func() { reportServiceError("recovery worker", d.recovery.Run(ctx)) }()
-	select {
-	case err := <-serviceErrors:
+	services, err := prepareDaemonServices(d, config)
+	if err != nil {
 		return err
-	case <-ctx.Done():
-		return nil
 	}
+	return services.run(ctx)
 }
 
 func grpcServerOptions(generation *runtime.Generation, token string) (runtime.RulesetExecutionServerOptions, error) {
@@ -189,7 +174,7 @@ func openDaemon(ctx context.Context) (*daemon, error) {
 		_ = engine.Close()
 		return nil, err
 	}
-	closeErr := func(err error) (*daemon, error) { _ = db.Close(); _ = engine.Close(); return nil, err }
+	closeErr := func(err error) (*daemon, error) { return nil, errors.Join(err, engine.Close(), db.Close()) }
 	if err := db.PingContext(ctx); err != nil {
 		return closeErr(err)
 	}
@@ -220,16 +205,18 @@ func openDaemon(ctx context.Context) (*daemon, error) {
 	}
 	return &daemon{engine: engine, generation: generation, db: db, recovery: &runtime.RecoveryWorker{Engine: engine, Store: store, Owner: "effectusd-recovery", BatchSize: 32, LeaseDuration: 30 * time.Second, PollInterval: time.Second}}, nil
 }
-func (d *daemon) close() {
+func (d *daemon) close() error {
 	if d == nil {
-		return
+		return nil
 	}
+	var err error
 	if d.engine != nil {
-		_ = d.engine.Close()
+		err = d.engine.Close()
 	}
 	if d.db != nil {
-		_ = d.db.Close()
+		err = errors.Join(err, d.db.Close())
 	}
+	return err
 }
 func openDatabase() (*sql.DB, error) {
 	if strings.TrimSpace(*postgresDSN) == "" {
@@ -262,15 +249,24 @@ func loadSourceBundle(ctx context.Context) (*bundle.SourceBundle, error) {
 }
 func (d *daemon) httpHandler(token string) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if allowHTTPMethod(w, r, http.MethodGet) {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		}
 	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, d.engine.GenerationView()) })
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if allowHTTPMethod(w, r, http.MethodGet) {
+			writeJSON(w, http.StatusOK, d.engine.GenerationView())
+		}
+	})
 	protected := http.NewServeMux()
-	protected.HandleFunc("/v1/status", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, d.engine.GenerationView()) })
+	protected.HandleFunc("/v1/status", func(w http.ResponseWriter, r *http.Request) {
+		if allowHTTPMethod(w, r, http.MethodGet) {
+			writeJSON(w, http.StatusOK, d.engine.GenerationView())
+		}
+	})
 	protected.HandleFunc("/v1/dry-run", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+		if !allowHTTPMethod(w, r, http.MethodPost) {
 			return
 		}
 		var body struct {
@@ -278,6 +274,10 @@ func (d *daemon) httpHandler(token string) http.Handler {
 		}
 		if err := decodeJSON(r, &body); err != nil {
 			writeError(w, err)
+			return
+		}
+		if body.Facts == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "facts must be a JSON object"})
 			return
 		}
 		result, err := d.engine.DryRun(r.Context(), body.Facts)
@@ -288,8 +288,7 @@ func (d *daemon) httpHandler(token string) http.Handler {
 		writeJSON(w, http.StatusOK, result)
 	})
 	protected.HandleFunc("/v1/execute", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+		if !allowHTTPMethod(w, r, http.MethodPost) {
 			return
 		}
 		if r.ContentLength > maxHTTPBodyBytes {
@@ -306,14 +305,24 @@ func (d *daemon) httpHandler(token string) http.Handler {
 			writeError(w, err)
 			return
 		}
+		body.Namespace, body.Universe = strings.TrimSpace(body.Namespace), strings.TrimSpace(body.Universe)
+		if body.Namespace != "" && body.Universe != "" && body.Namespace != body.Universe {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace and universe disagree"})
+			return
+		}
 		if body.Namespace == "" {
 			body.Namespace = body.Universe
 		}
+		if body.Namespace == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace is required"})
+			return
+		}
+		if body.Facts == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "facts must be a JSON object"})
+			return
+		}
 		view := d.engine.GenerationView()
 		expectedGeneration := strings.Trim(strings.TrimSpace(r.Header.Get("If-Match")), `"`)
-		if expectedGeneration == "" {
-			expectedGeneration = view.GenerationDigest
-		}
 		result, err := d.engine.Execute(r.Context(), runtime.ExecuteRequest{Admission: &runtime.Admission{ExecutionID: schema.StableExecutionID(body.Namespace, idempotencyKey, view.Ruleset, view.Version), AdmissionID: schema.StableAdmissionID(body.Namespace, idempotencyKey, view.Ruleset, view.Version), TenantNamespace: body.Namespace, Ruleset: view.Ruleset, Version: view.Version, Facts: body.Facts, ExpectedGenerationDigest: expectedGeneration}, WaitMode: runtime.WaitAccepted})
 		if err != nil {
 			writeError(w, err)
@@ -321,8 +330,27 @@ func (d *daemon) httpHandler(token string) http.Handler {
 		}
 		writeJSON(w, http.StatusAccepted, result)
 	})
-	mux.Handle("/v1/", httpTokenMiddleware(token, protected))
-	return mux
+	notFound := func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "route not found"})
+	}
+	protected.HandleFunc("/", notFound)
+	secured := httpTokenMiddleware(token, protected)
+	mux.Handle("/v1/", secured)
+	mux.Handle("/v1", secured)
+	mux.HandleFunc("/", notFound)
+	unknownProtected := httpTokenMiddleware(token, http.HandlerFunc(notFound))
+	return d.trackHTTPRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz", "/readyz", "/v1/status", "/v1/dry-run", "/v1/execute":
+			mux.ServeHTTP(w, r)
+		default:
+			if r.URL.Path == "/v1" || strings.HasPrefix(r.URL.Path, "/v1/") {
+				unknownProtected.ServeHTTP(w, r)
+			} else {
+				notFound(w, r)
+			}
+		}
+	}))
 }
 
 func httpTokenMiddleware(token string, next http.Handler) http.Handler {
@@ -345,16 +373,28 @@ func constantTimeTokenEqual(candidate, expected string) bool {
 }
 
 func decodeJSON(r *http.Request, value any) error {
-	de := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	if r.ContentLength > maxHTTPBodyBytes {
+		return errHTTPBodyTooLarge
+	}
+	if r.Body == nil {
+		return errHTTPInvalidJSON
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxHTTPBodyBytes+1))
+	if err != nil {
+		return fmt.Errorf("%w: %v", errHTTPInvalidJSON, err)
+	}
+	if len(body) > maxHTTPBodyBytes {
+		return errHTTPBodyTooLarge
+	}
+	de := json.NewDecoder(bytes.NewReader(body))
+	de.UseNumber()
 	de.DisallowUnknownFields()
 	if err := de.Decode(value); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", errHTTPInvalidJSON, err)
 	}
 	var extra any
-	if err := de.Decode(&extra); err == nil {
-		return errors.New("multiple JSON values")
-	} else if !errors.Is(err, io.EOF) {
-		return err
+	if err := de.Decode(&extra); err != io.EOF {
+		return errHTTPInvalidJSON
 	}
 	return nil
 }
@@ -364,11 +404,8 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 func writeError(w http.ResponseWriter, err error) {
-	status := http.StatusBadRequest
-	if errors.Is(err, runtime.ErrIdentityConflict) || errors.Is(err, runtime.ErrGenerationMismatch) {
-		status = http.StatusConflict
-	}
-	writeJSON(w, status, map[string]string{"error": err.Error()})
+	status, message := httpErrorStatus(err)
+	writeJSON(w, status, map[string]string{"error": message})
 }
 func (d *daemon) kafkaSource() (*kafka.KafkaSource, kafka.Handler, error) {
 	config := &kafka.Config{SourceID: "effectusd", ClusterNamespace: "default", Brokers: strings.Split(*kafkaBrokers, ","), Topic: *kafkaTopic, ConsumerGroup: *kafkaGroup, AckContract: kafka.AckContract(*kafkaAck), MaxAttempts: 3, InitialBackoff: time.Second, MaxBackoff: 30 * time.Second, PoisonPolicy: kafka.PoisonHalt}

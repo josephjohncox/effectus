@@ -111,6 +111,15 @@ type ExecutionLedger interface {
 	FinishExecutionLease(context.Context, ExecutionLease, ExecutionState, string) error
 }
 
+// ExecutionLeaseRenewer extends an unexpired recovery lease without changing
+// its owner, token, or revision. Old handles remain valid while that lease is
+// current. Implementations must reject expired or replaced leases atomically.
+// Recovery uses this optional capability for executions longer than one lease.
+// Stores without it are limited to the original lease's safe execution window.
+type ExecutionLeaseRenewer interface {
+	RenewExecutionLease(context.Context, ExecutionLease, time.Duration) (ExecutionLease, error)
+}
+
 type RecoveryStats struct {
 	Nonterminal       int64
 	Blocked           int64

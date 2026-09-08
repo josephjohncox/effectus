@@ -105,7 +105,7 @@ func TestLegacyExternalConsumerWithPositionalRequestLiteralsCompiles(t *testing.
 
 func TestExternalV03HandlerAdaptsFrozenRequest(t *testing.T) {
 	handler, err := executorhttp.NewHandler(executorhttp.Options{}, func(_ context.Context, request executorhttp.Request) executorhttp.Outcome {
-		if request.Arguments["order"] != "review" || request.ArgumentHash != "arguments" || request.ContractHash != "contract" {
+		if request.Arguments["order"] != "review" || request.ArgumentHash != "63c2bc01dce7f3742f333f591f671e1390b6474204bdb194a102ea21c2f829fb" || request.ContractHash != "contract" {
 			t.Fatalf("unexpected v0.3 request: %#v", request)
 		}
 		if request.Metadata.ExecutionID != "execution" || request.Metadata.RequestID != "request" {
@@ -126,7 +126,7 @@ func TestExternalV03HandlerAdaptsFrozenRequest(t *testing.T) {
 	request.Header.Set(invocation.HeaderAttempt, "1")
 	request.Header.Set(invocation.HeaderDirection, string(invocation.DirectionForward))
 	request.Header.Set(invocation.HeaderIdempotencyKey, "idempotency")
-	request.Header.Set(invocation.HeaderArgumentHash, "arguments")
+	request.Header.Set(invocation.HeaderArgumentHash, "63c2bc01dce7f3742f333f591f671e1390b6474204bdb194a102ea21c2f829fb")
 	request.Header.Set(invocation.HeaderContractHash, "contract")
 	response := httptest.NewRecorder()
 

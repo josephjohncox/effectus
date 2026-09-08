@@ -3,10 +3,12 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"reflect"
 	"regexp"
 	"sort"
@@ -15,6 +17,7 @@ import (
 
 	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
 	"github.com/josephjohncox/effectus/invocation"
+	"github.com/josephjohncox/effectus/ir"
 	"github.com/josephjohncox/effectus/schema"
 	"github.com/josephjohncox/effectus/schema/workflow"
 )
@@ -53,7 +56,10 @@ func (executor checkedWorkflowInvocationExecutor) Invoke(ctx context.Context, re
 }
 
 func (engine *Engine) executeCheckedWorkflow(ctx context.Context, generation *Generation, namespace, executionID string, facts map[string]interface{}, selectedPlanIDs map[string]struct{}, waitMode WaitMode) error {
-	resolvedFacts := cloneWorkflowFacts(facts)
+	resolvedFacts, err := normalizedWorkflowFacts(generation.Environment(), facts)
+	if err != nil {
+		return err
+	}
 	artifact := generation.Checked().CloneArtifact()
 	dispatcherOptions := engine.workflowOptions
 	dispatcherOptions.RequestID = executionID
@@ -141,6 +147,10 @@ func (engine *Engine) executeCheckedWorkflow(ctx context.Context, generation *Ge
 				result, err := decodeCheckedWorkflowResult(completed.Result)
 				if err != nil {
 					return fmt.Errorf("decode plan %q step %q result: %w", plan.Id, step.Id, err)
+				}
+				result, err = ir.NormalizeValue(generation.Environment(), generation.Environment().Verbs[step.Verb].ResultType, result)
+				if err != nil {
+					return fmt.Errorf("plan %q step %q result: %w", plan.Id, step.Id, err)
 				}
 				slots = append(slots, result)
 			}
@@ -266,7 +276,7 @@ func evaluateCheckedExpression(expression *effectusv1.Expression, facts map[stri
 	case *effectusv1.Expression_FactPath:
 		value, ok := lookupWorkflowFact(facts, kind.FactPath)
 		if !ok {
-			return nil, fmt.Errorf("fact %q is missing", kind.FactPath)
+			return nil, fmt.Errorf("%w: fact %q is missing", ErrInvalidExecuteRequest, kind.FactPath)
 		}
 		return value, nil
 	case *effectusv1.Expression_Unary:
@@ -286,6 +296,9 @@ func evaluateCheckedExpression(expression *effectusv1.Expression, facts map[stri
 			return !boolean, nil
 		case effectusv1.UnaryOperator_UNARY_OPERATOR_NEGATE:
 			if integer, ok := checkedInteger(value); ok {
+				if integer == math.MinInt64 {
+					return nil, fmt.Errorf("integer negation overflow")
+				}
 				return -integer, nil
 			}
 			if floating, ok := checkedFloat(value); ok {
@@ -329,9 +342,9 @@ func evaluateCheckedExpression(expression *effectusv1.Expression, facts map[stri
 func evaluateCheckedBinary(operator effectusv1.BinaryOperator, left, right interface{}) (interface{}, error) {
 	switch operator {
 	case effectusv1.BinaryOperator_BINARY_OPERATOR_EQUAL:
-		return reflect.DeepEqual(normalizeCheckedNumber(left), normalizeCheckedNumber(right)), nil
+		return checkedEqual(left, right), nil
 	case effectusv1.BinaryOperator_BINARY_OPERATOR_NOT_EQUAL:
-		return !reflect.DeepEqual(normalizeCheckedNumber(left), normalizeCheckedNumber(right)), nil
+		return !checkedEqual(left, right), nil
 	case effectusv1.BinaryOperator_BINARY_OPERATOR_AND:
 		leftBool, leftOK := left.(bool)
 		rightBool, rightOK := right.(bool)
@@ -409,11 +422,11 @@ func checkedArithmetic(operator effectusv1.BinaryOperator, left, right interface
 	if leftIsInt && rightIsInt && operator != effectusv1.BinaryOperator_BINARY_OPERATOR_DIVIDE {
 		switch operator {
 		case effectusv1.BinaryOperator_BINARY_OPERATOR_ADD:
-			return leftInt + rightInt, nil
+			return checkedIntResult(new(big.Int).Add(big.NewInt(leftInt), big.NewInt(rightInt)))
 		case effectusv1.BinaryOperator_BINARY_OPERATOR_SUBTRACT:
-			return leftInt - rightInt, nil
+			return checkedIntResult(new(big.Int).Sub(big.NewInt(leftInt), big.NewInt(rightInt)))
 		case effectusv1.BinaryOperator_BINARY_OPERATOR_MULTIPLY:
-			return leftInt * rightInt, nil
+			return checkedIntResult(new(big.Int).Mul(big.NewInt(leftInt), big.NewInt(rightInt)))
 		case effectusv1.BinaryOperator_BINARY_OPERATOR_MODULO:
 			if rightInt == 0 {
 				return nil, fmt.Errorf("modulo by zero")
@@ -428,19 +441,32 @@ func checkedArithmetic(operator effectusv1.BinaryOperator, left, right interface
 	}
 	switch operator {
 	case effectusv1.BinaryOperator_BINARY_OPERATOR_ADD:
-		return leftFloat + rightFloat, nil
+		return checkedFloatResult(leftFloat + rightFloat)
 	case effectusv1.BinaryOperator_BINARY_OPERATOR_SUBTRACT:
-		return leftFloat - rightFloat, nil
+		return checkedFloatResult(leftFloat - rightFloat)
 	case effectusv1.BinaryOperator_BINARY_OPERATOR_MULTIPLY:
-		return leftFloat * rightFloat, nil
+		return checkedFloatResult(leftFloat * rightFloat)
 	case effectusv1.BinaryOperator_BINARY_OPERATOR_DIVIDE:
 		if rightFloat == 0 {
 			return nil, fmt.Errorf("division by zero")
 		}
-		return leftFloat / rightFloat, nil
+		return checkedFloatResult(leftFloat / rightFloat)
 	default:
 		return nil, fmt.Errorf("modulo requires integer operands")
 	}
+}
+
+func checkedIntResult(value *big.Int) (any, error) {
+	if !value.IsInt64() {
+		return nil, fmt.Errorf("integer arithmetic overflow")
+	}
+	return value.Int64(), nil
+}
+func checkedFloatResult(value float64) (any, error) {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return nil, fmt.Errorf("floating arithmetic overflow")
+	}
+	return value, nil
 }
 
 func checkedContains(container, item interface{}) (bool, error) {
@@ -454,7 +480,7 @@ func checkedContains(container, item interface{}) (bool, error) {
 	value := reflect.ValueOf(container)
 	if value.IsValid() && (value.Kind() == reflect.Slice || value.Kind() == reflect.Array) {
 		for index := 0; index < value.Len(); index++ {
-			if reflect.DeepEqual(normalizeCheckedNumber(value.Index(index).Interface()), normalizeCheckedNumber(item)) {
+			if checkedEqual(value.Index(index).Interface(), item) {
 				return true, nil
 			}
 		}
@@ -471,18 +497,12 @@ func compareCheckedValues(left, right interface{}) (int, error) {
 		}
 		return strings.Compare(leftString, rightString), nil
 	}
-	leftFloat, leftOK := checkedFloat(left)
-	rightFloat, rightOK := checkedFloat(right)
+	leftNumber, leftOK := checkedRational(left)
+	rightNumber, rightOK := checkedRational(right)
 	if !leftOK || !rightOK {
 		return 0, fmt.Errorf("comparison operands must be numeric or string")
 	}
-	if leftFloat < rightFloat {
-		return -1, nil
-	}
-	if leftFloat > rightFloat {
-		return 1, nil
-	}
-	return 0, nil
+	return leftNumber.Cmp(rightNumber), nil
 }
 
 func checkedInteger(value interface{}) (int64, bool) {
@@ -512,8 +532,10 @@ func checkedInteger(value interface{}) (int64, bool) {
 			return int64(value), true
 		}
 	case json.Number:
-		integer, err := value.Int64()
-		return integer, err == nil
+		normalized, err := ir.NormalizeValue(ir.Environment{}, "int", value)
+		if err == nil {
+			return normalized.(int64), true
+		}
 	}
 	return 0, false
 }
@@ -524,24 +546,58 @@ func checkedFloat(value interface{}) (float64, bool) {
 	}
 	switch value := value.(type) {
 	case float32:
-		return float64(value), true
+		f := float64(value)
+		return f, !math.IsNaN(f) && !math.IsInf(f, 0)
 	case float64:
 		return value, !math.IsNaN(value) && !math.IsInf(value, 0)
 	case json.Number:
 		floating, err := value.Float64()
-		return floating, err == nil
+		return floating, err == nil && !math.IsNaN(floating) && !math.IsInf(floating, 0)
 	}
 	return 0, false
 }
 
-func normalizeCheckedNumber(value interface{}) interface{} {
+func checkedRational(value any) (*big.Rat, bool) {
 	if integer, ok := checkedInteger(value); ok {
-		return integer
+		return new(big.Rat).SetInt64(integer), true
 	}
 	if floating, ok := checkedFloat(value); ok {
-		return floating
+		return new(big.Rat).SetFloat64(floating), true
 	}
-	return value
+	return nil, false
+}
+
+func checkedEqual(left, right any) bool {
+	if l, ok := checkedRational(left); ok {
+		r, ok := checkedRational(right)
+		return ok && l.Cmp(r) == 0
+	}
+	if l, ok := left.([]any); ok {
+		r, ok := right.([]any)
+		if !ok || len(l) != len(r) {
+			return false
+		}
+		for i := range l {
+			if !checkedEqual(l[i], r[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	if l, ok := left.(map[string]any); ok {
+		r, ok := right.(map[string]any)
+		if !ok || len(l) != len(r) {
+			return false
+		}
+		for key, value := range l {
+			other, ok := r[key]
+			if !ok || !checkedEqual(value, other) {
+				return false
+			}
+		}
+		return true
+	}
+	return reflect.DeepEqual(left, right)
 }
 
 func isUnconditionalExtensionPlan(plan *effectusv1.Plan) bool {
@@ -566,7 +622,7 @@ func resolveCheckedWorkflowValue(value *effectusv1.Value, facts map[string]inter
 	case *effectusv1.Value_FactPath:
 		resolved, ok := lookupWorkflowFact(facts, kind.FactPath)
 		if !ok {
-			return nil, fmt.Errorf("fact %q is missing", kind.FactPath)
+			return nil, fmt.Errorf("%w: fact %q is missing", ErrInvalidExecuteRequest, kind.FactPath)
 		}
 		return resolved, nil
 	case *effectusv1.Value_ResultSlot:
@@ -674,7 +730,7 @@ func checkedLiteralValue(literal *effectusv1.Literal) (interface{}, error) {
 	case *effectusv1.Literal_StringValue:
 		return kind.StringValue, nil
 	case *effectusv1.Literal_BytesValue:
-		return append([]byte(nil), kind.BytesValue...), nil
+		return base64.StdEncoding.EncodeToString(kind.BytesValue), nil
 	case *effectusv1.Literal_ListValue:
 		if kind.ListValue == nil {
 			return nil, fmt.Errorf("list literal is nil")

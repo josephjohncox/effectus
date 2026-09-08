@@ -14,7 +14,11 @@ import (
 	"github.com/josephjohncox/effectus/schema/fencing"
 )
 
-// DispatcherOptions control one durable dispatch worker.
+// DispatcherOptions control one durable dispatch worker. Zero values select a
+// 30s lease, invocation timeout of 3/4 of the lease, eight attempts, 1s initial
+// backoff, and 1m maximum backoff. Negative durations are invalid. An explicit
+// invocation timeout must be shorter than the lease; initial backoff must not
+// exceed maximum backoff. Jitter never exceeds that maximum.
 type DispatcherOptions struct {
 	Owner                 string
 	RequestID             string
@@ -42,11 +46,17 @@ func NewDispatcher(store OutboxStore, provider fencing.Provider, executor invoca
 	if options.Owner == "" {
 		return nil, fmt.Errorf("dispatcher owner is required")
 	}
-	if options.LeaseDuration <= 0 {
+	if options.LeaseDuration < 0 || options.InvocationTimeout < 0 || options.InitialBackoff < 0 || options.MaxBackoff < 0 {
+		return nil, fmt.Errorf("dispatcher durations must not be negative")
+	}
+	if options.LeaseDuration == 0 {
 		options.LeaseDuration = 30 * time.Second
 	}
-	if options.InvocationTimeout <= 0 || options.InvocationTimeout >= options.LeaseDuration {
-		options.InvocationTimeout = options.LeaseDuration * 3 / 4
+	if options.InvocationTimeout == 0 {
+		options.InvocationTimeout = options.LeaseDuration - options.LeaseDuration/4
+	}
+	if options.InvocationTimeout >= options.LeaseDuration {
+		return nil, fmt.Errorf("invocation timeout must be shorter than the dispatch lease")
 	}
 	if options.InvocationTimeout <= 0 {
 		return nil, fmt.Errorf("dispatcher lease duration is too short")
@@ -59,6 +69,9 @@ func NewDispatcher(store OutboxStore, provider fencing.Provider, executor invoca
 	}
 	if options.MaxBackoff <= 0 {
 		options.MaxBackoff = time.Minute
+	}
+	if options.InitialBackoff > options.MaxBackoff {
+		return nil, fmt.Errorf("initial backoff must not exceed maximum backoff")
 	}
 	if options.RequireDurableFencing && (provider == nil || provider.Guarantee() != fencing.GuaranteeDurableMonotonic) {
 		return nil, fmt.Errorf("durable fencing is required but the provider is not durable_monotonic")
@@ -74,6 +87,12 @@ func (dispatcher *Dispatcher) DispatchOne(ctx context.Context) (*Dispatch, error
 
 // Dispatch claims only targetDispatchID when it is non-empty.
 func (dispatcher *Dispatcher) Dispatch(ctx context.Context, targetDispatchID string) (*Dispatch, error) {
+	if dispatcher == nil || ctx == nil {
+		return nil, fmt.Errorf("dispatcher and context are required")
+	}
+	// Start before the claim: this local monotonic deadline is conservative
+	// even when the database wall clock differs from the worker's clock.
+	leaseDeadline := time.Now().Add(dispatcher.options.LeaseDuration)
 	dispatch, err := dispatcher.store.ClaimDispatch(ctx, ClaimOptions{
 		Owner: dispatcher.options.Owner, LeaseDuration: dispatcher.options.LeaseDuration, TargetDispatchID: targetDispatchID,
 	})
@@ -91,7 +110,9 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, targetDispatchID str
 		if !completion.Exhausted {
 			completion.NextAttemptAt = completion.Now.Add(dispatcher.backoff(dispatch))
 		}
-		return dispatch, errors.Join(err, dispatcher.store.CompleteDispatch(ctx, completion))
+		completionCtx, cancel := dispatcher.dispositionContext(ctx, leaseDeadline)
+		defer cancel()
+		return dispatch, errors.Join(err, dispatcher.store.CompleteDispatch(completionCtx, completion))
 	}
 	defer releaseFences(leases)
 	if err := dispatcher.store.SaveFencingGrants(ctx, dispatch.ID, dispatch.Attempt, dispatch.LeaseToken, grants); err != nil {
@@ -103,15 +124,15 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, targetDispatchID str
 	decoder := json.NewDecoder(bytes.NewReader(dispatch.Arguments))
 	decoder.UseNumber()
 	if err := decoder.Decode(&arguments); err != nil {
-		return dispatch, dispatcher.completeUnknown(ctx, dispatch, fmt.Errorf("decode persisted arguments: %w", err))
+		return dispatch, dispatcher.completeUnknown(ctx, dispatch, leaseDeadline, fmt.Errorf("decode persisted arguments: %w", err))
 	}
 	saga, err := dispatcher.store.GetSaga(ctx, dispatch.SagaID)
 	if err != nil {
 		return dispatch, err
 	}
-	now := dispatcher.now().UTC()
+	now := time.Now()
 	deadline := now.Add(dispatcher.options.InvocationTimeout)
-	leaseSafeDeadline := dispatch.LeaseDeadline.Add(-dispatcher.options.LeaseDuration / 10)
+	leaseSafeDeadline := leaseDeadline.Add(-dispatcher.options.LeaseDuration / 10)
 	if leaseSafeDeadline.Before(deadline) {
 		deadline = leaseSafeDeadline
 	}
@@ -132,10 +153,18 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, targetDispatchID str
 		Verb: dispatch.Verb, Arguments: arguments, ArgumentHash: dispatch.ArgumentHash,
 		ContractHash: dispatch.ContractHash,
 	}
+	if err := invokeCtx.Err(); err != nil {
+		cancel()
+		return dispatch, err
+	}
 	outcome := dispatcher.executor.Invoke(invokeCtx, invokeRequest)
 	cancel()
+	// Caller cancellation does not erase an observed destination outcome.
+	// Persistence remains bounded by both a short timeout and the dispatch lease.
+	ctx, persistCancel := dispatcher.dispositionContext(ctx, leaseDeadline)
+	defer persistCancel()
 	if err := invocation.ValidateOutcome(outcome); err != nil {
-		return dispatch, dispatcher.completeUnknown(ctx, dispatch, fmt.Errorf("invalid invocation outcome: %w", err))
+		return dispatch, dispatcher.completeUnknown(ctx, dispatch, leaseDeadline, fmt.Errorf("invalid invocation outcome: %w", err))
 	}
 	completion := Completion{
 		DispatchID: dispatch.ID, Attempt: dispatch.Attempt, LeaseToken: dispatch.LeaseToken,
@@ -147,7 +176,7 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, targetDispatchID str
 	if outcome.Class == invocation.OutcomeSuccess {
 		result, _, err := CanonicalJSON(outcome.Result)
 		if err != nil {
-			return dispatch, dispatcher.completeUnknown(ctx, dispatch, fmt.Errorf("successful result is not serializable: %w", err))
+			return dispatch, dispatcher.completeUnknown(ctx, dispatch, leaseDeadline, fmt.Errorf("successful result is not serializable: %w", err))
 		}
 		completion.Result = result
 	} else if outcome.Class == invocation.OutcomeRetryableKnownNotCommitted || outcome.Class == invocation.OutcomeUnknown {
@@ -203,17 +232,21 @@ func (dispatcher *Dispatcher) acquireFences(ctx context.Context, dispatch *Dispa
 	return leases, grants, nil
 }
 
-func (dispatcher *Dispatcher) completeUnknown(ctx context.Context, dispatch *Dispatch, cause error) error {
-	now := dispatcher.now().UTC()
+func (dispatcher *Dispatcher) completeUnknown(ctx context.Context, dispatch *Dispatch, deadline time.Time, cause error) error {
+	completionCtx, cancel := dispatcher.dispositionContext(ctx, deadline)
+	defer cancel()
 	completion := Completion{
 		DispatchID: dispatch.ID, Attempt: dispatch.Attempt, LeaseToken: dispatch.LeaseToken,
-		Outcome: invocation.OutcomeUnknown, Error: cause.Error(), Now: now,
-		Exhausted: dispatch.Attempt >= dispatcher.options.MaxAttempts,
+		Outcome: invocation.OutcomeUnknown, Error: cause.Error(), Now: dispatcher.now().UTC(),
+		// A malformed outcome has no validated retry contract. Fail closed.
+		Exhausted: true,
 	}
-	if !completion.Exhausted {
-		completion.NextAttemptAt = now.Add(dispatcher.backoff(dispatch))
-	}
-	return errors.Join(cause, dispatcher.store.CompleteDispatch(ctx, completion))
+	return errors.Join(cause, dispatcher.store.CompleteDispatch(completionCtx, completion))
+}
+
+func (dispatcher *Dispatcher) dispositionContext(ctx context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
+	remaining := time.Until(deadline)
+	return context.WithTimeout(context.WithoutCancel(ctx), min(5*time.Second, remaining))
 }
 
 func (dispatcher *Dispatcher) backoff(dispatch *Dispatch) time.Duration {
@@ -229,7 +262,11 @@ func (dispatcher *Dispatcher) backoff(dispatch *Dispatch) time.Duration {
 	}
 	seed += dispatch.Attempt * 0x9e3779b97f4a7c15
 	jitter := 0.75 + float64(seed%5000)/10000 // [0.75, 1.2499]
-	return time.Duration(value * jitter)
+	value *= jitter
+	if value >= float64(dispatcher.options.MaxBackoff) {
+		return dispatcher.options.MaxBackoff
+	}
+	return time.Duration(value)
 }
 
 func releaseFences(leases []fencing.Lease) {

@@ -51,15 +51,15 @@ func generationView(generation *Generation) *GenerationView {
 }
 func (engine *Engine) DryRun(ctx context.Context, facts map[string]any) ([]PlanEvaluation, error) {
 	if engine == nil || ctx == nil {
-		return nil, fmt.Errorf("checked dry-run requires an engine and context")
+		return nil, fmt.Errorf("%w: checked dry-run requires an engine and context", ErrInvalidExecuteRequest)
 	}
 	generation := engine.Generation()
-	if generation == nil || generation.Checked() == nil {
-		return nil, fmt.Errorf("checked generation is unavailable")
+	if generation == nil || generation.Closed() || generation.Checked() == nil {
+		return nil, fmt.Errorf("%w: checked generation is unavailable", ErrBlockedDependency)
 	}
-	effective := cloneWorkflowFacts(facts)
-	if err := validateAdmissionFactTypes(generation.Environment(), effective); err != nil {
-		return nil, err
+	effective, err := normalizedWorkflowFacts(generation.Environment(), facts)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidExecuteRequest, err)
 	}
 	artifact := generation.Checked().CloneArtifact()
 	result := make([]PlanEvaluation, 0, len(artifact.Plans))

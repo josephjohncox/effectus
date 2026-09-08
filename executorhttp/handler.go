@@ -4,9 +4,13 @@ package executorhttp
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,7 +25,8 @@ const defaultMaxRequestBytes int64 = 1 << 20
 // invocation request and outcome vocabulary.
 type HandlerFunc func(context.Context, invocation.Request) invocation.Outcome
 
-// Options controls the HTTP boundary.
+// Options controls the HTTP boundary. Zero selects a 1 MiB request limit.
+// Limits must be nonnegative and smaller than MaxInt64 to permit overflow detection.
 type Options struct {
 	MaxRequestBytes int64
 }
@@ -31,8 +36,8 @@ func NewHandler(options Options, handler HandlerFunc) (http.Handler, error) {
 	if handler == nil {
 		return nil, fmt.Errorf("executor HTTP handler is required")
 	}
-	if options.MaxRequestBytes < 0 {
-		return nil, fmt.Errorf("executor HTTP maximum request bytes cannot be negative")
+	if options.MaxRequestBytes < 0 || options.MaxRequestBytes == math.MaxInt64 {
+		return nil, fmt.Errorf("executor HTTP maximum request bytes must be nonnegative and smaller than MaxInt64")
 	}
 	if options.MaxRequestBytes == 0 {
 		options.MaxRequestBytes = defaultMaxRequestBytes
@@ -81,6 +86,9 @@ func decodeRequest(request *http.Request, maxBytes int64) (invocation.Request, e
 	if err := rejectTrailingJSON(decoder); err != nil {
 		return invocation.Request{}, err
 	}
+	if arguments == nil {
+		return invocation.Request{}, fmt.Errorf("executor arguments must be a JSON object")
+	}
 	verb := strings.TrimSpace(request.Header.Get(invocation.HeaderVerb))
 	if verb == "" {
 		return invocation.Request{}, fmt.Errorf("%s header is required", invocation.HeaderVerb)
@@ -89,6 +97,18 @@ func decodeRequest(request *http.Request, maxBytes int64) (invocation.Request, e
 	if argumentHash == "" {
 		return invocation.Request{}, fmt.Errorf("%s header is required", invocation.HeaderArgumentHash)
 	}
+	// Match the producer's schema.CanonicalJSON contract: sorted JSON object
+	// keys, standard Go JSON escaping, and preserved json.Number spellings.
+	canonical, err := json.Marshal(arguments)
+	if err != nil {
+		return invocation.Request{}, fmt.Errorf("canonicalize executor arguments: %w", err)
+	}
+	digest := sha256.Sum256(canonical)
+	provided, err := hex.DecodeString(argumentHash)
+	if err != nil || len(provided) != sha256.Size || subtle.ConstantTimeCompare(provided, digest[:]) != 1 {
+		return invocation.Request{}, fmt.Errorf("%s does not match canonical arguments", invocation.HeaderArgumentHash)
+	}
+	argumentHash = hex.EncodeToString(digest[:])
 	contractHash := strings.TrimSpace(request.Header.Get(invocation.HeaderContractHash))
 	if contractHash == "" {
 		return invocation.Request{}, fmt.Errorf("%s header is required", invocation.HeaderContractHash)

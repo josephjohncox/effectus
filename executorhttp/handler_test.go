@@ -114,7 +114,7 @@ func validRequest(body string) *http.Request {
 	request.Header.Set(invocation.HeaderAttempt, "2")
 	request.Header.Set(invocation.HeaderDirection, string(invocation.DirectionForward))
 	request.Header.Set(invocation.HeaderIdempotencyKey, "key-1")
-	request.Header.Set(invocation.HeaderArgumentHash, "arguments")
+	request.Header.Set(invocation.HeaderArgumentHash, testArgumentHash(body))
 	request.Header.Set(invocation.HeaderContractHash, "contract")
 	return request
 }

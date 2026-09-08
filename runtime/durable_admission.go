@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"sort"
-	"strings"
 
 	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
 	"github.com/josephjohncox/effectus/invocation"
@@ -17,6 +15,9 @@ import (
 
 // ArtifactResolver reconstructs a callback-free Generation from one immutable
 // durable artifact. It intentionally has no compiler or loader surface.
+// A returned generation transfers ownership to the engine, including when an
+// error is returned with it. Return a fresh owned instance, not one borrowed
+// from another engine. The engine closes it after its final active use.
 type ArtifactResolver interface {
 	ResolveGeneration(context.Context, ledger.ExecutionArtifact) (*Generation, error)
 }
@@ -34,25 +35,24 @@ func buildDurableAdmission(ctx context.Context, generation *Generation, admissio
 	if err != nil {
 		return schema.DurableAdmission{}, nil, nil, err
 	}
-	effectiveFacts := make(map[string]any)
+	effectiveFacts, err := normalizedWorkflowFacts(generation.Environment(), admission.Facts)
+	if err != nil {
+		return schema.DurableAdmission{}, nil, nil, err
+	}
 	mergePolicy := admission.MergePolicy
 	if mergePolicy == "" {
 		mergePolicy = "merge"
 	}
 	switch mergePolicy {
 	case "merge", "replace":
-		mergeWorkflowFactOverrides(effectiveFacts, admission.Facts)
 	default:
 		return schema.DurableAdmission{}, nil, nil, fmt.Errorf("unsupported fact merge policy %q", mergePolicy)
-	}
-	if err := validateAdmissionFactTypes(generation.Environment(), effectiveFacts); err != nil {
-		return schema.DurableAdmission{}, nil, nil, err
 	}
 	factsJSON, _, err := schema.CanonicalJSON(effectiveFacts)
 	if err != nil {
 		return schema.DurableAdmission{}, nil, nil, err
 	}
-	inputFactsJSON, _, err := schema.CanonicalJSON(admission.Facts)
+	inputFactsJSON, err := canonicalJSONValue(admission.Facts)
 	if err != nil {
 		return schema.DurableAdmission{}, nil, nil, err
 	}
@@ -89,74 +89,45 @@ func buildDurableAdmission(ctx context.Context, generation *Generation, admissio
 	return request, selected, effectiveFacts, nil
 }
 
+// Normalize declared values before the JSON ownership boundary so typed Go
+// collections (including []uint8 used as a list) retain their declared meaning.
+func normalizedWorkflowFacts(environment ir.Environment, facts map[string]any) (map[string]any, error) {
+	copy := cloneWorkflowFacts(facts)
+	if err := validateAdmissionFactTypes(environment, copy); err != nil {
+		return nil, err
+	}
+	wire, err := canonicalJSONValue(copy)
+	if err != nil {
+		return nil, err
+	}
+	owned, err := decodeExecutionFacts(wire)
+	if err != nil {
+		return nil, err
+	}
+	effective := make(map[string]any)
+	mergeWorkflowFactOverrides(effective, owned)
+	if err := validateAdmissionFactTypes(environment, effective); err != nil {
+		return nil, err
+	}
+	return effective, nil
+}
+
 func validateAdmissionFactTypes(environment ir.Environment, facts map[string]any) error {
-	for path, typeName := range environment.Facts {
+	paths := make([]string, 0, len(environment.Facts))
+	for path := range environment.Facts {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
 		value, ok := lookupWorkflowFact(facts, path)
 		if !ok {
 			continue
 		}
-		if err := validateAdmissionValue(environment, typeName, value); err != nil {
+		normalized, err := ir.NormalizeValue(environment, environment.Facts[path], value)
+		if err != nil {
 			return fmt.Errorf("fact %q: %w", path, err)
 		}
-	}
-	return nil
-}
-func validateAdmissionValue(environment ir.Environment, typeName string, value any) error {
-	normalized := strings.ToLower(strings.TrimSpace(typeName))
-	valid := false
-	switch normalized {
-	case "string":
-		_, valid = value.(string)
-	case "bool", "boolean":
-		_, valid = value.(bool)
-	case "int", "integer":
-		switch typed := value.(type) {
-		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-			valid = true
-		case json.Number:
-			_, err := typed.Int64()
-			valid = err == nil
-		case float64:
-			valid = typed == math.Trunc(typed)
-		}
-	case "float", "double", "number":
-		switch value.(type) {
-		case float32, float64, int, int32, int64, json.Number:
-			valid = true
-		}
-	case "bytes":
-		_, valid = value.([]byte)
-	case "any", "unknown":
-		return fmt.Errorf("open type %q is not accepted at durable admission", typeName)
-	default:
-		definition, ok := environment.Types[typeName]
-		if !ok {
-			return fmt.Errorf("unknown checked type %q", typeName)
-		}
-		if definition.Kind == ir.TypeKindObject {
-			object, ok := value.(map[string]any)
-			if !ok {
-				return fmt.Errorf("got %T, want object %s", value, typeName)
-			}
-			for _, required := range definition.RequiredFields {
-				if _, exists := object[required]; !exists {
-					return fmt.Errorf("missing required field %q", required)
-				}
-			}
-			for field, item := range object {
-				fieldType, exists := definition.Fields[field]
-				if !exists {
-					return fmt.Errorf("unknown field %q", field)
-				}
-				if err := validateAdmissionValue(environment, fieldType, item); err != nil {
-					return fmt.Errorf("field %q: %w", field, err)
-				}
-			}
-			return nil
-		}
-	}
-	if !valid {
-		return fmt.Errorf("got %T, want %s", value, typeName)
+		facts[path] = normalized
 	}
 	return nil
 }

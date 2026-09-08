@@ -7,8 +7,12 @@ import "google/protobuf/any.proto";
 
 option go_package = "github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1";
 
-// FactRegistryService manages fact schemas and their evolution
+// FactRegistryService is reserved and not registered by the shipped server.
+// Every RPC returns Unimplemented. Names and field numbers remain frozen.
+// Deprecated: no supported fact-registry service is provided.
 service FactRegistryService {
+  option deprecated = true;
+
   // RegisterFactSchema registers a new fact schema
   rpc RegisterFactSchema(RegisterFactSchemaRequest) returns (RegisterFactSchemaResponse);
 

@@ -145,7 +145,7 @@ func (store *InMemoryExecutionLedger) SetExecutionState(ctx context.Context, id 
 	if record == nil {
 		return ExecutionRecord{}, fmt.Errorf("%w: %s", ErrExecutionNotFound, id)
 	}
-	if record.Revision != revision {
+	if record.Revision != revision || IsTerminalExecutionState(record.State) || record.RecoveryToken != "" {
 		return ExecutionRecord{}, ErrOptimisticConflict
 	}
 	record.State, record.LastError = state, message
@@ -176,7 +176,13 @@ func (store *InMemoryExecutionLedger) LeaseExecutions(ctx context.Context, owner
 			ids = append(ids, id)
 		}
 	}
-	sort.Strings(ids)
+	sort.Slice(ids, func(i, j int) bool {
+		left, right := store.executions[ids[i]], store.executions[ids[j]]
+		if !left.UpdatedAt.Equal(right.UpdatedAt) {
+			return left.UpdatedAt.Before(right.UpdatedAt)
+		}
+		return ids[i] < ids[j]
+	})
 	if len(ids) > limit {
 		ids = ids[:limit]
 	}
@@ -195,6 +201,30 @@ func (store *InMemoryExecutionLedger) LeaseExecutions(ctx context.Context, owner
 	return leases, nil
 }
 
+// RenewExecutionLease extends only a current unexpired lease. Renewal leaves
+// the revision unchanged so a concurrent terminal CAS can use the same handle.
+func (store *InMemoryExecutionLedger) RenewExecutionLease(ctx context.Context, lease ExecutionLease, duration time.Duration) (ExecutionLease, error) {
+	if err := ctx.Err(); err != nil {
+		return ExecutionLease{}, err
+	}
+	if duration <= 0 {
+		return ExecutionLease{}, fmt.Errorf("positive lease duration is required")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	record := store.executions[lease.ExecutionID]
+	now := store.now().UTC()
+	if record == nil || record.RecoveryOwner != lease.Owner || record.RecoveryToken != lease.Token ||
+		record.Revision != lease.Revision || !record.RecoveryDeadline.After(now) || IsTerminalExecutionState(record.State) {
+		return ExecutionLease{}, ErrStaleExecutionLease
+	}
+	if deadline := now.Add(duration); deadline.After(record.RecoveryDeadline) {
+		record.RecoveryDeadline = deadline
+	}
+	lease.Deadline = record.RecoveryDeadline
+	return lease, nil
+}
+
 func (store *InMemoryExecutionLedger) FinishExecutionLease(ctx context.Context, lease ExecutionLease, state ExecutionState, message string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -205,7 +235,8 @@ func (store *InMemoryExecutionLedger) FinishExecutionLease(ctx context.Context, 
 	if record == nil {
 		return fmt.Errorf("%w: %s", ErrExecutionNotFound, lease.ExecutionID)
 	}
-	if record.RecoveryOwner != lease.Owner || record.RecoveryToken != lease.Token || record.Revision != lease.Revision {
+	if record.RecoveryOwner != lease.Owner || record.RecoveryToken != lease.Token || record.Revision != lease.Revision ||
+		!record.RecoveryDeadline.After(store.now().UTC()) {
 		return ErrStaleExecutionLease
 	}
 	if state != "" {

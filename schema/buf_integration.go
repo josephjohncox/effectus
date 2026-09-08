@@ -173,19 +173,18 @@ type CodeGenerationResult struct {
 	Metadata       map[string]interface{} `json:"metadata"`
 }
 
-// NewBufIntegration creates a new Buf integration service
+// NewBufIntegration reads local configuration without creating directories or files.
 func NewBufIntegration(workspaceRoot string) (*BufIntegration, error) {
+	if strings.TrimSpace(workspaceRoot) == "" {
+		return nil, fmt.Errorf("workspace root is required")
+	}
+	root, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace root: %w", err)
+	}
+	workspaceRoot = root
 	protoDir := filepath.Join(workspaceRoot, "proto")
 	genDir := filepath.Join(workspaceRoot, "effectus-go", "gen")
-
-	// Ensure directories exist
-	if err := os.MkdirAll(protoDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create proto directory: %w", err)
-	}
-
-	if err := os.MkdirAll(genDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create gen directory: %w", err)
-	}
 
 	integration := &BufIntegration{
 		workspaceRoot: workspaceRoot,
@@ -219,7 +218,7 @@ func (b *BufIntegration) loadBufConfig() error {
 				Lint:     BufLintConfig{Use: []string{"DEFAULT"}, Except: []string{"UNARY_RPC"}, AllowCommentIgnores: true},
 				Build:    BufBuildConfig{Excludes: []string{"examples/", "tests/"}},
 			}
-			return b.saveBufConfig()
+			return nil
 		}
 		return fmt.Errorf("failed to read buf config: %w", err)
 	}
@@ -231,26 +230,22 @@ func (b *BufIntegration) loadBufConfig() error {
 	return nil
 }
 
-// saveBufConfig saves the buf.yaml configuration
-func (b *BufIntegration) saveBufConfig() error {
-	configPath := filepath.Join(b.workspaceRoot, "buf.yaml")
-
-	data, err := yaml.Marshal(b.bufConfig)
-	if err != nil {
-		return fmt.Errorf("failed to marshal buf config: %w", err)
-	}
-
-	if err := os.WriteFile(configPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write buf config: %w", err)
-	}
-
-	return nil
-}
-
 // RegisterVerbSchema registers a new verb interface schema
 func (b *BufIntegration) RegisterVerbSchema(ctx context.Context, schema *VerbSchema) error {
+	if err := b.checkContext(ctx); err != nil {
+		return err
+	}
+	if schema == nil {
+		return fmt.Errorf("verb schema is required")
+	}
+	if err := checkBufSchemaNames(schema.Name, schema.InputSchema, schema.OutputSchema); err != nil {
+		return err
+	}
 	b.verbRegistry.mutex.Lock()
 	defer b.verbRegistry.mutex.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	// Validate schema compatibility
 	if existing, exists := b.verbRegistry.schemas[schema.Name]; exists {
@@ -277,8 +272,20 @@ func (b *BufIntegration) RegisterVerbSchema(ctx context.Context, schema *VerbSch
 
 // RegisterFactSchema registers a new fact schema
 func (b *BufIntegration) RegisterFactSchema(ctx context.Context, schema *FactSchema) error {
+	if err := b.checkContext(ctx); err != nil {
+		return err
+	}
+	if schema == nil {
+		return fmt.Errorf("fact schema is required")
+	}
+	if err := checkBufSchemaNames(schema.Name, schema.Schema); err != nil {
+		return err
+	}
 	b.factRegistry.mutex.Lock()
 	defer b.factRegistry.mutex.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	// Validate schema compatibility
 	if existing, exists := b.factRegistry.schemas[schema.Name]; exists {
@@ -305,8 +312,14 @@ func (b *BufIntegration) RegisterFactSchema(ctx context.Context, schema *FactSch
 
 // GenerateCode generates code for all registered schemas
 func (b *BufIntegration) GenerateCode(ctx context.Context) (*CodeGenerationResult, error) {
+	if err := b.checkContext(ctx); err != nil {
+		return nil, err
+	}
 	b.generationMutex.Lock()
 	defer b.generationMutex.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	startTime := time.Now()
 	result := &CodeGenerationResult{
@@ -349,6 +362,9 @@ func (b *BufIntegration) GenerateCode(ctx context.Context) (*CodeGenerationResul
 
 // ValidateSchemas validates all registered schemas for compatibility
 func (b *BufIntegration) ValidateSchemas(ctx context.Context) (*SchemaValidationResult, error) {
+	if err := b.checkContext(ctx); err != nil {
+		return nil, err
+	}
 	result := &SchemaValidationResult{
 		Valid:           true,
 		Errors:          []string{},

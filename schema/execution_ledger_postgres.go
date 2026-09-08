@@ -204,7 +204,8 @@ func (store *PostgresOutboxStore) SetExecutionState(ctx context.Context, id stri
 	result, err := tx.ExecContext(ctx, `
 		UPDATE effectus_executions
 		SET state = $3, last_error = NULLIF($4, ''), revision = revision + 1, updated_at = now()
-		WHERE execution_id = $1 AND revision = $2
+		WHERE execution_id = $1 AND revision = $2 AND recovery_token IS NULL
+		  AND state NOT IN ('completed', 'failed', 'blocked_unknown', 'blocked_fence', 'blocked_dependency', 'blocked_compensation')
 	`, id, revision, state, message)
 	if err != nil {
 		return ExecutionRecord{}, err
@@ -286,6 +287,10 @@ func (store *PostgresOutboxStore) LeaseExecutions(ctx context.Context, owner str
 		}
 		ids = append(ids, id)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
@@ -316,6 +321,26 @@ func (store *PostgresOutboxStore) LeaseExecutions(ctx context.Context, owner str
 	return leases, nil
 }
 
+// RenewExecutionLease extends only a current unexpired lease. The database
+// clock and owner/token/revision CAS prevent an expired worker from reviving it.
+func (store *PostgresOutboxStore) RenewExecutionLease(ctx context.Context, lease ExecutionLease, duration time.Duration) (ExecutionLease, error) {
+	if duration < time.Microsecond {
+		return ExecutionLease{}, fmt.Errorf("lease duration must be at least one microsecond")
+	}
+	err := store.db.QueryRowContext(ctx, `
+		UPDATE effectus_executions
+		SET recovery_deadline = GREATEST(recovery_deadline, clock_timestamp() + ($5 * interval '1 microsecond'))
+		WHERE execution_id = $1 AND recovery_owner = $2 AND recovery_token = $3 AND revision = $4
+		  AND recovery_deadline > clock_timestamp()
+		  AND state NOT IN ('completed', 'failed', 'blocked_unknown', 'blocked_fence', 'blocked_dependency', 'blocked_compensation')
+		RETURNING recovery_deadline
+	`, lease.ExecutionID, lease.Owner, lease.Token, lease.Revision, duration.Microseconds()).Scan(&lease.Deadline)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ExecutionLease{}, ErrStaleExecutionLease
+	}
+	return lease, err
+}
+
 func (store *PostgresOutboxStore) FinishExecutionLease(ctx context.Context, lease ExecutionLease, state ExecutionState, message string) error {
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -328,6 +353,7 @@ func (store *PostgresOutboxStore) FinishExecutionLease(ctx context.Context, leas
 		    last_error = NULLIF($5, ''), recovery_owner = NULL, recovery_token = NULL,
 		    recovery_deadline = NULL, revision = revision + 1, updated_at = now()
 		WHERE execution_id = $1 AND recovery_owner = $2 AND recovery_token = $3 AND revision = $4
+		  AND recovery_deadline > clock_timestamp()
 	`, lease.ExecutionID, lease.Owner, lease.Token, lease.Revision, message, state)
 	if err != nil {
 		return err

@@ -2823,14 +2823,14 @@ const file_effectus_v1_verbs_proto_rawDesc = "" +
 	"!CODE_GENERATION_TARGET_TYPESCRIPT\x10\x03\x12\x1f\n" +
 	"\x1bCODE_GENERATION_TARGET_JAVA\x10\x04\x12\x1f\n" +
 	"\x1bCODE_GENERATION_TARGET_RUST\x10\x05\x12!\n" +
-	"\x1dCODE_GENERATION_TARGET_CSHARP\x10\x062\x92\x05\n" +
+	"\x1dCODE_GENERATION_TARGET_CSHARP\x10\x062\x97\x05\n" +
 	"\x13VerbRegistryService\x12n\n" +
 	"\x15RegisterVerbInterface\x12).effectus.v1.RegisterVerbInterfaceRequest\x1a*.effectus.v1.RegisterVerbInterfaceResponse\x12_\n" +
 	"\x10GetVerbInterface\x12$.effectus.v1.GetVerbInterfaceRequest\x1a%.effectus.v1.GetVerbInterfaceResponse\x12e\n" +
 	"\x12ListVerbInterfaces\x12&.effectus.v1.ListVerbInterfacesRequest\x1a'.effectus.v1.ListVerbInterfacesResponse\x12_\n" +
 	"\x10ValidateVerbCall\x12$.effectus.v1.ValidateVerbCallRequest\x1a%.effectus.v1.ValidateVerbCallResponse\x12\x80\x01\n" +
 	"\x1bCheckInterfaceCompatibility\x12/.effectus.v1.CheckInterfaceCompatibilityRequest\x1a0.effectus.v1.CheckInterfaceCompatibilityResponse\x12_\n" +
-	"\x10GenerateVerbCode\x12$.effectus.v1.GenerateVerbCodeRequest\x1a%.effectus.v1.GenerateVerbCodeResponseB>Z<github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1b\x06proto3"
+	"\x10GenerateVerbCode\x12$.effectus.v1.GenerateVerbCodeRequest\x1a%.effectus.v1.GenerateVerbCodeResponse\x1a\x03\x88\x02\x01B>Z<github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1b\x06proto3"
 
 var (
 	file_effectus_v1_verbs_proto_rawDescOnce sync.Once

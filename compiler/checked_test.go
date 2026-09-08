@@ -52,7 +52,7 @@ rule "charge-list" priority 8 {
 }`}
 	flowSource := bundle.Source{Path: "flows/a.effx", Content: `
 flow "charge-flow" priority 4 {
-  when { lower(order.id) == "abc" && order.tags contains "vip" }
+  when { order.id == "abc" && order.tags contains "vip" }
   steps {
     receipt = charge(amount: 12, order_id: order.id)
     record(receipt: $receipt)
@@ -135,7 +135,7 @@ func TestCompileCheckedRejectsUnsafeAndUnsupportedPredicates(t *testing.T) {
 	environment := checkedTestEnvironment()
 	environment.Functions["clock"] = ir.FunctionContract{ReturnType: "int", Pure: false, Total: true}
 	_, err := CompileChecked(t.Context(), checkedBundle(t, environment, bundle.Source{Path: "bad.eff", Content: `rule "bad" priority 1 { when { clock() > 0 } then {} }`}), CompileOptions{})
-	require.ErrorContains(t, err, "not declared pure and total")
+	require.ErrorContains(t, err, "function \"clock\" is unavailable")
 
 	_, err = CompileChecked(t.Context(), checkedBundle(t, environment, bundle.Source{Path: "bad.eff", Content: `rule "bad" priority 1 { when { order.ready ? true : false } then {} }`}), CompileOptions{})
 	require.Error(t, err)
@@ -159,4 +159,28 @@ func TestCompileCheckedContractChangeChangesArtifact(t *testing.T) {
 	second, err := CompileChecked(t.Context(), checkedBundle(t, secondEnvironment, source), CompileOptions{})
 	require.NoError(t, err)
 	require.NotEqual(t, first.Digest(), second.Digest())
+}
+
+func TestCompileCheckedRejectsOutOfRangeLiteralMagnitudes(t *testing.T) {
+	for _, literal := range []string{"-9223372036854775808", "-9223372036854775809", "9223372036854775808"} {
+		checked, err := CompileChecked(t.Context(), checkedBundle(t, checkedTestEnvironment(), bundle.Source{Path: "bounds.eff", Content: `rule "bounds" priority 1 { when { order.amount == ` + literal + ` } then {} }`}), CompileOptions{})
+		require.Nil(t, checked)
+		require.ErrorContains(t, err, "integer literal magnitude must fit int64")
+		require.ErrorContains(t, err, "(-9223372036854775807 - 1)")
+	}
+}
+
+func TestCompileCheckedRejectsUnavailablePureFunctions(t *testing.T) {
+	for _, dialect := range []string{"eff", "effx"} {
+		for _, expression := range []string{`lower(order.id) == "abc"`, `true || lower(order.id) == "abc"`, `len(order.tags) > 0`, `order.id.lower() == "abc"`} {
+			t.Run(dialect+"/"+expression, func(t *testing.T) {
+				source := `rule "bad" priority 1 { when { ` + expression + ` } then {} }`
+				if dialect == "effx" {
+					source = `flow "bad" priority 1 { when { ` + expression + ` } steps {} }`
+				}
+				_, err := CompileChecked(t.Context(), checkedBundle(t, checkedTestEnvironment(), bundle.Source{Path: "bad." + dialect, Content: source}), CompileOptions{})
+				require.ErrorContains(t, err, "unavailable in immutable generations")
+			})
+		}
+	}
 }

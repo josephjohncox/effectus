@@ -22,7 +22,7 @@ var (
 	ErrLimitExceeded = errors.New("checked IR limit exceeded")
 )
 
-// Limits bounds untrusted artifacts. A zero field uses DefaultLimits.
+// Limits bounds untrusted artifacts. Zero fields use fixed production defaults; negative fields are invalid.
 type Limits struct {
 	MaxArtifactBytes    int
 	MaxPlans            int
@@ -39,21 +39,30 @@ type Limits struct {
 	MaxTotalStringBytes int
 }
 
-// DefaultLimits are conservative production defaults.
-var DefaultLimits = Limits{
-	MaxArtifactBytes:    4 << 20,
-	MaxPlans:            1_000,
-	MaxSteps:            10_000,
-	MaxStepsPerPlan:     1_000,
-	MaxArgumentsPerStep: 128,
-	MaxPredicateNodes:   1_024,
-	MaxLiteralNodes:     10_000,
-	MaxDepth:            64,
-	MaxStringBytes:      1 << 20,
-	MaxBytesValue:       1 << 20,
-	MaxCollectionItems:  10_000,
-	MaxObjectFields:     1_024,
-	MaxTotalStringBytes: 4 << 20,
+// DefaultLimits is a compatibility copy of the production defaults.
+// Mutating this variable has no effect on checking. Removal requires compatibility
+// review and an approved breaking release.
+// Deprecated: use ValidationDefaults. Removal deadline: 2027-09-01.
+var DefaultLimits = ValidationDefaults()
+
+// ValidationDefaults returns an independent copy of the fixed production bounds.
+// Zero-valued Limits use these same bounds without reading mutable globals.
+func ValidationDefaults() Limits {
+	return Limits{
+		MaxArtifactBytes:    4 << 20,
+		MaxPlans:            1_000,
+		MaxSteps:            10_000,
+		MaxStepsPerPlan:     1_000,
+		MaxArgumentsPerStep: 128,
+		MaxPredicateNodes:   1_024,
+		MaxLiteralNodes:     10_000,
+		MaxDepth:            64,
+		MaxStringBytes:      1 << 20,
+		MaxBytesValue:       1 << 20,
+		MaxCollectionItems:  10_000,
+		MaxObjectFields:     1_024,
+		MaxTotalStringBytes: 4 << 20,
+	}
 }
 
 // Checked is an opaque, immutable execution plan. It contains no callbacks.
@@ -67,7 +76,11 @@ type Checked struct {
 
 // Parse decodes untrusted protobuf bytes and rechecks every reference.
 func Parse(data []byte, environment Environment, limits Limits) (*Checked, error) {
-	limits = limits.withDefaults()
+	var err error
+	limits, err = limits.withDefaults()
+	if err != nil {
+		return nil, err
+	}
 	if len(data) > limits.MaxArtifactBytes {
 		return nil, limitError("artifact bytes", len(data), limits.MaxArtifactBytes)
 	}
@@ -82,7 +95,11 @@ func Parse(data []byte, environment Environment, limits Limits) (*Checked, error
 // The input and environment may be mutated after this call without changing
 // the returned Checked value.
 func Check(artifact *effectusv1.RuleArtifact, environment Environment, limits Limits) (*Checked, error) {
-	limits = limits.withDefaults()
+	var err error
+	limits, err = limits.withDefaults()
+	if err != nil {
+		return nil, err
+	}
 	if artifact == nil {
 		return nil, invalid("artifact is nil")
 	}
@@ -179,9 +196,9 @@ func (c *Checked) Size() int {
 	return c.artifactLen
 }
 
-func (limits Limits) withDefaults() Limits {
+func (limits Limits) withDefaults() (Limits, error) {
 	result := limits
-	defaults := DefaultLimits
+	defaults := ValidationDefaults()
 	fields := []*int{
 		&result.MaxArtifactBytes, &result.MaxPlans, &result.MaxSteps,
 		&result.MaxStepsPerPlan, &result.MaxArgumentsPerStep,
@@ -198,12 +215,16 @@ func (limits Limits) withDefaults() Limits {
 		defaults.MaxCollectionItems, defaults.MaxObjectFields,
 		defaults.MaxTotalStringBytes,
 	}
+	names := []string{"MaxArtifactBytes", "MaxPlans", "MaxSteps", "MaxStepsPerPlan", "MaxArgumentsPerStep", "MaxPredicateNodes", "MaxLiteralNodes", "MaxDepth", "MaxStringBytes", "MaxBytesValue", "MaxCollectionItems", "MaxObjectFields", "MaxTotalStringBytes"}
 	for i, field := range fields {
-		if *field <= 0 {
+		if *field < 0 {
+			return Limits{}, invalid("limit %s must not be negative", names[i])
+		}
+		if *field == 0 {
 			*field = defaultFields[i]
 		}
 	}
-	return result
+	return result, nil
 }
 
 type artifactChecker struct {

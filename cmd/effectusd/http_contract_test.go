@@ -118,13 +118,21 @@ func TestHTTPAdmissionContract(t *testing.T) {
 		require.Equal(t, http.StatusConflict, response.Code)
 	})
 	t.Run("concurrent changed payloads always conflict instead of returning bad request", func(t *testing.T) {
-		raceDaemon, _, closeRaceDaemon := newHTTPContractDaemon(t)
-		defer closeRaceDaemon()
 		const workers = 64
 		ledger := &contendedAdmissionLedger{ExecutionLedger: schema.NewInMemoryExecutionLedger()}
 		ledger.admissions.Add(workers)
-		require.NoError(t, raceDaemon.engine.ConfigureLedger(ledger, nil))
-		raceHandler := raceDaemon.httpHandler("secret")
+		outbox := schema.NewInMemoryOutboxStore()
+		handlers := make([]http.Handler, workers)
+		for index := range handlers {
+			// One engine coalesces same-execution requests before admission.
+			// Independent engines sharing stores still race at the durable
+			// boundary, which is what this barrier and all 64 assertions test.
+			raceDaemon, _, closeRaceDaemon := newHTTPContractDaemon(t)
+			t.Cleanup(closeRaceDaemon)
+			require.NoError(t, raceDaemon.engine.ConfigureLedger(ledger, nil))
+			require.NoError(t, raceDaemon.engine.ConfigureWorkflow(outbox, nil, schema.DispatcherOptions{Owner: "http-race"}))
+			handlers[index] = raceDaemon.httpHandler("secret")
+		}
 
 		type response struct {
 			payload string
@@ -134,6 +142,7 @@ func TestHTTPAdmissionContract(t *testing.T) {
 		var callers sync.WaitGroup
 		callers.Add(workers)
 		for worker := range workers {
+			raceHandler := handlers[worker]
 			payload := "low"
 			body := `{"namespace":"tenant-race","facts":{"order":{"id":"42","risk":1}}}`
 			if worker%2 == 0 {

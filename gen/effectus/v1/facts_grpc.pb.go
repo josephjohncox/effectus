@@ -30,7 +30,11 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// FactRegistryService manages fact schemas and their evolution
+// FactRegistryService is reserved and not registered by the shipped server.
+// Every RPC returns Unimplemented. Names and field numbers remain frozen.
+// Deprecated: no supported fact-registry service is provided.
+//
+// Deprecated: Do not use.
 type FactRegistryServiceClient interface {
 	// RegisterFactSchema registers a new fact schema
 	RegisterFactSchema(ctx context.Context, in *RegisterFactSchemaRequest, opts ...grpc.CallOption) (*RegisterFactSchemaResponse, error)
@@ -48,6 +52,7 @@ type factRegistryServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
+// Deprecated: Do not use.
 func NewFactRegistryServiceClient(cc grpc.ClientConnInterface) FactRegistryServiceClient {
 	return &factRegistryServiceClient{cc}
 }
@@ -106,7 +111,11 @@ func (c *factRegistryServiceClient) CheckCompatibility(ctx context.Context, in *
 // All implementations must embed UnimplementedFactRegistryServiceServer
 // for forward compatibility.
 //
-// FactRegistryService manages fact schemas and their evolution
+// FactRegistryService is reserved and not registered by the shipped server.
+// Every RPC returns Unimplemented. Names and field numbers remain frozen.
+// Deprecated: no supported fact-registry service is provided.
+//
+// Deprecated: Do not use.
 type FactRegistryServiceServer interface {
 	// RegisterFactSchema registers a new fact schema
 	RegisterFactSchema(context.Context, *RegisterFactSchemaRequest) (*RegisterFactSchemaResponse, error)
@@ -153,6 +162,7 @@ type UnsafeFactRegistryServiceServer interface {
 	mustEmbedUnimplementedFactRegistryServiceServer()
 }
 
+// Deprecated: Do not use.
 func RegisterFactRegistryServiceServer(s grpc.ServiceRegistrar, srv FactRegistryServiceServer) {
 	// If the following call panics, it indicates UnimplementedFactRegistryServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an

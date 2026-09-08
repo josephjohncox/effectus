@@ -619,13 +619,13 @@ const file_effectus_v1_facts_proto_rawDesc = "" +
 	"compatible\x18\x01 \x01(\bR\n" +
 	"compatible\x12)\n" +
 	"\x10breaking_changes\x18\x02 \x03(\tR\x0fbreakingChanges\x12\x1a\n" +
-	"\bwarnings\x18\x03 \x03(\tR\bwarnings2\xfa\x03\n" +
+	"\bwarnings\x18\x03 \x03(\tR\bwarnings2\xff\x03\n" +
 	"\x13FactRegistryService\x12e\n" +
 	"\x12RegisterFactSchema\x12&.effectus.v1.RegisterFactSchemaRequest\x1a'.effectus.v1.RegisterFactSchemaResponse\x12V\n" +
 	"\rGetFactSchema\x12!.effectus.v1.GetFactSchemaRequest\x1a\".effectus.v1.GetFactSchemaResponse\x12\\\n" +
 	"\x0fListFactSchemas\x12#.effectus.v1.ListFactSchemasRequest\x1a$.effectus.v1.ListFactSchemasResponse\x12_\n" +
 	"\x10ValidateFactData\x12$.effectus.v1.ValidateFactDataRequest\x1a%.effectus.v1.ValidateFactDataResponse\x12e\n" +
-	"\x12CheckCompatibility\x12&.effectus.v1.CheckCompatibilityRequest\x1a'.effectus.v1.CheckCompatibilityResponseB>Z<github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1b\x06proto3"
+	"\x12CheckCompatibility\x12&.effectus.v1.CheckCompatibilityRequest\x1a'.effectus.v1.CheckCompatibilityResponse\x1a\x03\x88\x02\x01B>Z<github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1b\x06proto3"
 
 var (
 	file_effectus_v1_facts_proto_rawDescOnce sync.Once

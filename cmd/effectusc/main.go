@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -19,24 +20,34 @@ type command struct {
 	run               func() error
 }
 
-func main() {
+func main() { os.Exit(runCLI(os.Args[1:])) }
+
+func runCLI(arguments []string) int {
 	commands := defineCommands()
-	if len(os.Args) < 2 {
+	if len(arguments) == 1 && (arguments[0] == "--help" || arguments[0] == "-h" || arguments[0] == "help") {
 		usage(commands)
-		os.Exit(2)
+		return 0
 	}
-	cmd, ok := commands[os.Args[1]]
+	if len(arguments) == 0 {
+		usage(commands)
+		return 2
+	}
+	cmd, ok := commands[arguments[0]]
 	if !ok {
 		usage(commands)
-		os.Exit(2)
+		return 2
 	}
-	if err := cmd.flags.Parse(os.Args[2:]); err != nil {
-		os.Exit(2)
+	if err := cmd.flags.Parse(arguments[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
 	}
 	if err := cmd.run(); err != nil {
 		fmt.Fprintln(os.Stderr, "effectusc:", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 func usage(commands map[string]command) {
 	fmt.Fprintln(os.Stderr, "Usage: effectusc <command> [options]")
@@ -74,12 +85,15 @@ func checkedCommand(write bool) command {
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	source := flags.String("bundle", "", "Path to effectus.source-bundle.v1 JSON")
-	output := flags.String("output", "", "Output checked IR protobuf (required for compile)")
+	var output string
+	if write {
+		flags.StringVar(&output, "output", "", "Output checked IR protobuf (required for compile)")
+	}
 	return command{name: name, description: description, flags: flags, run: func() error {
 		if flags.NArg() != 0 {
 			return fmt.Errorf("%s does not accept positional source files; construct a SourceBundle first", name)
 		}
-		if write && *output == "" {
+		if write && output == "" {
 			return fmt.Errorf("--output is required")
 		}
 		value, err := loadBundle(*source)
@@ -94,7 +108,7 @@ func checkedCommand(write bool) command {
 			fmt.Printf("checked bundle %s@%s: %d plans, %d steps, ir=%s\n", value.Name(), value.Version(), checked.PlanCount(), checked.StepCount(), checked.Digest())
 			return nil
 		}
-		if err := os.WriteFile(*output, checked.Marshal(), 0o600); err != nil {
+		if err := writeCheckedArtifact(*source, output, checked.Marshal()); err != nil {
 			return fmt.Errorf("write checked IR: %w", err)
 		}
 		return nil

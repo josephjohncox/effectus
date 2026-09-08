@@ -8,8 +8,12 @@ import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/josephjohncox/effectus/gen/effectus/v1;effectusv1";
 
-// VerbRegistryService manages verb interface definitions and evolution
+// VerbRegistryService is reserved and not registered by the shipped server.
+// Every RPC returns Unimplemented. Names and field numbers remain frozen.
+// Deprecated: no supported verb-registry service is provided.
 service VerbRegistryService {
+  option deprecated = true;
+
   // RegisterVerbInterface registers a new verb interface
   rpc RegisterVerbInterface(RegisterVerbInterfaceRequest) returns (RegisterVerbInterfaceResponse);
 

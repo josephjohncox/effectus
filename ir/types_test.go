@@ -98,6 +98,33 @@ func oneStepArtifact(t *testing.T, environment ir.Environment, arguments []*effe
 	}
 }
 
+func TestCheckObjectReferencesRespectClosedFieldsAndRequiredness(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		fields   map[string]string
+		required []string
+		valid    bool
+	}{
+		{"compatible", map[string]string{"name": "string"}, []string{"name"}, true},
+		{"extra field", map[string]string{"name": "string", "extra": "int"}, []string{"name"}, false},
+		{"optional source", map[string]string{"name": "string"}, nil, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			env := ir.Environment{Facts: map[string]string{"source": "Source"}, Types: map[string]ir.TypeDefinition{
+				"Source": {Kind: ir.TypeKindObject, Fields: test.fields, RequiredFields: test.required},
+				"Target": {Kind: ir.TypeKindObject, Fields: map[string]string{"name": "string", "note": "string"}, RequiredFields: []string{"name"}},
+			}, Verbs: map[string]ir.VerbContract{"store": {Arguments: map[string]string{"profile": "Target"}, ResultType: "void"}}}
+			artifact := oneStepArtifact(t, env, []*effectusv1.Argument{{Name: "profile", Value: &effectusv1.Value{Kind: &effectusv1.Value_FactPath{FactPath: "source"}}}})
+			_, err := ir.Check(artifact, env, ir.Limits{})
+			if test.valid {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "incompatible")
+			}
+		})
+	}
+}
+
 func protoClone(artifact *effectusv1.RuleArtifact) *effectusv1.RuleArtifact {
 	return proto.Clone(artifact).(*effectusv1.RuleArtifact)
 }

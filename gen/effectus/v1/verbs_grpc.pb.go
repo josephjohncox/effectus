@@ -31,7 +31,11 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// VerbRegistryService manages verb interface definitions and evolution
+// VerbRegistryService is reserved and not registered by the shipped server.
+// Every RPC returns Unimplemented. Names and field numbers remain frozen.
+// Deprecated: no supported verb-registry service is provided.
+//
+// Deprecated: Do not use.
 type VerbRegistryServiceClient interface {
 	// RegisterVerbInterface registers a new verb interface
 	RegisterVerbInterface(ctx context.Context, in *RegisterVerbInterfaceRequest, opts ...grpc.CallOption) (*RegisterVerbInterfaceResponse, error)
@@ -51,6 +55,7 @@ type verbRegistryServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
+// Deprecated: Do not use.
 func NewVerbRegistryServiceClient(cc grpc.ClientConnInterface) VerbRegistryServiceClient {
 	return &verbRegistryServiceClient{cc}
 }
@@ -119,7 +124,11 @@ func (c *verbRegistryServiceClient) GenerateVerbCode(ctx context.Context, in *Ge
 // All implementations must embed UnimplementedVerbRegistryServiceServer
 // for forward compatibility.
 //
-// VerbRegistryService manages verb interface definitions and evolution
+// VerbRegistryService is reserved and not registered by the shipped server.
+// Every RPC returns Unimplemented. Names and field numbers remain frozen.
+// Deprecated: no supported verb-registry service is provided.
+//
+// Deprecated: Do not use.
 type VerbRegistryServiceServer interface {
 	// RegisterVerbInterface registers a new verb interface
 	RegisterVerbInterface(context.Context, *RegisterVerbInterfaceRequest) (*RegisterVerbInterfaceResponse, error)
@@ -171,6 +180,7 @@ type UnsafeVerbRegistryServiceServer interface {
 	mustEmbedUnimplementedVerbRegistryServiceServer()
 }
 
+// Deprecated: Do not use.
 func RegisterVerbRegistryServiceServer(s grpc.ServiceRegistrar, srv VerbRegistryServiceServer) {
 	// If the following call panics, it indicates UnimplementedVerbRegistryServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
