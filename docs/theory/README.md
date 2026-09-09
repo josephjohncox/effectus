@@ -9,10 +9,12 @@ Use [Runtime Guarantees](../GUARANTEES.md) for implemented behavior. Use [Execut
 The notes separate three systems:
 
 1. The checked first-order IR used by production effectusd
-2. Legacy Go list and continuation APIs used by embedded applications
+2. Historical Go list and continuation APIs, unsupported as a current embedded execution path
 3. External verb destinations that Effectus does not control
 
 A property must name the system and assumptions that it covers.
+The current embedded API accepts a source bundle and resolver registry and constructs a checked generation.
+See the [Go API guide](../go-api.md).
 
 ## Documents
 

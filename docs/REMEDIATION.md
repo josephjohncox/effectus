@@ -113,46 +113,62 @@ Implementation, compatibility, tests, and independent acceptance are recorded in
 
 ## Milestone 5: Supported public API
 
-See [M5 implementation evidence and remaining work](audits/m5-api-validation.md). R25 is implemented, R26 is partial, and independent M5 acceptance remains open.
+R25–R27 passed independent acceptance. See [M5 API validation](audits/m5-api-validation.md) for source, tests, and exact snapshot reconciliation.
 
-- [ ] **R25 / F15:** Freeze and label reserved/unsupported protobuf capabilities.
+- [x] **R25 / F15:** Freeze and label reserved/unsupported protobuf capabilities.
   Acceptance: complete service capability matrix, unsupported-RPC tests, deprecation comments, and compatibility checks.
-- [ ] **R26 / F19:** Harden or safely deprecate the exported BufIntegration compatibility surface.
+- [x] **R26 / F19:** Harden or safely deprecate the exported BufIntegration compatibility surface.
   Acceptance: nil/canceled input, defensive copy, concurrency, configured paths, and no hidden constructor filesystem mutation tests.
-- [ ] **R27 / F21:** Document the supported Go API and narrow the recommended entry path without breaking imports.
+- [x] **R27 / F21:** Document the supported Go API and narrow the recommended entry path without breaking imports.
   Acceptance: package guides and useful export comments cover ownership, concurrency, contexts, errors, state machines, and compatibility aliases.
   Audit the public surface and report unsupported exports rather than describe them as supported features.
 
 ## Milestone 6: Documentation and executable onboarding
 
-- [ ] **R28 / F22:** Remove contradictory lifecycle claims from current architecture, intent, coherent-flow, and theory pages.
+R28–R35 and combined M6 passed independent acceptance after the unknown-outcome and historical-index corrections. See [M6 documentation evidence](audits/m6-documentation-validation.md).
+
+- [x] **R28 / F22:** Remove contradictory lifecycle claims from current architecture, intent, coherent-flow, and theory pages.
   Acceptance: all normative pages match startup compilation, process replacement, recovery, and tested shutdown behavior.
-- [ ] **R29 / F23:** Replace fictional gRPC/YAML configuration with actual flags, environment variables, and separate library options.
+- [x] **R29 / F23:** Replace fictional gRPC/YAML configuration with actual flags, environment variables, and separate library options.
   Acceptance: tested commands, authentication/TLS instructions, default limits, and inbound/outbound distinctions.
-- [ ] **R30 / F24:** Write an incremental concepts and integration tutorial with `.eff` and `.effx` paths.
+- [x] **R30 / F24:** Write an incremental concepts and integration tutorial with `.eff` and `.effx` paths.
   Acceptance: executable snippets teach facts, contracts, verbs, bindings, ordering, bundles, resolvers, diagnostics, and outcomes.
-- [ ] **R31 / F25:** Correct contributor and agent commands, adding missing recipes only when they provide a supported workflow.
+- [x] **R31 / F25:** Correct contributor and agent commands, adding missing recipes only when they provide a supported workflow.
   Acceptance: documented Just recipes exist and SQL/protobuf regeneration instructions match the repository.
-- [ ] **R32 / F26:** Publish a complete HTTP API reference.
+- [x] **R32 / F26:** Publish a complete HTTP API reference.
   Acceptance: routes, methods, auth, request/response schemas, body limits, errors, aliases, idempotency, and wait semantics match tests.
-- [ ] **R33 / F27:** Execute authenticated Go gRPC and Python examples and test TLS separately.
+- [x] **R33 / F27:** Execute authenticated Go gRPC and Python examples and test TLS separately.
   Acceptance: runnable matching service, authentication/idempotency checks, clear prerequisites, and CI or equivalent automated gate.
-- [ ] **R34 / F28:** Replace lexical-only documentation checks with behavioral contracts.
+- [x] **R34 / F28:** Replace lexical-only documentation checks with behavioral contracts.
   Acceptance: per-command help, defaults/required combinations, recipes, snippets, JSON contracts, local links, and stale-claim checks.
-- [ ] **R35 / F29:** Repair documentation indexes, glossary, release prerequisites, and historical/current distinctions.
+- [x] **R35 / F29:** Repair documentation indexes, glossary, release prerequisites, and historical/current distinctions.
   Acceptance: no remaining unsupported current-product claims and strict documentation build.
 
 ## Milestone 7: Measurements and completion audit
 
-- [ ] **R36 / F30:** Measure meaningful coverage and close remaining regression gaps.
+Current [M7 measurement evidence](audits/m7-measurement-validation.md) records accepted coverage interpretation and two accepted regression additions.
+The parent also passed recovery tests with independently offset PostgreSQL process clocks at ±24 hours.
+Independent review accepted the clock-specific work and whole-task R36 with no findings.
+Independent review accepted the 28 [R37 benchmark cases and bounded measurements](audits/m7-benchmark-validation.md) with no findings.
+Independent review accepted [R38 local validation and remaining external gates](audits/m7-full-validation.md#independent-r38-acceptance) after the Helm metadata correction.
+The first R39 boundary/API and usability reviews passed. The core review required three P1 corrections.
+The first correction review accepted C1, C3, and C2's resume path, but required an admission-replay cancellation follow-up.
+The parent reproduced and corrected that path, then passed targeted races, full-root races, vet, lint, and guardrails.
+Independent re-review accepted [the final R39 diff and R40 finding reconciliation](audits/m7-final-review.md#independent-final-acceptance) with no findings.
+The unavailable external gates remain unchecked.
+The separately authorized [standalone Compose follow-up](audits/standalone-compose-validation.md#independent-acceptance) passed independent acceptance for its bounded local scope.
+The separately authorized [Kafka-to-business-commit follow-up](audits/kafka-business-commit-validation.md#independent-acceptance) also passed independent acceptance for its bounded local scope.
+The other three external gates remain open.
+
+- [x] **R36 / F30:** Measure meaningful coverage and close remaining regression gaps.
   Acceptance: report exact commands, exclusions, cross-package coverage limitations, changed-behavior tests, race results, and remaining blind spots.
-- [ ] **R37 / F31:** Add and run representative benchmarks.
+- [x] **R37 / F31:** Add and run representative benchmarks.
   Acceptance: compilation, checking, admission/evaluation, recovery, and dispatch fixtures with allocations, repeat counts, toolchain, machine context, and bounds.
-- [ ] **R38 / F32:** Run full available validation, including PostgreSQL, Kafka, examples, documentation, protobuf compatibility, and tools.
+- [x] **R38 / F32:** Run full available validation, including PostgreSQL, Kafka, examples, documentation, protobuf compatibility, and tools.
   Acceptance: record actual results. Leave unavailable external gates unchecked with exact setup requirements and blockers.
-- [ ] **R39 / F32:** Complete independent correctness and usability review, resolve accepted findings, and review the final diff.
+- [x] **R39 / F32:** Complete independent correctness and usability review, resolve accepted findings, and review the final diff.
   Acceptance: review evidence tied to current files, no unresolved blocker, no user-file damage, and focused reruns after fixes.
-- [ ] **R40 / all:** Reconcile every finding with code, documentation, tests, and final status.
+- [x] **R40 / all:** Reconcile every finding with code, documentation, tests, and final status.
   Acceptance: durable validation report, explicit behavior changes and residual risks, accurate checklist, and no claim of completion for blocked work.
 
 ## Execution log
@@ -197,4 +213,4 @@ The retried child writer started successfully and implemented R01-R04 on the sha
 Current evidence: [remediation validation and blockers](audits/remediation-validation.md).
 For each later result, include task IDs, changed behavior, tests and their outcomes, review disposition, and remaining work.
 
-R01–R24 are implemented and independently accepted. See [M4 transport validation](audits/m4-transport-validation.md) for the latest milestone. R25–R40 remain open. Final production-readiness conclusions remain unclaimed.
+R01–R38 are implemented and independently accepted. R39–R40 remain open. See [M5 API validation](audits/m5-api-validation.md), [M6 documentation evidence](audits/m6-documentation-validation.md), and [M7 measurement evidence](audits/m7-measurement-validation.md) for current status. Final production-readiness conclusions remain unclaimed.

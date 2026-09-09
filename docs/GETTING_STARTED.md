@@ -105,7 +105,7 @@ A successful run ends with output in this form:
 }
 conflicting_replay_http_status: 409
 {
-  "error": "engine admission identity conflict: admission identity ..."
+  "error": "idempotency identity conflicts with an existing request"
 }
 OK durable order-review demo passed
 ```
@@ -248,7 +248,7 @@ The two paths do not need to produce the same execution ID.
 
 ## Next steps
 
-- Read [Effectus Basics](BASICS.md) for the language model.
+- Run [the incremental concepts tutorial](BASICS.md) for `.eff` and `.effx`, typed contracts, result bindings, and compiler diagnostics.
 - Read [Integration Guide](INTEGRATION.md) before you select a production boundary.
 - Read [Runtime Guarantees](GUARANTEES.md) before a production deployment.
 - Read [Production Runbook](PRODUCTION_RUNBOOK.md) before operations work.

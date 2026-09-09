@@ -144,13 +144,15 @@ func (engine *Engine) executeCheckedWorkflow(ctx context.Context, generation *Ge
 				if *step.ResultSlot != uint32(len(slots)) {
 					return fmt.Errorf("plan %q step %q has a non-dense result slot", plan.Id, step.Id)
 				}
+				// Success is already durable. An unusable immutable result blocks
+				// execution, without rewriting success or starting compensation.
 				result, err := decodeCheckedWorkflowResult(completed.Result)
 				if err != nil {
-					return fmt.Errorf("decode plan %q step %q result: %w", plan.Id, step.Id, err)
+					return fmt.Errorf("%w: decode plan %q step %q result: %w", ErrBlockedDependency, plan.Id, step.Id, err)
 				}
 				result, err = ir.NormalizeValue(generation.Environment(), generation.Environment().Verbs[step.Verb].ResultType, result)
 				if err != nil {
-					return fmt.Errorf("plan %q step %q result: %w", plan.Id, step.Id, err)
+					return fmt.Errorf("%w: plan %q step %q result: %w", ErrBlockedDependency, plan.Id, step.Id, err)
 				}
 				slots = append(slots, result)
 			}
@@ -598,18 +600,6 @@ func checkedEqual(left, right any) bool {
 		return true
 	}
 	return reflect.DeepEqual(left, right)
-}
-
-func isUnconditionalExtensionPlan(plan *effectusv1.Plan) bool {
-	if plan == nil || plan.Predicate == nil || plan.Predicate.Expression == nil {
-		return false
-	}
-	literal, ok := plan.Predicate.Expression.Kind.(*effectusv1.Expression_Literal)
-	if !ok || literal.Literal == nil {
-		return false
-	}
-	value, ok := literal.Literal.Kind.(*effectusv1.Literal_BoolValue)
-	return ok && value.BoolValue
 }
 
 func resolveCheckedWorkflowValue(value *effectusv1.Value, facts map[string]interface{}, slots []interface{}) (interface{}, error) {

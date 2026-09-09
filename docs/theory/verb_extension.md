@@ -1,8 +1,10 @@
 # Verb Extension Model
 
-A verb extension adds typed operation contracts and executor configuration to a candidate environment.
+This page models how a new bundle can add typed contracts and executor descriptors.
+It is an abstract composition model, not a daemon hot-reload or candidate-activation API.
+The daemon compiles its active generation at startup. A changed bundle requires process replacement.
 
-Read [Extension System](../EXTENSION_SYSTEM.md) for supported manifest formats.
+Read [Runtime Lifecycle](../LIFECYCLE.md) for current behavior and [Extension System](../EXTENSION_SYSTEM.md) for bundle boundaries.
 
 ## Contract
 
@@ -18,9 +20,10 @@ The declaration describes an operation. It does not prove the executor implement
 
 ## Environment extension
 
-Let $V$ be the active map of verb names to contracts. A candidate extension proposes $V'$.
+Let $V$ be one bundle's map of verb names to contracts. A changed bundle proposes $V'$.
 
-The loader applies duplicate and compatibility policy before it builds the candidate environment.
+Bundle validation rejects duplicate or invalid definitions before generation construction.
+This notation does not imply an automatic compatibility policy between deployed bundles.
 
 The environment digest changes when a relevant contract changes. Checked artifacts include contract hashes for their steps.
 
@@ -33,9 +36,9 @@ For each invocation, the compiler checks:
 - Required arguments are present.
 - Argument values have compatible types.
 - A result binding uses the declared result type.
-- The selected executor target is supported.
 
-A schema or verb refresh recompiles existing rule sources against the candidate environment.
+Generation construction separately resolves supported executor descriptors.
+For a changed contract, compile source rules against the changed bundle's environment before replacing the process.
 
 ## Interpretation
 
@@ -45,7 +48,8 @@ An executor interprets a checked invocation:
 \mathrm{execute}_v : (Args_v, Metadata, W) \rightarrow (Result_v, Outcome, W')
 ```
 
-The runtime validates the result against $\rho$ before it records successful completion.
+The contract declares $\rho$ as the expected result type.
+That declaration alone does not prove executor conformance or successful destination commit.
 
 $W$ represents external state. The runtime does not assume that this function is pure or deterministic.
 
@@ -55,11 +59,12 @@ Production effectusd supports the checked HTTP executor target. HTTP targets app
 
 In-process Go plugins are rejected by the production daemon.
 
-## Static embedded executors
+## Embedded boundary
 
-A trusted Go application can register a static executor through the library API.
-
-This path can contain arbitrary Go behavior. It does not become serializable checked IR and does not gain daemon process isolation.
+The current embedded entry point accepts checked bundles and durable descriptors, not anonymous Go continuations.
+A business service can implement Go behavior behind `executorhttp` and an HTTP descriptor.
+An executor interface implementation does not become serializable IR or acquire process isolation merely by implementing the interface.
+See [the Go API guide](../go-api.md) for supported and low-level entry points.
 
 ## Composition
 
@@ -71,9 +76,11 @@ Capability and resource declarations provide additional conflict metadata. They 
 
 ## Versioning
 
-A production generation pins exact verb contracts and executors. Existing executions keep that generation after a refresh.
+A generation pins exact verb contracts and executor descriptors.
+Existing executions retain their persisted generation artifact after process replacement.
+Recovery resolves that historical artifact rather than rebinding unfinished work to the replacement's active generation.
 
-A changed contract must produce a new candidate and pass compilation before activation.
+A changed contract belongs to a new bundle and must pass compilation before the replacement serves new admissions.
 
 ## Security obligations
 

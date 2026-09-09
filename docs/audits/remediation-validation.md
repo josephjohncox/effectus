@@ -2,16 +2,48 @@
 
 ## Current status
 
-**R01–R24 implemented, validated, and independently reviewed.** The retried background writer timed out after leaving partial M1 changes. Under the user's prior authorization, the parent verified that the writer had stopped, preserved its work, and continued directly. See B02 below.
+**R01–R40 independently accepted for local remediation scope. External gates remain open.**
+The first correction review accepted C1, C3, and C2's resume path, but found a remaining admission-replay cancellation defect.
+The parent reproduced and corrected that follow-up, then passed targeted and full-root races, vet, lint, and guardrails.
+See [the corrections and complete finding reconciliation](m7-final-review.md).
+The M1–M3 sections below are historical milestone records, not current unchecked-task lists.
+The parent continued after the earlier writer timeout under prior user authorization. See B02 below.
 R14–R24 passed independent acceptance after the storage-error classification fix. See [M4 transport validation](m4-transport-validation.md).
-R25–R40 remain open in [the checklist](../REMEDIATION.md).
+Combined M5 review accepted R25–R27 with a formatting-only snapshot note, now reconciled.
+R30–R31 also passed independent acceptance, including the verified formatting-only snapshot amendment. See [tutorial and contributor validation](m6-tutorial-contributor-validation.md).
+R33 passed independent acceptance for live authenticated Go/Python clients and separate TLS checks. See [client validation](m6-grpc-client-validation.md).
+R32 passed independent acceptance after its header-normalization wording correction and raw TCP regression. See [HTTP reference validation](m6-http-reference-validation.md).
+The completed M6 review receipt accepts R29 and R34 independently. See [the review and correction evidence](m6-contract-site-validation.md#independent-review-and-corrections).
+The correction re-review accepts R28, R35, and combined M6 with no findings. See [M6 acceptance](m6-contract-site-validation.md#combined-m6-acceptance).
+The final R36 review accepts the clock-specific work and combined measurement/regression scope with no findings. See [M7 measurement evidence](m7-measurement-validation.md).
+R37 also passed independent acceptance with no findings. See [benchmark measurements and acceptance](m7-benchmark-validation.md).
+R38 passed independent acceptance after the Helm version-evidence correction. See [R38 acceptance](m7-full-validation.md#independent-r38-acceptance).
+The first R39 boundary/API and usability reviews passed for their frozen lanes.
+Independent re-review accepted the final R39 corrections and R40 reconciliation with no findings.
+See [the acceptance and frozen evidence](m7-final-review.md#independent-final-acceptance) and [the completed local checklist](../REMEDIATION.md).
+See [M5 API validation](m5-api-validation.md) for the accepted source snapshot and review evidence.
 The isolated PostgreSQL fixture passes the M2–M4 integration suites, including race builds.
-Kafka, Python/TLS examples, full final validation, and production readiness remain unestablished.
+R38 parent execution passed real Kafka commit/restart tests, declared-toolchain Go races, and additional tool checks. See [available validation and external gates](m7-full-validation.md).
+R38 acceptance leaves its unavailable external gates unchecked. R39/R40 local acceptance cannot establish production readiness.
+The user separately authorized a [retention-safe standalone Compose follow-up](standalone-compose-validation.md#independent-acceptance).
+Independent review accepted its bounded first-run/restart scope and evidence reconciliation with no findings.
+That acceptance closed only the standalone Compose gate.
+The user then authorized a separate [Kafka-to-business-commit fixture](kafka-business-commit-validation.md#independent-acceptance).
+Independent review accepted its bounded commit-window, deduplication, Kafka-redelivery, and retained-stack restart evidence with no findings.
+The combined Kafka gate also closes. The other three external gates remain open.
+All ten earlier containers remained unchanged, and all six new containers remain retained.
+The earlier six fixtures remained unchanged, and the new stack remains retained.
+Neither the broker test nor the accepted Python/TLS fixture establishes a durable daemon deployment.
 The user authorized a Git checkpoint before work resumes on the remaining milestones.
 The checkpoint includes accepted R01–R24, implemented R25, and partial R26. It is not final M5 acceptance.
 Full repository race tests, PostgreSQL race integration, and guardrails passed again before staging.
 Their logs and exit records are under `out/remediation/checkpoint-*` and `checkpoint-results.json`.
 The pre-existing release-script edit is excluded from the checkpoint.
+Commit `673d6c9d87c5aa69ce88306ca424c6788d9e3de2` was pushed to `origin/main` and verified against the remote.
+Subsequent remediation work, including the accepted R39 corrections and R40 reconciliation, remains local and unstaged.
+The first R39 corrections passed full-root and corrected PostgreSQL integration races, vet, lint, and guardrails.
+The later admission-replay fix passed new targeted/full-root races, vet, lint, and guardrails. Earlier integration evidence keeps its original chronology.
+The protected release-script hash remains unchanged.
 
 ## M1: R01-R04 executable language contract
 
@@ -113,6 +145,12 @@ Scheduling uses local monotonic durations measured **before** claim/renewal RPCs
 The first read-only review required three fixes: confirm lease authority before execution, stop using database wall timestamps for local scheduling, and stop same-poll repeated invocation after renewal failure. All three were implemented. Added regressions cover replacement before start with zero invocations, reported clock skew of ±24 hours, renewal failure with `BatchSize=8`, and a blocked renewal joined during successful completion. A second independent read-only review **accepted R05-R08 with no blocking findings**.
 
 Remaining non-blocking test gaps: direct PostgreSQL renewal-versus-finish concurrency, a focused delayed-claim test for custom stores without renewal, and testing a genuinely skewed database clock rather than altered returned timestamps. R36 and final review must assess these gaps; they are not claimed as covered.
+
+That paragraph records the M2 acceptance boundary. The later [R36 measurement work](m7-measurement-validation.md) adds and validates the first two regressions.
+Independent review accepted those two regressions and the coverage interpretation as a partial slice.
+The parent subsequently passed real recovery tests with PostgreSQL process clocks offset by +24 and −24 hours.
+Independent review accepted the clock-specific work and whole-task R36 with no findings.
+The earlier M2 acceptance record is unchanged. The reviewed clock model is process interposition, not a host-clock or NTP adjustment test.
 
 ### Validation actually run
 

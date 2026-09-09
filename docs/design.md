@@ -10,21 +10,24 @@ Production source files compile into the protobuf IR defined in `effectus/v1/ir.
 
 The checked IR contains data, not Go functions. The runtime accepts an artifact only after `ir.Check` validates it against an immutable environment.
 
-Legacy list specifications, flow programs, and Go continuations remain library compatibility paths. They do not enter production generations.
+Retained compatibility declarations do not introduce another supported execution representation.
+The current embedded API also accepts checked source bundles and durable descriptors, not anonymous Go continuations.
 
 ## One production execution engine
 
-HTTP, Kafka, generated gRPC, extension execution, and recovery call `runtime.Engine.Execute`.
+HTTP, Kafka, generated gRPC, embedded execution, and recovery call `runtime.Engine.Execute`.
 
 This shared path prevents transport-specific admission, identity, generation, and recovery behavior.
 
 ## Immutable generations
 
-A generation publishes schemas, verb contracts, executors, checked artifacts, and digests as one snapshot.
+Startup compilation builds one active generation with an immutable environment, verb contracts, resolved executors, checked artifacts, and digests.
 
-The runtime validates a candidate before publication. Expected-generation activation prevents a stale candidate from overwriting newer state.
+Changing that generation requires a new source bundle and process replacement.
+The daemon has no candidate-publication or in-process activation phase.
+Request generation constraints guard admission and replay identity, not deployment activation.
 
-Executions stay pinned to the generation that admitted them.
+Existing executions keep their pinned artifacts. The engine can resolve historical generations without changing its active generation.
 
 ## Durable intent before external work
 
@@ -52,7 +55,9 @@ Nested saga transactions are not supported. The compiler and runtime reject them
 
 ## Fail-closed configuration
 
-Effectusd uses strict YAML and JSON decoding. It rejects unknown fields, multiple documents, conflicting source modes, and secret command-line flags.
+Effectusd uses command-line flags and supported environment variables, not a general YAML runtime configuration.
+Its JSON boundaries reject unknown fields, multiple values, and oversized bodies.
+Startup rejects conflicting bundle modes and invalid settings before serving.
 
 Unsupported production paths return explicit errors. The daemon does not silently select a compatibility executor.
 
@@ -68,6 +73,16 @@ The compiler, IR parser, HTTP source, gRPC service, archive extractor, and remot
 
 OCI extraction rejects traversal, links, device entries, excessive file counts, and excessive expanded sizes.
 
+## Resource lifetime
+
+The daemon prepares listeners before starting services and cleans up partial preparation failures.
+Shutdown stops admission, cancels intake, and drains entered handlers.
+It joins handlers and workers before closing the engine, then closes the borrowed database.
+
+Cancellation is cooperative. A drain deadline triggers cancellation but does not terminate Go callbacks.
+A non-cooperative callback can extend shutdown while it still uses dependencies.
+The ledger retains unfinished accepted work for recovery after process replacement.
+
 ## Compatibility policy
 
 Compatibility artifacts can remain when removal would break a published schema contract. The daemon must not register or execute them by accident.
@@ -76,7 +91,9 @@ The deprecated dynamic gRPC schema follows this policy. Generated `effectus.v1` 
 
 ## Formal models
 
-The TLA+ models check bounded saga and generation state machines. They do not prove external service behavior or full Go implementation equivalence.
+The TLA+ models check bounded saga and abstract generation state machines.
+Any candidate-activation transition in a model is not an implemented daemon reload feature.
+These models do not prove external service behavior or full Go implementation equivalence.
 
 Read [Theory Notes](theory/README.md) for semantic models and [Executable State Models](https://github.com/josephjohncox/effectus/blob/main/formal/README.md) for model scope.
 

@@ -48,8 +48,17 @@ Kafka handler failure counts across rebalances and process restarts.
 
 ## Secret rotation
 
-The daemon reads `EFFECTUS_API_TOKEN` and gRPC key material at startup. To
-rotate either value, update the Secret, change `rolloutNonce`, wait for
-readiness, update clients, then retire the old credential. The daemon accepts
-one API token at a time, so retain the old ingress path until all clients have
-moved.
+The daemon reads `EFFECTUS_API_TOKEN` and gRPC key material at startup.
+It accepts one API token per process, with no in-place reload or dual-token grace period.
+Plan a coordinated client change and a controlled admission outage.
+
+1. Prepare clients to trust the replacement TLS certificate or CA when trust must change.
+2. Stop new admissions and stop the old process through the normal drain procedure.
+3. Update the Secret and change `rolloutNonce` to start the replacement process.
+4. Switch clients to the new API token before restoring their admission traffic.
+5. Check readiness, the authenticated generation view, and a bounded client request before reopening ingress.
+
+Keeping an old ingress URL does not preserve the old token after the backend changes.
+Do not run old and new daemons concurrently against the same workload to simulate token overlap.
+Readiness does not probe ongoing database availability; use separate dependency monitoring and recovery checks.
+See [HTTP API](HTTP_API.md), [Client Examples](CLIENT_EXAMPLES.md), and [Runtime Lifecycle](LIFECYCLE.md).

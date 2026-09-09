@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -93,6 +94,9 @@ func (engine *Engine) matchReplay(ctx context.Context, admission *Admission, rec
 	}
 	artifact, err := engine.ledger.GetArtifact(ctx, record.GenerationDigest)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 		return fmt.Errorf("%w: read pinned artifact: %v", ErrBlockedDependency, err)
 	}
 	if err := validateArtifactIdentity(record, artifact); err != nil {

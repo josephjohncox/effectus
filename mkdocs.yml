@@ -9,6 +9,12 @@ copyright: Copyright &copy; 2025 Joseph Cox
 exclude_docs: |
   /README.md
 
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
 nav:
   - Home: index.md
   - Getting started: GETTING_STARTED.md
@@ -20,7 +26,11 @@ nav:
       - Integration models: INTEGRATION.md
       - v0.3 compatibility: COMPATIBILITY.md
       - CLI reference: COMMANDS.md
+      - Go API: go-api.md
+      - HTTP API: HTTP_API.md
       - gRPC execution: GRPC_EXECUTION.md
+      - gRPC capabilities: grpc-capabilities.md
+      - Buf compatibility: buf-compatibility.md
       - Client examples: CLIENT_EXAMPLES.md
       - Fact sources: FACT_SOURCES.md
       - Extension system: EXTENSION_SYSTEM.md
@@ -48,6 +58,23 @@ nav:
       - v0.4.0: releases/v0.4.0.md
       - v0.3.0: releases/v0.3.0.md
       - v0.2.1: releases/v0.2.1.md
+  - Project validation:
+      - Remediation checklist: REMEDIATION.md
+      - Validation and blockers: audits/remediation-validation.md
+      - Historical baseline audit: audits/codebase-review-388c3cb.md
+      - Transport validation: audits/m4-transport-validation.md
+      - Go API validation: audits/m5-api-validation.md
+      - Documentation validation: audits/m6-documentation-validation.md
+      - Contracts and site validation: audits/m6-contract-site-validation.md
+      - Onboarding validation: audits/m6-tutorial-contributor-validation.md
+      - HTTP reference validation: audits/m6-http-reference-validation.md
+      - Client validation: audits/m6-grpc-client-validation.md
+      - Measurements and remaining gates: audits/m7-measurement-validation.md
+      - Benchmark validation: audits/m7-benchmark-validation.md
+      - Available validation: audits/m7-full-validation.md
+      - Aggregate review and reconciliation: audits/m7-final-review.md
+      - Standalone Compose validation: audits/standalone-compose-validation.md
+      - Kafka commit validation: audits/kafka-business-commit-validation.md
 
 theme:
   name: material

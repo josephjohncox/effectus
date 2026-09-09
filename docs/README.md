@@ -4,7 +4,7 @@ Read the [published documentation](https://josephjohncox.github.io/effectus/) or
 
 ## Start here
 
-1. Complete [Getting Started](GETTING_STARTED.md) to run the checked HTTP path.
+1. Complete [Getting Started](GETTING_STARTED.md) to run the embedded Go or durable HTTP path.
 2. Read [Integration Guide](INTEGRATION.md) to choose embedded or standalone mode.
 3. Read [Basics](BASICS.md) for facts, rules, flows, verbs, and effects.
 4. Read [Architecture](ARCHITECTURE.md) for the production data path.
@@ -16,15 +16,18 @@ Read the [published documentation](https://josephjohncox.github.io/effectus/) or
 
 - [Tutorials](TUTORIALS.md) contains short examples.
 - [CLI Reference](COMMANDS.md) describes `effectusc` and `effectusd`.
-- [Client Examples](CLIENT_EXAMPLES.md) shows API clients.
+- [HTTP API Reference](HTTP_API.md) defines routes, JSON contracts, and accepted-only execution.
+- [Go API](go-api.md) describes supported entry points, ownership, and compatibility.
+- [Client Examples](CLIENT_EXAMPLES.md) runs authenticated Go/Python gRPC clients and separate TLS checks.
 - [SourceBundle Extension Boundary](EXTENSION_SYSTEM.md) describes immutable bundle contents and executor descriptors.
 - [Fact Sources](FACT_SOURCES.md) describes streaming and batch adapters.
-- [gRPC Execution](GRPC_EXECUTION.md) describes the generated execution service.
+- [gRPC Execution](GRPC_EXECUTION.md) describes the inbound service. The [capability matrix](grpc-capabilities.md) distinguishes implemented and reserved RPCs.
+- [Buf Compatibility](buf-compatibility.md) describes the legacy helper's supported subset and workspace ownership.
 
 ## Operate the runtime
 
-- [Runtime Configuration](RUNTIME_CONFIG.md) defines strict YAML and JSON configuration.
-- [Runtime Lifecycle](LIFECYCLE.md) defines activation, refresh, drain, and shutdown.
+- [Runtime Configuration](RUNTIME_CONFIG.md) defines daemon flags/environment and separate Go library options. There is no runtime YAML/JSON loader.
+- [Runtime Lifecycle](LIFECYCLE.md) defines startup, process replacement, historical recovery, drain, and shutdown.
 - [Production Runbook](PRODUCTION_RUNBOOK.md) provides deployment and recovery procedures.
 - [Durable Saga Protocol](DURABLE_SAGA_PROTOCOL.md) defines dispatch, leases, outcomes, and fencing.
 - [Dependency Audit](DEPENDENCY_AUDIT.md) records dependency checks and remaining external actions.
@@ -46,13 +49,15 @@ Use the [examples index](../examples/README.md) to find runnable examples and lo
 
 Use this order when two documents appear to conflict:
 
-1. Generated API schemas and checked migrations
+1. Implemented source, behavioral tests, and checked migrations; generated API schemas define wire identities, not implementation availability.
 2. [Runtime Guarantees](GUARANTEES.md)
 3. [Runtime Lifecycle](LIFECYCLE.md) and [Durable Saga Protocol](DURABLE_SAGA_PROTOCOL.md)
 4. Package and command references
 5. Design and theory notes
 
 Theory notes describe models and proof obligations. They do not override runtime behavior.
+Release notes describe their named version, not the current command or package surface.
+[Remediation](REMEDIATION.md) distinguishes independently accepted work from remaining validation and external-service gates.
 
 ## Documentation rules
 

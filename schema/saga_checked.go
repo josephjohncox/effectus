@@ -2,6 +2,7 @@ package schema
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 
 	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
@@ -171,7 +172,8 @@ func checkedSagaLiteral(literal *effectusv1.Literal) (any, error) {
 	case *effectusv1.Literal_StringValue:
 		return kind.StringValue, nil
 	case *effectusv1.Literal_BytesValue:
-		return append([]byte(nil), kind.BytesValue...), nil
+		// Match durable initial intent, including empty bytes ("", not null).
+		return base64.StdEncoding.EncodeToString(kind.BytesValue), nil
 	case *effectusv1.Literal_ListValue:
 		if kind.ListValue == nil {
 			return nil, fmt.Errorf("list literal is nil")

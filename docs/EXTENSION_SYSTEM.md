@@ -19,9 +19,10 @@ Production daemon bundles use resolved HTTP invocation descriptors. The daemon
 resolves every descriptor before it becomes ready. A missing or unsupported
 descriptor fails startup.
 
-The HTTP destination receives stable invocation, idempotency, contract, attempt,
-and fencing metadata. The destination must enforce idempotency or fencing where
-its business mutation needs that guarantee.
+The HTTP destination receives stable invocation identity, an idempotency key, contract identity, attempt information, and fencing metadata.
+Attempts and fencing tokens can change while the logical operation identity stays fixed.
+The destination must coordinate business deduplication with its business write.
+It must also enforce fencing when stale ownership threatens safety. Fencing does not replace deduplication.
 
 The generated gRPC service is an inbound execution API. Kafka is an inbound
 fact source. Neither is an outbound executor descriptor.

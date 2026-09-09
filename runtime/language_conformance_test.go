@@ -197,10 +197,55 @@ func TestLanguageConformanceInvalidResultsDoNotReachNextStep(t *testing.T) {
 		require.Equal(t, "Produce", r.Verb)
 		return invocation.Outcome{Class: invocation.OutcomeSuccess, Result: []any{1, "bad"}}
 	})
-	engine := languageEngine(t, languageGeneration(t, env, checked, map[string]invocation.Executor{"Produce": executor, "Consume": executor}), schema.NewInMemoryOutboxStore(), schema.NewInMemoryExecutionLedger())
-	_, err := engine.Execute(t.Context(), ExecuteRequest{Admission: &Admission{ExecutionID: "bad-result", TenantNamespace: "test", Ruleset: "language", Version: "1"}, WaitMode: WaitTerminal})
+	outbox, durable := schema.NewInMemoryOutboxStore(), schema.NewInMemoryExecutionLedger()
+	engine := languageEngine(t, languageGeneration(t, env, checked, map[string]invocation.Executor{"Produce": executor, "Consume": executor}), outbox, durable)
+	request := ExecuteRequest{Admission: &Admission{ExecutionID: "bad-result", TenantNamespace: "test", Ruleset: "language", Version: "1"}, WaitMode: WaitTerminal}
+	result, err := engine.Execute(t.Context(), request)
 	require.ErrorContains(t, err, "list item 1")
 	require.Equal(t, 1, calls)
+	var terminal *TerminalExecutionError
+	require.ErrorAs(t, err, &terminal)
+	require.ErrorIs(t, err, ErrBlockedDependency)
+	require.Equal(t, schema.ExecutionBlockedDependency, terminal.State)
+	require.Equal(t, string(terminal.State), result.State)
+	record, err := durable.GetExecution(t.Context(), "bad-result")
+	require.NoError(t, err)
+	require.Equal(t, schema.ExecutionBlockedDependency, record.State)
+	require.Len(t, record.Plans, 1)
+	saga, err := outbox.GetSaga(t.Context(), record.Plans[0].SagaID)
+	require.NoError(t, err)
+	// This is an execution-level dependency block, not a fabricated business
+	// failure or completed saga. Preserve the unfinished saga and its success.
+	require.Equal(t, schema.SagaRunning, saga.State)
+	dispatches, err := outbox.ListDispatches(t.Context(), saga.SagaID)
+	require.NoError(t, err)
+	require.Len(t, dispatches, 1)
+	require.Equal(t, schema.DispatchSucceeded, dispatches[0].State)
+	require.Equal(t, invocation.OutcomeSuccess, dispatches[0].LastOutcome)
+	require.Equal(t, `[1,"bad"]`, string(dispatches[0].Result))
+	attempts, err := outbox.ListAttempts(t.Context(), dispatches[0].ID)
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	require.Equal(t, invocation.OutcomeSuccess, attempts[0].Outcome)
+	worker := &RecoveryWorker{Engine: engine, Store: durable, Owner: "bad-result-recovery", BatchSize: 2}
+	processed, err := worker.RunOnce(t.Context())
+	require.NoError(t, err)
+	require.Zero(t, processed, "immutable invalid results must not remain recovery-eligible")
+	for _, replay := range []ExecuteRequest{request, {ResumeExecutionID: "bad-result", WaitMode: WaitTerminal}} {
+		_, err := engine.Execute(t.Context(), replay)
+		require.ErrorAs(t, err, &terminal)
+		require.Equal(t, schema.ExecutionBlockedDependency, terminal.State)
+	}
+	request.WaitMode = WaitAccepted
+	accepted, err := engine.Execute(t.Context(), request)
+	require.NoError(t, err)
+	require.True(t, accepted.DurablyAccepted)
+	require.False(t, accepted.Completed)
+	require.Equal(t, string(schema.ExecutionBlockedDependency), accepted.State)
+	require.Equal(t, 1, calls)
+	unchanged, err := outbox.GetDispatch(t.Context(), dispatches[0].ID)
+	require.NoError(t, err)
+	require.Equal(t, dispatches[0], unchanged)
 }
 
 func TestLanguageConformanceInvalidFactsFailBeforeAdmission(t *testing.T) {

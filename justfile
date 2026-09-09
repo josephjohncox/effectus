@@ -31,11 +31,11 @@ test:
 test-modules:
 	@set -eu; go run ./internal/guardrails/cmd modules | while IFS= read -r module; do echo "==> $module"; (cd "$module" && go test ./...); done
 
-# Run the three golden examples and their shared scenario tests.
+# Run local examples, the list/flow tutorial, and shared scenario tests.
 test-examples:
 	go test ./internal/demo/orderreview
 	go -C examples run ./embedded_orders
-	go test ./examples/grpc_execution
+	go test ./examples/embedded_orders/tutorial ./examples/grpc_execution
 
 # Verify frozen v0.3 compatibility imports from a released root module on the Go proxy.
 smoke-compat version:
@@ -68,8 +68,8 @@ setup-db:
 # Run durable PostgreSQL integration tests; DB_DSN must point at an explicit database.
 test-integration:
 	@test -n "${DB_DSN:-}" || { echo "ERROR DB_DSN is required"; exit 1; }
-	EFFECTUS_POSTGRES_DSN="{{DB_DSN}}" go run ./cmd/effectusd --database-migrations=apply
-	DB_DSN="{{DB_DSN}}" POSTGRES_DSN="{{DB_DSN}}" go test -p 1 -tags=integration ./runtime/... ./schema ./cmd/effectusd
+	@EFFECTUS_POSTGRES_DSN="$DB_DSN" go run ./cmd/effectusd --mode=migrate --database-migrations=apply
+	@POSTGRES_DSN="$DB_DSN" go test -p 1 -tags=integration -timeout=90s ./runtime/... ./schema ./cmd/effectusd
 
 # Build the documentation site strictly.
 docs:

@@ -1,37 +1,51 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
+	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
-
-func TestIntegrationGuideDaemonStartupContract(t *testing.T) {
-	documentation, err := os.ReadFile("../../docs/INTEGRATION.md")
-	require.NoError(t, err)
-	require.Contains(t, string(documentation), "export DB_DSN=")
-	require.Contains(t, string(documentation), "export EFFECTUS_API_TOKEN=")
-	require.Contains(t, string(documentation), "EFFECTUS_POSTGRES_DSN=\"$DB_DSN\"")
-	require.Contains(t, string(documentation), "EFFECTUS_API_TOKEN=\"$EFFECTUS_API_TOKEN\"")
-	require.Contains(t, string(documentation), "go run ./cmd/effectusd --bundle")
-}
 
 func TestDocumentedCLIAndFlags(t *testing.T) {
 	documentation, err := os.ReadFile("../../docs/COMMANDS.md")
 	require.NoError(t, err)
 	text := string(documentation)
-	flags := []string{
-		"bundle", "oci-ref", "oci-signature-verifier", "postgres-dsn", "database-migrations", "migrate-only",
-		"http-addr", "grpc-addr", "grpc-tls-cert", "grpc-tls-key", "grpc-allow-insecure", "fact-source",
-		"kafka-brokers", "kafka-topic", "kafka-consumer-group", "kafka-ack-contract",
-	}
-	require.NotEmpty(t, flags, "documentation contract must have daemon flags to check")
-	for _, name := range flags {
-		require.NotNil(t, flag.CommandLine.Lookup(name), "active daemon flag --%s is missing", name)
-		require.Contains(t, text, "`--"+name+"`", "documented daemon flag --%s is missing", name)
+	actual := make(map[string]bool)
+	flag.CommandLine.VisitAll(func(option *flag.Flag) {
+		if !strings.HasPrefix(option.Name, "test.") {
+			actual[option.Name] = true
+			require.Contains(t, text, "`--"+option.Name+"`", "documented daemon flag is missing")
+		}
+	})
+	require.NotEmpty(t, actual)
+	binary, err := os.Executable()
+	require.NoError(t, err)
+	for _, helpFlag := range []string{"--help", "-h"} {
+		t.Run(helpFlag, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, binary, "-test.run=^TestEffectusdHelperProcess$", "--", helpFlag)
+			command.Dir = t.TempDir()
+			command.Env = append(os.Environ(), "EFFECTUSD_TEST_PROCESS=1", "EFFECTUS_POSTGRES_DSN=", "EFFECTUS_API_TOKEN=")
+			command.WaitDelay = 2 * time.Second
+			output, err := command.CombinedOutput()
+			require.NoError(t, ctx.Err(), string(output))
+			require.NoError(t, err, string(output))
+			displayed := make(map[string]bool)
+			for _, match := range regexp.MustCompile(`(?m)^  -([^\s]+)`).FindAllStringSubmatch(string(output), -1) {
+				if !strings.HasPrefix(match[1], "test.") {
+					displayed[match[1]] = true
+				}
+			}
+			require.Equal(t, actual, displayed, "daemon help must expose the documented registered flags")
+		})
 	}
 	entries, err := os.ReadDir("testdata/docs")
 	require.NoError(t, err)

@@ -113,6 +113,8 @@ This does not make external outcomes deterministic.
 The execution ledger records the generation. Recovery loads the same generation artifact.
 
 The TLA+ generation model checks bounded publication and pinning transitions.
+Publication is an abstract model transition, not a daemon hot-reload API.
+The daemon changes its active generation through process replacement and resolves historical artifacts for existing executions.
 
 ## Stale-completion property
 

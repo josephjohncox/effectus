@@ -2,7 +2,7 @@
 
 ![Effectus logo](./effectus-small.png)
 
-Effectus compiles `.eff` and `.effx` rules to checked protobuf IR. The runtime executes checked rules through one durable engine.
+Effectus compiles `.eff` and `.effx` rules to checked protobuf IR. The same execution engine supports process-local embedded use and PostgreSQL-backed durable execution.
 
 ## Start here
 
@@ -19,7 +19,7 @@ Both paths use the same order-review rule and scenario artifact. Each path prove
 
 Effectus controls durable admission and internal execution state. It does not make an external service transactional.
 
-External services must enforce the supplied idempotency key or fencing token. Compensation is recovery work, not an ACID rollback.
+External destinations must coordinate deduplication with their business commit and enforce fencing when required. Fencing does not replace deduplication. Compensation is recovery work, not an ACID rollback.
 
 Read [Runtime Guarantees](docs/GUARANTEES.md) before a production deployment.
 
@@ -33,9 +33,12 @@ Do not use a mutable `@main` Go dependency for production. Pin a release tag or 
 
 - [Getting started](docs/GETTING_STARTED.md)
 - [Integration guide](docs/INTEGRATION.md)
+- [Supported Go API and ownership contracts](docs/go-api.md)
+- [gRPC capability matrix](docs/grpc-capabilities.md)
 - [v0.3 Go compatibility](docs/COMPATIBILITY.md)
 - [Effectus basics](docs/BASICS.md)
 - [CLI reference](docs/COMMANDS.md)
+- [HTTP API reference](docs/HTTP_API.md)
 - [Runtime configuration](docs/RUNTIME_CONFIG.md)
 - [Runtime guarantees](docs/GUARANTEES.md)
 - [Production runbook](docs/PRODUCTION_RUNBOOK.md)

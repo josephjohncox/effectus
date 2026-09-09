@@ -23,36 +23,51 @@ effectusc inspect --bundle orders.bundle.json
 
 ## `effectusd`
 
-`effectusd` starts one immutable daemon. Set exactly one bundle input:
-`--bundle PATH` or `--oci-ref REF`. OCI input also requires
-`--oci-signature-verifier PATH` and a digest-pinned reference.
+The default mode is `serve`. It requires exactly one `--bundle PATH` or `--oci-ref REF` input.
+OCI input also requires `--oci-signature-verifier PATH` and a digest-pinned reference.
+`--mode=migrate` accepts no bundle and honors `--database-migrations=validate|apply`.
+The legacy `--migrate-only` alias applies migrations. Do not combine it with explicit `--mode`.
 
-| Flag | Meaning |
-| --- | --- |
-| `--bundle` | Local SourceBundle JSON path. |
-| `--oci-ref` | Digest-pinned OCI SourceBundle reference. |
-| `--oci-signature-verifier` | Executable that verifies OCI reference and digest. |
-| `--postgres-dsn` | PostgreSQL DSN; `EFFECTUS_POSTGRES_DSN` is the alternative. |
-| `--database-migrations` | `validate` (default) or `apply`. |
-| `--migrate-only` | Apply current PostgreSQL migrations and exit. |
-| `--http-addr` | HTTP listen address; empty disables HTTP. |
-| `--grpc-addr` | Generated gRPC listen address; empty disables gRPC. |
-| `--grpc-tls-cert` | TLS certificate PEM for gRPC. |
-| `--grpc-tls-key` | TLS private-key PEM for gRPC. |
-| `--grpc-allow-insecure` | Development-only plaintext gRPC override. |
-| `--fact-source` | `http` or `kafka`. |
-| `--kafka-brokers` | Comma-separated Kafka brokers. |
-| `--kafka-topic` | Kafka facts topic. |
-| `--kafka-consumer-group` | Kafka consumer group. |
-| `--kafka-ack-contract` | `durable_acceptance` or `completed_processing`. |
+The daemon reads flags and supported environment variables, not runtime YAML.
+An empty string in the default column means an unset value.
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--bundle` | `""` | Local source-bundle JSON path. |
+| `--oci-ref` | `""` | Digest-pinned OCI source-bundle reference. |
+| `--oci-signature-verifier` | `""` | Executable that verifies OCI reference and digest. |
+| `--postgres-dsn` | `""` | PostgreSQL DSN. Unset falls back to `EFFECTUS_POSTGRES_DSN`. |
+| `--mode` | `serve` | `serve` or `migrate`. |
+| `--database-migrations` | `validate` | `validate` or `apply`. |
+| `--migrate-only` | `false` | Apply migrations and exit. Legacy alias. |
+| `--http-addr` | `:8080` | HTTP listen address. Empty disables HTTP. |
+| `--http-shutdown-timeout` | `30s` | HTTP drain grace. Zero selects 30 seconds. Negative values fail. |
+| `--grpc-addr` | `""` | Inbound generated gRPC address. Empty disables gRPC. |
+| `--grpc-tls-cert` | `""` | TLS certificate PEM for gRPC. |
+| `--grpc-tls-key` | `""` | TLS private-key PEM for gRPC. |
+| `--grpc-allow-insecure` | `false` | Local-development plaintext gRPC override. Authentication remains required. |
+| `--fact-source` | `http` | `http` or `kafka`. |
+| `--kafka-brokers` | `localhost:9092` | Comma-separated Kafka brokers. |
+| `--kafka-topic` | `facts` | Kafka facts topic. |
+| `--kafka-consumer-group` | `effectusd` | Kafka consumer group. |
+| `--kafka-ack-contract` | `completed_processing` | `durable_acceptance` or `completed_processing`. |
 
 `EFFECTUS_API_TOKEN` is required whenever HTTP or gRPC is enabled. All `/v1/*`
 requests need `Authorization: Bearer TOKEN`.
 
-`POST /v1/execute` requires an `Idempotency-Key` header and a JSON body with
-`namespace` and `facts`. It always uses durable acceptance and returns HTTP 202.
-A matching retry has the same execution identity. Changed content for the same
-key, or an `If-Match` generation digest that is stale, returns HTTP 409.
+`POST /v1/execute` requires `Idempotency-Key`, a nonblank namespace, and object-valued facts.
+It uses accepted-only execution. Successful admission returns HTTP 202, not business completion.
+A matching retry preserves identity within the same namespace, ruleset, and version.
+Conflicting content or an explicit generation mismatch returns HTTP 409.
+Replay checks the pinned historical generation rather than implicitly requiring the active generation.
+See the [HTTP API reference](HTTP_API.md) for routes, exact JSON schemas, errors, generation constraints, and readiness limitations.
+
+The gRPC limits are fixed daemon defaults, not additional flags.
+See [gRPC Execution](./GRPC_EXECUTION.md) for separate library options and TLS requirements.
+
+`--help` and `-h` exit successfully. Invalid flag syntax exits with code 2.
+Rejected configuration or execution errors exit with code 1.
+Do not pass positional arguments to the daemon.
 
 ```bash
 EFFECTUS_POSTGRES_DSN="$DB_DSN" EFFECTUS_API_TOKEN="$TOKEN" \

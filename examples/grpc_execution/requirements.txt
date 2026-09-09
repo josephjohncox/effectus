@@ -1,0 +1,6 @@
+# Local example generation/runtime tools; not daemon dependencies.
+grpcio==1.76.0
+grpcio-tools==1.76.0
+protobuf==6.33.6
+setuptools==84.0.0
+typing_extensions==4.16.0

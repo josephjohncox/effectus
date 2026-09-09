@@ -20,6 +20,7 @@ lint:
 build:
   excludes:
     - .pi/
+    - .tools/
     - examples/
     - tests/
     - tools/vscode-extension/node_modules/
