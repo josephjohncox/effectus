@@ -31,7 +31,7 @@ Use a release tag instead of `main` for production evaluation. The commands on t
 
 ## Path 1: Embedded Go
 
-This path requires only Go 1.25 or later after you get the source. It does not require Docker, Buf, or Python.
+This path requires only Go 1.26 or later after you get the source. Use the patched toolchain pinned in `go.mod`. It does not require Docker, Buf, or Python.
 
 Run the checked embedded application:
 
@@ -66,7 +66,7 @@ Install these host tools before you run the acceptance script:
 - Docker with the Compose plugin
 - `curl`
 - Python 3
-- Go 1.25 or later
+- Go 1.26 or later; use the patched toolchain pinned in `go.mod`
 
 Buf is not required. The script checks every prerequisite and checks the Docker daemon before it creates resources.
 

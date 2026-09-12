@@ -3,6 +3,7 @@
 Snapshot taken on September 12 UTC (September 11 in America/Los_Angeles), before this cleanup PR.
 Git refs were fetched with pruning; PR, workflow, release, and repository enforcement state were queried from GitHub.
 This is a repository-state and maintenance audit, not a new correctness review of the entire implementation.
+The dependency dispositions below describe that snapshot; see the [subsequent toolchain and extension maintenance](../DEPENDENCY_AUDIT.md#toolchain-and-extension-maintenance) for the resolution of the four remaining dependency PRs.
 
 ## Published baseline
 
