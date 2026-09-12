@@ -75,7 +75,7 @@ Those failures do not establish that the proposed TypeScript compiler is incompa
 Rebase or recreate the updates against current main, then run installation, audit, compilation, lint, tests, and VSIX packaging together.
 
 [PR #67](https://github.com/josephjohncox/effectus/pull/67) (gRPC) and [PR #73](https://github.com/josephjohncox/effectus/pull/73) (`js-yaml`) were already closed; their fixes shipped through PR #74.
-The four consolidated PRs remain open until this cleanup merges, so there is no claim that unmerged dependency changes have shipped.
+This cleanup supersedes the four consolidated dependency PRs. Closing those duplicates does not mean their updates have shipped; that requires merging this cleanup.
 
 ## Remaining work
 
