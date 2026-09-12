@@ -3,6 +3,16 @@
 ## Current status
 
 **R01–R40 independently accepted for local remediation scope. Remote CI passed; deployment and capacity gates are unavailable here.**
+
+The accepted work subsequently merged in [PR #74](https://github.com/josephjohncox/effectus/pull/74)
+and shipped in [v0.5.0](https://github.com/josephjohncox/effectus/releases/tag/v0.5.0).
+The [repository and PR audit](repository-state-2026-09-12.md) records that later state and the remaining deployment and capacity gates.
+
+## Remediation execution record (historical)
+
+The following chronology describes the implementation and validation sessions.
+Branch positions, unstaged changes, authorizations, and fixture observations are statements about those sessions.
+
 The first correction review accepted C1, C3, and C2's resume path, but found a remaining admission-replay cancellation defect.
 The parent reproduced and corrected that follow-up, then passed targeted and full-root races, vet, lint, and guardrails.
 See [the corrections and complete finding reconciliation](m7-final-review.md).
@@ -46,9 +56,9 @@ Full repository race tests, PostgreSQL race integration, and guardrails passed a
 Their logs and exit records are under `out/remediation/checkpoint-*` and `checkpoint-results.json`.
 The pre-existing release-script edit is excluded from the checkpoint.
 Commit `673d6c9d87c5aa69ce88306ca424c6788d9e3de2` was pushed to `origin/main` and verified against the remote.
-Later remediation work was published only to branch `validation/remediation-e566c0316db9`, ending at signed commit `7fd8abaaa9f85e01d311f2475689dabee749fbe7`.
-`origin/main` still resolves to the earlier checkpoint. Nothing was merged, tagged, or released.
-Subsequent remediation work, including the accepted R39 corrections and R40 reconciliation, remains local and unstaged.
+Later remediation work was published to branch `validation/remediation-e566c0316db9`; its tested source commit was `7fd8abaaa9f85e01d311f2475689dabee749fbe7`.
+At that validation gate, `origin/main` still resolved to the earlier checkpoint. Nothing had yet been merged, tagged, or released.
+The accepted R39 corrections and R40 reconciliation were included in the published remediation source.
 The first R39 corrections passed full-root and corrected PostgreSQL integration races, vet, lint, and guardrails.
 The later admission-replay fix passed new targeted/full-root races, vet, lint, and guardrails. Earlier integration evidence keeps its original chronology.
 The protected release-script hash remains unchanged.

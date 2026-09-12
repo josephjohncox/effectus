@@ -58,6 +58,7 @@ Use this order when two documents appear to conflict:
 Theory notes describe models and proof obligations. They do not override runtime behavior.
 Release notes describe their named version, not the current command or package surface.
 [Remediation](REMEDIATION.md) distinguishes independently accepted work from remaining validation and external-service gates.
+The [repository and PR audit](audits/repository-state-2026-09-12.md) records the v0.5.0 branch state, integrated work, and dependency follow-ups.
 
 ## Documentation rules
 

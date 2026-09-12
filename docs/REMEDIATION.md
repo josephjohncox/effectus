@@ -5,9 +5,18 @@
 Resolve the findings in [the review at 388c3cb](audits/codebase-review-388c3cb.md).
 Keep the review as historical evidence. Use this checklist as the current source of work status.
 
-The user requested implementation, not just a plan. Continue through ready tasks, tests, and reviews until the list is complete or explicitly blocked.
+## Current status
 
-## Rules for execution
+R01–R40 are implemented and independently accepted for the recorded remediation scope.
+[PR #74](https://github.com/josephjohncox/effectus/pull/74) merged that work into `main`.
+The subsequent [v0.5.0 release](https://github.com/josephjohncox/effectus/releases/tag/v0.5.0)
+passed CI, documentation, and publication workflows at `d14b94b`.
+See the [repository and PR audit](audits/repository-state-2026-09-12.md) for branch reconciliation and dependency follow-ups.
+Deployed Kubernetes recovery and representative production-capacity validation remain open.
+
+## Original remediation execution rules (historical)
+
+These rules record the original implementation authorization. Later publication, PR, and release work had separate authorization.
 
 1. Read the relevant finding and source before each change.
 2. Reproduce correctness findings with regression tests when practical.
@@ -159,7 +168,7 @@ The unavailable external gates remain unchecked.
 The separately authorized [standalone Compose follow-up](audits/standalone-compose-validation.md#independent-acceptance) passed independent acceptance for its bounded local scope.
 The separately authorized [Kafka-to-business-commit follow-up](audits/kafka-business-commit-validation.md#independent-acceptance) also passed independent acceptance for its bounded local scope.
 The reviewed source was then published to a validation branch, where [remote CI passed all 15 jobs](audits/remote-ci-validation.md) after two dependency advisory fixes.
-The two remaining external gates need a cluster, registry, and capacity environment that this setup does not have.
+Release publication subsequently passed for v0.5.0. The two remaining external gates need a Kubernetes recovery environment and representative capacity measurements; publication alone does not close either gate.
 
 - [x] **R36 / F30:** Measure meaningful coverage and close remaining regression gaps.
   Acceptance: report exact commands, exclusions, cross-package coverage limitations, changed-behavior tests, race results, and remaining blind spots.
@@ -172,7 +181,7 @@ The two remaining external gates need a cluster, registry, and capacity environm
 - [x] **R40 / all:** Reconcile every finding with code, documentation, tests, and final status.
   Acceptance: durable validation report, explicit behavior changes and residual risks, accurate checklist, and no claim of completion for blocked work.
 
-## Execution log
+## Execution log (historical)
 
 ### Baseline recorded
 
@@ -214,4 +223,4 @@ The retried child writer started successfully and implemented R01-R04 on the sha
 Current evidence: [remediation validation and blockers](audits/remediation-validation.md).
 For each later result, include task IDs, changed behavior, tests and their outcomes, review disposition, and remaining work.
 
-R01–R38 are implemented and independently accepted. R39–R40 remain open. See [M5 API validation](audits/m5-api-validation.md), [M6 documentation evidence](audits/m6-documentation-validation.md), and [M7 measurement evidence](audits/m7-measurement-validation.md) for current status. Final production-readiness conclusions remain unclaimed.
+R01–R40 are implemented and independently accepted. See the [final review and finding reconciliation](audits/m7-final-review.md#independent-final-acceptance) and [repository and PR audit](audits/repository-state-2026-09-12.md). Deployed Kubernetes recovery and production-capacity validation remain open; the recorded checks do not establish production readiness.
