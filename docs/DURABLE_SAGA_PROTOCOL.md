@@ -115,9 +115,22 @@ stale_fence
 A timeout after possible transmission is an `unknown_outcome`.
 A connection reset after possible transmission is also an `unknown_outcome`.
 
-Effectus retries an unknown outcome with the same idempotency key.
-It does not start compensation for an unknown forward outcome.
-An exhausted unknown outcome moves the saga to `blocked_unknown`.
+### Unknown outcomes
+
+Unknown outcomes block by default. They are not unconditional retries.
+For checked workflows, a valid executor `unknown_outcome` can retry only when the step declares `SINK_GUARANTEED` (`sink_guaranteed`) and attempts remain.
+`KEY_REQUIRED` (`key_required`) alone does not authorize this retry.
+
+The checked `MaxAttempts` includes the initial attempt. An omitted attempt limit defaults to one, even with `SINK_GUARANTEED`.
+Retries retain execution, saga, dispatch, and idempotency identities while increasing the attempt number.
+An unauthorized or exhausted unknown outcome moves the dispatch and saga to `blocked_unknown`.
+The runtime does not start compensation for an unknown forward outcome.
+
+The sink guarantee must be real: the destination must coordinate deduplication with the business commit and replay the stored result.
+The policy declaration and request metadata alone do not implement this guarantee.
+See the destination contract below.
+
+### Other outcomes
 
 A permanent forward failure starts durable reverse-order compensation.
 A stale-fence outcome moves the saga to `blocked_fence`.
@@ -168,7 +181,8 @@ stale_rejected
 
 ## Persistence
 
-Apply `schema/migrations/10001_saga_outbox_v2.sql` before worker startup.
+Apply the complete durable schema before worker startup through the supported [migration command](COMMANDS.md).
+`schema/migrations/10001_saga_outbox_v2.sql` is the first outbox migration, not the complete execution-ledger and Kafka schema.
 The V2 store does not run startup `ALTER TABLE` statements.
 It does not write the legacy saga tables.
 
@@ -183,7 +197,11 @@ effectus_fencing_counters
 effectus_fencing_leases
 ```
 
-PostgreSQL is the only durable store. It atomically records admission, workflow state, fencing, and recovery data.
+PostgreSQL is the implemented durable store.
+The daemon's shared ledger/outbox store atomically admits the execution, selected plans, sagas, and initial steps.
+Later dispatch, fencing, recovery, and state changes have their own guarded operations; execution is not one transaction spanning all of them.
+No Effectus database transaction includes an external destination's business commit.
+See [Runtime Guarantees](GUARANTEES.md) and the [remediation evidence](audits/remediation-validation.md).
 
 The in-memory V2 store implements the same state checks for tests.
 It does not provide durable recovery.

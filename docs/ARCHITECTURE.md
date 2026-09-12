@@ -1,7 +1,8 @@
 # Effectus Architecture
 
-Effectus has one production path: an immutable `bundle.SourceBundle` is checked,
-compiled once, and run by one daemon process.
+Effectus has one production path: startup compiles an immutable `bundle.SourceBundle`
+into the active generation for new admissions.
+The engine can also resolve pinned historical generations for replay and recovery.
 
 ```text
 SourceBundle -> effectusc check|compile|inspect
@@ -44,9 +45,10 @@ it does not consult a mutable configuration authority.
 matching retry returns the same execution identity. A different payload for the
 same identity, or a stale `If-Match` generation digest, returns HTTP 409.
 
-HTTP 202 does not mean that an external verb completed. External exactly-once
-behavior requires the destination to enforce the supplied idempotency key or
-fencing token.
+HTTP 202 does not mean that an external verb completed.
+Destination deduplication must coordinate with the business commit to prevent duplicate effects.
+Fencing rejects stale authority. It does not replace business idempotency.
+Effectus does not claim exactly-once destination effects from metadata alone.
 
 ## Kafka and gRPC
 
@@ -59,6 +61,17 @@ crash.
 The generated gRPC API authenticates callers and uses the same engine and
 immutable generation. TLS is required unless the explicit development override
 is selected.
+
+## Shutdown and replacement
+
+The daemon prepares listeners before starting services and cleans up partial preparation failures.
+Shutdown stops admission and cancels intake workers. It then drains and joins entered handlers and workers.
+The engine closes owned generations and resolver resources before the daemon closes the borrowed database.
+
+Drain deadlines trigger cancellation, not forced Go callback termination.
+Non-cooperative callbacks can prolong shutdown. The daemon keeps dependencies open until those callbacks return.
+Pending durable work remains available for recovery after process replacement.
+See [Runtime Lifecycle](LIFECYCLE.md) for the complete sequence.
 
 ## Deployment
 

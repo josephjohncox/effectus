@@ -1,101 +1,97 @@
 # Checked Compilation Flow
 
-This document maps rule and extension inputs to the production execution engine.
+This page describes the shipped daemon, not an abstract hot-reload design.
+One startup source bundle defines the active generation for new admissions.
 
 ## Inputs
 
-A candidate generation can contain:
+`effectusd` loads exactly one local bundle or one digest-pinned OCI bundle with signature verification.
+It does not load extension directories or poll mutable tags.
 
-- `.eff` list rules
-- `.effx` flow rules
+A `bundle.SourceBundle` contains:
+
+- `.eff` list-rule or `.effx` flow-rule sources
 - Fact type declarations
-- Function declarations
 - Verb contracts
-- Supported executor configuration
+- Durable executor descriptors
+- Bundle name, version, and metadata
 
-Inputs can come from a local bundle, an extension directory, or a signed OCI bundle.
+Declarations and descriptors belong to the bundle's immutable identity.
+A mutable external registry does not supply missing executable definitions during admission.
 
-Production OCI references use digests. Effectusd does not poll mutable tags.
+## Compile and check
 
-## Build the environment
+`compiler.CompileChecked` parses and checks each rule source against the bundle environment.
+List rules preserve source effect order. Flow rules assign result slots in step order.
 
-The loader resolves declarations before rule compilation. It rejects duplicate or incompatible definitions according to the configured policy.
+Compilation rejects unknown facts and verbs, unavailable predicate-function calls, invalid types, and invalid argument bindings.
+It also rejects references to future result slots and unsupported nested saga boundaries.
 
-The compiler builds an immutable environment with:
+The `ir` package validates the protobuf artifact before execution or storage.
+It applies structural limits, checks environment and contract hashes, and rejects unknown protobuf fields.
+`Checked.Marshal` produces deterministic bytes. `Checked.Digest` identifies the checked artifact.
 
-- Fact paths and types
-- Pure predicate functions
-- Verb argument and result contracts
-- Capability and resource declarations
+See [Checked IR](https://github.com/josephjohncox/effectus/blob/main/ir/README.md) for the checker contract.
 
-The environment digest identifies this declaration set.
+## Construct the startup generation
 
-## Compile source
+`runtime.CompileGeneration` resolves descriptors and builds an immutable executable generation.
+The production daemon supports HTTP executor descriptors.
+Generated gRPC is an inbound execution API, not an outbound executor descriptor.
 
-`compiler.CompileChecked` parses and checks each rule source.
+Startup configures the engine, PostgreSQL stores, fencing provider, and recovery worker.
+The daemon prepares enabled listeners before starting services.
+If preparation fails, it closes listeners already acquired and releases owned resources.
 
-For list rules, it preserves source effect order. For flow rules, it assigns result slots in step order.
-
-The compiler rejects:
-
-- Unknown fact paths
-- Unknown verbs or functions
-- Invalid predicate types
-- Missing or duplicate arguments
-- Incompatible literals and result bindings
-- References to future result slots
-- Unsupported nested saga boundaries
-
-## Check the artifact
-
-The `ir` package validates the protobuf artifact again before execution or storage.
-
-The checker applies structural limits and recalculates environment and contract hashes. It rejects unknown protobuf fields.
-
-`Checked.Marshal` produces deterministic bytes. `Checked.Digest` identifies the exact artifact content.
-
-Read [Checked IR](https://github.com/josephjohncox/effectus/blob/main/ir/README.md) for the full checker list.
-
-## Build a candidate generation
-
-The runtime combines the checked artifacts with the exact schemas, verb contracts, executors, and bundle manifest.
-
-It validates the complete candidate before publication. A failed candidate releases its resources and leaves the active generation unchanged.
-
-## Publish atomically
-
-Activation compares the candidate base generation with the current active generation.
-
-If they match, the runtime publishes the candidate as one immutable snapshot. If they do not match, activation returns a generation conflict.
-
-A schema or verb refresh recompiles existing source rules against the candidate declarations before publication.
+A failed startup never replaces another process's active generation.
+There is no candidate publication, generation-swap, refresh, or deployment-rollback phase in the current daemon.
 
 ## Admit work
 
 HTTP, Kafka, generated gRPC, and recovery use `runtime.Engine.Execute`.
+The engine records admission identity, normalized payload identity, ruleset, version, and pinned generation identity.
+It records selected checked plans before external execution.
 
-The engine records the admission identity, payload hash, ruleset, version, and generation. It then records the selected checked plans.
+A matching retry returns the existing execution identity.
+A conflicting payload for the same identity fails.
+New admissions use the active generation. Existing identities retain their historical generation, even after a process replacement.
 
-A duplicate identity with the same payload returns the existing execution. A duplicate identity with different facts fails.
+Accepted-only calls acknowledge durable admission, not successful business completion.
+Terminal waits and replay preserve typed failure and blocked states.
+See [the Go API guide](go-api.md) and [the gRPC capability matrix](grpc-capabilities.md).
 
 ## Execute and recover
 
-The workflow runtime records each dispatch intent before invocation. A worker completes a dispatch only while it holds the current lease token.
+The workflow runtime records each dispatch intent before invocation.
+Completion requires current lease authority and an unexpired deadline.
+Recovery keeps execution, plan, effect, and dispatch identities stable.
+It consults persisted state and resolves the execution's pinned historical artifact when needed.
 
-Recovery gets a new lease and uses the same execution, plan, effect, and dispatch identities.
+Completed results replay from durable state.
+Unknown destination outcomes block by default.
+A checked `SINK_GUARANTEED` step can retry a valid unknown outcome within its attempt limit, retaining the stable identity.
+`KEY_REQUIRED` alone is insufficient. Unauthorized or exhausted unknown outcomes remain blocked.
+Destination deduplication and fencing remain destination obligations, not guarantees created by metadata.
+See [unknown-outcome handling](DURABLE_SAGA_PROTOCOL.md#unknown-outcomes).
 
-Completed results replay from durable state. Unknown external outcomes enter a blocked state for operator action.
+## Replace and stop
 
-## Refresh and drain
+A changed rule, contract, or descriptor requires a new source bundle and process replacement.
+Keep historical artifacts and resolver support available for pending executions.
+A process can resolve historical generations without replacing its active admission generation.
 
-A successful refresh affects new admissions only. Existing executions keep their pinned generation.
+Shutdown first stops admission and cancels intake workers.
+HTTP requests receive their configured grace period. Expiry cancels request contexts and closes connections, but does not terminate Go callbacks.
+gRPC shutdown also waits for its handlers after forced cancellation.
 
-During shutdown, effectusd stops admission and drains accepted work. It then retires unused generation resources.
+The daemon joins handlers and workers before `Engine.Close` releases owned generations and resolver resources.
+It closes the borrowed database after the engine finishes.
+Non-cooperative callbacks can prolong this sequence beyond configured deadlines.
 
-Read [Runtime Lifecycle](LIFECYCLE.md) for the complete state machine.
+Read [Runtime Lifecycle](LIFECYCLE.md) for the full sequence.
 
-## Compatibility paths
+## Compatibility boundary
 
-Embedded Go applications can use legacy specifications and continuations. These values contain process-local behavior and cannot form checked artifacts.
-
-Production effectusd rejects legacy in-memory specifications and in-process plugins.
+The current embedded API also uses checked bundles and durable descriptors.
+It does not accept anonymous Go continuations as production source.
+Retained protobuf or Go compatibility declarations do not imply dynamic schema registration, extension-directory loading, or in-process plugins.

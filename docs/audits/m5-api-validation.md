@@ -2,10 +2,11 @@
 
 ## Status
 
-R01–R24 are independently accepted. R25–R27 remain unchecked until the M5 review.
-R28–R40 also remain open.
+**R01–R27 are implemented, validated, and independently accepted.**
+Combined review `a1eb959e-6999-425d-8f10-e9f7109c3374` accepted M5 with a formatting-snapshot note, reconciled below.
+R28–R40 remain open. This acceptance does not claim production readiness.
 
-## R25: Implemented, not yet independently accepted
+## R25: Implemented and independently accepted
 
 [The capability matrix](../grpc-capabilities.md) lists all three services and all 19 RPCs.
 Only `RulesetExecutionService.ExecuteRuleset` is implemented by the shipped server.
@@ -28,45 +29,81 @@ Validation passed:
 - Primary LSP checks on the new test and generated bindings.
 
 Results: `out/remediation/m5-r25-results.json` and the corresponding logs.
-No independent R25 acceptance is claimed yet.
+The combined M5 review independently accepted the capability contract and its source-backed tests.
 
-## R26: Partial implementation
+## R26: Implemented and independently accepted
 
 The first boundary regressions reproduced constructor filesystem mutation, nil-input panics, and canceled registrations that changed input values.
 The red log is `out/remediation/m5-r26-boundary-red.log`.
+The initial correction was partial when commit `673d6c9` was published.
 
-The partial correction:
+The completed correction:
 
-- Rejects an empty workspace and resolves the root to an absolute path.
-- Reads configuration without creating directories or writing a default configuration.
-- Rejects nil or uninitialized integrations, nil contexts, nil schemas, and already-canceled contexts before operations.
-- Rechecks cancellation after registration or generation lock acquisition.
-- Rejects unsafe schema names and invalid protobuf field identifiers before filesystem writes.
+- Keeps constructor reads free of filesystem writes and rejects invalid receivers, contexts, schemas, names, and scalar types.
+- Owns registered values and returns deep snapshots, including nested metadata and numeric types.
+- Serializes registration, generation, validation, and count reads within one integration.
+- Honors one configured v2 module path and configured v1/v2 generation output paths.
+- Propagates command failures and cancellation. Failed validation no longer reports success.
+- Assigns new field numbers deterministically and never overwrites different existing protobuf definitions.
+- Uses confined filesystem operations and atomic no-overwrite installation.
+- Documents the trusted-workspace, single-owner, compatibility-only contract in [the Buf guide](../buf-compatibility.md).
 
-Repeated schema race tests pass with `-race -count=3`.
-Results: `out/remediation/m5-r26-boundary-result.json` and its race log.
-Primary LSP checks passed. The session diagnostics report no blocking errors across the diagnosed files.
-Auxiliary coverage remains incomplete where previously reported.
+The wrapper remains compatibility support without a new removal commitment.
+An initial formal Go deprecation marker failed the removal-deadline guard.
+That newly added marker was replaced with usage guidance. No guard or inventory budget changed.
 
-Required remaining work:
+Validation passed:
 
-1. Own registration inputs and return deep copies from getters and lists.
-2. Coordinate registration, generation, validation, and registry-count reads.
-3. Honor configured generation outputs instead of the hard-coded legacy directory.
-4. Propagate validation cancellation and command failure correctly.
-5. Add nil getter/list behavior and concurrent-access regressions.
-6. Resolve unsafe legacy generation behavior before describing the wrapper as safe.
-   Map iteration currently assigns field numbers nondeterministically and overwrites existing schema files.
-   Preserve existing wire identities or reject unsafe updates with actionable migration guidance.
-7. Document the compatibility-only role and limits of this exported wrapper.
+- Schema race tests with `-count=3`: `m5-r26-hardening-race.log`.
+- Full repository race tests: `m5-r26-full-race.log`.
+- `go vet ./schema`: `m5-r26-vet.log`.
+- Final repository guardrails: `m5-r26-guardrails-final.log`.
+- Primary LSP checks for the changed Go files.
 
-No complete R26 hardening or deprecation decision is claimed.
-`schema/buf_integration.go` still contains the unfinished behavior listed above.
+These logs are under `out/remediation/`.
+`m5-r26-final-results.json` records the full suite and the initial guard failure.
+`m5-r26-guardrails-final-result.json` records the corrected guard success.
+
+Independent review `d38abdd6-122c-4ba0-a211-dcbd78a7bbe6` returned **ACCEPT for R26 only**.
+The reviewer read source, regression tests, and parent-provided command evidence. It did not rerun commands.
+The exact reviewed source hashes and diff are in `m5-r26-review-manifest.json` and `m5-r26-review.patch`.
+That first review accepted R26 only. The later combined review accepted all of M5, not production readiness.
 
 ## R27 and review
 
-The supported Go package guides, ownership contracts, and export audit remain unfinished.
-Do not mark M5 accepted until these requirements and an independent review pass.
+[The Go API guide](../go-api.md) now maps all 16 inventoried package paths.
+It separates recommended entry points, low-level infrastructure, generated declarations, and compatibility exports.
+It covers ownership, concurrency, contexts, shutdown, typed failures, accepted-only execution, and historical replay.
+
+The inventory audit counted 1,768 declarations, including 1,248 generated declarations.
+These are declaration counts, not feature counts. No public declaration or budget changed.
+Package comments now explain runtime and schema ownership boundaries.
+Embedded entry points and engine construction have explicit lifetime and default-storage comments.
+
+The complete repository race suite and guardrails passed after the R27 documentation changes.
+Primary LSP checks passed. STE lint completed with advisory style counts, not a correctness verdict.
+Results: `out/remediation/m5-api-results.json` and its logs.
+All 12 files in the accepted R26 manifest remained byte-identical.
+
+The combined M5 review independently accepted R27 with R25 and the previously accepted R26.
+Its report is preserved at `out/remediation/m5-api-accepted.md`.
+The reviewer checked source contracts and parent-provided test evidence. It did not rerun commands.
+
+## Exact acceptance snapshot
+
+The original manifest is `out/remediation/m5-api-review-manifest.json`.
+During review, readbacks showed four added blank lines in `embedded/embedded.go`.
+The reviewer found no semantic difference and requested final hash reconciliation.
+
+The parent removed only those four blank lines in memory and reproduced the original frozen SHA256 exactly.
+The file grew from 3,644 to 3,648 bytes. All other 29 frozen file hashes stayed unchanged.
+The reconciled snapshot is `out/remediation/m5-api-review-manifest-format-update.json`.
+The exact diff and verification are in `m5-api-format-only.patch` and `m5-api-format-drift-evidence.json` under `out/remediation/`.
+No source edit or validation weakening was needed to reconcile the snapshot.
+A live guidance attempt arrived after the reviewer finished. Its final verdict already included the same snapshot note.
+
+These manifests preserve the accepted application and guide snapshots.
+Later edits to this validation report and the checklist record acceptance. They are not application changes.
 
 ## Tool evidence
 

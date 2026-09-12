@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -13,11 +12,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// BufIntegration manages protobuf schemas and code generation using Buf
+// BufIntegration is a process-local compatibility wrapper for trusted Buf workspaces.
+// Its methods serialize mutations and return owned schema snapshots.
+// New applications should use checked-in protobuf definitions and explicit Buf CLI commands.
+// This wrapper is not the Engine's schema registry or a general JSON Schema compiler.
 type BufIntegration struct {
 	workspaceRoot string
 	protoDir      string
-	genDir        string
 
 	// Schema registries
 	verbRegistry *VerbSchemaRegistry
@@ -184,12 +185,10 @@ func NewBufIntegration(workspaceRoot string) (*BufIntegration, error) {
 	}
 	workspaceRoot = root
 	protoDir := filepath.Join(workspaceRoot, "proto")
-	genDir := filepath.Join(workspaceRoot, "effectus-go", "gen")
 
 	integration := &BufIntegration{
 		workspaceRoot: workspaceRoot,
 		protoDir:      protoDir,
-		genDir:        genDir,
 		verbRegistry:  &VerbSchemaRegistry{schemas: make(map[string]*VerbSchema)},
 		factRegistry:  &FactSchemaRegistry{schemas: make(map[string]*FactSchema)},
 	}
@@ -209,15 +208,8 @@ func (b *BufIntegration) loadBufConfig() error {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Create default configuration
-			b.bufConfig = &BufConfig{
-				Version:  "v1",
-				Name:     "buf.build/effectus/effectus",
-				Deps:     []string{"buf.build/googleapis/googleapis", "buf.build/protocolbuffers/wellknowntypes"},
-				Breaking: BufBreakingConfig{Use: []string{"FILE"}},
-				Lint:     BufLintConfig{Use: []string{"DEFAULT"}, Except: []string{"UNARY_RPC"}, AllowCommentIgnores: true},
-				Build:    BufBuildConfig{Excludes: []string{"examples/", "tests/"}},
-			}
+			// Keep the legacy proto/ location without inventing a disk configuration.
+			b.bufConfig = &BufConfig{Version: "v1"}
 			return nil
 		}
 		return fmt.Errorf("failed to read buf config: %w", err)
@@ -226,11 +218,38 @@ func (b *BufIntegration) loadBufConfig() error {
 	if err := yaml.Unmarshal(data, &b.bufConfig); err != nil {
 		return fmt.Errorf("failed to parse buf config: %w", err)
 	}
-
+	if b.bufConfig == nil || (b.bufConfig.Version != "v1" && b.bufConfig.Version != "v2") {
+		return fmt.Errorf("Buf configuration version must be v1 or v2")
+	}
+	if b.bufConfig.Version == "v2" {
+		var config struct {
+			Modules []struct {
+				Path string `yaml:"path"`
+			} `yaml:"modules"`
+		}
+		if err := yaml.Unmarshal(data, &config); err != nil {
+			return err
+		}
+		if len(config.Modules) > 1 {
+			return fmt.Errorf("legacy BufIntegration requires one module. Use the Buf CLI for multiple modules")
+		}
+		if len(config.Modules) == 1 {
+			path := config.Modules[0].Path
+			if path == "" || filepath.IsAbs(path) {
+				return fmt.Errorf("Buf module path must be relative to the workspace")
+			}
+			path = filepath.Clean(path)
+			if path == ".." || strings.HasPrefix(path, ".."+string(filepath.Separator)) {
+				return fmt.Errorf("Buf module path must remain within the workspace")
+			}
+			b.protoDir = filepath.Join(b.workspaceRoot, path)
+		}
+	}
 	return nil
 }
 
-// RegisterVerbSchema registers a new verb interface schema
+// RegisterVerbSchema copies metadata and installs a new scalar protobuf definition.
+// Existing definitions must be identical. Caller inputs must remain stable during the call.
 func (b *BufIntegration) RegisterVerbSchema(ctx context.Context, schema *VerbSchema) error {
 	if err := b.checkContext(ctx); err != nil {
 		return err
@@ -238,9 +257,16 @@ func (b *BufIntegration) RegisterVerbSchema(ctx context.Context, schema *VerbSch
 	if schema == nil {
 		return fmt.Errorf("verb schema is required")
 	}
+	owned, err := cloneBufVerb(schema)
+	if err != nil {
+		return fmt.Errorf("copy verb schema: %w", err)
+	}
+	schema = owned
 	if err := checkBufSchemaNames(schema.Name, schema.InputSchema, schema.OutputSchema); err != nil {
 		return err
 	}
+	b.generationMutex.Lock()
+	defer b.generationMutex.Unlock()
 	b.verbRegistry.mutex.Lock()
 	defer b.verbRegistry.mutex.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -250,12 +276,13 @@ func (b *BufIntegration) RegisterVerbSchema(ctx context.Context, schema *VerbSch
 	// Validate schema compatibility
 	if existing, exists := b.verbRegistry.schemas[schema.Name]; exists {
 		if result := b.validateVerbSchemaCompatibility(existing, schema); !result.Valid {
-			return fmt.Errorf("schema compatibility validation failed: %v", result.Errors)
+			return fmt.Errorf("schema compatibility validation failed: %v", result.BreakingChanges)
 		}
+		schema.CreatedAt = existing.CreatedAt
 	}
 
 	// Generate protobuf definition
-	if err := b.generateVerbProto(schema); err != nil {
+	if err := b.generateVerbProto(ctx, schema); err != nil {
 		return fmt.Errorf("failed to generate verb proto: %w", err)
 	}
 
@@ -270,7 +297,8 @@ func (b *BufIntegration) RegisterVerbSchema(ctx context.Context, schema *VerbSch
 	return nil
 }
 
-// RegisterFactSchema registers a new fact schema
+// RegisterFactSchema copies metadata and installs a new scalar protobuf definition.
+// Existing definitions must be identical. It does not enforce retention or privacy metadata.
 func (b *BufIntegration) RegisterFactSchema(ctx context.Context, schema *FactSchema) error {
 	if err := b.checkContext(ctx); err != nil {
 		return err
@@ -278,9 +306,16 @@ func (b *BufIntegration) RegisterFactSchema(ctx context.Context, schema *FactSch
 	if schema == nil {
 		return fmt.Errorf("fact schema is required")
 	}
+	owned, err := cloneBufFact(schema)
+	if err != nil {
+		return fmt.Errorf("copy fact schema: %w", err)
+	}
+	schema = owned
 	if err := checkBufSchemaNames(schema.Name, schema.Schema); err != nil {
 		return err
 	}
+	b.generationMutex.Lock()
+	defer b.generationMutex.Unlock()
 	b.factRegistry.mutex.Lock()
 	defer b.factRegistry.mutex.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -290,12 +325,13 @@ func (b *BufIntegration) RegisterFactSchema(ctx context.Context, schema *FactSch
 	// Validate schema compatibility
 	if existing, exists := b.factRegistry.schemas[schema.Name]; exists {
 		if result := b.validateFactSchemaCompatibility(existing, schema); !result.Valid {
-			return fmt.Errorf("schema compatibility validation failed: %v", result.Errors)
+			return fmt.Errorf("schema compatibility validation failed: %v", result.BreakingChanges)
 		}
+		schema.CreatedAt = existing.CreatedAt
 	}
 
 	// Generate protobuf definition
-	if err := b.generateFactProto(schema); err != nil {
+	if err := b.generateFactProto(ctx, schema); err != nil {
 		return fmt.Errorf("failed to generate fact proto: %w", err)
 	}
 
@@ -310,168 +346,94 @@ func (b *BufIntegration) RegisterFactSchema(ctx context.Context, schema *FactSch
 	return nil
 }
 
-// GenerateCode generates code for all registered schemas
+// GenerateCode runs the workspace's configured Buf plugins. GeneratedFiles lists
+// Go protobuf files present in configured output directories, including unchanged files.
+// The workspace and plugins must be trusted. One integration owns each workspace.
 func (b *BufIntegration) GenerateCode(ctx context.Context) (*CodeGenerationResult, error) {
-	if err := b.checkContext(ctx); err != nil {
-		return nil, err
-	}
-	b.generationMutex.Lock()
-	defer b.generationMutex.Unlock()
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	startTime := time.Now()
-	result := &CodeGenerationResult{
-		Success:        true,
-		GeneratedFiles: []string{},
-		Errors:         []string{},
-		Warnings:       []string{},
-		Metadata:       make(map[string]interface{}),
-	}
-
-	// Run buf generate
-	cmd := exec.CommandContext(ctx, "buf", "generate")
-	cmd.Dir = b.workspaceRoot
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		result.Success = false
-		result.Errors = append(result.Errors, fmt.Sprintf("buf generate failed: %v", err))
-		result.Errors = append(result.Errors, string(output))
-		result.Duration = time.Since(startTime)
-		return result, err
-	}
-
-	// Parse generated files
-	generatedFiles, err := b.findGeneratedFiles()
-	if err != nil {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("failed to enumerate generated files: %v", err))
-	} else {
-		result.GeneratedFiles = generatedFiles
-	}
-
-	// Update generation timestamp
-	b.lastGeneration = time.Now()
-	result.Duration = time.Since(startTime)
-	result.Metadata["generation_timestamp"] = b.lastGeneration
-	result.Metadata["schema_count"] = len(b.verbRegistry.schemas) + len(b.factRegistry.schemas)
-
-	return result, nil
+	return b.generateCode(ctx)
 }
 
-// ValidateSchemas validates all registered schemas for compatibility
+// ValidateSchemas runs Buf breaking against local main, then Buf lint.
+// Command failures return a non-nil error and an invalid result. Cancellation
+// stops the sequence. This is not a full JSON Schema compatibility check.
 func (b *BufIntegration) ValidateSchemas(ctx context.Context) (*SchemaValidationResult, error) {
-	if err := b.checkContext(ctx); err != nil {
-		return nil, err
-	}
-	result := &SchemaValidationResult{
-		Valid:           true,
-		Errors:          []string{},
-		Warnings:        []string{},
-		BreakingChanges: []string{},
-		Suggestions:     []string{},
-	}
-
-	// Run buf breaking
-	cmd := exec.CommandContext(ctx, "buf", "breaking", "--against", ".git#branch=main")
-	cmd.Dir = b.workspaceRoot
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// Breaking changes detected
-		result.BreakingChanges = append(result.BreakingChanges, strings.Split(string(output), "\n")...)
-		result.Suggestions = append(result.Suggestions, "Consider bumping the major version for breaking changes")
-	}
-
-	// Run buf lint
-	cmd = exec.CommandContext(ctx, "buf", "lint")
-	cmd.Dir = b.workspaceRoot
-
-	output, err = cmd.CombinedOutput()
-	if err != nil {
-		result.Valid = false
-		result.Errors = append(result.Errors, fmt.Sprintf("buf lint failed: %v", err))
-		result.Errors = append(result.Errors, strings.Split(string(output), "\n")...)
-	}
-
-	return result, nil
+	return b.validateSchemas(ctx)
 }
 
-// GetVerbSchema retrieves a verb schema by name
+// GetVerbSchema returns an owned snapshot. Nil and zero integrations return false.
 func (b *BufIntegration) GetVerbSchema(name string) (*VerbSchema, bool) {
+	if b == nil || b.verbRegistry == nil {
+		return nil, false
+	}
 	b.verbRegistry.mutex.RLock()
 	defer b.verbRegistry.mutex.RUnlock()
-
 	schema, exists := b.verbRegistry.schemas[name]
-	return schema, exists
+	if !exists {
+		return nil, false
+	}
+	copy, err := cloneBufVerb(schema)
+	return copy, err == nil
 }
 
-// GetFactSchema retrieves a fact schema by name
+// GetFactSchema returns an owned snapshot. Nil and zero integrations return false.
 func (b *BufIntegration) GetFactSchema(name string) (*FactSchema, bool) {
+	if b == nil || b.factRegistry == nil {
+		return nil, false
+	}
 	b.factRegistry.mutex.RLock()
 	defer b.factRegistry.mutex.RUnlock()
-
 	schema, exists := b.factRegistry.schemas[name]
-	return schema, exists
+	if !exists {
+		return nil, false
+	}
+	copy, err := cloneBufFact(schema)
+	return copy, err == nil
 }
 
-// ListVerbSchemas returns all registered verb schemas
+// ListVerbSchemas returns owned snapshots. Nil and zero integrations return an empty map.
 func (b *BufIntegration) ListVerbSchemas() map[string]*VerbSchema {
+	result := make(map[string]*VerbSchema)
+	if b == nil || b.verbRegistry == nil {
+		return result
+	}
 	b.verbRegistry.mutex.RLock()
 	defer b.verbRegistry.mutex.RUnlock()
-
-	result := make(map[string]*VerbSchema)
 	for name, schema := range b.verbRegistry.schemas {
-		result[name] = schema
+		copy, err := cloneBufVerb(schema)
+		if err == nil {
+			result[name] = copy
+		}
 	}
 	return result
 }
 
-// ListFactSchemas returns all registered fact schemas
+// ListFactSchemas returns owned snapshots. Nil and zero integrations return an empty map.
 func (b *BufIntegration) ListFactSchemas() map[string]*FactSchema {
+	result := make(map[string]*FactSchema)
+	if b == nil || b.factRegistry == nil {
+		return result
+	}
 	b.factRegistry.mutex.RLock()
 	defer b.factRegistry.mutex.RUnlock()
-
-	result := make(map[string]*FactSchema)
 	for name, schema := range b.factRegistry.schemas {
-		result[name] = schema
+		copy, err := cloneBufFact(schema)
+		if err == nil {
+			result[name] = copy
+		}
 	}
 	return result
 }
 
 // generateVerbProto generates protobuf definition for a verb schema
-func (b *BufIntegration) generateVerbProto(schema *VerbSchema) error {
+func (b *BufIntegration) generateVerbProto(ctx context.Context, schema *VerbSchema) error {
 	protoPath := filepath.Join(b.protoDir, "effectus", "v1", "verbs", fmt.Sprintf("%s.proto", schema.Name))
-
-	if err := os.MkdirAll(filepath.Dir(protoPath), 0755); err != nil {
-		return fmt.Errorf("failed to create verb proto directory: %w", err)
-	}
-
-	protoContent := b.generateVerbProtoContent(schema)
-
-	if err := os.WriteFile(protoPath, []byte(protoContent), 0644); err != nil {
-		return fmt.Errorf("failed to write verb proto file: %w", err)
-	}
-
-	return nil
+	return b.installBufProto(ctx, protoPath, b.generateVerbProtoContent(schema))
 }
 
 // generateFactProto generates protobuf definition for a fact schema
-func (b *BufIntegration) generateFactProto(schema *FactSchema) error {
+func (b *BufIntegration) generateFactProto(ctx context.Context, schema *FactSchema) error {
 	protoPath := filepath.Join(b.protoDir, "effectus", "v1", "facts", fmt.Sprintf("%s.proto", schema.Name))
-
-	if err := os.MkdirAll(filepath.Dir(protoPath), 0755); err != nil {
-		return fmt.Errorf("failed to create fact proto directory: %w", err)
-	}
-
-	protoContent := b.generateFactProtoContent(schema)
-
-	if err := os.WriteFile(protoPath, []byte(protoContent), 0644); err != nil {
-		return fmt.Errorf("failed to write fact proto file: %w", err)
-	}
-
-	return nil
+	return b.installBufProto(ctx, protoPath, b.generateFactProtoContent(schema))
 }
 
 // generateVerbProtoContent generates protobuf content for a verb schema
@@ -495,7 +457,8 @@ option go_package = "github.com/josephjohncox/effectus/gen/effectus/v1/verbs;ver
 	builder.WriteString(fmt.Sprintf("message %sInput {\n", toCamelCase(schema.Name)))
 
 	fieldNum := 1
-	for fieldName, fieldType := range schema.InputSchema {
+	for _, fieldName := range sortedBufFieldNames(schema.InputSchema) {
+		fieldType := schema.InputSchema[fieldName]
 		builder.WriteString(fmt.Sprintf("  %s %s = %d;\n",
 			convertToProtoType(fieldType), fieldName, fieldNum))
 		fieldNum++
@@ -509,7 +472,8 @@ option go_package = "github.com/josephjohncox/effectus/gen/effectus/v1/verbs;ver
 	builder.WriteString(fmt.Sprintf("message %sOutput {\n", toCamelCase(schema.Name)))
 
 	fieldNum = 1
-	for fieldName, fieldType := range schema.OutputSchema {
+	for _, fieldName := range sortedBufFieldNames(schema.OutputSchema) {
+		fieldType := schema.OutputSchema[fieldName]
 		builder.WriteString(fmt.Sprintf("  %s %s = %d;\n",
 			convertToProtoType(fieldType), fieldName, fieldNum))
 		fieldNum++
@@ -549,7 +513,8 @@ option go_package = "github.com/josephjohncox/effectus/gen/effectus/v1/facts;fac
 	builder.WriteString(fmt.Sprintf("message %s {\n", toCamelCase(schema.Name)))
 
 	fieldNum := 1
-	for fieldName, fieldType := range schema.Schema {
+	for _, fieldName := range sortedBufFieldNames(schema.Schema) {
+		fieldType := schema.Schema[fieldName]
 		builder.WriteString(fmt.Sprintf("  %s %s = %d;\n",
 			convertToProtoType(fieldType), fieldName, fieldNum))
 		fieldNum++
@@ -632,29 +597,6 @@ func (b *BufIntegration) validateFactSchemaCompatibility(existing, new *FactSche
 	}
 
 	return result
-}
-
-// findGeneratedFiles finds all files generated by buf generate
-func (b *BufIntegration) findGeneratedFiles() ([]string, error) {
-	var files []string
-
-	err := filepath.Walk(b.genDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if !info.IsDir() && (strings.HasSuffix(path, ".pb.go") || strings.HasSuffix(path, "_grpc.pb.go")) {
-			relPath, err := filepath.Rel(b.workspaceRoot, path)
-			if err != nil {
-				return err
-			}
-			files = append(files, relPath)
-		}
-
-		return nil
-	})
-
-	return files, err
 }
 
 // Helper functions

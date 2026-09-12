@@ -103,6 +103,10 @@ type engineExecution struct {
 	releaseGeneration func()
 }
 
+// NewEngine takes ownership of an open generation on success.
+// It starts with an in-memory ledger and does not start recovery workers.
+// Configure persistent storage before execution. Close the engine after its callers stop.
+// On failure, the caller retains generation ownership.
 func NewEngine(generation *Generation) (*Engine, error) {
 	if generation == nil || generation.Checked() == nil || generation.Closed() {
 		return nil, fmt.Errorf("open immutable generation is required")
@@ -212,10 +216,19 @@ func (engine *Engine) Execute(ctx context.Context, request ExecuteRequest) (resu
 		defer execution.releaseGeneration()
 	}
 	if err != nil {
-		if execution != nil && errors.Is(err, ErrBlockedDependency) && request.WaitMode == WaitTerminal && !schema.IsTerminalExecutionState(execution.record.State) {
+		canceled := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+		block := !canceled && errors.Is(err, ErrBlockedDependency)
+		releaseLease := canceled && request.RecoveryLease != nil
+		if execution != nil && (block || releaseLease) && request.WaitMode == WaitTerminal && !schema.IsTerminalExecutionState(execution.record.State) {
+			state := execution.record.State
+			if block {
+				state = schema.ExecutionBlockedDependency
+			}
+			// Cancellation is not evidence of a missing artifact. Release only
+			// the supplied lease, through its existing unexpired-owner CAS.
 			persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
-			if persist := engine.persistExecutionState(persistCtx, execution, schema.ExecutionBlockedDependency, err.Error(), request.RecoveryLease); persist != nil {
+			if persist := engine.persistExecutionState(persistCtx, execution, state, err.Error(), request.RecoveryLease); persist != nil {
 				return engineResult(execution.record), errors.Join(err, fmt.Errorf("%w: %w", ErrDurableDisposition, persist))
 			}
 			return terminalExecutionResult(execution.record, request.WaitMode, err)
@@ -261,12 +274,16 @@ func (engine *Engine) Execute(ctx context.Context, request ExecuteRequest) (resu
 	ctx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer persistCancel()
 	if err != nil {
-		state, disposition := engine.executionFailureState(ctx, execution)
-		if disposition != nil {
-			state = execution.record.State
+		state := schema.ExecutionBlockedDependency
+		var disposition error
+		if !errors.Is(err, ErrBlockedDependency) {
+			state, disposition = engine.executionFailureState(ctx, execution)
+			if disposition != nil {
+				state = execution.record.State
+			}
 		}
 		if persist := engine.persistExecutionState(ctx, execution, state, err.Error(), request.RecoveryLease); persist != nil {
-			return engineResult(execution.record), errors.Join(err, disposition, fmt.Errorf("%w: %v", ErrDurableDisposition, persist))
+			return engineResult(execution.record), errors.Join(err, disposition, fmt.Errorf("%w: %w", ErrDurableDisposition, persist))
 		}
 		return terminalExecutionResult(execution.record, request.WaitMode, err)
 	}
@@ -406,6 +423,9 @@ func (engine *Engine) blockDependency(_ context.Context, record schema.Execution
 	// Execute decides disposition using the caller's authority. A lease read
 	// from a record is not permission to impersonate its owner.
 	x := &engineExecution{record: record, facts: facts, selected: selected}
+	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+		return x, cause
+	}
 	return x, fmt.Errorf("%w: %v", ErrBlockedDependency, cause)
 }
 func (engine *Engine) persistExecutionState(ctx context.Context, x *engineExecution, state schema.ExecutionState, message string, lease *schema.ExecutionLease) error {

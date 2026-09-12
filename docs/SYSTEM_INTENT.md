@@ -1,21 +1,31 @@
 # System Intent
 
-Effectus exists to make rule execution deterministic, explainable, and safe under change. The engine turns **facts** (typed, versioned data from multiple sources) into **effects** (verbs that do real work) using rules and flows that are validated before they ever run.
+Effectus turns typed facts into checked plans and durable dispatch records.
+The current execution contract is defined by [Runtime Guarantees](GUARANTEES.md) and [Runtime Lifecycle](LIFECYCLE.md).
 
-## Core Intent
+## Core intent
 
-- **Deterministic outcomes**: the same facts and rules produce the same effects. Time, randomness, and IO are explicit and traceable.
-- **Typed contracts everywhere**: fact schemas and verb interfaces are the source of truth. Runtime enforcement is optional but available for strict environments.
-- **Compile before run**: rules and flows are parsed, type-checked, and linted before deployment. Fail fast, not in production.
-- **Explicit capabilities**: every verb declares required capabilities and resources to enable safe planning, concurrency rules, and security checks.
-- **Hot reload without chaos**: new rulesets are compiled and validated before swapping into production, with safe rollback on failure.
-- **Composable bundles**: rules, schemas, and verbs are packaged, versioned, and resolved with checksums and compatibility constraints.
+- **Deterministic planning:** fixed facts and a fixed checked generation determine plan selection and step order. External operations need not be deterministic.
+- **Checked contracts:** startup compilation and validation reject unsupported expressions, unknown declarations, and incompatible argument bindings before admission.
+- **Immutable executable identity:** one startup generation serves new admissions. A rule or descriptor change requires a new source bundle and process replacement.
+- **Pinned recovery:** unfinished executions keep their recorded artifact identity. Replacement processes resolve historical artifacts rather than reinterpret work against new rules.
+- **Durable intent:** the runtime records admission and dispatch intent before invoking an external operation.
+- **Explicit outcomes:** admission, completion, failure, and blocked states remain distinct. An unknown external outcome does not prove that retry or compensation is safe.
 
-## What “Correct” Means
+There is no hot-reload, candidate-activation, or automatic deployment-rollback API in the daemon.
+Operators can deploy a previously retained bundle through process replacement. They must still preserve artifacts required by existing executions.
 
-- A rule cannot reference unknown facts or call verbs with incompatible types.
-- A mutating verb must declare its inverse and concurrency semantics.
-- Expressions cannot rely on unsafe or nondeterministic operations without an explicit policy.
-- Facts can come from multiple sources, but their merge rules must be explicit and repeatable.
+## Contract boundaries
 
-If a change makes any of the above ambiguous, it is a bug by definition.
+Facts and verb contracts define supported value types.
+Capability and resource declarations describe access requirements. They do not grant destination permissions or prove that operations commute.
+Inverse declarations describe compensation. Compensation is another external operation, not an atomic reversal of distributed state.
+
+A destination must enforce business idempotency and any required fencing.
+Effectus cannot guarantee exactly-once destination effects through transport metadata alone.
+
+## Resource lifetime
+
+Shutdown stops admission and cancels intake workers.
+The daemon drains and joins handlers and workers before closing the engine, then closes the database.
+Context cancellation is cooperative. A callback that ignores cancellation can prolong shutdown beyond a drain deadline.

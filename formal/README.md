@@ -1,6 +1,6 @@
 # Executable State Models
 
-These TLA+ models cover runtime state machines. They do not prove external verb behavior.
+These finite TLA+ models check selected state-machine invariants. They do not prove the runtime implementation or external verb behavior.
 
 ## Models
 
@@ -11,9 +11,17 @@ The saga model permits lease expiry and recovery. A replacement worker receives 
 
 The generation model records one generation for each started request. A later publication does not change that request generation. A candidate can publish only when its captured base is still active.
 
+This publication model is abstract. The daemon does not provide hot reload. See the [implemented lifecycle](../docs/LIFECYCLE.md).
+
+Both configurations disable deadlock checks and specify no temporal liveness property. A successful run checks only their finite domains and configured invariants.
+
 ## Run the models
 
-Install the TLA+ tools and run:
+CI uses the [stable v1.7.4 release](https://github.com/tlaplus/tlaplus/releases/tag/v1.7.4).
+It verifies SHA256 `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88` before installation.
+The upstream `v1.8.0` prerelease changes with master commits. Do not replace a failed checksum with its latest download hash.
+
+Use a `tlc` launcher for the verified stable jar. Run from the repository root:
 
 ```bash
 tlc formal/Saga.tla -config formal/Saga.cfg

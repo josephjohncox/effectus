@@ -1,0 +1,9 @@
+flow "ReviewAndRecord" priority 10 {
+  when {
+    order.total > 1000 || order.risk_score > 75
+  }
+  steps {
+    ticket = RequestManualReview(orderId: order.id, reason: "value_or_risk")
+    RecordReview(orderId: order.id, ticket: $ticket)
+  }
+}

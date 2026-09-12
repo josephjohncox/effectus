@@ -52,6 +52,14 @@ node_modules/
 *.vsix
 coverage.html
 
+# Python gRPC example tools and generated bindings (beside their proto package).
+.tools/grpc-example-venv/
+effectus/v1/*_pb2.py
+effectus/v1/*_pb2_grpc.py
+effectus/v1/*_pb2.pyi
+effectus/v1/__pycache__/
+examples/grpc_execution/__pycache__/
+
 # Buf Generated
 **/clients/
 .gocache/
