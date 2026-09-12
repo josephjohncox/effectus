@@ -4,10 +4,8 @@ eslint.config.*
 .github/**
 .vscode/**
 .vscode-test/**
-out/test/**
+out/**
+test/**
 **/*.map
-go.mod
-node_modules/.cache/**
+node_modules/**
 package-lock.json
-src/**
-tsconfig*.json

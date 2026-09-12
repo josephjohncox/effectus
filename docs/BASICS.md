@@ -1,7 +1,7 @@
 # Learn Effectus with Two Executable Rules
 
 This tutorial starts with facts and finishes with replay and compiler diagnostics.
-It requires Go 1.25 or later and the repository checkout.
+It requires Go 1.26 or later and the repository checkout. Use the patched toolchain pinned in `go.mod`.
 Run commands from the repository root. No database, Docker, Python, or network service is needed.
 
 The tutorial uses process-local executor implementations identified by explicit embedded descriptors.
