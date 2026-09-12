@@ -270,15 +270,20 @@ External gate status follows. Local R39/R40 acceptance alone cannot close these 
 The user later authorized an isolated standalone Compose stack and a retention-safe harness.
 Its [first-run/restart checks and evidence reconciliation passed independent acceptance](standalone-compose-validation.md#independent-acceptance).
 The separately authorized [Kafka-to-business-commit fixture also passed independent acceptance](kafka-business-commit-validation.md#independent-acceptance).
-The other three gates remain open.
+The user later authorized publishing the reviewed source to a validation branch and running CI.
+That [remote CI run passed every job and step](remote-ci-validation.md).
+The remaining two gates cannot run in this environment.
 
 - [x] Standalone Compose first-run/restart: independently accepted for the bounded, retention-safe local fixture scope.
 - [x] Combined Kafka → daemon → PostgreSQL → destination business commit: independently accepted for the bounded local lost-response, deduplication, redelivery, and restart scope.
-- [ ] Remote CI on the exact final source: requires authorization to publish the final source and trigger or observe that CI run.
-- [ ] Deployed Kubernetes, registry and production recovery paths: require authorized environments, credentials, deployment and recovery procedures.
-- [ ] Production capacity: requires representative workloads, resources, destinations and a separate measurement plan.
+- [x] Remote CI on the exact final source: [all 15 jobs and 133 steps passed](remote-ci-validation.md) on the published validation branch. Two dependency advisories required fixes first.
+- [ ] Deployed Kubernetes, registry and production recovery paths: **not available in this environment.** No cluster or registry exists to deploy to. Charts pass lint, render, and schema checks only.
+- [ ] Production capacity: **not available in this environment.** It requires representative workloads, resources, destinations and a separate measurement plan.
 
-All five earlier PostgreSQL containers and the earlier Kafka container remain retained and unchanged.
-The new standalone stack also remains retained, including its PostgreSQL volume and successful migration container.
-Any cleanup requires explicit authorization and fresh exact-ownership checks.
+The four earlier clock and Kafka fixtures remain retained and unchanged.
+One earlier PostgreSQL fixture and its anonymous volume were lost during the later remote-CI work.
+That loss is unrecoverable, its cause is unproven, and it is recorded in the remediation evidence.
+A parent claim that all sixteen containers stayed unchanged was false and is retracted.
+The standalone Compose and Kafka stacks also remain retained, including their volumes and successful migration containers.
+Every surviving container is stopped after a host reboot and matches its post-reboot observation.
 No final-source coverage, benchmark, Kafka deployment, model rerun, or production-readiness claim follows from the R39 checks.

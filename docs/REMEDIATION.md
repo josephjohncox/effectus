@@ -158,7 +158,8 @@ Independent re-review accepted [the final R39 diff and R40 finding reconciliatio
 The unavailable external gates remain unchecked.
 The separately authorized [standalone Compose follow-up](audits/standalone-compose-validation.md#independent-acceptance) passed independent acceptance for its bounded local scope.
 The separately authorized [Kafka-to-business-commit follow-up](audits/kafka-business-commit-validation.md#independent-acceptance) also passed independent acceptance for its bounded local scope.
-The other three external gates remain open.
+The reviewed source was then published to a validation branch, where [remote CI passed all 15 jobs](audits/remote-ci-validation.md) after two dependency advisory fixes.
+The two remaining external gates need a cluster, registry, and capacity environment that this setup does not have.
 
 - [x] **R36 / F30:** Measure meaningful coverage and close remaining regression gaps.
   Acceptance: report exact commands, exclusions, cross-package coverage limitations, changed-behavior tests, race results, and remaining blind spots.

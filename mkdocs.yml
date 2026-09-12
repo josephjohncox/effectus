@@ -75,6 +75,7 @@ nav:
       - Aggregate review and reconciliation: audits/m7-final-review.md
       - Standalone Compose validation: audits/standalone-compose-validation.md
       - Kafka commit validation: audits/kafka-business-commit-validation.md
+      - Remote CI validation: audits/remote-ci-validation.md
 
 theme:
   name: material

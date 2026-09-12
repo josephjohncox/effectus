@@ -2,7 +2,7 @@
 
 ## Current status
 
-**R01–R40 independently accepted for local remediation scope. External gates remain open.**
+**R01–R40 independently accepted for local remediation scope. Remote CI passed; deployment and capacity gates are unavailable here.**
 The first correction review accepted C1, C3, and C2's resume path, but found a remaining admission-replay cancellation defect.
 The parent reproduced and corrected that follow-up, then passed targeted and full-root races, vet, lint, and guardrails.
 See [the corrections and complete finding reconciliation](m7-final-review.md).
@@ -30,8 +30,14 @@ Independent review accepted its bounded first-run/restart scope and evidence rec
 That acceptance closed only the standalone Compose gate.
 The user then authorized a separate [Kafka-to-business-commit fixture](kafka-business-commit-validation.md#independent-acceptance).
 Independent review accepted its bounded commit-window, deduplication, Kafka-redelivery, and retained-stack restart evidence with no findings.
-The combined Kafka gate also closes. The other three external gates remain open.
-All ten earlier containers remained unchanged, and all six new containers remain retained.
+The combined Kafka gate also closes.
+The user then authorized publishing the reviewed source to a validation branch and running CI.
+[Remote CI passed all 15 jobs and 133 steps](remote-ci-validation.md) on commit `7fd8abaa`, after fixing two dependency advisories.
+The remaining two gates need a Kubernetes cluster, a registry, and a capacity environment that this setup does not have.
+All ten earlier containers were unchanged through the Kafka work, and all six new containers remain retained.
+During the later remote-CI work, one earlier PostgreSQL fixture and its anonymous volume were lost.
+That loss is unrecoverable and its cause is unproven. A parent claim of sixteen unchanged containers was false and is retracted.
+The 15 surviving containers match their post-reboot observations and remain stopped and retained.
 The earlier six fixtures remained unchanged, and the new stack remains retained.
 Neither the broker test nor the accepted Python/TLS fixture establishes a durable daemon deployment.
 The user authorized a Git checkpoint before work resumes on the remaining milestones.
@@ -40,6 +46,8 @@ Full repository race tests, PostgreSQL race integration, and guardrails passed a
 Their logs and exit records are under `out/remediation/checkpoint-*` and `checkpoint-results.json`.
 The pre-existing release-script edit is excluded from the checkpoint.
 Commit `673d6c9d87c5aa69ce88306ca424c6788d9e3de2` was pushed to `origin/main` and verified against the remote.
+Later remediation work was published only to branch `validation/remediation-e566c0316db9`, ending at signed commit `7fd8abaaa9f85e01d311f2475689dabee749fbe7`.
+`origin/main` still resolves to the earlier checkpoint. Nothing was merged, tagged, or released.
 Subsequent remediation work, including the accepted R39 corrections and R40 reconciliation, remains local and unstaged.
 The first R39 corrections passed full-root and corrected PostgreSQL integration races, vet, lint, and guardrails.
 The later admission-replay fix passed new targeted/full-root races, vet, lint, and guardrails. Earlier integration evidence keeps its original chronology.
