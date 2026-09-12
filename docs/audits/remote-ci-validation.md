@@ -2,6 +2,10 @@
 
 **Remote CI passed on the exact published source.**
 
+This report records the validation-branch gate before PR #74 and v0.5.0.
+Its statements about publication authorization and branch state describe that historical gate.
+For the subsequent merge, release, and remaining work, see the [repository and PR audit](repository-state-2026-09-12.md).
+
 The user authorized publishing the reviewed source to a new validation branch and running CI.
 That authorization excluded updating `main`, opening a pull request, tagging, releasing, and deploying.
 

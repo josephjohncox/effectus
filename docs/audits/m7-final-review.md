@@ -277,7 +277,7 @@ The remaining two gates cannot run in this environment.
 - [x] Standalone Compose first-run/restart: independently accepted for the bounded, retention-safe local fixture scope.
 - [x] Combined Kafka → daemon → PostgreSQL → destination business commit: independently accepted for the bounded local lost-response, deduplication, redelivery, and restart scope.
 - [x] Remote CI on the exact final source: [all 15 jobs and 133 steps passed](remote-ci-validation.md) on the published validation branch. Two dependency advisories required fixes first.
-- [ ] Deployed Kubernetes, registry and production recovery paths: **not available in this environment.** No cluster or registry exists to deploy to. Charts pass lint, render, and schema checks only.
+- [ ] Deployed Kubernetes and production recovery paths: **not validated.** Charts pass lint, render, and schema checks. The later [v0.5.0 publication workflow](https://github.com/josephjohncox/effectus/actions/runs/34667919841) passed registry publication, signing, and release gates; it does not validate a deployed cluster or production recovery.
 - [ ] Production capacity: **not available in this environment.** It requires representative workloads, resources, destinations and a separate measurement plan.
 
 The four earlier clock and Kafka fixtures remain retained and unchanged.

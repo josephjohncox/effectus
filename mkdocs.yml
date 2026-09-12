@@ -60,6 +60,7 @@ nav:
       - v0.3.0: releases/v0.3.0.md
       - v0.2.1: releases/v0.2.1.md
   - Project validation:
+      - Repository and PR audit: audits/repository-state-2026-09-12.md
       - Remediation checklist: REMEDIATION.md
       - Validation and blockers: audits/remediation-validation.md
       - Historical baseline audit: audits/codebase-review-388c3cb.md
