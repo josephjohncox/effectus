@@ -12,7 +12,7 @@ require (
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/segmentio/kafka-go v0.4.51
 	github.com/stretchr/testify v1.12.1
-	google.golang.org/grpc v1.83.2
+	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 )
 
