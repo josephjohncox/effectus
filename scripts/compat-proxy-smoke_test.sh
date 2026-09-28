@@ -124,6 +124,22 @@ full_proxy="$temp/full-proxy"
 make_proxy "$full_proxy" "$version"
 run_smoke "$full_proxy" "$version" full
 
+# A previously downloaded root module must not stand in for the selected proxy.
+seeded_cache="$temp/seeded-cache"
+(
+  cd "$temp"
+  GOMODCACHE="$seeded_cache" GOPROXY="file://$full_proxy" GOSUMDB=off \
+    go mod download "${module}@v${version}"
+)
+test -f "$seeded_cache/cache/download/$module/@v/v${version}.zip"
+missing_proxy="$temp/no-proxy"
+if EFFECTUS_COMPAT_TEST_GOPROXY="file://$missing_proxy" \
+  GOMODCACHE="$seeded_cache" GOCACHE="$temp/gocache-seeded" \
+  "$script_dir/compat-proxy-smoke.sh" "v$version" >/dev/null 2>&1; then
+  echo 'compatibility smoke passed from an inherited module cache without a proxy' >&2
+  exit 1
+fi
+
 for absent in embedded executorhttp invocation; do
   proxy="$temp/proxy-without-$absent"
   make_proxy "$proxy" "$version" "$absent"

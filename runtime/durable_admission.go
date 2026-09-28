@@ -143,7 +143,7 @@ func durableInitialStep(plan *effectusv1.Plan, facts map[string]any, sagaID stri
 		arguments[argument.Name] = value
 	}
 	request := schema.EnqueueStepRequest{SagaID: sagaID, EffectID: step.Id, Sequence: 1, Verb: step.Verb, ContractHash: step.ContractHash, Arguments: arguments}
-	if step.Compensation != nil {
+	if plan.ExecutionPolicy == effectusv1.ExecutionPolicy_EXECUTION_POLICY_DURABLE_COMPENSATING && step.Compensation != nil {
 		request.CompensationVerb = step.Compensation.InverseVerb
 		request.CompensationContract = step.Compensation.InverseContractHash
 		request.CompensationArguments = arguments

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/josephjohncox/effectus/schema"
 	"github.com/josephjohncox/effectus/schema/ledger"
 )
 
@@ -126,6 +127,12 @@ func (worker *RecoveryWorker) RunOnce(ctx context.Context) (int, error) {
 		}
 		if errors.Is(executeErr, ErrDurableDisposition) {
 			return processed, executeErr
+		}
+		if errors.Is(executeErr, schema.ErrActiveDispatchLease) {
+			// An external dispatcher still owns work in another selected plan.
+			// Revisit after its lease settles instead of reclaiming this
+			// execution repeatedly within the same batch.
+			return processed, nil
 		}
 		// Known business failures do not stop unrelated recovery work.
 	}

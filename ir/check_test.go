@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"testing"
+	"time"
 
 	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
 	"github.com/josephjohncox/effectus/ir"
@@ -144,6 +145,22 @@ func TestCheckAcceptsOmittedOptionalArgument(t *testing.T) {
 	environment := testEnvironment(t)
 	_, err := ir.Check(validArtifact(t, environment), environment, ir.Limits{})
 	require.NoError(t, err)
+}
+
+func TestVerbRetryBackoffFitsRuntimeDuration(t *testing.T) {
+	limit := uint64((1<<63 - 1) / int64(time.Millisecond))
+	contract := ir.VerbContract{ResultType: "bool", RetryPolicy: ir.RetryPolicy{
+		MaxAttempts: 2, InitialBackoffMillis: limit, MaxBackoffMillis: limit,
+	}}
+	_, err := ir.ContractHash(contract)
+	require.NoError(t, err)
+	contract.RetryPolicy.MaxBackoffMillis++
+	_, err = ir.ContractHash(contract)
+	require.ErrorContains(t, err, "retry backoff exceeds supported duration")
+	contract.RetryPolicy.MaxBackoffMillis = 0
+	contract.RetryPolicy.InitialBackoffMillis++
+	_, err = ir.ContractHash(contract)
+	require.ErrorContains(t, err, "retry backoff exceeds supported duration")
 }
 
 func TestCheckFailsClosedOnMalformedArtifact(t *testing.T) {

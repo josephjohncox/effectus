@@ -132,7 +132,21 @@ See the destination contract below.
 
 ### Other outcomes
 
-A permanent forward failure starts durable reverse-order compensation.
+A permanent forward failure starts durable reverse-order compensation when the
+checked plan uses `DURABLE_COMPENSATING`. New `DURABLE_FAIL_FAST` plans carry no
+inverse dispatch intent: they stop after the failed step and retain prior
+successful effects in the audit record. If a historical fail-fast artifact
+already queued compensation, recovery blocks that inverse instead of invoking
+it under the wrong policy.
+During an upgrade, stop independently operated generic outbox dispatchers for
+checked executions admitted by older versions until those executions are
+terminal. Older saga rows do not record the plan policy, so a generic worker
+can claim a previously frozen inverse before the checked runtime blocks it.
+The checked runtime rejects compensation for a fail-fast plan in its own
+executor path.
+A terminal unsuccessful execution cancels unstarted dispatches in later selected
+plans. Work with an unknown external outcome remains blocked for investigation;
+it is not recorded as an ordinary canceled dispatch.
 A stale-fence outcome moves the saga to `blocked_fence`.
 Effectus does not send stale-fence outcomes through a generic retry loop.
 

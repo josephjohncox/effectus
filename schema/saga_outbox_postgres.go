@@ -56,6 +56,37 @@ func (store *PostgresOutboxStore) EnqueueStep(ctx context.Context, request Enque
 	return dispatch, nil
 }
 
+func (store *PostgresOutboxStore) replayExistingStep(ctx context.Context, request EnqueueStepRequest) (*Dispatch, error) {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var dispatchID string
+	err = tx.QueryRowContext(ctx, `
+		SELECT dispatch_id FROM effectus_saga_outbox
+		WHERE saga_id = $1 AND effect_id = $2 AND direction = 'forward'
+		FOR UPDATE
+	`, request.SagaID, request.EffectID).Scan(&dispatchID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: legacy checked dispatch no longer exists", ErrIdentityConflict)
+	}
+	if err != nil {
+		return nil, err
+	}
+	dispatch, err := enqueueStepTx(ctx, tx, request)
+	if err != nil {
+		return nil, err
+	}
+	if dispatch.ID != dispatchID {
+		return nil, fmt.Errorf("%w: legacy checked dispatch changed identity", ErrIdentityConflict)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return dispatch, nil
+}
+
 func (store *PostgresOutboxStore) ClaimDispatch(ctx context.Context, options ClaimOptions) (*Dispatch, error) {
 	if options.Owner == "" || options.LeaseDuration <= 0 {
 		return nil, fmt.Errorf("claim owner and positive lease duration are required")
@@ -70,7 +101,9 @@ func (store *PostgresOutboxStore) ClaimDispatch(ctx context.Context, options Cla
 		SELECT o.dispatch_id
 		FROM effectus_saga_outbox o
 		JOIN effectus_saga_instances s ON s.saga_id = o.saga_id
+		LEFT JOIN effectus_executions e ON e.execution_id = s.execution_id
 		WHERE ($1 = '' OR o.dispatch_id = $1)
+		AND (e.execution_id IS NULL OR e.state IN ('admitting', 'accepted', 'running'))
 		AND (
 			o.state = 'queued'
 			OR (o.state = 'retry_wait' AND COALESCE(o.next_attempt_at, '-infinity'::timestamptz) <= now())
@@ -82,6 +115,11 @@ func (store *PostgresOutboxStore) ClaimDispatch(ctx context.Context, options Cla
 			SELECT 1 FROM effectus_saga_outbox active
 			WHERE active.saga_id = o.saga_id AND active.state = 'in_flight'
 			  AND active.lease_deadline > now() AND active.dispatch_id <> o.dispatch_id
+		))
+		AND (NOT o.serial_saga OR o.direction <> 'forward' OR NOT EXISTS (
+			SELECT 1 FROM effectus_saga_outbox earlier
+			WHERE earlier.saga_id = o.saga_id AND earlier.direction = 'forward'
+			  AND earlier.sequence < o.sequence AND earlier.state <> 'succeeded'
 		))
 		ORDER BY o.created_at, o.saga_id, o.sequence, o.dispatch_id
 		FOR UPDATE OF o SKIP LOCKED
@@ -315,6 +353,339 @@ func (store *PostgresOutboxStore) CompleteSaga(ctx context.Context, sagaID strin
 		return err
 	}
 	return tx.Commit()
+}
+
+// FinalizeStoppedExecution closes pending work after an unsuccessful terminal
+// disposition. Outbox rows are locked before saga rows, matching claim/completion
+// order. A second lock pass catches steps enqueued while waiting for the saga.
+func (store *PostgresOutboxStore) FinalizeStoppedExecution(ctx context.Context, executionID string) error {
+	if executionID == "" {
+		return fmt.Errorf("execution ID is required")
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx, `
+		SELECT saga_id FROM effectus_saga_instances
+		WHERE execution_id = $1
+		ORDER BY saga_id
+	`, executionID)
+	if err != nil {
+		return err
+	}
+	var sagaIDs []string
+	for rows.Next() {
+		var sagaID string
+		if err := rows.Scan(&sagaID); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		sagaIDs = append(sagaIDs, sagaID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, sagaID := range sagaIDs {
+		if err := lockSagaDispatches(ctx, tx, sagaID); err != nil {
+			return err
+		}
+		saga, err := getSagaTx(ctx, tx, sagaID, true)
+		if err != nil {
+			return err
+		}
+		if err := lockSagaDispatches(ctx, tx, sagaID); err != nil {
+			return err
+		}
+		if err := rejectActiveDispatchLease(ctx, tx, sagaID); err != nil {
+			return err
+		}
+		if isTerminalSaga(saga.State) {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE effectus_saga_outbox
+				SET state = 'blocked_unknown', lease_owner = NULL, lease_token = NULL,
+				    lease_deadline = NULL, next_attempt_at = NULL,
+				    last_error = 'dispatch lease expired without a known outcome',
+				    revision = revision + 1, updated_at = now()
+				WHERE saga_id = $1 AND state = 'in_flight' AND lease_deadline <= now()
+			`, sagaID); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE effectus_saga_outbox
+				SET state = 'blocked_unknown', next_attempt_at = NULL,
+				    revision = revision + 1, updated_at = now()
+				WHERE saga_id = $1 AND state = 'retry_wait'
+				  AND (last_outcome = $2 OR dispatch_id IN (
+				      SELECT dispatch_id FROM effectus_saga_attempts
+				      WHERE outcome = $2 OR completed_at IS NULL
+				  ))
+			`, sagaID, invocation.OutcomeUnknown); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE effectus_saga_outbox
+				SET state = 'canceled', next_attempt_at = NULL,
+				    last_error = 'execution stopped before dispatch could complete',
+				    revision = revision + 1, updated_at = now()
+				WHERE saga_id = $1 AND state IN ('queued', 'retry_wait')
+			`, sagaID); err != nil {
+				return err
+			}
+			var uncertain bool
+			if err := tx.QueryRowContext(ctx, `
+				SELECT EXISTS (SELECT 1 FROM effectus_saga_outbox
+				               WHERE saga_id = $1 AND state = 'blocked_unknown')
+			`, sagaID).Scan(&uncertain); err != nil {
+				return err
+			}
+			if uncertain && saga.State != SagaBlockedUnknown {
+				if _, err := tx.ExecContext(ctx, `
+					UPDATE effectus_saga_instances
+					SET state = 'blocked_unknown', revision = revision + 1, updated_at = now()
+					WHERE saga_id = $1
+				`, sagaID); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		if saga.State != SagaRunning && saga.State != SagaCompensating {
+			continue
+		}
+		nextState := SagaFailed
+		if saga.State == SagaCompensating {
+			nextState = SagaBlockedDependency
+		}
+		var uncertain, succeeded bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT EXISTS (SELECT 1 FROM effectus_saga_outbox
+			               WHERE saga_id = $1 AND (state IN ('in_flight', 'blocked_unknown') OR
+			                   (state = 'retry_wait' AND (last_outcome = $2 OR dispatch_id IN (
+			                       SELECT dispatch_id FROM effectus_saga_attempts
+			                       WHERE outcome = $2 OR completed_at IS NULL
+			                   ))))),
+			       EXISTS (SELECT 1 FROM effectus_saga_outbox
+			               WHERE saga_id = $1 AND direction = 'forward' AND state = 'succeeded')
+		`, sagaID, invocation.OutcomeUnknown).Scan(&uncertain, &succeeded); err != nil {
+			return err
+		}
+		if uncertain {
+			nextState = SagaBlockedUnknown
+		} else if succeeded {
+			nextState = SagaBlockedDependency
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE effectus_saga_outbox
+			SET state = 'blocked_unknown', lease_owner = NULL, lease_token = NULL,
+			    lease_deadline = NULL, next_attempt_at = NULL,
+			    last_error = 'dispatch lease expired without a known outcome',
+			    revision = revision + 1, updated_at = now()
+			WHERE saga_id = $1 AND state = 'in_flight' AND lease_deadline <= now()
+		`, sagaID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE effectus_saga_outbox
+			SET state = 'blocked_unknown', next_attempt_at = NULL,
+			    revision = revision + 1, updated_at = now()
+			WHERE saga_id = $1 AND state = 'retry_wait'
+			  AND (last_outcome = $2 OR dispatch_id IN (
+			      SELECT dispatch_id FROM effectus_saga_attempts
+			      WHERE outcome = $2 OR completed_at IS NULL
+			  ))
+		`, sagaID, invocation.OutcomeUnknown); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE effectus_saga_outbox
+			SET state = 'canceled', next_attempt_at = NULL,
+			    last_error = 'execution stopped before dispatch could complete',
+			    revision = revision + 1, updated_at = now()
+			WHERE saga_id = $1 AND state IN ('queued', 'retry_wait')
+		`, sagaID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE effectus_saga_instances
+			SET state = $2, revision = revision + 1, updated_at = now()
+			WHERE saga_id = $1 AND state IN ('running', 'compensating')
+		`, sagaID, nextState); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// BlockSagaCompensation keeps legacy fail-fast artifacts from invoking an
+// inverse after their saga has already entered compensation.
+func (store *PostgresOutboxStore) BlockSagaCompensation(ctx context.Context, sagaID string) error {
+	if sagaID == "" {
+		return fmt.Errorf("saga ID is required")
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := lockSagaDispatches(ctx, tx, sagaID); err != nil {
+		return err
+	}
+	saga, err := getSagaTx(ctx, tx, sagaID, true)
+	if err != nil {
+		return err
+	}
+	if saga.State == SagaBlockedCompensation {
+		return tx.Commit()
+	}
+	if saga.State != SagaCompensating {
+		return fmt.Errorf("%w: cannot block compensation from %s", ErrInvalidTransition, saga.State)
+	}
+	if err := lockSagaDispatches(ctx, tx, sagaID); err != nil {
+		return err
+	}
+	if err := rejectActiveDispatchLease(ctx, tx, sagaID); err != nil {
+		return err
+	}
+	expiredResult, err := tx.ExecContext(ctx, `
+		UPDATE effectus_saga_outbox
+		SET state = 'blocked_unknown', lease_owner = NULL, lease_token = NULL,
+		    lease_deadline = NULL, next_attempt_at = NULL,
+		    last_error = 'compensation lease expired without a known outcome',
+		    revision = revision + 1, updated_at = now()
+		WHERE saga_id = $1 AND direction = 'compensation'
+		  AND state = 'in_flight' AND lease_deadline <= now()
+	`, sagaID)
+	if err != nil {
+		return err
+	}
+	expiredCount, err := expiredResult.RowsAffected()
+	if err != nil {
+		return err
+	}
+	unknownRetryResult, err := tx.ExecContext(ctx, `
+		UPDATE effectus_saga_outbox
+		SET state = 'blocked_unknown', next_attempt_at = NULL,
+		    revision = revision + 1, updated_at = now()
+		WHERE saga_id = $1 AND direction = 'compensation'
+		  AND state = 'retry_wait'
+		  AND (last_outcome = $2 OR dispatch_id IN (
+		      SELECT dispatch_id FROM effectus_saga_attempts
+		      WHERE outcome = $2 OR completed_at IS NULL
+		  ))
+	`, sagaID, invocation.OutcomeUnknown)
+	if err != nil {
+		return err
+	}
+	unknownRetryCount, err := unknownRetryResult.RowsAffected()
+	if err != nil {
+		return err
+	}
+	nextState := SagaBlockedCompensation
+	if expiredCount != 0 || unknownRetryCount != 0 {
+		nextState = SagaBlockedUnknown
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE effectus_saga_outbox
+		SET state = 'canceled', next_attempt_at = NULL,
+		    last_error = 'compensation disabled by fail-fast execution policy',
+		    revision = revision + 1, updated_at = now()
+		WHERE saga_id = $1 AND direction = 'compensation' AND state IN ('queued', 'retry_wait')
+	`, sagaID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE effectus_saga_instances
+		SET state = $2, revision = revision + 1, updated_at = now()
+		WHERE saga_id = $1 AND state = 'compensating'
+	`, sagaID, nextState); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// FinalizeFailFastSaga resolves the legacy compensation state only when no
+// inverse dispatch was ever created.
+func (store *PostgresOutboxStore) FinalizeFailFastSaga(ctx context.Context, sagaID string) error {
+	if sagaID == "" {
+		return fmt.Errorf("saga ID is required")
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := lockSagaDispatches(ctx, tx, sagaID); err != nil {
+		return err
+	}
+	saga, err := getSagaTx(ctx, tx, sagaID, true)
+	if err != nil {
+		return err
+	}
+	if saga.State == SagaFailed {
+		return tx.Commit()
+	}
+	if saga.State != SagaBlockedCompensation {
+		return fmt.Errorf("%w: cannot finalize fail-fast saga from %s", ErrInvalidTransition, saga.State)
+	}
+	if err := lockSagaDispatches(ctx, tx, sagaID); err != nil {
+		return err
+	}
+	var hasCompensationOrInFlight bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM effectus_saga_outbox
+		               WHERE saga_id = $1 AND (direction = 'compensation' OR state = 'in_flight'))
+	`, sagaID).Scan(&hasCompensationOrInFlight); err != nil {
+		return err
+	}
+	if hasCompensationOrInFlight {
+		return fmt.Errorf("%w: saga %s has compensation or in-flight work", ErrInvalidTransition, sagaID)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE effectus_saga_instances
+		SET state = 'failed', revision = revision + 1, updated_at = now()
+		WHERE saga_id = $1 AND state = 'blocked_compensation'
+	`, sagaID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func lockSagaDispatches(ctx context.Context, tx *sql.Tx, sagaID string) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT dispatch_id FROM effectus_saga_outbox
+		WHERE saga_id = $1 ORDER BY dispatch_id FOR UPDATE
+	`, sagaID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var dispatchID string
+		if err := rows.Scan(&dispatchID); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func rejectActiveDispatchLease(ctx context.Context, tx *sql.Tx, sagaID string) error {
+	var active bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM effectus_saga_outbox
+		               WHERE saga_id = $1 AND state = 'in_flight' AND lease_deadline > now())
+	`, sagaID).Scan(&active); err != nil {
+		return err
+	}
+	if active {
+		return fmt.Errorf("%w: saga %s", ErrActiveDispatchLease, sagaID)
+	}
+	return nil
 }
 
 func (store *PostgresOutboxStore) GetSaga(ctx context.Context, sagaID string) (*SagaInstance, error) {

@@ -4,7 +4,7 @@ Use one of the supported first-run paths.
 
 ## Embedded Go
 
-Use `embedded.New` to build checked rules and register invocation-aware Go handlers in a trusted process. Run the complete example:
+Build a source bundle, register invocation-aware Go handlers, then open the checked runtime with `embedded.Open`. Run the complete example:
 
 ```bash
 go run ./examples/embedded_orders

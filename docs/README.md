@@ -20,7 +20,7 @@ Read the [published documentation](https://josephjohncox.github.io/effectus/) or
 - [Go API](go-api.md) describes supported entry points, ownership, and compatibility.
 - [Client Examples](CLIENT_EXAMPLES.md) runs authenticated Go/Python gRPC clients and separate TLS checks.
 - [SourceBundle Extension Boundary](EXTENSION_SYSTEM.md) describes immutable bundle contents and executor descriptors.
-- [Fact Sources](FACT_SOURCES.md) describes streaming and batch adapters.
+- [Fact Sources](FACT_SOURCES.md) describes HTTP admission and daemon-operated Kafka ingestion.
 - [gRPC Execution](GRPC_EXECUTION.md) describes the inbound service. The [capability matrix](grpc-capabilities.md) distinguishes implemented and reserved RPCs.
 - [Buf Compatibility](buf-compatibility.md) describes the legacy helper's supported subset and workspace ownership.
 

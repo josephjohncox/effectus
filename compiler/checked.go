@@ -449,7 +449,7 @@ func lowerInvocations(planID string, invocations []sourceInvocation, environment
 			Id: fmt.Sprintf("%s.step.%06d", planID, index+1), Ordinal: uint32(index), Verb: invocation.verb,
 			ContractHash: contractHash, Arguments: arguments,
 		}
-		freezeStepPolicies(step, contract, environment)
+		freezeStepPolicies(step, contract, environment, policy)
 		if policy == ExecutionPolicyCompensating {
 			if err := validateCompensationContract(invocation.verb, contract, environment); err != nil {
 				return nil, fmt.Errorf("step %d: %w", index+1, err)
@@ -472,7 +472,7 @@ func lowerInvocations(planID string, invocations []sourceInvocation, environment
 	return steps, nil
 }
 
-func freezeStepPolicies(step *effectusv1.Step, contract ir.VerbContract, environment ir.Environment) {
+func freezeStepPolicies(step *effectusv1.Step, contract ir.VerbContract, environment ir.Environment, policy effectusv1.ExecutionPolicy) {
 	maxAttempts := contract.RetryPolicy.MaxAttempts
 	if maxAttempts == 0 {
 		maxAttempts = 1
@@ -493,7 +493,7 @@ func freezeStepPolicies(step *effectusv1.Step, contract ir.VerbContract, environ
 	} else {
 		step.FencingRequirement = effectusv1.FencingRequirement_FENCING_REQUIREMENT_NONE
 	}
-	if inverse, ok := environment.Verbs[contract.InverseVerb]; contract.InverseVerb != "" && ok {
+	if inverse, ok := environment.Verbs[contract.InverseVerb]; policy == ExecutionPolicyCompensating && contract.InverseVerb != "" && ok {
 		if hash, err := ir.ContractHash(inverse); err == nil {
 			step.Compensation = &effectusv1.CompensationContract{InverseVerb: contract.InverseVerb, InverseContractHash: hash}
 		}

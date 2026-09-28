@@ -18,12 +18,13 @@ var (
 	// ErrIdentityConflict is re-exported as runtime.ErrIdentityConflict. Keep
 	// this leaf-package declaration so durable stores and runtime share one
 	// sentinel without creating an import cycle.
-	ErrIdentityConflict   = errors.New("engine admission identity conflict")
-	ErrNoDispatch         = errors.New("no eligible dispatch")
-	ErrStaleLease         = errors.New("stale dispatch lease")
-	ErrTerminalSaga       = errors.New("terminal saga cannot be reopened")
-	ErrInvalidTransition  = errors.New("invalid saga state transition")
-	ErrOptimisticConflict = errors.New("optimistic persistence conflict")
+	ErrIdentityConflict    = errors.New("engine admission identity conflict")
+	ErrNoDispatch          = errors.New("no eligible dispatch")
+	ErrStaleLease          = errors.New("stale dispatch lease")
+	ErrActiveDispatchLease = errors.New("active dispatch lease prevents execution finalization")
+	ErrTerminalSaga        = errors.New("terminal saga cannot be reopened")
+	ErrInvalidTransition   = errors.New("invalid saga state transition")
+	ErrOptimisticConflict  = errors.New("optimistic persistence conflict")
 )
 
 // Durable workflow contracts live in schema/workflow. Compatibility aliases

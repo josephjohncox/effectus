@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // FormatVersion is the only artifact format accepted by this package.
@@ -272,6 +273,10 @@ func normalizeVerbContract(contract VerbContract) (VerbContract, error) {
 	}
 	if contract.RetryPolicy.MaxBackoffMillis != 0 && contract.RetryPolicy.InitialBackoffMillis > contract.RetryPolicy.MaxBackoffMillis {
 		return VerbContract{}, fmt.Errorf("retry initial backoff exceeds maximum backoff")
+	}
+	const maxBackoffMillis = uint64((1<<63 - 1) / int64(time.Millisecond))
+	if contract.RetryPolicy.InitialBackoffMillis > maxBackoffMillis || contract.RetryPolicy.MaxBackoffMillis > maxBackoffMillis {
+		return VerbContract{}, fmt.Errorf("retry backoff exceeds supported duration")
 	}
 	if contract.IdempotencyPolicy == "" {
 		contract.IdempotencyPolicy = IdempotencyNone

@@ -19,9 +19,9 @@ use the current root packages unless they require this frozen source surface.
 
 ## Consumer check
 
-CI compiles an external-package test against the local root module. After the
-v0.4.0 release exists, the publish workflow creates a temporary external module.
-It resolves these imports through `https://proxy.golang.org`:
+CI compiles an external-package test against the local root module. Before
+marking a release complete, the publish workflow creates a temporary external
+module and resolves these imports through `https://proxy.golang.org`:
 
 ```bash
 just smoke-compat "$ROOT_VERSION"

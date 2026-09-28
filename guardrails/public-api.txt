@@ -1538,6 +1538,7 @@ github.com/josephjohncox/effectus/runtime	var ErrInvalidExecuteRequest = errors.
 github.com/josephjohncox/effectus/runtime	var ErrTerminalExecution = errors.New("execution ended unsuccessfully")
 github.com/josephjohncox/effectus/schema	const DispatchBlockedFence = workflow.DispatchBlockedFence
 github.com/josephjohncox/effectus/schema	const DispatchBlockedUnknown = workflow.DispatchBlockedUnknown
+github.com/josephjohncox/effectus/schema	const DispatchCanceled = workflow.DispatchCanceled
 github.com/josephjohncox/effectus/schema	const DispatchFailedPermanent = workflow.DispatchFailedPermanent
 github.com/josephjohncox/effectus/schema	const DispatchInFlight = workflow.DispatchInFlight
 github.com/josephjohncox/effectus/schema	const DispatchQueued = workflow.DispatchQueued
@@ -1600,11 +1601,14 @@ github.com/josephjohncox/effectus/schema	method InMemoryExecutionLedger.LeaseExe
 github.com/josephjohncox/effectus/schema	method InMemoryExecutionLedger.PutArtifact(ctx context.Context, artifact ExecutionArtifact) error
 github.com/josephjohncox/effectus/schema	method InMemoryExecutionLedger.RenewExecutionLease(ctx context.Context, lease ExecutionLease, duration time.Duration) (ExecutionLease, error)
 github.com/josephjohncox/effectus/schema	method InMemoryExecutionLedger.SetExecutionState(ctx context.Context, id string, revision uint64, state ExecutionState, message string) (ExecutionRecord, error)
+github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.BlockSagaCompensation(ctx context.Context, sagaID string) error
 github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.ClaimDispatch(ctx context.Context, options ClaimOptions) (*Dispatch, error)
 github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.CompleteDispatch(ctx context.Context, completion Completion) error
 github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.CompleteSaga(ctx context.Context, sagaID string) error
 github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.CreateSaga(ctx context.Context, request CreateSagaRequest) (*SagaInstance, error)
 github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.EnqueueStep(ctx context.Context, request EnqueueStepRequest) (*Dispatch, error)
+github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.FinalizeFailFastSaga(ctx context.Context, sagaID string) error
+github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.FinalizeStoppedExecution(ctx context.Context, executionID string) error
 github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.GetDispatch(ctx context.Context, dispatchID string) (*Dispatch, error)
 github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.GetSaga(ctx context.Context, sagaID string) (*SagaInstance, error)
 github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.ListAttempts(ctx context.Context, dispatchID string) ([]DispatchAttempt, error)
@@ -1612,11 +1616,14 @@ github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.ListDispatch
 github.com/josephjohncox/effectus/schema	method InMemoryOutboxStore.SaveFencingGrants(ctx context.Context, dispatchID string, attempt uint64, leaseToken string, grants []invocation.FencingGrant) error
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.AdmitExecution(ctx context.Context, admission DurableAdmission) (ExecutionRecord, bool, error)
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.AdmitExecutionAtomic(ctx context.Context, admission DurableAdmission) (ExecutionRecord, bool, error)
+github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.BlockSagaCompensation(ctx context.Context, sagaID string) error
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.ClaimDispatch(ctx context.Context, options ClaimOptions) (*Dispatch, error)
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.CompleteDispatch(ctx context.Context, completion Completion) error
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.CompleteSaga(ctx context.Context, sagaID string) error
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.CreateSaga(ctx context.Context, request CreateSagaRequest) (*SagaInstance, error)
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.EnqueueStep(ctx context.Context, request EnqueueStepRequest) (*Dispatch, error)
+github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.FinalizeFailFastSaga(ctx context.Context, sagaID string) error
+github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.FinalizeStoppedExecution(ctx context.Context, executionID string) error
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.FinishExecutionLease(ctx context.Context, lease ExecutionLease, state ExecutionState, message string) error
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.GetArtifact(ctx context.Context, digest string) (ExecutionArtifact, error)
 github.com/josephjohncox/effectus/schema	method PostgresOutboxStore.GetDispatch(ctx context.Context, dispatchID string) (*Dispatch, error)
@@ -1655,6 +1662,7 @@ github.com/josephjohncox/effectus/schema	type DispatcherOptions struct{Owner str
 github.com/josephjohncox/effectus/schema	type DurableAdmission = ledger.DurableAdmission
 github.com/josephjohncox/effectus/schema	type EnqueueStepRequest = workflow.EnqueueStepRequest
 github.com/josephjohncox/effectus/schema	type ExecutionArtifact = ledger.ExecutionArtifact
+github.com/josephjohncox/effectus/schema	type ExecutionFinalizer = workflow.ExecutionFinalizer
 github.com/josephjohncox/effectus/schema	type ExecutionLease = ledger.ExecutionLease
 github.com/josephjohncox/effectus/schema	type ExecutionLedger = ledger.ExecutionLedger
 github.com/josephjohncox/effectus/schema	type ExecutionPlanRecord = ledger.ExecutionPlanRecord
@@ -1684,6 +1692,7 @@ github.com/josephjohncox/effectus/schema	type StepState = workflow.StepState
 github.com/josephjohncox/effectus/schema	type UnknownOutcomeRetryPolicy = workflow.UnknownOutcomeRetryPolicy
 github.com/josephjohncox/effectus/schema	type VerbSchema struct{Name string; Version string; Description string; InputSchema map[string]interface{}; OutputSchema map[string]interface{}; RequiredCapabilities []string; ExecutionType string; Idempotent bool; Compensatable bool; BufModule string; BufCommit string; CreatedAt time.Time; UpdatedAt time.Time}
 github.com/josephjohncox/effectus/schema	type VerbSchemaRegistry struct{}
+github.com/josephjohncox/effectus/schema	var ErrActiveDispatchLease = errors.New("active dispatch lease prevents execution finalization")
 github.com/josephjohncox/effectus/schema	var ErrArtifactNotFound = errors.New("execution artifact not found")
 github.com/josephjohncox/effectus/schema	var ErrExecutionNotFound = errors.New("execution not found")
 github.com/josephjohncox/effectus/schema	var ErrIdentityConflict = errors.New("engine admission identity conflict")
@@ -1736,6 +1745,7 @@ github.com/josephjohncox/effectus/schema/ledger	type RecoveryStats struct{Nonter
 github.com/josephjohncox/effectus/schema/ledger	type RecoveryStatsReader interface{RecoveryStatsfunc(context.Context) (RecoveryStats, error)}
 github.com/josephjohncox/effectus/schema/workflow	const DispatchBlockedFence DispatchState = "blocked_fence"
 github.com/josephjohncox/effectus/schema/workflow	const DispatchBlockedUnknown DispatchState = "blocked_unknown"
+github.com/josephjohncox/effectus/schema/workflow	const DispatchCanceled DispatchState = "canceled"
 github.com/josephjohncox/effectus/schema/workflow	const DispatchFailedPermanent DispatchState = "failed_permanent"
 github.com/josephjohncox/effectus/schema/workflow	const DispatchInFlight DispatchState = "in_flight"
 github.com/josephjohncox/effectus/schema/workflow	const DispatchQueued DispatchState = "queued"
@@ -1761,6 +1771,7 @@ github.com/josephjohncox/effectus/schema/workflow	type Dispatch struct{ID string
 github.com/josephjohncox/effectus/schema/workflow	type DispatchAttempt struct{DispatchID string; Attempt uint64; LeaseOwner string; LeaseToken string; LeaseDeadline time.Time; FencingGrants []invocation.FencingGrant; Outcome invocation.OutcomeClass; Error string; StartedAt time.Time; CompletedAt time.Time}
 github.com/josephjohncox/effectus/schema/workflow	type DispatchState string
 github.com/josephjohncox/effectus/schema/workflow	type EnqueueStepRequest struct{SagaID string; EffectID string; Sequence int; Verb string; ContractHash string; Arguments map[string]any; CompensationVerb string; CompensationContract string; CompensationArguments map[string]any; Fencing []FencingRequirement}
+github.com/josephjohncox/effectus/schema/workflow	type ExecutionFinalizer interface{FinalizeStoppedExecutionfunc(context.Context, string) error; BlockSagaCompensationfunc(context.Context, string) error; FinalizeFailFastSagafunc(context.Context, string) error}
 github.com/josephjohncox/effectus/schema/workflow	type FencingRequirement struct{Authority string; Resource string}
 github.com/josephjohncox/effectus/schema/workflow	type OutboxStore interface{CreateSagafunc(context.Context, CreateSagaRequest) (*SagaInstance, error); EnqueueStepfunc(context.Context, EnqueueStepRequest) (*Dispatch, error); ClaimDispatchfunc(context.Context, ClaimOptions) (*Dispatch, error); SaveFencingGrantsfunc(context.Context, string, uint64, string, []invocation.FencingGrant) error; CompleteDispatchfunc(context.Context, Completion) error; CompleteSagafunc(context.Context, string) error; GetSagafunc(context.Context, string) (*SagaInstance, error); GetDispatchfunc(context.Context, string) (*Dispatch, error); ListDispatchesfunc(context.Context, string) ([]*Dispatch, error); ListAttemptsfunc(context.Context, string) ([]DispatchAttempt, error)}
 github.com/josephjohncox/effectus/schema/workflow	type SagaInstance struct{Namespace string; SagaID string; ExecutionID string; PlanID string; PlanDigest string; State SagaState; Serial bool; Revision uint64; CreatedAt time.Time; UpdatedAt time.Time}

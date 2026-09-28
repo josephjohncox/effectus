@@ -343,6 +343,218 @@ func TestOutboxSerialSagaAllowsOneCurrentClaim(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoDispatch)
 }
 
+func TestOutboxSerialSagaWaitsForEarlierRetry(t *testing.T) {
+	store := NewInMemoryOutboxStore()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+	createOutboxSaga(t, store, "saga-serial-retry")
+	first := enqueueOutboxStep(t, store, "saga-serial-retry", "effect-1", "first", 1)
+	second := enqueueOutboxStep(t, store, "saga-serial-retry", "effect-2", "second", 2)
+	claimed, err := store.ClaimDispatch(t.Context(), ClaimOptions{Owner: "one", LeaseDuration: time.Minute, TargetDispatchID: first.ID, Now: now})
+	require.NoError(t, err)
+	require.NoError(t, store.CompleteDispatch(t.Context(), Completion{
+		DispatchID: first.ID, Attempt: claimed.Attempt, LeaseToken: claimed.LeaseToken,
+		Outcome: invocation.OutcomeRetryableKnownNotCommitted, Error: "not committed", NextAttemptAt: now.Add(time.Hour), Now: now,
+	}))
+	_, err = store.ClaimDispatch(t.Context(), ClaimOptions{Owner: "two", LeaseDuration: time.Minute, TargetDispatchID: second.ID, Now: now})
+	require.ErrorIs(t, err, ErrNoDispatch)
+	now = now.Add(time.Hour)
+	claimed, err = store.ClaimDispatch(t.Context(), ClaimOptions{Owner: "one", LeaseDuration: time.Minute, TargetDispatchID: first.ID, Now: now})
+	require.NoError(t, err)
+	require.NoError(t, store.CompleteDispatch(t.Context(), Completion{
+		DispatchID: first.ID, Attempt: claimed.Attempt, LeaseToken: claimed.LeaseToken,
+		Outcome: invocation.OutcomeSuccess, Result: []byte(`null`), Now: now,
+	}))
+	_, err = store.ClaimDispatch(t.Context(), ClaimOptions{Owner: "two", LeaseDuration: time.Minute, TargetDispatchID: second.ID, Now: now})
+	require.NoError(t, err)
+}
+
+func TestFinalizeStoppedExecutionPreservesCommittedAndUncertainWork(t *testing.T) {
+	store := NewInMemoryOutboxStore()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+	createOutboxSaga(t, store, "saga-stopped-committed")
+	first := enqueueOutboxStep(t, store, "saga-stopped-committed", "effect-1", "first", 1)
+	second := enqueueOutboxStep(t, store, "saga-stopped-committed", "effect-2", "second", 2)
+	claimed, err := store.ClaimDispatch(t.Context(), ClaimOptions{Owner: "worker", LeaseDuration: time.Minute, TargetDispatchID: first.ID, Now: now})
+	require.NoError(t, err)
+	require.NoError(t, store.CompleteDispatch(t.Context(), Completion{
+		DispatchID: first.ID, Attempt: claimed.Attempt, LeaseToken: claimed.LeaseToken,
+		Outcome: invocation.OutcomeSuccess, Result: []byte(`null`), Now: now,
+	}))
+	createOutboxSaga(t, store, "saga-stopped-unstarted")
+	unstarted := enqueueOutboxStep(t, store, "saga-stopped-unstarted", "effect-1", "first", 1)
+	createOutboxSaga(t, store, "saga-stopped-uncertain")
+	uncertain := enqueueOutboxStep(t, store, "saga-stopped-uncertain", "effect-1", "first", 1)
+	createOutboxSaga(t, store, "saga-stopped-terminal")
+	terminal := enqueueOutboxStep(t, store, "saga-stopped-terminal", "effect-1", "first", 1)
+	store.sagas["saga-stopped-terminal"].State = SagaBlockedUnknown
+	_, err = store.ClaimDispatch(t.Context(), ClaimOptions{Owner: "worker", LeaseDuration: time.Minute, TargetDispatchID: uncertain.ID, Now: now})
+	require.NoError(t, err)
+	require.ErrorIs(t, store.FinalizeStoppedExecution(t.Context(), "execution-1"), ErrActiveDispatchLease)
+	require.Equal(t, SagaRunning, store.sagas["saga-stopped-unstarted"].State, "active lease rolls back all finalization")
+	now = now.Add(2 * time.Minute)
+	require.NoError(t, store.FinalizeStoppedExecution(t.Context(), "execution-1"))
+	require.Equal(t, SagaBlockedDependency, store.sagas["saga-stopped-committed"].State)
+	require.Equal(t, DispatchSucceeded, store.dispatches[first.ID].State)
+	require.Equal(t, DispatchCanceled, store.dispatches[second.ID].State)
+	require.Equal(t, SagaFailed, store.sagas["saga-stopped-unstarted"].State)
+	require.Equal(t, DispatchCanceled, store.dispatches[unstarted.ID].State)
+	require.Equal(t, SagaBlockedUnknown, store.sagas["saga-stopped-uncertain"].State)
+	require.Equal(t, DispatchBlockedUnknown, store.dispatches[uncertain.ID].State)
+	require.Equal(t, SagaBlockedUnknown, store.sagas["saga-stopped-terminal"].State)
+	require.Equal(t, DispatchCanceled, store.dispatches[terminal.ID].State)
+	require.NoError(t, store.FinalizeStoppedExecution(t.Context(), "execution-1"))
+}
+
+func TestFinalizeStoppedExecutionBlocksUnknownRetry(t *testing.T) {
+	store := NewInMemoryOutboxStore()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+	createOutboxSaga(t, store, "saga-unknown-retry-stop")
+	dispatch := enqueueOutboxStep(t, store, "saga-unknown-retry-stop", "effect-1", "write", 1)
+	claimed, err := store.ClaimDispatch(t.Context(), ClaimOptions{Owner: "worker", LeaseDuration: time.Minute, Now: now})
+	require.NoError(t, err)
+	require.NoError(t, store.CompleteDispatch(t.Context(), Completion{
+		DispatchID: claimed.ID, Attempt: claimed.Attempt, LeaseToken: claimed.LeaseToken,
+		Outcome: invocation.OutcomeUnknown, Error: "sink outcome unknown", NextAttemptAt: now.Add(time.Hour), Now: now,
+	}))
+	now = now.Add(time.Hour)
+	claimed, err = store.ClaimDispatch(t.Context(), ClaimOptions{Owner: "worker", LeaseDuration: time.Minute, Now: now})
+	require.NoError(t, err)
+	require.NoError(t, store.CompleteDispatch(t.Context(), Completion{
+		DispatchID: claimed.ID, Attempt: claimed.Attempt, LeaseToken: claimed.LeaseToken,
+		Outcome: invocation.OutcomeRetryableKnownNotCommitted, Error: "retry not committed",
+		NextAttemptAt: now.Add(time.Hour), Now: now,
+	}))
+	require.NoError(t, store.FinalizeStoppedExecution(t.Context(), "execution-1"))
+	require.Equal(t, SagaBlockedUnknown, store.sagas["saga-unknown-retry-stop"].State)
+	require.Equal(t, DispatchBlockedUnknown, store.dispatches[dispatch.ID].State)
+	require.Equal(t, invocation.OutcomeRetryableKnownNotCommitted, store.dispatches[dispatch.ID].LastOutcome)
+	require.Len(t, store.attempts[dispatch.ID], 2)
+	require.Equal(t, invocation.OutcomeUnknown, store.attempts[dispatch.ID][0].Outcome)
+}
+
+func TestFinalizeStoppedExecutionUpliftsHistoricalUnknownDispatches(t *testing.T) {
+	store := NewInMemoryOutboxStore()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+	createOutboxSaga(t, store, "saga-historical-terminal")
+	terminal := enqueueOutboxStep(t, store, "saga-historical-terminal", "effect-1", "write", 1)
+	claimed, err := store.ClaimDispatch(t.Context(), ClaimOptions{
+		Owner: "worker", LeaseDuration: time.Minute, TargetDispatchID: terminal.ID, Now: now,
+	})
+	require.NoError(t, err)
+	store.sagas["saga-historical-terminal"].State = SagaFailed
+	createOutboxSaga(t, store, "saga-historical-running")
+	running := enqueueOutboxStep(t, store, "saga-historical-running", "effect-1", "write", 1)
+	store.dispatches[running.ID].State = DispatchBlockedUnknown
+	require.ErrorIs(t, store.FinalizeStoppedExecution(t.Context(), "execution-1"), ErrActiveDispatchLease)
+	require.Equal(t, SagaRunning, store.sagas["saga-historical-running"].State)
+	now = claimed.LeaseDeadline.Add(time.Second)
+	require.NoError(t, store.FinalizeStoppedExecution(t.Context(), "execution-1"))
+	require.Equal(t, SagaBlockedUnknown, store.sagas["saga-historical-terminal"].State)
+	require.Equal(t, DispatchBlockedUnknown, store.dispatches[terminal.ID].State)
+	require.Equal(t, SagaBlockedUnknown, store.sagas["saga-historical-running"].State)
+	require.Equal(t, DispatchBlockedUnknown, store.dispatches[running.ID].State)
+}
+
+func TestFailFastFinalizationRequiresNoInverseDispatch(t *testing.T) {
+	store := NewInMemoryOutboxStore()
+	createOutboxSaga(t, store, "saga-fail-fast")
+	for _, effectID := range []string{"first", "second"} {
+		_, err := store.EnqueueStep(t.Context(), EnqueueStepRequest{
+			SagaID: "saga-fail-fast", EffectID: effectID, Sequence: len(store.steps["saga-fail-fast"]) + 1,
+			Verb: effectID, ContractHash: "contract-" + effectID, Arguments: map[string]any{"id": effectID},
+		})
+		require.NoError(t, err)
+	}
+	first, err := store.ClaimDispatch(t.Context(), ClaimOptions{Owner: "worker", LeaseDuration: time.Minute})
+	require.NoError(t, err)
+	require.NoError(t, store.CompleteDispatch(t.Context(), Completion{
+		DispatchID: first.ID, Attempt: first.Attempt, LeaseToken: first.LeaseToken,
+		Outcome: invocation.OutcomeSuccess, Result: []byte(`null`),
+	}))
+	second, err := store.ClaimDispatch(t.Context(), ClaimOptions{Owner: "worker", LeaseDuration: time.Minute})
+	require.NoError(t, err)
+	require.NoError(t, store.CompleteDispatch(t.Context(), Completion{
+		DispatchID: second.ID, Attempt: second.Attempt, LeaseToken: second.LeaseToken,
+		Outcome: invocation.OutcomePermanentFailure, Error: "rejected",
+	}))
+	require.Equal(t, SagaBlockedCompensation, store.sagas["saga-fail-fast"].State)
+	require.NoError(t, store.FinalizeFailFastSaga(t.Context(), "saga-fail-fast"))
+	require.Equal(t, SagaFailed, store.sagas["saga-fail-fast"].State)
+	require.NoError(t, store.FinalizeFailFastSaga(t.Context(), "saga-fail-fast"))
+}
+
+func TestBlockSagaCompensationCancelsInverseAndPreservesUnknownOutcome(t *testing.T) {
+	store := NewInMemoryOutboxStore()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+	createOutboxSaga(t, store, "saga-legacy-inverse")
+	first := enqueueOutboxStep(t, store, "saga-legacy-inverse", "effect-1", "first", 1)
+	second := enqueueOutboxStep(t, store, "saga-legacy-inverse", "effect-2", "second", 2)
+	claimed, err := store.ClaimDispatch(t.Context(), ClaimOptions{Owner: "worker", LeaseDuration: time.Minute, TargetDispatchID: first.ID, Now: now})
+	require.NoError(t, err)
+	require.NoError(t, store.CompleteDispatch(t.Context(), Completion{
+		DispatchID: first.ID, Attempt: claimed.Attempt, LeaseToken: claimed.LeaseToken,
+		Outcome: invocation.OutcomeSuccess, Result: []byte(`null`), Now: now,
+	}))
+	claimed, err = store.ClaimDispatch(t.Context(), ClaimOptions{Owner: "worker", LeaseDuration: time.Minute, TargetDispatchID: second.ID, Now: now})
+	require.NoError(t, err)
+	require.NoError(t, store.CompleteDispatch(t.Context(), Completion{
+		DispatchID: second.ID, Attempt: claimed.Attempt, LeaseToken: claimed.LeaseToken,
+		Outcome: invocation.OutcomePermanentFailure, Error: "rejected", Now: now,
+	}))
+	dispatches, err := store.ListDispatches(t.Context(), "saga-legacy-inverse")
+	require.NoError(t, err)
+	require.Len(t, dispatches, 3)
+	var inverse *Dispatch
+	for _, dispatch := range dispatches {
+		if dispatch.Direction == invocation.DirectionCompensation {
+			inverse = dispatch
+		}
+	}
+	require.NotNil(t, inverse)
+	require.NoError(t, store.BlockSagaCompensation(t.Context(), "saga-legacy-inverse"))
+	require.Equal(t, SagaBlockedCompensation, store.sagas["saga-legacy-inverse"].State)
+	require.Equal(t, DispatchCanceled, store.dispatches[inverse.ID].State)
+	require.ErrorIs(t, store.FinalizeFailFastSaga(t.Context(), "saga-legacy-inverse"), ErrInvalidTransition)
+	require.NoError(t, store.BlockSagaCompensation(t.Context(), "saga-legacy-inverse"))
+
+	createOutboxSaga(t, store, "saga-legacy-unknown-inverse")
+	first = enqueueOutboxStep(t, store, "saga-legacy-unknown-inverse", "effect-1", "first", 1)
+	second = enqueueOutboxStep(t, store, "saga-legacy-unknown-inverse", "effect-2", "second", 2)
+	claimed, err = store.ClaimDispatch(t.Context(), ClaimOptions{Owner: "worker", LeaseDuration: time.Minute, TargetDispatchID: first.ID, Now: now})
+	require.NoError(t, err)
+	require.NoError(t, store.CompleteDispatch(t.Context(), Completion{
+		DispatchID: first.ID, Attempt: claimed.Attempt, LeaseToken: claimed.LeaseToken,
+		Outcome: invocation.OutcomeSuccess, Result: []byte(`null`), Now: now,
+	}))
+	claimed, err = store.ClaimDispatch(t.Context(), ClaimOptions{Owner: "worker", LeaseDuration: time.Minute, TargetDispatchID: second.ID, Now: now})
+	require.NoError(t, err)
+	require.NoError(t, store.CompleteDispatch(t.Context(), Completion{
+		DispatchID: second.ID, Attempt: claimed.Attempt, LeaseToken: claimed.LeaseToken,
+		Outcome: invocation.OutcomePermanentFailure, Error: "rejected", Now: now,
+	}))
+	dispatches, err = store.ListDispatches(t.Context(), "saga-legacy-unknown-inverse")
+	require.NoError(t, err)
+	inverse = nil
+	for _, dispatch := range dispatches {
+		if dispatch.Direction == invocation.DirectionCompensation {
+			inverse = dispatch
+		}
+	}
+	require.NotNil(t, inverse)
+	_, err = store.ClaimDispatch(t.Context(), ClaimOptions{Owner: "worker", LeaseDuration: time.Minute, TargetDispatchID: inverse.ID, Now: now})
+	require.NoError(t, err)
+	require.ErrorIs(t, store.BlockSagaCompensation(t.Context(), "saga-legacy-unknown-inverse"), ErrActiveDispatchLease)
+	now = now.Add(2 * time.Minute)
+	require.NoError(t, store.BlockSagaCompensation(t.Context(), "saga-legacy-unknown-inverse"))
+	require.Equal(t, SagaBlockedUnknown, store.sagas["saga-legacy-unknown-inverse"].State)
+	require.Equal(t, DispatchBlockedUnknown, store.dispatches[inverse.ID].State)
+}
+
 func TestOutboxConcurrentClaimHasOneWinner(t *testing.T) {
 	store := NewInMemoryOutboxStore()
 	createOutboxSaga(t, store, "saga-race")

@@ -30,7 +30,11 @@ else
 fi
 
 temp=$(mktemp -d)
-trap 'rm -rf "$temp"' EXIT HUP INT TERM
+# A populated runner cache can satisfy Go without contacting the public proxy.
+# Resolve every release candidate through the selected proxy on this run.
+compat_modcache=$temp/modcache
+trap 'chmod -R u+w "$compat_modcache" 2>/dev/null || true; rm -rf "$temp"' EXIT HUP INT TERM
+export GOMODCACHE="$compat_modcache"
 cd "$temp"
 go mod init example.com/effectus-compat-v03-smoke >/dev/null
 gen_test_file=compat_test.go

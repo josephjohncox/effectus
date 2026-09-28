@@ -49,6 +49,7 @@ type Completion = workflow.Completion
 type DispatchAttempt = workflow.DispatchAttempt
 type UnknownOutcomeRetryPolicy = workflow.UnknownOutcomeRetryPolicy
 type OutboxStore = workflow.OutboxStore
+type ExecutionFinalizer = workflow.ExecutionFinalizer
 
 const (
 	SagaRunning             = workflow.SagaRunning
@@ -65,6 +66,7 @@ const (
 	DispatchSucceeded       = workflow.DispatchSucceeded
 	DispatchRetryWait       = workflow.DispatchRetryWait
 	DispatchFailedPermanent = workflow.DispatchFailedPermanent
+	DispatchCanceled        = workflow.DispatchCanceled
 	DispatchBlockedUnknown  = workflow.DispatchBlockedUnknown
 	DispatchBlockedFence    = workflow.DispatchBlockedFence
 	StepPending             = workflow.StepPending
