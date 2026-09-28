@@ -13,7 +13,7 @@ on:
         type: string
 
 concurrency:
-  group: recover-release-${{ inputs.tag }}
+  group: release-${{ inputs.tag }}
   cancel-in-progress: false
 
 permissions:
@@ -79,10 +79,19 @@ jobs:
           version=${TAG#v}
           test "$(awk '/^version:/ {print $2}' charts/effectusd/Chart.yaml)" = "$version"
           test "$(node -p "require('./tools/vscode-extension/package.json').version")" = "$version"
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          release_error=$(mktemp)
+          if gh release view "$TAG" >/dev/null 2>"$release_error"; then
             echo "GitHub release already exists: $TAG" >&2
+            rm -f "$release_error"
             exit 1
           fi
+          if ! grep -Eqi 'release not found|HTTP 404' "$release_error"; then
+            echo "cannot prove GitHub release is absent: $TAG" >&2
+            cat "$release_error" >&2
+            rm -f "$release_error"
+            exit 1
+          fi
+          rm -f "$release_error"
           owner=$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')
           bundle_layout=$(mktemp)
           .recovery-helper/.github/scripts/recovery-bundle-layout.sh "$PWD" "$version" > "$bundle_layout"
@@ -110,6 +119,7 @@ jobs:
           go install github.com/google/go-containerregistry/cmd/crane@v0.20.3
           go install github.com/sigstore/cosign/v2/cmd/cosign@v2.4.3
           go install github.com/anchore/syft/cmd/syft@v1.22.0
+          go install oras.land/oras/cmd/oras@v1.2.2
 
       - name: Build exact release assets
         env:
@@ -155,8 +165,6 @@ jobs:
           go run ./cmd/effectusc check --bundle "dist/$BUNDLE_ASSET"
           helm package charts/effectusd --destination dist \
             --version "$VERSION" --app-version "$VERSION"
-          docker build --build-arg SOURCE_DATE_EPOCH=0 \
-            --tag effectus:release .
 
       - name: Build VS Code extension
         working-directory: tools/vscode-extension
@@ -170,7 +178,7 @@ jobs:
           npm run package
           mv "effectus-language-support-${VERSION}.vsix" ../../dist/
 
-      - name: Scan and describe recovered assets
+      - name: Describe recovered bundle and chart assets
         env:
           SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
           TAG: ${{ steps.release.outputs.tag }}
@@ -178,11 +186,6 @@ jobs:
           BUNDLE_ASSET: ${{ steps.release.outputs.bundle_asset }}
         run: |
           set -euo pipefail
-          trivy="aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c"
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            "$trivy" image --scanners vuln --severity HIGH,CRITICAL \
-            --ignore-unfixed --exit-code 1 effectus:release
-          syft effectus:release -o cyclonedx-json=dist/image-sbom.cdx.json
           syft "dir:charts/effectusd" \
             -o cyclonedx-json=dist/chart-sbom.cdx.json
           syft "file:dist/${BUNDLE_ASSET}" \
@@ -196,7 +199,68 @@ jobs:
             '{buildType:$buildType,builder:{id:$builder},invocation:{configSource:{uri:$uri,digest:{sha1:$sha}}}}' \
             > dist/release-provenance.json
 
-      - name: Sign local checksum manifest
+      - name: Log in after local validation
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate signed staging references and final destinations
+        id: registry
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+          IMAGE_REPO: ${{ steps.release.outputs.image_repo }}
+          BUNDLE_REPO: ${{ steps.release.outputs.bundle_repo }}
+          CHART_REPO: ${{ steps.release.outputs.chart_repo }}
+          CHART_STAGE_REPO: ${{ steps.release.outputs.chart_stage_repo }}
+          ORIGINAL_IDENTITY: ${{ steps.release.outputs.original_identity }}
+        run: |
+          set -euo pipefail
+          .recovery-helper/.github/scripts/recover-promote.sh \
+            verify \
+            "$VERSION" "$SOURCE_SHA" "$IMAGE_REPO" "$BUNDLE_REPO" \
+            "$CHART_REPO" "$CHART_STAGE_REPO" "$ORIGINAL_IDENTITY" \
+            "$GITHUB_OUTPUT"
+
+      - name: Scan recovered published AMD64 and ARM64 image artifacts
+        env:
+          IMAGE_REPO: ${{ steps.release.outputs.image_repo }}
+          IMAGE_DIGEST: ${{ steps.registry.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          .recovery-helper/.github/scripts/scan-published-image.sh \
+            "$IMAGE_REPO" "$IMAGE_DIGEST" dist
+          jq --slurpfile image dist/image-platforms.json \
+            '.invocation.parameters.publishedImage = $image[0]' \
+            dist/release-provenance.json > dist/image-provenance.json
+
+      - name: Sign and verify recovered image attestations
+        env:
+          IMAGE_REPO: ${{ steps.release.outputs.image_repo }}
+          IMAGE_DIGEST: ${{ steps.registry.outputs.image_digest }}
+          RECOVERY_IDENTITY: ${{ steps.release.outputs.recovery_identity }}
+        run: |
+          set -euo pipefail
+          image_ref="${IMAGE_REPO}@${IMAGE_DIGEST}"
+          cosign attest --yes --type slsaprovenance \
+            --predicate dist/image-provenance.json "$image_ref"
+          cosign verify-attestation --type slsaprovenance "$image_ref" \
+            --certificate-identity "$RECOVERY_IDENTITY" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          for arch in amd64 arm64; do
+            platform_digest=$(jq -r --arg arch "linux/$arch" \
+              '.platforms[$arch]' dist/image-platforms.json)
+            platform_ref="${IMAGE_REPO}@${platform_digest}"
+            cosign attest --yes --type cyclonedx \
+              --predicate "dist/image-${arch}-sbom.cdx.json" "$platform_ref"
+            cosign verify-attestation --type cyclonedx "$platform_ref" \
+              --certificate-identity "$RECOVERY_IDENTITY" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          done
+
+      - name: Sign and verify recovered asset checksums
         env:
           RECOVERY_IDENTITY: ${{ steps.release.outputs.recovery_identity }}
         run: |
@@ -214,15 +278,7 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             dist/SHA256SUMS
 
-      - name: Log in after local validation
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Validate promoted references and repair chart signatures
-        id: registry
+      - name: Promote verified OCI digests to missing final tags
         env:
           VERSION: ${{ steps.release.outputs.version }}
           SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
@@ -231,33 +287,26 @@ jobs:
           CHART_REPO: ${{ steps.release.outputs.chart_repo }}
           CHART_STAGE_REPO: ${{ steps.release.outputs.chart_stage_repo }}
           ORIGINAL_IDENTITY: ${{ steps.release.outputs.original_identity }}
+          IMAGE_DIGEST: ${{ steps.registry.outputs.image_digest }}
+          BUNDLE_DIGEST: ${{ steps.registry.outputs.bundle_digest }}
+          CHART_DIGEST: ${{ steps.registry.outputs.chart_digest }}
+        run: |
+          set -euo pipefail
+          .recovery-helper/.github/scripts/recover-promote.sh \
+            promote \
+            "$VERSION" "$SOURCE_SHA" "$IMAGE_REPO" "$BUNDLE_REPO" \
+            "$CHART_REPO" "$CHART_STAGE_REPO" "$ORIGINAL_IDENTITY" \
+            "$GITHUB_OUTPUT" "$IMAGE_DIGEST" "$BUNDLE_DIGEST" "$CHART_DIGEST"
+
+      - name: Repair and verify final chart signatures
+        env:
+          CHART_REPO: ${{ steps.release.outputs.chart_repo }}
+          CHART_DIGEST: ${{ steps.registry.outputs.chart_digest }}
           RECOVERY_IDENTITY: ${{ steps.release.outputs.recovery_identity }}
         run: |
           set -euo pipefail
           issuer=https://token.actions.githubusercontent.com
-          image_stage="${IMAGE_REPO}:staging-${SOURCE_SHA}"
-          bundle_stage="${BUNDLE_REPO}:staging-${SOURCE_SHA}"
-          image_digest=$(crane digest "$image_stage")
-          bundle_digest=$(crane digest "$bundle_stage")
-          chart_digest=$(crane digest "${CHART_STAGE_REPO}:${VERSION}")
-          test "$(crane digest "${IMAGE_REPO}:${VERSION}")" = "$image_digest"
-          test "$(crane digest "${BUNDLE_REPO}:${VERSION}")" = "$bundle_digest"
-          test "$(crane digest "${CHART_REPO}:${VERSION}")" = "$chart_digest"
-          for ref in \
-            "${IMAGE_REPO}@${image_digest}" \
-            "${BUNDLE_REPO}@${bundle_digest}" \
-            "${CHART_STAGE_REPO}@${chart_digest}"; do
-            cosign verify "$ref" \
-              --certificate-identity "$ORIGINAL_IDENTITY" \
-              --certificate-oidc-issuer "$issuer"
-            cosign verify-attestation --type slsaprovenance "$ref" \
-              --certificate-identity "$ORIGINAL_IDENTITY" \
-              --certificate-oidc-issuer "$issuer"
-            cosign verify-attestation --type cyclonedx "$ref" \
-              --certificate-identity "$ORIGINAL_IDENTITY" \
-              --certificate-oidc-issuer "$issuer"
-          done
-          chart_ref="${CHART_REPO}@${chart_digest}"
+          chart_ref="${CHART_REPO}@${CHART_DIGEST}"
           if ! cosign verify "$chart_ref" \
             --certificate-identity "$RECOVERY_IDENTITY" \
             --certificate-oidc-issuer "$issuer" >/dev/null 2>&1; then
@@ -276,11 +325,30 @@ jobs:
           cosign verify-attestation --type cyclonedx "$chart_ref" \
             --certificate-identity "$RECOVERY_IDENTITY" \
             --certificate-oidc-issuer "$issuer"
-          {
-            echo "image_digest=$image_digest"
-            echo "bundle_digest=$bundle_digest"
-            echo "chart_digest=$chart_digest"
-          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify public Go-proxy compatibility before completion
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          compat_policy=$(
+            .recovery-helper/.github/scripts/recovery-compat-policy.sh "$VERSION"
+          )
+          if [ "$compat_policy" = not-applicable ]; then
+            echo "v${VERSION} predates the frozen compat/v03 import surface"
+            exit 0
+          fi
+          test "$compat_policy" = required
+          for attempt in $(seq 1 20); do
+            if .recovery-helper/scripts/compat-proxy-smoke.sh "$VERSION"; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 20 ]; then
+              echo "public Go-proxy compatibility smoke failed after 20 attempts" >&2
+              exit 1
+            fi
+            sleep 15
+          done
 
       - name: Create and sign recovery completion manifest
         env:
@@ -320,10 +388,19 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          release_error=$(mktemp)
+          if gh release view "$TAG" >/dev/null 2>"$release_error"; then
             echo "GitHub release appeared during recovery: $TAG" >&2
+            rm -f "$release_error"
             exit 1
           fi
+          if ! grep -Eqi 'release not found|HTTP 404' "$release_error"; then
+            echo "cannot prove GitHub release is absent: $TAG" >&2
+            cat "$release_error" >&2
+            rm -f "$release_error"
+            exit 1
+          fi
+          rm -f "$release_error"
           gh release create "$TAG" dist/* \
             --verify-tag --notes-file "docs/releases/v${VERSION}.md" \
             --title "Effectus $TAG"

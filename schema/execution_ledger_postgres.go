@@ -27,7 +27,7 @@ func (store *PostgresOutboxStore) RecoveryStats(ctx context.Context) (RecoverySt
 	if err := store.db.QueryRowContext(ctx, `
 		SELECT min(updated_at)
 		FROM effectus_saga_outbox
-		WHERE state NOT IN ('succeeded','failed_permanent')
+		WHERE state NOT IN ('succeeded','failed_permanent','canceled')
 	`).Scan(&oldestOutbox); err != nil {
 		return RecoveryStats{}, fmt.Errorf("read outbox dispatch statistics: %w", err)
 	}

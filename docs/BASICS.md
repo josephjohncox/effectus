@@ -123,8 +123,8 @@ Compare replay IDs within each run. The tutorial uses a different namespace for 
 - A result binding cannot be redefined.
 - A `void` result cannot be bound to a value.
 - Named argument order does not change argument meaning.
-- Higher-priority plans precede lower-priority plans.
-- Equal-priority plans use deterministic source-path and declaration order, not the caller's source-slice order.
+- List (`.eff`) plans precede flow (`.effx`) plans. Within each dialect, higher-priority plans precede lower-priority plans.
+- Equal-priority plans within a dialect use deterministic source-path and declaration order, not the caller's source-slice order.
 
 The compiler turns these dependencies into checked IR result slots.
 It does not infer that external operations commute or can execute in parallel safely.

@@ -31,6 +31,7 @@ const (
 	DispatchSucceeded       DispatchState = "succeeded"
 	DispatchRetryWait       DispatchState = "retry_wait"
 	DispatchFailedPermanent DispatchState = "failed_permanent"
+	DispatchCanceled        DispatchState = "canceled"
 	DispatchBlockedUnknown  DispatchState = "blocked_unknown"
 	DispatchBlockedFence    DispatchState = "blocked_fence"
 )
@@ -178,4 +179,12 @@ type OutboxStore interface {
 	GetDispatch(context.Context, string) (*Dispatch, error)
 	ListDispatches(context.Context, string) ([]*Dispatch, error)
 	ListAttempts(context.Context, string) ([]DispatchAttempt, error)
+}
+
+// ExecutionFinalizer is implemented by stores that can atomically close
+// stranded durable work after an execution stops.
+type ExecutionFinalizer interface {
+	FinalizeStoppedExecution(context.Context, string) error
+	BlockSagaCompensation(context.Context, string) error
+	FinalizeFailFastSaga(context.Context, string) error
 }

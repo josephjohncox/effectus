@@ -88,7 +88,7 @@ func PruneTerminalRecords(ctx context.Context, db *sql.DB, options PruneOptions)
 				JOIN effectus_saga_outbox outbox ON outbox.saga_id = plan.saga_id
 				WHERE plan.execution_id = execution.execution_id
 				  AND (
-					outbox.state NOT IN ('succeeded', 'failed_permanent')
+					outbox.state NOT IN ('succeeded', 'failed_permanent', 'canceled')
 					OR outbox.updated_at >= $1
 					OR outbox.lease_owner IS NOT NULL
 					OR outbox.lease_token IS NOT NULL
@@ -126,7 +126,7 @@ func PruneTerminalRecords(ctx context.Context, db *sql.DB, options PruneOptions)
 				SELECT 1 FROM effectus_saga_outbox outbox
 				WHERE outbox.saga_id = saga.saga_id
 				  AND (
-					outbox.state NOT IN ('succeeded', 'failed_permanent')
+					outbox.state NOT IN ('succeeded', 'failed_permanent', 'canceled')
 					OR outbox.updated_at >= $1
 					OR outbox.lease_owner IS NOT NULL
 					OR outbox.lease_token IS NOT NULL
@@ -230,8 +230,8 @@ func PruneTerminalRecords(ctx context.Context, db *sql.DB, options PruneOptions)
 		{"saga instances", `DELETE FROM effectus_saga_instances WHERE saga_id IN (SELECT saga_id FROM effectus_prune_sagas)`},
 		{"executions", `DELETE FROM effectus_executions WHERE execution_id IN (SELECT execution_id FROM effectus_prune_executions)`},
 		{"Kafka poison records", `DELETE FROM effectus_kafka_deliveries WHERE delivery_id IN (SELECT delivery_id FROM effectus_prune_kafka)`},
-		{"retired generations", `DELETE FROM effectus_rule_generations generation USING effectus_prune_generations candidate WHERE generation.ruleset = candidate.ruleset AND generation.version = candidate.version AND generation.generation_digest = candidate.generation_digest`},
-		{"unreferenced artifacts", `DELETE FROM effectus_execution_artifacts artifact WHERE artifact.generation_digest IN (SELECT generation_digest FROM effectus_prune_artifacts)`},
+		{"retired generations", `DELETE FROM effectus_rule_generations generation USING effectus_prune_generations candidate WHERE generation.ruleset = candidate.ruleset AND generation.version = candidate.version AND generation.generation_digest = candidate.generation_digest AND generation.state = 'retired' AND generation.retired_at < $1 AND NOT EXISTS (SELECT 1 FROM effectus_executions execution WHERE execution.generation_digest = generation.generation_digest)`},
+		{"unreferenced artifacts", `DELETE FROM effectus_execution_artifacts artifact WHERE artifact.generation_digest IN (SELECT generation_digest FROM effectus_prune_artifacts) AND NOT EXISTS (SELECT 1 FROM effectus_rule_generations generation WHERE generation.generation_digest = artifact.generation_digest) AND NOT EXISTS (SELECT 1 FROM effectus_executions execution WHERE execution.generation_digest = artifact.generation_digest)`},
 	}
 	for _, deletion := range deletions {
 		var err error

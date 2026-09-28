@@ -81,7 +81,8 @@ flow "charge-flow" priority 4 {
 	require.Equal(t, uint32(3), artifact.Plans[0].Steps[0].RetryPolicy.MaxAttempts)
 	require.Equal(t, effectusv1.IdempotencyPolicy_IDEMPOTENCY_POLICY_SINK_GUARANTEED, artifact.Plans[0].Steps[0].IdempotencyPolicy)
 	require.Equal(t, effectusv1.FencingRequirement_FENCING_REQUIREMENT_REQUIRED, artifact.Plans[0].Steps[0].FencingRequirement)
-	require.Equal(t, "refund", artifact.Plans[0].Steps[0].Compensation.InverseVerb)
+	require.Equal(t, ExecutionPolicyFailFast, artifact.Plans[0].ExecutionPolicy)
+	require.Nil(t, artifact.Plans[0].Steps[0].Compensation)
 }
 
 func TestCompileCheckedCanonicalPriorityAndSourceOrder(t *testing.T) {
@@ -123,6 +124,7 @@ func TestCompileCheckedCompensationValidation(t *testing.T) {
 	checked, err := CompileChecked(t.Context(), checkedBundle(t, environment, source), CompileOptions{ExecutionPolicy: ExecutionPolicyCompensating})
 	require.NoError(t, err)
 	require.Equal(t, ExecutionPolicyCompensating, checked.CloneArtifact().Plans[0].ExecutionPolicy)
+	require.Equal(t, "refund", checked.CloneArtifact().Plans[0].Steps[0].Compensation.InverseVerb)
 
 	contract := environment.Verbs["charge"]
 	contract.InverseVerb = ""

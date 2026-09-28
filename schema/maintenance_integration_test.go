@@ -38,6 +38,160 @@ func TestConcurrentSagaMigratorsFinish(t *testing.T) {
 	}
 }
 
+func TestSagaMigrationWithOneOpenConnection(t *testing.T) {
+	db := openSagaIntegrationDB(t)
+	db.SetMaxOpenConns(1)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	require.NoError(t, MigrateSagaV2(ctx, db))
+	require.NoError(t, ValidateSagaV2(ctx, db))
+}
+
+func TestSagaMigrationBackfillsStoppedTerminalIntents(t *testing.T) {
+	admin := openSagaIntegrationDB(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	schemaName := "effectus_backfill_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	_, err := admin.ExecContext(ctx, `CREATE SCHEMA `+schemaName)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = admin.Exec(`DROP SCHEMA ` + schemaName + ` CASCADE`) })
+	dsn, err := url.Parse(os.Getenv("DB_DSN"))
+	require.NoError(t, err)
+	query := dsn.Query()
+	query.Set("search_path", schemaName)
+	dsn.RawQuery = query.Encode()
+	db, err := sql.Open("pgx", dsn.String())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	require.NoError(t, db.PingContext(ctx))
+	provider, err := newSagaMigrationProvider(db)
+	require.NoError(t, err)
+	_, err = provider.UpTo(ctx, 10004)
+	require.NoError(t, err)
+
+	generation := "generation-" + uuid.NewString()
+	executionID := "execution-" + uuid.NewString()
+	_, err = db.ExecContext(ctx, `INSERT INTO effectus_execution_artifacts
+		(generation_digest, ir_digest, ir_bytes, environment, executor_manifest, function_manifest, source_digest, compiler_metadata)
+		VALUES ($1, 'ir', '\x01', '{}', '{}', '{}', 'source', '{}')`, generation)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `INSERT INTO effectus_executions
+		(execution_id, admission_identity, request_hash, ruleset, version, tenant_namespace,
+		 merge_policy, generation_digest, effective_facts, state)
+		VALUES ($1, $2, 'request', 'rules', '1', 'tenant', 'last', $3, '{}', 'failed')`,
+		executionID, "admission-"+executionID, generation)
+	require.NoError(t, err)
+	insertSaga := func(sagaID, effectID, dispatchState string, ordinal int) {
+		_, err := db.ExecContext(ctx, `INSERT INTO effectus_saga_instances
+			(saga_id, namespace, execution_id, plan_id, plan_digest, state)
+			VALUES ($1, 'tenant', $2, $3, 'digest', 'running')`, sagaID, executionID, "plan-"+effectID)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx, `INSERT INTO effectus_execution_plans
+			(execution_id, plan_id, saga_id, ordinal, state)
+			VALUES ($1, $2, $3, $4, 'selected')`, executionID, "plan-"+effectID, sagaID, ordinal)
+		require.NoError(t, err)
+		stepState := "pending"
+		if dispatchState == "succeeded" {
+			stepState = "succeeded"
+		}
+		_, err = db.ExecContext(ctx, `INSERT INTO effectus_saga_steps
+			(saga_id, effect_id, sequence, verb, contract_hash, arguments, argument_hash, state)
+			VALUES ($1, $2, 1, 'write', 'contract', '{}', 'hash', $3)`, sagaID, effectID, stepState)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx, `INSERT INTO effectus_saga_outbox
+			(dispatch_id, saga_id, effect_id, sequence, direction, verb, contract_hash,
+			 arguments, argument_hash, idempotency_key, state)
+			VALUES ($1, $2, $3, 1, 'forward', 'write', 'contract', '{}', 'hash', $4, $5)`,
+			"dispatch-"+effectID, sagaID, effectID, "key-"+effectID, dispatchState)
+		require.NoError(t, err)
+	}
+	untouchedSaga, evidenceSaga := "untouched-"+uuid.NewString(), "evidence-"+uuid.NewString()
+	attemptedSaga, terminalSaga := "attempted-"+uuid.NewString(), "terminal-"+uuid.NewString()
+	unknownSaga := "unknown-" + uuid.NewString()
+	historicalUnknownSaga := "historical-unknown-" + uuid.NewString()
+	insertSaga(untouchedSaga, "untouched", "queued", 0)
+	insertSaga(evidenceSaga, "evidence", "succeeded", 1)
+	insertSaga(attemptedSaga, "attempted", "queued", 2)
+	insertSaga(terminalSaga, "terminal", "retry_wait", 3)
+	insertSaga(unknownSaga, "unknown", "retry_wait", 4)
+	insertSaga(historicalUnknownSaga, "historical-unknown", "queued", 5)
+	_, err = db.ExecContext(ctx, `UPDATE effectus_saga_instances SET state = 'failed' WHERE saga_id = $1`, historicalUnknownSaga)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `UPDATE effectus_saga_outbox SET state = 'blocked_unknown' WHERE saga_id = $1`, historicalUnknownSaga)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `UPDATE effectus_saga_instances SET state = 'blocked_unknown' WHERE saga_id = $1`, terminalSaga)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `UPDATE effectus_saga_outbox SET last_outcome = 'retryable_failure_known_not_committed' WHERE saga_id = $1`, unknownSaga)
+	require.NoError(t, err)
+	for _, effectID := range []string{"attempted", "terminal", "unknown"} {
+		_, err = db.ExecContext(ctx, `UPDATE effectus_saga_outbox SET attempt = 1 WHERE dispatch_id = $1`, "dispatch-"+effectID)
+		require.NoError(t, err)
+		outcome := "retryable_failure_known_not_committed"
+		if effectID == "unknown" {
+			outcome = "unknown_outcome"
+		}
+		_, err = db.ExecContext(ctx, `INSERT INTO effectus_saga_attempts
+			(dispatch_id, attempt, lease_owner, lease_token, lease_deadline, outcome, started_at, completed_at)
+			VALUES ($1, 1, 'worker', 'token', now()-interval '1 hour',
+			        $2, now()-interval '2 hours', now()-interval '1 hour')`,
+			"dispatch-"+effectID, outcome)
+		require.NoError(t, err)
+	}
+	require.NoError(t, MigrateSagaV2(ctx, db))
+	store, err := NewPostgresOutboxStore(db)
+	require.NoError(t, err)
+	var sagaState, dispatchState string
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT state FROM effectus_saga_instances WHERE saga_id = $1`, untouchedSaga).Scan(&sagaState))
+	require.Equal(t, "failed", sagaState)
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT state FROM effectus_saga_outbox WHERE saga_id = $1`, untouchedSaga).Scan(&dispatchState))
+	require.Equal(t, "canceled", dispatchState)
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT state FROM effectus_saga_instances WHERE saga_id = $1`, evidenceSaga).Scan(&sagaState))
+	require.Equal(t, "blocked_dependency", sagaState)
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT state FROM effectus_saga_outbox WHERE saga_id = $1`, evidenceSaga).Scan(&dispatchState))
+	require.Equal(t, "succeeded", dispatchState)
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT state FROM effectus_saga_instances WHERE saga_id = $1`, attemptedSaga).Scan(&sagaState))
+	require.Equal(t, "failed", sagaState)
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT state FROM effectus_saga_outbox WHERE saga_id = $1`, attemptedSaga).Scan(&dispatchState))
+	require.Equal(t, "canceled", dispatchState)
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT state FROM effectus_saga_instances WHERE saga_id = $1`, terminalSaga).Scan(&sagaState))
+	require.Equal(t, "blocked_unknown", sagaState)
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT state FROM effectus_saga_outbox WHERE saga_id = $1`, terminalSaga).Scan(&dispatchState))
+	require.Equal(t, "canceled", dispatchState)
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT state FROM effectus_saga_instances WHERE saga_id = $1`, unknownSaga).Scan(&sagaState))
+	require.Equal(t, "blocked_unknown", sagaState)
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT state FROM effectus_saga_outbox WHERE saga_id = $1`, unknownSaga).Scan(&dispatchState))
+	require.Equal(t, "blocked_unknown", dispatchState)
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT state FROM effectus_saga_instances WHERE saga_id = $1`, historicalUnknownSaga).Scan(&sagaState))
+	require.Equal(t, "blocked_unknown", sagaState)
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT state FROM effectus_saga_outbox WHERE saga_id = $1`, historicalUnknownSaga).Scan(&dispatchState))
+	require.Equal(t, "blocked_unknown", dispatchState)
+	var executionState string
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT state FROM effectus_executions WHERE execution_id = $1`, executionID).Scan(&executionState))
+	require.Equal(t, "blocked_unknown", executionState)
+	var attempts int
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM effectus_saga_attempts WHERE dispatch_id = 'dispatch-terminal'`).Scan(&attempts))
+	require.Equal(t, 1, attempts)
+	var revision uint64
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT revision FROM effectus_saga_outbox WHERE dispatch_id = 'dispatch-terminal'`).Scan(&revision))
+	require.NoError(t, MigrateSagaV2(ctx, db))
+	var replayedRevision uint64
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT revision FROM effectus_saga_outbox WHERE dispatch_id = 'dispatch-terminal'`).Scan(&replayedRevision))
+	require.Equal(t, revision, replayedRevision)
+	_, err = db.ExecContext(ctx, `DELETE FROM effectus_saga_attempts WHERE dispatch_id IN ('dispatch-attempted', 'dispatch-unknown')`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `DELETE FROM effectus_saga_outbox WHERE dispatch_id IN ('dispatch-attempted', 'dispatch-unknown', 'dispatch-historical-unknown')`)
+	require.NoError(t, err)
+	stats, err := store.RecoveryStats(ctx)
+	require.NoError(t, err)
+	require.True(t, stats.OldestOutbox.IsZero(), "canceled and succeeded dispatches must not age as open work")
+	postMigrationSaga := "postmigration-" + uuid.NewString()
+	insertSaga(postMigrationSaga, "postmigration", "queued", 6)
+	_, err = store.ClaimDispatch(ctx, ClaimOptions{
+		Owner: "worker", LeaseDuration: time.Minute, TargetDispatchID: "dispatch-postmigration",
+	})
+	require.ErrorIs(t, err, ErrNoDispatch, "terminal execution must gate historical queued work")
+}
+
 func TestValidateSagaSchemaWithRuntimeRoleNoDDL(t *testing.T) {
 	admin := openSagaIntegrationDB(t)
 	require.NoError(t, MigrateSagaV2(t.Context(), admin))

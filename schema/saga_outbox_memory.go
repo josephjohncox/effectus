@@ -118,6 +118,29 @@ func (store *InMemoryOutboxStore) EnqueueStep(ctx context.Context, request Enque
 	return cloneDispatch(dispatch), nil
 }
 
+func (store *InMemoryOutboxStore) replayExistingStep(ctx context.Context, request EnqueueStepRequest) (*Dispatch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	request, _, argumentHash, _, compensationHash, err := normalizeEnqueue(request)
+	if err != nil {
+		return nil, err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	saga := store.sagas[request.SagaID]
+	if saga == nil {
+		return nil, fmt.Errorf("saga not found: %s", request.SagaID)
+	}
+	key := IdempotencyKey(saga.Namespace, saga.SagaID, request.EffectID, invocation.DirectionForward)
+	dispatch := store.dispatches["dispatch/"+key]
+	step := store.steps[request.SagaID][request.EffectID]
+	if dispatch == nil || step == nil || !sameStep(step, request, argumentHash, compensationHash) {
+		return nil, fmt.Errorf("%w: saga %s effect %s", ErrIdentityConflict, request.SagaID, request.EffectID)
+	}
+	return cloneDispatch(dispatch), nil
+}
+
 func (store *InMemoryOutboxStore) ClaimDispatch(ctx context.Context, options ClaimOptions) (*Dispatch, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -173,7 +196,8 @@ func (store *InMemoryOutboxStore) ClaimDispatch(ctx context.Context, options Cla
 	})
 	for _, dispatch := range eligible {
 		saga := store.sagas[dispatch.SagaID]
-		if saga.Serial && store.hasOtherInFlightLocked(dispatch.SagaID, dispatch.ID, now) {
+		if saga.Serial && (store.hasOtherInFlightLocked(dispatch.SagaID, dispatch.ID, now) ||
+			store.hasUnfinishedEarlierForwardLocked(dispatch)) {
 			continue
 		}
 		token, err := randomLeaseToken()
@@ -303,6 +327,215 @@ func (store *InMemoryOutboxStore) CompleteSaga(ctx context.Context, sagaID strin
 	return nil
 }
 
+// FinalizeStoppedExecution closes selected work that cannot run after an
+// unsuccessful terminal disposition. Committed or uncertain effects block it.
+func (store *InMemoryOutboxStore) FinalizeStoppedExecution(ctx context.Context, executionID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if executionID == "" {
+		return fmt.Errorf("execution ID is required")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	now := store.now().UTC()
+	for _, saga := range store.sagas {
+		if saga.ExecutionID != executionID {
+			continue
+		}
+		for _, dispatch := range store.dispatches {
+			if dispatch.SagaID == saga.SagaID && dispatch.State == DispatchInFlight && dispatch.LeaseDeadline.After(now) {
+				return fmt.Errorf("%w: saga %s", ErrActiveDispatchLease, saga.SagaID)
+			}
+		}
+	}
+	for _, saga := range store.sagas {
+		if saga.ExecutionID != executionID {
+			continue
+		}
+		if isTerminalSaga(saga.State) {
+			uncertain := false
+			for _, dispatch := range store.dispatches {
+				if dispatch.SagaID != saga.SagaID {
+					continue
+				}
+				switch {
+				case dispatch.State == DispatchInFlight:
+					blockExpiredDispatch(dispatch, now)
+					uncertain = true
+				case store.isUncertainRetryLocked(dispatch):
+					blockUnknownRetryDispatch(dispatch, now)
+					uncertain = true
+				case dispatch.State == DispatchBlockedUnknown:
+					uncertain = true
+				}
+			}
+			for _, dispatch := range store.dispatches {
+				if dispatch.SagaID == saga.SagaID && (dispatch.State == DispatchQueued || dispatch.State == DispatchRetryWait) {
+					cancelDispatch(dispatch, now, "execution stopped before dispatch could complete")
+				}
+			}
+			if uncertain && saga.State != SagaBlockedUnknown {
+				saga.State = SagaBlockedUnknown
+				saga.Revision++
+				saga.UpdatedAt = now
+			}
+			continue
+		}
+		if saga.State != SagaRunning && saga.State != SagaCompensating {
+			continue
+		}
+		nextState := SagaFailed
+		if saga.State == SagaCompensating {
+			nextState = SagaBlockedDependency
+		}
+		for _, dispatch := range store.dispatches {
+			if dispatch.SagaID != saga.SagaID {
+				continue
+			}
+			if dispatch.State == DispatchInFlight {
+				blockExpiredDispatch(dispatch, now)
+				nextState = SagaBlockedUnknown
+			} else if store.isUncertainRetryLocked(dispatch) {
+				blockUnknownRetryDispatch(dispatch, now)
+				nextState = SagaBlockedUnknown
+			} else if dispatch.State == DispatchBlockedUnknown {
+				nextState = SagaBlockedUnknown
+			} else if dispatch.Direction == invocation.DirectionForward && dispatch.State == DispatchSucceeded && nextState != SagaBlockedUnknown {
+				nextState = SagaBlockedDependency
+			}
+		}
+		for _, dispatch := range store.dispatches {
+			if dispatch.SagaID == saga.SagaID && (dispatch.State == DispatchQueued || dispatch.State == DispatchRetryWait) {
+				cancelDispatch(dispatch, now, "execution stopped before dispatch could complete")
+			}
+		}
+		saga.State = nextState
+		saga.Revision++
+		saga.UpdatedAt = now
+	}
+	return nil
+}
+
+// BlockSagaCompensation stops inverse work for a fail-fast execution whose
+// older checked artifact already entered the compensating state.
+func (store *InMemoryOutboxStore) BlockSagaCompensation(ctx context.Context, sagaID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	saga := store.sagas[sagaID]
+	if saga == nil {
+		return fmt.Errorf("saga not found: %s", sagaID)
+	}
+	if saga.State == SagaBlockedCompensation {
+		return nil
+	}
+	if saga.State != SagaCompensating {
+		return fmt.Errorf("%w: cannot block compensation from %s", ErrInvalidTransition, saga.State)
+	}
+	now := store.now().UTC()
+	for _, dispatch := range store.dispatches {
+		if dispatch.SagaID == sagaID && dispatch.State == DispatchInFlight && dispatch.LeaseDeadline.After(now) {
+			return fmt.Errorf("%w: saga %s", ErrActiveDispatchLease, sagaID)
+		}
+	}
+	nextState := SagaBlockedCompensation
+	for _, dispatch := range store.dispatches {
+		if dispatch.SagaID == sagaID && dispatch.Direction == invocation.DirectionCompensation {
+			switch dispatch.State {
+			case DispatchQueued:
+				cancelDispatch(dispatch, now, "compensation disabled by fail-fast execution policy")
+			case DispatchInFlight:
+				blockExpiredDispatch(dispatch, now)
+				nextState = SagaBlockedUnknown
+			case DispatchRetryWait:
+				if store.isUncertainRetryLocked(dispatch) {
+					blockUnknownRetryDispatch(dispatch, now)
+					nextState = SagaBlockedUnknown
+				} else {
+					cancelDispatch(dispatch, now, "compensation disabled by fail-fast execution policy")
+				}
+			}
+		}
+	}
+	saga.State = nextState
+	saga.Revision++
+	saga.UpdatedAt = now
+	return nil
+}
+
+// FinalizeFailFastSaga records an ordinary fail-fast failure after the legacy
+// compensation state machine found a prior success with no inverse.
+func (store *InMemoryOutboxStore) FinalizeFailFastSaga(ctx context.Context, sagaID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	saga := store.sagas[sagaID]
+	if saga == nil {
+		return fmt.Errorf("saga not found: %s", sagaID)
+	}
+	if saga.State == SagaFailed {
+		return nil
+	}
+	if saga.State != SagaBlockedCompensation {
+		return fmt.Errorf("%w: cannot finalize fail-fast saga from %s", ErrInvalidTransition, saga.State)
+	}
+	for _, dispatch := range store.dispatches {
+		if dispatch.SagaID == sagaID && (dispatch.Direction == invocation.DirectionCompensation || dispatch.State == DispatchInFlight) {
+			return fmt.Errorf("%w: saga %s has compensation or in-flight work", ErrInvalidTransition, sagaID)
+		}
+	}
+	saga.State = SagaFailed
+	saga.Revision++
+	saga.UpdatedAt = store.now().UTC()
+	return nil
+}
+
+func cancelDispatch(dispatch *Dispatch, now time.Time, reason string) {
+	dispatch.State = DispatchCanceled
+	dispatch.NextAttemptAt = time.Time{}
+	dispatch.LastError = reason
+	dispatch.Revision++
+	dispatch.UpdatedAt = now
+}
+
+func blockExpiredDispatch(dispatch *Dispatch, now time.Time) {
+	dispatch.State = DispatchBlockedUnknown
+	dispatch.LeaseOwner = ""
+	dispatch.LeaseToken = ""
+	dispatch.LeaseDeadline = time.Time{}
+	dispatch.NextAttemptAt = time.Time{}
+	dispatch.LastError = "dispatch lease expired without a known outcome"
+	dispatch.Revision++
+	dispatch.UpdatedAt = now
+}
+
+func blockUnknownRetryDispatch(dispatch *Dispatch, now time.Time) {
+	dispatch.State = DispatchBlockedUnknown
+	dispatch.NextAttemptAt = time.Time{}
+	dispatch.Revision++
+	dispatch.UpdatedAt = now
+}
+
+func (store *InMemoryOutboxStore) isUncertainRetryLocked(dispatch *Dispatch) bool {
+	if dispatch.State != DispatchRetryWait {
+		return false
+	}
+	if dispatch.LastOutcome == invocation.OutcomeUnknown {
+		return true
+	}
+	for _, attempt := range store.attempts[dispatch.ID] {
+		if attempt.Outcome == invocation.OutcomeUnknown || attempt.CompletedAt.IsZero() {
+			return true
+		}
+	}
+	return false
+}
+
 func (store *InMemoryOutboxStore) GetSaga(ctx context.Context, sagaID string) (*SagaInstance, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -368,6 +601,19 @@ func (store *InMemoryOutboxStore) ListAttempts(ctx context.Context, dispatchID s
 func (store *InMemoryOutboxStore) hasOtherInFlightLocked(sagaID, dispatchID string, now time.Time) bool {
 	for _, dispatch := range store.dispatches {
 		if dispatch.ID != dispatchID && dispatch.SagaID == sagaID && dispatch.State == DispatchInFlight && dispatch.LeaseDeadline.After(now) {
+			return true
+		}
+	}
+	return false
+}
+
+func (store *InMemoryOutboxStore) hasUnfinishedEarlierForwardLocked(candidate *Dispatch) bool {
+	if candidate.Direction != invocation.DirectionForward {
+		return false
+	}
+	for _, dispatch := range store.dispatches {
+		if dispatch.SagaID == candidate.SagaID && dispatch.Direction == invocation.DirectionForward &&
+			dispatch.Sequence < candidate.Sequence && dispatch.State != DispatchSucceeded {
 			return true
 		}
 	}

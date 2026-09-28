@@ -10,7 +10,7 @@ on:
       - "v*"
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -140,8 +140,6 @@ jobs:
           go run ./cmd/effectusc check --bundle "dist/order-review-${VERSION}.json"
           helm package charts/effectusd --destination dist \
             --version "$VERSION" --app-version "$VERSION"
-          docker build --build-arg SOURCE_DATE_EPOCH=0 \
-            --tag effectus:release .
 
       - name: Build VS Code extension
         working-directory: tools/vscode-extension
@@ -155,41 +153,17 @@ jobs:
           npm run package
           mv "effectus-language-support-${VERSION}.vsix" ../../dist/
 
-      - name: Scan and describe local release inputs
+      - name: Describe local bundle and chart inputs
         env:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          trivy="aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c"
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            "$trivy" image --scanners vuln --severity HIGH,CRITICAL \
-            --ignore-unfixed --exit-code 1 effectus:release
-          syft effectus:release -o cyclonedx-json=dist/image-sbom.cdx.json
           syft "dir:charts/effectusd" -o cyclonedx-json=dist/chart-sbom.cdx.json
           syft "file:dist/order-review-${VERSION}.json" \
             -o cyclonedx-json=dist/bundle-sbom.cdx.json
           printf '{"buildType":"https://github.com/%s/.github/workflows/publish.yml","builder":{"id":"https://github.com/actions/runner"},"invocation":{"configSource":{"uri":"git+https://github.com/%s@%s","digest":{"sha1":"%s"}}}}\n' \
             "$GITHUB_REPOSITORY" "$GITHUB_REPOSITORY" "$GITHUB_REF" "$GITHUB_SHA" \
             > dist/release-provenance.json
-
-      - name: Sign and verify local checksum manifest
-        env:
-          VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          set -euo pipefail
-          (cd dist && find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' \
-            -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS)
-          (cd dist && sha256sum --check SHA256SUMS)
-          cosign sign-blob --yes \
-            --output-signature dist/SHA256SUMS.sig \
-            --output-certificate dist/SHA256SUMS.pem dist/SHA256SUMS
-          cosign verify-blob \
-            --certificate dist/SHA256SUMS.pem \
-            --signature dist/SHA256SUMS.sig \
-            --certificate-identity-regexp \
-              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/v${VERSION}" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            dist/SHA256SUMS
 
       - name: Log in after preflight and local validation
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -198,7 +172,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish, sign, and verify staging references
+      - name: Publish staging references
         env:
           VERSION: ${{ steps.release.outputs.version }}
           IMAGE_REPO: ${{ steps.release.outputs.image_repo }}
@@ -218,13 +192,45 @@ jobs:
           image_digest=$(crane digest "$image_stage")
           bundle_digest=$(crane digest "$bundle_stage")
           chart_digest=$(crane digest "${CHART_STAGE_REPO}:${VERSION}")
+          printf '%s\n' "$image_digest" > "$RUNNER_TEMP/image.digest"
+          printf '%s\n' "$bundle_digest" > "$RUNNER_TEMP/bundle.digest"
+          printf '%s\n' "$chart_digest" > "$RUNNER_TEMP/chart.digest"
+
+      - name: Scan the pushed AMD64 and ARM64 image artifacts
+        env:
+          IMAGE_REPO: ${{ steps.release.outputs.image_repo }}
+        run: |
+          set -euo pipefail
+          image_digest=$(cat "$RUNNER_TEMP/image.digest")
+          .github/scripts/scan-published-image.sh \
+            "$IMAGE_REPO" "$image_digest" dist
+          jq --slurpfile image dist/image-platforms.json \
+            '.invocation.parameters.publishedImage = $image[0]' \
+            dist/release-provenance.json > dist/image-provenance.json
+
+      - name: Sign and verify staging references
+        env:
+          IMAGE_REPO: ${{ steps.release.outputs.image_repo }}
+          BUNDLE_REPO: ${{ steps.release.outputs.bundle_repo }}
+          CHART_STAGE_REPO: ${{ steps.release.outputs.chart_stage_repo }}
+        run: |
+          set -euo pipefail
+          image_digest=$(cat "$RUNNER_TEMP/image.digest")
+          bundle_digest=$(cat "$RUNNER_TEMP/bundle.digest")
+          chart_digest=$(cat "$RUNNER_TEMP/chart.digest")
+          amd64_digest=$(jq -r '.platforms["linux/amd64"]' dist/image-platforms.json)
+          arm64_digest=$(jq -r '.platforms["linux/arm64"]' dist/image-platforms.json)
           for ref in \
             "${IMAGE_REPO}@${image_digest}" \
             "${BUNDLE_REPO}@${bundle_digest}" \
             "${CHART_STAGE_REPO}@${chart_digest}"; do
             cosign sign --yes "$ref"
+            predicate=dist/release-provenance.json
+            if [ "$ref" = "${IMAGE_REPO}@${image_digest}" ]; then
+              predicate=dist/image-provenance.json
+            fi
             cosign attest --yes --type slsaprovenance \
-              --predicate dist/release-provenance.json "$ref"
+              --predicate "$predicate" "$ref"
             cosign verify "$ref" \
               --certificate-identity-regexp \
                 "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
@@ -235,15 +241,20 @@ jobs:
               --certificate-oidc-issuer https://token.actions.githubusercontent.com
           done
           cosign attest --yes --type cyclonedx \
-            --predicate dist/image-sbom.cdx.json "${IMAGE_REPO}@${image_digest}"
+            --predicate dist/image-amd64-sbom.cdx.json "${IMAGE_REPO}@${amd64_digest}"
+          cosign attest --yes --type cyclonedx \
+            --predicate dist/image-arm64-sbom.cdx.json "${IMAGE_REPO}@${arm64_digest}"
           cosign attest --yes --type cyclonedx \
             --predicate dist/bundle-sbom.cdx.json "${BUNDLE_REPO}@${bundle_digest}"
           cosign attest --yes --type cyclonedx \
             --predicate dist/chart-sbom.cdx.json "${CHART_STAGE_REPO}@${chart_digest}"
-          cosign verify-attestation --type cyclonedx "${IMAGE_REPO}@${image_digest}" \
-            --certificate-identity-regexp \
-              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          for platform_digest in "$amd64_digest" "$arm64_digest"; do
+            cosign verify-attestation --type cyclonedx \
+              "${IMAGE_REPO}@${platform_digest}" \
+              --certificate-identity-regexp \
+                "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          done
           cosign verify-attestation --type cyclonedx "${BUNDLE_REPO}@${bundle_digest}" \
             --certificate-identity-regexp \
               "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
@@ -252,9 +263,25 @@ jobs:
             --certificate-identity-regexp \
               "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com
-          printf '%s\n' "$image_digest" > "$RUNNER_TEMP/image.digest"
-          printf '%s\n' "$bundle_digest" > "$RUNNER_TEMP/bundle.digest"
-          printf '%s\n' "$chart_digest" > "$RUNNER_TEMP/chart.digest"
+
+      - name: Sign and verify release asset checksums
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          (cd dist && find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' \
+            -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS)
+          (cd dist && sha256sum --check SHA256SUMS)
+          cosign sign-blob --yes \
+            --output-signature dist/SHA256SUMS.sig \
+            --output-certificate dist/SHA256SUMS.pem dist/SHA256SUMS
+          cosign verify-blob \
+            --certificate dist/SHA256SUMS.pem \
+            --signature dist/SHA256SUMS.sig \
+            --certificate-identity-regexp \
+              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/v${VERSION}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            dist/SHA256SUMS
 
       - name: Promote immutable version references in order
         env:
@@ -287,12 +314,12 @@ jobs:
           # Repository settings must reject tag mutation. These last-moment
           # checks additionally fail closed if another publisher wins a race.
           check_absent "${IMAGE_REPO}:${VERSION}"
+          check_absent "${BUNDLE_REPO}:${VERSION}"
+          check_absent "${CHART_REPO}:${VERSION}"
           crane tag "${IMAGE_REPO}@${image_digest}" "$VERSION"
           test "$(crane digest "${IMAGE_REPO}:${VERSION}")" = "$image_digest"
-          check_absent "${BUNDLE_REPO}:${VERSION}"
           crane tag "${BUNDLE_REPO}@${bundle_digest}" "$VERSION"
           test "$(crane digest "${BUNDLE_REPO}:${VERSION}")" = "$bundle_digest"
-          check_absent "${CHART_REPO}:${VERSION}"
           oras copy --recursive "${CHART_STAGE_REPO}@${chart_digest}" \
             "${CHART_REPO}:${VERSION}"
           test "$(crane digest "${CHART_REPO}:${VERSION}")" = "$chart_digest"
@@ -316,6 +343,24 @@ jobs:
             --certificate-identity-regexp \
               "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/tags/${GITHUB_REF_NAME}" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+      - name: Verify public Go-proxy compatibility before completion
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The pushed Git tag is sufficient for proxy resolution. A GitHub
+          # Release is the completion marker and must wait for this check.
+          for attempt in $(seq 1 20); do
+            if scripts/compat-proxy-smoke.sh "$VERSION"; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 20 ]; then
+              echo "public Go-proxy compatibility smoke failed after 20 attempts" >&2
+              exit 1
+            fi
+            sleep 15
+          done
 
       - name: Create and sign release completion manifest
         env:
@@ -352,36 +397,3 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --verify-tag --notes-file "docs/releases/v${VERSION}.md" \
             --title "Effectus $GITHUB_REF_NAME"
-
-  # The release job creates the root release completion marker as its last step.
-  # Do not resolve the public module before that release exists.
-  compatibility-proxy-smoke:
-    needs: release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout released root module
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ github.ref }}
-
-      - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: go.mod
-          cache: false
-
-      - name: Resolve v0.3 compatibility packages from the Go proxy after root release
-        run: |
-          set -eu
-          version="${GITHUB_REF_NAME#v}"
-          for attempt in $(seq 1 20); do
-            if scripts/compat-proxy-smoke.sh "$version"; then
-              exit 0
-            fi
-            if [ "$attempt" -eq 20 ]; then
-              exit 1
-            fi
-            sleep 15
-          done

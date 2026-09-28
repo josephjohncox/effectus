@@ -214,9 +214,9 @@ func TestLanguageConformanceInvalidResultsDoNotReachNextStep(t *testing.T) {
 	require.Len(t, record.Plans, 1)
 	saga, err := outbox.GetSaga(t.Context(), record.Plans[0].SagaID)
 	require.NoError(t, err)
-	// This is an execution-level dependency block, not a fabricated business
-	// failure or completed saga. Preserve the unfinished saga and its success.
-	require.Equal(t, schema.SagaRunning, saga.State)
+	// The unusable recorded success blocks its saga as a dependency, while
+	// preserving the succeeded dispatch and its immutable result.
+	require.Equal(t, schema.SagaBlockedDependency, saga.State)
 	dispatches, err := outbox.ListDispatches(t.Context(), saga.SagaID)
 	require.NoError(t, err)
 	require.Len(t, dispatches, 1)

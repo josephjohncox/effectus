@@ -221,15 +221,22 @@ func (engine *Engine) Execute(ctx context.Context, request ExecuteRequest) (resu
 		releaseLease := canceled && request.RecoveryLease != nil
 		if execution != nil && (block || releaseLease) && request.WaitMode == WaitTerminal && !schema.IsTerminalExecutionState(execution.record.State) {
 			state := execution.record.State
-			if block {
-				state = schema.ExecutionBlockedDependency
-			}
 			// Cancellation is not evidence of a missing artifact. Release only
 			// the supplied lease, through its existing unexpired-owner CAS.
 			persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
+			var disposition error
+			if block {
+				state, disposition = engine.finalizeStoppedExecution(persistCtx, execution, schema.ExecutionBlockedDependency)
+			}
 			if persist := engine.persistExecutionState(persistCtx, execution, state, err.Error(), request.RecoveryLease); persist != nil {
-				return engineResult(execution.record), errors.Join(err, fmt.Errorf("%w: %w", ErrDurableDisposition, persist))
+				return engineResult(execution.record), errors.Join(err, disposition, fmt.Errorf("%w: %w", ErrDurableDisposition, persist))
+			}
+			if disposition != nil {
+				if errors.Is(disposition, schema.ErrActiveDispatchLease) {
+					return engineResult(execution.record), errors.Join(err, disposition)
+				}
+				return engineResult(execution.record), errors.Join(err, fmt.Errorf("%w: %w", ErrDurableDisposition, disposition))
 			}
 			return terminalExecutionResult(execution.record, request.WaitMode, err)
 		}
@@ -278,12 +285,21 @@ func (engine *Engine) Execute(ctx context.Context, request ExecuteRequest) (resu
 		var disposition error
 		if !errors.Is(err, ErrBlockedDependency) {
 			state, disposition = engine.executionFailureState(ctx, execution)
-			if disposition != nil {
-				state = execution.record.State
-			}
+		}
+		if disposition == nil && schema.IsTerminalExecutionState(state) {
+			state, disposition = engine.finalizeStoppedExecution(ctx, execution, state)
+		}
+		if disposition != nil {
+			state = execution.record.State
 		}
 		if persist := engine.persistExecutionState(ctx, execution, state, err.Error(), request.RecoveryLease); persist != nil {
 			return engineResult(execution.record), errors.Join(err, disposition, fmt.Errorf("%w: %w", ErrDurableDisposition, persist))
+		}
+		if disposition != nil {
+			if errors.Is(disposition, schema.ErrActiveDispatchLease) {
+				return engineResult(execution.record), errors.Join(err, disposition)
+			}
+			return engineResult(execution.record), errors.Join(err, fmt.Errorf("%w: %w", ErrDurableDisposition, disposition))
 		}
 		return terminalExecutionResult(execution.record, request.WaitMode, err)
 	}
@@ -432,25 +448,85 @@ func (engine *Engine) persistExecutionState(ctx context.Context, x *engineExecut
 	return engine.commitExecutionState(ctx, x, state, message, lease)
 }
 func (engine *Engine) executionFailureState(ctx context.Context, x *engineExecution) (schema.ExecutionState, error) {
+	blocked := schema.ExecutionState("")
+	blockedRank := 0
+	failed := false
 	for _, plan := range x.record.Plans {
 		saga, err := engine.workflowStore.GetSaga(ctx, plan.SagaID)
 		if err != nil {
 			return x.record.State, err
 		}
+		var candidate schema.ExecutionState
+		var rank int
 		switch saga.State {
 		case schema.SagaBlockedUnknown:
-			return schema.ExecutionBlockedUnknown, nil
+			candidate, rank = schema.ExecutionBlockedUnknown, 4
 		case schema.SagaBlockedFence:
-			return schema.ExecutionBlockedFence, nil
+			candidate, rank = schema.ExecutionBlockedFence, 3
 		case schema.SagaBlockedDependency:
-			return schema.ExecutionBlockedDependency, nil
+			candidate, rank = schema.ExecutionBlockedDependency, 2
 		case schema.SagaBlockedCompensation:
-			return schema.ExecutionBlockedCompensation, nil
+			candidate, rank = schema.ExecutionBlockedCompensation, 1
 		case schema.SagaFailed, schema.SagaCompensated:
-			return schema.ExecutionFailed, nil
+			failed = true
+		}
+		if rank > blockedRank {
+			blocked, blockedRank = candidate, rank
 		}
 	}
+	if blockedRank > 0 {
+		return blocked, nil
+	}
+	if failed {
+		return schema.ExecutionFailed, nil
+	}
 	return x.record.State, nil
+}
+
+// finalizeStoppedExecution closes runnable work before the ledger becomes
+// terminal. A successful finalization is idempotent, so recovery can finish
+// if the following execution-state write fails.
+func (engine *Engine) finalizeStoppedExecution(ctx context.Context, x *engineExecution, desired schema.ExecutionState) (schema.ExecutionState, error) {
+	finalizer, err := engine.executionFinalizer()
+	if err != nil {
+		return x.record.State, err
+	}
+	if err := finalizer.FinalizeStoppedExecution(ctx, x.record.ExecutionID); err != nil {
+		return x.record.State, err
+	}
+	observed, err := engine.executionFailureState(ctx, x)
+	if err != nil {
+		return x.record.State, err
+	}
+	if failureStateRank(observed) > failureStateRank(desired) {
+		return observed, nil
+	}
+	return desired, nil
+}
+
+func (engine *Engine) executionFinalizer() (workflow.ExecutionFinalizer, error) {
+	finalizer, ok := engine.workflowStore.(workflow.ExecutionFinalizer)
+	if !ok {
+		return nil, fmt.Errorf("workflow store does not support atomic execution finalization")
+	}
+	return finalizer, nil
+}
+
+func failureStateRank(state schema.ExecutionState) int {
+	switch state {
+	case schema.ExecutionBlockedUnknown:
+		return 5
+	case schema.ExecutionBlockedFence:
+		return 4
+	case schema.ExecutionBlockedDependency:
+		return 3
+	case schema.ExecutionBlockedCompensation:
+		return 2
+	case schema.ExecutionFailed:
+		return 1
+	default:
+		return 0
+	}
 }
 func selectedExecutionHasSteps(x *engineExecution) bool {
 	if x == nil || x.generation == nil || x.generation.Checked() == nil {

@@ -4,7 +4,7 @@
 
 Kafka ingestion remains a daemon-operated transport when configured. It is not a public Go adapter library. The daemon records delivery and poison state in PostgreSQL; Kafka offset commits and external effects are not one atomic transaction.
 
-Do not import adapter packages from external programs. The root module exposes only the documented v0.3 `embedded`, `executorhttp`, and `invocation` compatibility packages.
+External Go programs can use `bundle`, `invocation`, and `embedded` for in-process execution, or `runtime` and its storage contracts for durable integrations. See the [Go API guide](go-api.md).
 
 ## HTTP admission
 

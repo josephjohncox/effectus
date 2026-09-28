@@ -3,6 +3,7 @@
 package schema
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -16,6 +17,78 @@ func TestMigrationApplyAndValidate(t *testing.T) {
 	db := openSagaIntegrationDB(t)
 	require.NoError(t, MigrateSagaV2(t.Context(), db))
 	require.NoError(t, ValidateSagaV2(t.Context(), db))
+}
+
+func TestPruneDoesNotDeleteReactivatedGeneration(t *testing.T) {
+	db := openSagaIntegrationDB(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	require.NoError(t, MigrateSagaV2(ctx, db))
+	store, err := NewPostgresOutboxStore(db)
+	require.NoError(t, err)
+	generation := "reactivated-" + uuid.NewString()
+	executionID := "reactivation-" + uuid.NewString()
+	admission := testDurableAdmission(executionID, "delivery-"+uuid.NewString(), "payload", generation)
+	t.Cleanup(func() { cleanupExecutionIntegration(t, db, executionID, "", generation) })
+	require.NoError(t, store.PutArtifact(ctx, admission.Artifact))
+	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	_, err = db.ExecContext(ctx, `UPDATE effectus_execution_artifacts SET created_at = $2 WHERE generation_digest = $1`, generation, old)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO effectus_rule_generations
+		(ruleset, version, environment, generation_digest, state, created_at, retired_at)
+		VALUES ($1, $2, $3, $4, 'retired', $5, $5)
+	`, admission.Execution.Ruleset, admission.Execution.Version, admission.Execution.TenantNamespace, generation, old)
+	require.NoError(t, err)
+
+	// Hold the Kafka table only after candidate selection. The prune operation
+	// waits there before deleting its materialized generation candidates.
+	blocker, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer blocker.Rollback() //nolint:errcheck -- cleanup after commit
+	_, err = blocker.ExecContext(ctx, `LOCK TABLE effectus_kafka_deliveries IN SHARE MODE`)
+	require.NoError(t, err)
+	pruned := make(chan error, 1)
+	go func() {
+		_, pruneErr := PruneTerminalRecords(ctx, db, PruneOptions{
+			Before: old.Add(365 * 24 * time.Hour), BatchSize: 10,
+		})
+		pruned <- pruneErr
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var waiting bool
+		err := db.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM pg_locks waiting
+				JOIN pg_class relation ON relation.oid = waiting.relation
+				WHERE relation.relname = 'effectus_kafka_deliveries'
+				  AND waiting.granted = false AND waiting.pid <> pg_backend_pid()
+			)
+		`).Scan(&waiting)
+		require.NoError(t, err)
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("prune never reached the post-selection delete")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_, created, err := store.AdmitExecutionAtomic(ctx, admission)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, blocker.Commit())
+	require.NoError(t, <-pruned)
+	var state string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT state FROM effectus_rule_generations WHERE generation_digest = $1
+	`, generation).Scan(&state))
+	require.Equal(t, "active", state)
+	_, err = store.GetArtifact(ctx, generation)
+	require.NoError(t, err)
+	_, err = store.GetExecution(ctx, executionID)
+	require.NoError(t, err)
 }
 
 func TestPruneDryRunTerminalGraphAndBlockedStatePreserved(t *testing.T) {

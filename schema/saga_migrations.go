@@ -22,19 +22,29 @@ func MigrateSagaV2(ctx context.Context, db *sql.DB) error {
 	if db == nil {
 		return fmt.Errorf("saga migration database is required")
 	}
-	lockConnection, err := db.Conn(ctx)
+	provider, err := newSagaMigrationProvider(db)
 	if err != nil {
-		return fmt.Errorf("acquire saga migration lock connection: %w", err)
+		return err
 	}
-	defer lockConnection.Close()
+	if _, err := provider.Up(ctx); err != nil {
+		return fmt.Errorf("apply saga V2 migrations: %w", err)
+	}
+	return nil
+}
+
+// Goose runs SQL migrations on its own pinned connection. Locking that same
+// connection avoids starving pools configured with one open connection.
+type sagaMigrationLocker struct{}
+
+func (sagaMigrationLocker) SessionLock(ctx context.Context, conn *sql.Conn) error {
 	const migrationLockID int64 = 0x4566666563747573
 	for {
 		var acquired bool
-		if err := lockConnection.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, migrationLockID).Scan(&acquired); err != nil {
+		if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, migrationLockID).Scan(&acquired); err != nil {
 			return fmt.Errorf("acquire saga migration lock: %w", err)
 		}
 		if acquired {
-			break
+			return nil
 		}
 		// A blocking advisory-lock statement keeps a transaction snapshot alive.
 		// That snapshot can deadlock CREATE INDEX CONCURRENTLY in the lock holder.
@@ -45,15 +55,16 @@ func MigrateSagaV2(ctx context.Context, db *sql.DB) error {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	defer func() {
-		_, _ = lockConnection.ExecContext(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, migrationLockID)
-	}()
-	provider, err := newSagaMigrationProvider(db)
-	if err != nil {
-		return err
+}
+
+func (sagaMigrationLocker) SessionUnlock(ctx context.Context, conn *sql.Conn) error {
+	const migrationLockID int64 = 0x4566666563747573
+	var released bool
+	if err := conn.QueryRowContext(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, migrationLockID).Scan(&released); err != nil {
+		return fmt.Errorf("release saga migration lock: %w", err)
 	}
-	if _, err := provider.Up(ctx); err != nil {
-		return fmt.Errorf("apply saga V2 migrations: %w", err)
+	if !released {
+		return fmt.Errorf("saga migration lock was not held")
 	}
 	return nil
 }
@@ -127,6 +138,7 @@ func newSagaMigrationProvider(db *sql.DB) (*goose.Provider, error) {
 		db,
 		migrations,
 		goose.WithTableName("effectus_saga_goose_db_version"),
+		goose.WithSessionLocker(sagaMigrationLocker{}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create saga migration provider: %w", err)

@@ -48,7 +48,8 @@ This is the automated onboarding gate. It:
 
 Without `EFFECTUS_EXAMPLE_PYTHON`, ordinary Go tests explicitly skip the Python gate.
 That skip is not Python validation. A selected but unusable interpreter fails the gate rather than skipping it.
-`just test-examples` also runs the Go client tests. Set the variable above and use the uncached command for the complete gate.
+CI installs the pinned requirements and sets the interpreter for `just test-examples`.
+For local validation, set the variable above and use the uncached command for the complete gate.
 
 ## Call an existing service
 

@@ -45,8 +45,20 @@ func (executor checkedWorkflowInvocationExecutor) Invoke(ctx context.Context, re
 	if err != nil {
 		return invocation.Outcome{Class: invocation.OutcomeUnknown, Err: err}
 	}
-	if executor.generation == nil || saga.PlanDigest != executor.generation.Checked().Digest() {
+	if executor.generation == nil || executor.generation.Checked() == nil || saga.PlanDigest != executor.generation.Checked().Digest() {
 		return invocation.Outcome{Class: invocation.OutcomePermanentFailure, Err: schema.ErrIdentityConflict}
+	}
+	if request.Metadata.Saga.Direction == invocation.DirectionCompensation {
+		allowed := false
+		for _, plan := range executor.generation.Checked().CloneArtifact().Plans {
+			if plan.Id == saga.PlanID {
+				allowed = plan.ExecutionPolicy == effectusv1.ExecutionPolicy_EXECUTION_POLICY_DURABLE_COMPENSATING
+				break
+			}
+		}
+		if !allowed {
+			return invocation.Outcome{Class: invocation.OutcomePermanentFailure, Err: fmt.Errorf("%w: compensation is not enabled for checked plan %q", schema.ErrInvalidTransition, saga.PlanID)}
+		}
 	}
 	resolved, ok := executor.generation.Executor(request.Verb)
 	if !ok || resolved == nil {
@@ -137,6 +149,37 @@ func (engine *Engine) executeCheckedWorkflow(ctx context.Context, generation *Ge
 					if compensationErr := driveCheckedCompensation(ctx, dispatcher, engine.workflowStore, sagaID); compensationErr != nil {
 						return errors.Join(fmt.Errorf("plan %q step %q: %w", plan.Id, step.Id, err), compensationErr)
 					}
+				} else {
+					// Older checked FAIL_FAST artifacts froze inverse contracts. The
+					// store may already have queued one after a permanent failure.
+					// Stop that work without invoking an inverse under FAIL_FAST.
+					saga, sagaErr := engine.workflowStore.GetSaga(ctx, sagaID)
+					if sagaErr != nil {
+						return errors.Join(fmt.Errorf("plan %q step %q: %w", plan.Id, step.Id, err), sagaErr)
+					}
+					switch saga.State {
+					case schema.SagaCompensating:
+						finalizer, finalizerErr := engine.executionFinalizer()
+						if finalizerErr != nil {
+							return errors.Join(fmt.Errorf("plan %q step %q: %w", plan.Id, step.Id, err), fmt.Errorf("%w: %w", ErrDurableDisposition, finalizerErr))
+						}
+						if blockErr := finalizer.BlockSagaCompensation(ctx, sagaID); blockErr != nil {
+							if errors.Is(blockErr, schema.ErrActiveDispatchLease) {
+								return errors.Join(fmt.Errorf("plan %q step %q: %w", plan.Id, step.Id, err), blockErr)
+							}
+							return errors.Join(fmt.Errorf("plan %q step %q: %w", plan.Id, step.Id, err), fmt.Errorf("%w: block fail-fast compensation: %w", ErrDurableDisposition, blockErr))
+						}
+					case schema.SagaBlockedCompensation:
+						// No inverse was declared. The preceding success remains in
+						// the audit record; FAIL_FAST has no compensation to perform.
+						finalizer, finalizerErr := engine.executionFinalizer()
+						if finalizerErr != nil {
+							return errors.Join(fmt.Errorf("plan %q step %q: %w", plan.Id, step.Id, err), fmt.Errorf("%w: %w", ErrDurableDisposition, finalizerErr))
+						}
+						if finalErr := finalizer.FinalizeFailFastSaga(ctx, sagaID); finalErr != nil {
+							return errors.Join(fmt.Errorf("plan %q step %q: %w", plan.Id, step.Id, err), fmt.Errorf("%w: finalize fail-fast saga: %w", ErrDurableDisposition, finalErr))
+						}
+					}
 				}
 				return fmt.Errorf("plan %q step %q: %w", plan.Id, step.Id, err)
 			}
@@ -173,7 +216,7 @@ func dispatchCheckedWorkflowStep(ctx context.Context, dispatcher *schema.Dispatc
 		switch current.State {
 		case schema.DispatchSucceeded:
 			return current, nil
-		case schema.DispatchFailedPermanent, schema.DispatchBlockedUnknown, schema.DispatchBlockedFence:
+		case schema.DispatchFailedPermanent, schema.DispatchBlockedUnknown, schema.DispatchBlockedFence, schema.DispatchCanceled:
 			return nil, fmt.Errorf("durable dispatch entered terminal state %s: %s", current.State, current.LastError)
 		}
 		_, err = dispatcher.Dispatch(ctx, dispatchID)

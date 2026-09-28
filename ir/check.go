@@ -350,14 +350,14 @@ func (c *artifactChecker) checkPlan(index int, plan *effectusv1.Plan) error {
 	}
 	slots := make([]*typeRef, 0, len(plan.Steps))
 	for stepIndex, step := range plan.Steps {
-		if err := c.checkStep(location, stepIndex, step, &slots); err != nil {
+		if err := c.checkStep(location, stepIndex, step, &slots, plan.ExecutionPolicy); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *artifactChecker) checkStep(planLocation string, index int, step *effectusv1.Step, slots *[]*typeRef) error {
+func (c *artifactChecker) checkStep(planLocation string, index int, step *effectusv1.Step, slots *[]*typeRef, executionPolicy effectusv1.ExecutionPolicy) error {
 	location := fmt.Sprintf("%s.step[%d]", planLocation, index)
 	if step == nil {
 		return invalid("%s is nil", location)
@@ -389,7 +389,7 @@ func (c *artifactChecker) checkStep(planLocation string, index int, step *effect
 	if err := c.text(location+".contract_hash", step.ContractHash, true); err != nil {
 		return err
 	}
-	if err := c.checkStepPolicies(location, step, contract); err != nil {
+	if err := c.checkStepPolicies(location, step, contract, executionPolicy); err != nil {
 		return err
 	}
 	if len(step.Arguments) > c.limits.MaxArgumentsPerStep {
@@ -443,7 +443,7 @@ func (c *artifactChecker) checkStep(planLocation string, index int, step *effect
 	return nil
 }
 
-func (c *artifactChecker) checkStepPolicies(location string, step *effectusv1.Step, contract VerbContract) error {
+func (c *artifactChecker) checkStepPolicies(location string, step *effectusv1.Step, contract VerbContract, executionPolicy effectusv1.ExecutionPolicy) error {
 	expectedRetry := &effectusv1.CheckedRetryPolicy{
 		MaxAttempts:          contract.RetryPolicy.MaxAttempts,
 		InitialBackoffMillis: contract.RetryPolicy.InitialBackoffMillis,
@@ -489,9 +489,9 @@ func (c *artifactChecker) checkStepPolicies(location string, step *effectusv1.St
 	if err != nil {
 		return invalid("%s inverse contract: %v", location, err)
 	}
-	if step.Compensation == nil {
+	if step.Compensation == nil && executionPolicy == effectusv1.ExecutionPolicy_EXECUTION_POLICY_DURABLE_COMPENSATING {
 		step.Compensation = &effectusv1.CompensationContract{InverseVerb: contract.InverseVerb, InverseContractHash: inverseHash}
-	} else if step.Compensation.InverseVerb != contract.InverseVerb || step.Compensation.InverseContractHash != inverseHash {
+	} else if step.Compensation != nil && (step.Compensation.InverseVerb != contract.InverseVerb || step.Compensation.InverseContractHash != inverseHash) {
 		return invalid("%s compensation does not match verb %q", location, step.Verb)
 	}
 	return nil

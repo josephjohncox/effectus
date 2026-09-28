@@ -42,9 +42,12 @@ policy. gRPC requires TLS unless an operator explicitly sets
 6. Restore ingress admission.
 
 Kafka offsets commit only at the configured acknowledgement boundary. A stop
-during a handler or commit leaves the record uncommitted; the replacement
-consumer replays it with the same stable delivery identity. PostgreSQL keeps
-Kafka handler failure counts across rebalances and process restarts.
+before the broker commits an offset leaves the record available for replay by
+the replacement consumer with the same stable delivery identity. The commit
+can finish after handler cancellation, and a process loss during commit can
+leave its outcome unknown. Check the broker's committed offset before assuming
+the record will replay. PostgreSQL keeps Kafka handler failure counts across
+rebalances and process restarts.
 
 ## Secret rotation
 

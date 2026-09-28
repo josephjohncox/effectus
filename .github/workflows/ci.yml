@@ -125,7 +125,8 @@ jobs:
           sqlfluff lint --dialect postgres \
             schema/migrations/10002_execution_ledger.sql \
             schema/migrations/10003_kafka_delivery_ledger.sql \
-            schema/migrations/10004_retention_indexes.sql
+            schema/migrations/10004_retention_indexes.sql \
+            schema/migrations/10005_canceled_dispatch.sql
 
   dependency-audit:
     runs-on: ubuntu-latest
@@ -162,6 +163,17 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python gRPC example requirements
+        run: |
+          python -m venv .tools/grpc-example-venv
+          .tools/grpc-example-venv/bin/python -m pip install \
+            --requirement examples/grpc_execution/requirements.txt
+
       - name: Set up Buf
         # v1.50.0
         uses: >-
@@ -173,6 +185,8 @@ jobs:
         run: cargo install just --locked --version 1.38.0
 
       - name: Test all example modules through the repository recipe
+        env:
+          EFFECTUS_EXAMPLE_PYTHON: ${{ github.workspace }}/.tools/grpc-example-venv/bin/python
         run: just test-examples
 
       - name: Run embedded checked-runtime example
@@ -358,6 +372,10 @@ jobs:
           .github/scripts/release-preflight_test.sh
           .github/scripts/recovery-bundle-layout_test.sh
           .github/scripts/reproducible-archive_test.sh
+          .github/scripts/recover-promote_test.sh
+          .github/scripts/recovery-compat-policy_test.sh
+          .github/scripts/scan-published-image_test.sh
+          .github/scripts/release-workflow-order_test.sh
           scripts/compat-proxy-smoke_test.sh
           if grep -Eq 'workflow_dispatch|--clobber|--generate-notes' .github/workflows/publish.yml; then
             echo "unsafe release workflow path detected" >&2
@@ -376,14 +394,11 @@ jobs:
             .github/workflows/recover-release.yml
           grep -Fq -- 'SOURCE_DATE_EPOCH: "0"' .github/workflows/publish.yml \
             .github/workflows/recover-release.yml
-          grep -Fq -- 'Validate promoted references' \
+          grep -Fq -- 'Validate signed staging references and final destinations' \
             .github/workflows/recover-release.yml
           grep -Fq -- 'Create GitHub release completion marker last' \
             .github/workflows/recover-release.yml
           grep -Fq -- 'Create GitHub release completion marker last' .github/workflows/publish.yml
-          grep -Fq -- 'compatibility-proxy-smoke:' .github/workflows/publish.yml
-          grep -Fq -- 'needs: release' .github/workflows/publish.yml
-          grep -Fq -- 'scripts/compat-proxy-smoke.sh' .github/workflows/publish.yml
           if grep -Fq -- 'EFFECTUS_COMPAT_TEST_GOPROXY' .github/workflows/publish.yml; then
             echo "publish workflow must use the default public compatibility proxy" >&2
             exit 1

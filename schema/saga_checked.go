@@ -3,6 +3,7 @@ package schema
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 
 	effectusv1 "github.com/josephjohncox/effectus/gen/effectus/v1"
@@ -67,16 +68,36 @@ func EnqueueCheckedStep(ctx context.Context, store OutboxStore, checked *ir.Chec
 					return nil, fmt.Errorf("%w: supplied arguments contradict checked argument expressions", ErrIdentityConflict)
 				}
 			}
-			compensationVerb, compensationContract := request.CompensationVerb, request.CompensationContract
-			compensationArguments := request.CompensationArguments
-			if step.Compensation != nil {
-				if compensationVerb != "" && (compensationVerb != step.Compensation.InverseVerb || compensationContract != step.Compensation.InverseContractHash) {
+			var compensationVerb, compensationContract string
+			var compensationArguments map[string]any
+			// Historical fail-fast artifacts can carry a frozen inverse. The plan
+			// policy, not that stale step metadata, governs durable intent.
+			if plan.ExecutionPolicy == effectusv1.ExecutionPolicy_EXECUTION_POLICY_DURABLE_FAIL_FAST {
+				if request.CompensationVerb != "" || request.CompensationContract != "" || request.CompensationArguments != nil {
+					return nil, fmt.Errorf("%w: fail-fast plan cannot enqueue compensation", ErrIdentityConflict)
+				}
+			} else if step.Compensation != nil {
+				if (request.CompensationVerb != "" && request.CompensationVerb != step.Compensation.InverseVerb) ||
+					(request.CompensationContract != "" && request.CompensationContract != step.Compensation.InverseContractHash) {
 					return nil, fmt.Errorf("%w: supplied compensation contradicts checked contract", ErrIdentityConflict)
 				}
 				compensationVerb, compensationContract = step.Compensation.InverseVerb, step.Compensation.InverseContractHash
-				if compensationArguments == nil {
-					compensationArguments = arguments
+				compensationArguments = arguments
+				if request.CompensationArguments != nil {
+					_, expectedHash, err := CanonicalJSON(arguments)
+					if err != nil {
+						return nil, err
+					}
+					_, suppliedHash, err := CanonicalJSON(request.CompensationArguments)
+					if err != nil {
+						return nil, err
+					}
+					if expectedHash != suppliedHash {
+						return nil, fmt.Errorf("%w: supplied compensation arguments contradict checked arguments", ErrIdentityConflict)
+					}
 				}
+			} else if request.CompensationVerb != "" || request.CompensationContract != "" || request.CompensationArguments != nil {
+				return nil, fmt.Errorf("%w: checked effect has no compensation", ErrIdentityConflict)
 			}
 			fencing := request.Fencing
 			if step.FencingRequirement == effectusv1.FencingRequirement_FENCING_REQUIREMENT_REQUIRED {
@@ -86,16 +107,36 @@ func EnqueueCheckedStep(ctx context.Context, store OutboxStore, checked *ir.Chec
 				}
 				fencing = checkedFencing
 			}
-			return store.EnqueueStep(ctx, EnqueueStepRequest{
+			enqueue := EnqueueStepRequest{
 				SagaID: request.SagaID, EffectID: step.Id, Sequence: int(step.Ordinal) + 1,
 				Verb: step.Verb, ContractHash: step.ContractHash, Arguments: arguments,
 				CompensationVerb: compensationVerb, CompensationContract: compensationContract,
 				CompensationArguments: compensationArguments, Fencing: fencing,
-			})
+			}
+			dispatch, err := store.EnqueueStep(ctx, enqueue)
+			if err == nil || !errors.Is(err, ErrIdentityConflict) ||
+				plan.ExecutionPolicy != effectusv1.ExecutionPolicy_EXECUTION_POLICY_DURABLE_FAIL_FAST ||
+				step.Compensation == nil {
+				return dispatch, err
+			}
+			// Older fail-fast rows can already hold a frozen inverse. Replay that
+			// immutable row atomically; the replay API must never insert a row.
+			replayer, ok := store.(legacyCheckedReplayStore)
+			if !ok {
+				return nil, err
+			}
+			enqueue.CompensationVerb = step.Compensation.InverseVerb
+			enqueue.CompensationContract = step.Compensation.InverseContractHash
+			enqueue.CompensationArguments = arguments
+			return replayer.replayExistingStep(ctx, enqueue)
 		}
 		return nil, fmt.Errorf("checked effect %q not found in plan %q", request.EffectID, request.PlanID)
 	}
 	return nil, fmt.Errorf("checked plan not found: %s", request.PlanID)
+}
+
+type legacyCheckedReplayStore interface {
+	replayExistingStep(context.Context, EnqueueStepRequest) (*Dispatch, error)
 }
 
 func resolveCheckedStepArguments(step *effectusv1.Step, facts map[string]any, slots []any) (map[string]any, error) {
