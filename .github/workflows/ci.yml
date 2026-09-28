@@ -143,12 +143,17 @@ jobs:
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
 
+      - name: Test vulnerability audit exception
+        run: python3 -m unittest discover -s scripts -p 'test_audit_govulncheck.py'
+
       - name: Audit every discovered Go module
         run: |
-          set -eu
+          set -euo pipefail
+          root="$PWD"
           go run ./internal/guardrails/cmd modules | while IFS= read -r module; do
             echo "==> $module"
-            (cd "$module" && govulncheck ./...)
+            (cd "$module" && govulncheck -format=json ./...) |
+              python3 "$root/scripts/audit_govulncheck.py"
           done
 
   examples:
