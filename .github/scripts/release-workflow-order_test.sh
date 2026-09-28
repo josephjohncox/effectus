@@ -24,6 +24,24 @@ for file in "$workflows/publish.yml" "$workflows/recover-release.yml"; do
   grep -Fq 'scan-published-image.sh' "$file"
 done
 
+# Checkout of the tag at the workspace root clears pre-existing contents,
+# including a helper checkout. Keep helpers after the source checkout.
+if ! awk '
+  /^      - name: Checkout exact release tag$/ { source = NR; source_count++ }
+  /^      - name: Checkout recovery helpers$/ { helpers = NR; helpers_count++ }
+  /^      - name: Resolve and validate recovery coordinates$/ { resolve = NR; resolve_count++ }
+  END {
+    if (source_count != 1 || helpers_count != 1 || resolve_count != 1 ||
+        !(source < helpers && helpers < resolve)) exit 1
+  }
+' "$workflows/recover-release.yml"; then
+  echo 'recovery helpers must be checked out after the release source' >&2
+  exit 1
+fi
+grep -Fq 'ref: ${{ github.workflow_sha }}' "$workflows/recover-release.yml"
+grep -Fq 'path: .recovery-helper' "$workflows/recover-release.yml"
+grep -Fq 'ref: ${{ inputs.tag }}' "$workflows/recover-release.yml"
+
 if ! awk '
   /^      - name: Scan the pushed AMD64 and ARM64 image artifacts$/ { scan = NR }
   /^      - name: Sign and verify staging references$/ { attest = NR }

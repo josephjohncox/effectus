@@ -35,7 +35,10 @@ temp=$(mktemp -d)
 compat_modcache=$temp/modcache
 trap 'chmod -R u+w "$compat_modcache" 2>/dev/null || true; rm -rf "$temp"' EXIT HUP INT TERM
 export GOMODCACHE="$compat_modcache"
-cd "$temp"
+# Keep the scratch module beside the cache. If the cache is under the module,
+# Go may walk downloaded @version directories as local source during tidy.
+mkdir "$temp/work"
+cd "$temp/work"
 go mod init example.com/effectus-compat-v03-smoke >/dev/null
 gen_test_file=compat_test.go
 cat >"$gen_test_file" <<'EOF'

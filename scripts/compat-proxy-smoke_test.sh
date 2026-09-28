@@ -124,6 +124,26 @@ full_proxy="$temp/full-proxy"
 make_proxy "$full_proxy" "$version"
 run_smoke "$full_proxy" "$version" full
 
+# A cold module cache must live outside the scratch module. Go can otherwise
+# traverse downloaded packages as source during tidy, including @version paths.
+real_go=$(command -v go)
+mkdir -p "$temp/go-wrapper"
+cat >"$temp/go-wrapper/go" <<'GOEOF'
+#!/bin/sh
+if [ "${1:-}" = mod ] && [ "${2:-}" = tidy ]; then
+  case "$GOMODCACHE/" in
+    "$PWD/"*)
+      echo 'compatibility smoke placed its module cache inside the scratch module' >&2
+      exit 1
+      ;;
+  esac
+fi
+exec "$EFFECTUS_COMPAT_REAL_GO" "$@"
+GOEOF
+chmod +x "$temp/go-wrapper/go"
+PATH="$temp/go-wrapper:$PATH" EFFECTUS_COMPAT_REAL_GO="$real_go" \
+  run_smoke "$full_proxy" "$version" isolated-cache
+
 # A previously downloaded root module must not stand in for the selected proxy.
 seeded_cache="$temp/seeded-cache"
 (

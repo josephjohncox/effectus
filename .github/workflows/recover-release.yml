@@ -28,21 +28,19 @@ jobs:
       packages: write
       id-token: write
     steps:
-      # The dispatcher runs this workflow from the default branch while the
-      # release source below is a historical tag. Keep recovery helpers from
-      # the workflow revision so they remain available after that checkout.
-      - name: Checkout recovery helpers
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ github.workflow_sha }}
-          path: .recovery-helper
-
+      # The root checkout can clear pre-existing workspace contents. Check out
+      # the historical release source before adding helpers from this workflow.
       - name: Checkout exact release tag
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.tag }}
           fetch-depth: 0
-          clean: false
+
+      - name: Checkout recovery helpers
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .recovery-helper
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
