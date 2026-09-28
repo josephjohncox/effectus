@@ -126,8 +126,11 @@ run_smoke "$full_proxy" "$version" full
 
 # A previously downloaded root module must not stand in for the selected proxy.
 seeded_cache="$temp/seeded-cache"
-GOMODCACHE="$seeded_cache" GOPROXY="file://$full_proxy" GOSUMDB=off \
-  go mod download "${module}@v${version}"
+(
+  cd "$temp"
+  GOMODCACHE="$seeded_cache" GOPROXY="file://$full_proxy" GOSUMDB=off \
+    go mod download "${module}@v${version}"
+)
 test -f "$seeded_cache/cache/download/$module/@v/v${version}.zip"
 missing_proxy="$temp/no-proxy"
 if EFFECTUS_COMPAT_TEST_GOPROXY="file://$missing_proxy" \
