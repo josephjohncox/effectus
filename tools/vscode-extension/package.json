@@ -27,8 +27,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@vscode/vsce": "^3.9.2",
-    "eslint": "^10.9.1"
+    "@vscode/vsce": "^4.0.0",
+    "eslint": "^10.11.0"
   },
   "repository": { "type": "git", "url": "git+https://github.com/josephjohncox/effectus.git", "directory": "tools/vscode-extension" },
   "bugs": { "url": "https://github.com/josephjohncox/effectus/issues" },
