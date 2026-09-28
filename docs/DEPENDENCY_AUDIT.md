@@ -8,18 +8,34 @@ business-executor image with Trivy at high and critical severity.
 Reproduce the checks from the repository root:
 
 ```bash
-set -eu
+set -euo pipefail
 export GOTOOLCHAIN=go1.26.8
 go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+root="$PWD"
 go run ./internal/guardrails/cmd modules > /tmp/effectus-audit-modules.txt
 while IFS= read -r module; do
-  (cd "$module" && govulncheck ./...) || exit
+  (cd "$module" && govulncheck -format=json ./...) |
+    python3 "$root/scripts/audit_govulncheck.py"
 done < /tmp/effectus-audit-modules.txt
 (cd tools/vscode-extension && npm ci && npm audit --audit-level=moderate)
 docker build -t effectus:audit .
 docker build --file examples/standalone_executor/Dockerfile \
   --tag effectus/business-executor:audit .
+trivy="aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe0"
+trivy+="86a917230e818dc9f8528e3c852f7b1aff648949b6258d1c"
+for image in effectus:audit effectus/business-executor:audit; do
+  docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+    "$trivy" image --scanners vuln --severity HIGH,CRITICAL \
+    --ignore-unfixed --exit-code 1 "$image"
+done
 ```
+
+The JSON checker retains the called-symbol failure rule and makes one exact
+exception for GO-2026-6443 on `google.golang.org/grpc@v1.84.0`. The
+[gRPC advisory](https://github.com/grpc/grpc-go/security/advisories/GHSA-2v4p-qf9q-27wj)
+lists that release as patched; the
+[Go database correction](https://github.com/golang/vulndb/pull/6580) is pending.
+Raw `govulncheck ./...` currently reports this false positive.
 
 Test-only service stacks are in `tests/fixtures`. They are not examples or
 production deployment templates.
