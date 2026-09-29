@@ -39,23 +39,7 @@ type consumerGroupRunner struct {
 }
 
 func newConsumerGroupRunner(config *Config) (*consumerGroupRunner, error) {
-	startOffset := segmentio.LastOffset
-	if config.StartOffset == "earliest" {
-		startOffset = segmentio.FirstOffset
-	}
-	group, err := segmentio.NewConsumerGroup(segmentio.ConsumerGroupConfig{
-		ID:                     config.ConsumerGroup,
-		Brokers:                append([]string(nil), config.Brokers...),
-		Topics:                 []string{config.Topic},
-		GroupBalancers:         []segmentio.GroupBalancer{segmentio.RangeGroupBalancer{}},
-		StartOffset:            startOffset,
-		WatchPartitionChanges:  true,
-		PartitionWatchInterval: config.PartitionWatchInterval,
-		HeartbeatInterval:      config.HeartbeatInterval,
-		SessionTimeout:         config.SessionTimeout,
-		RebalanceTimeout:       config.RebalanceTimeout,
-		JoinGroupBackoff:       config.JoinGroupBackoff,
-	})
+	group, err := segmentio.NewConsumerGroup(consumerGroupConfig(config))
 	if err != nil {
 		return nil, fmt.Errorf("create Kafka consumer group: %w", err)
 	}
@@ -70,6 +54,29 @@ func newConsumerGroupRunner(config *Config) (*consumerGroupRunner, error) {
 		})
 	}
 	return &consumerGroupRunner{group: group, readerFactory: factory}, nil
+}
+
+func consumerGroupConfig(config *Config) segmentio.ConsumerGroupConfig {
+	startOffset := segmentio.LastOffset
+	if config.StartOffset == "earliest" {
+		startOffset = segmentio.FirstOffset
+	}
+	return segmentio.ConsumerGroupConfig{
+		ID:                     config.ConsumerGroup,
+		Brokers:                append([]string(nil), config.Brokers...),
+		Topics:                 []string{config.Topic},
+		GroupBalancers:         []segmentio.GroupBalancer{segmentio.RangeGroupBalancer{}},
+		StartOffset:            startOffset,
+		WatchPartitionChanges:  true,
+		PartitionWatchInterval: config.PartitionWatchInterval,
+		HeartbeatInterval:      config.HeartbeatInterval,
+		SessionTimeout:         config.SessionTimeout,
+		RebalanceTimeout:       config.RebalanceTimeout,
+		JoinGroupBackoff:       config.JoinGroupBackoff,
+		// CommitOffsets has no context parameter. kafka-go uses this network
+		// timeout for offset commits and other coordinator requests.
+		Timeout: config.CommitTimeout,
+	}
 }
 
 func (runner *consumerGroupRunner) Run(ctx context.Context, process func(context.Context, segmentio.Message, recordCommitter) error) (runErr error) {
@@ -165,7 +172,11 @@ func (runner *consumerGroupRunner) Close() error {
 }
 
 type generationCommitter struct {
-	generation *segmentio.Generation
+	generation offsetCommitter
+}
+
+type offsetCommitter interface {
+	CommitOffsets(map[string]map[int]int64) error
 }
 
 func (committer generationCommitter) Commit(ctx context.Context, message segmentio.Message) error {
@@ -177,9 +188,6 @@ func (committer generationCommitter) Commit(ctx context.Context, message segment
 	})
 	if err != nil {
 		return fmt.Errorf("commit Kafka offset %s/%d/%d: %w", message.Topic, message.Partition, message.Offset, err)
-	}
-	if err := ctx.Err(); err != nil {
-		return err
 	}
 	return nil
 }

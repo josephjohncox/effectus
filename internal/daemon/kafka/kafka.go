@@ -525,13 +525,7 @@ func (k *KafkaSource) handlePoison(ctx context.Context, message kafka.Message, d
 }
 
 func (k *KafkaSource) commitMessage(handlerContext context.Context, committer recordCommitter, message kafka.Message) error {
-	commitContext := context.WithoutCancel(handlerContext)
-	if k.config.CommitTimeout > 0 {
-		var cancel context.CancelFunc
-		commitContext, cancel = context.WithTimeout(commitContext, k.config.CommitTimeout)
-		defer cancel()
-	}
-	if err := committer.Commit(commitContext, message); err != nil {
+	if err := committer.Commit(context.WithoutCancel(handlerContext), message); err != nil {
 		k.commitHealthy.Store(false)
 		return err
 	}
