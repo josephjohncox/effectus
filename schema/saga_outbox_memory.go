@@ -277,7 +277,11 @@ func (store *InMemoryOutboxStore) CompleteDispatch(ctx context.Context, completi
 	if saga == nil || step == nil {
 		return fmt.Errorf("dispatch dependencies are missing")
 	}
-	if err := applyCompletion(dispatch, step, saga, completion); err != nil {
+	priorUnresolved := false
+	if terminalOutcomeMayMaskPriorUnknown(completion) {
+		priorUnresolved = !priorAttemptsKnownNotCommitted(store.attempts[dispatch.ID], dispatch.Attempt)
+	}
+	if err := applyCompletion(dispatch, step, saga, completion, priorUnresolved); err != nil {
 		return err
 	}
 	attempts := store.attempts[dispatch.ID]
@@ -285,7 +289,7 @@ func (store *InMemoryOutboxStore) CompleteDispatch(ctx context.Context, completi
 	attempts[len(attempts)-1].Error = completion.Error
 	attempts[len(attempts)-1].CompletedAt = completion.Now
 	store.attempts[dispatch.ID] = attempts
-	if dispatch.Direction == invocation.DirectionForward && (completion.Outcome == invocation.OutcomePermanentFailure ||
+	if dispatch.Direction == invocation.DirectionForward && !priorUnresolved && (completion.Outcome == invocation.OutcomePermanentFailure ||
 		(completion.Outcome == invocation.OutcomeRetryableKnownNotCommitted && completion.Exhausted)) {
 		if err := store.startCompensationLocked(saga, completion.Now); err != nil {
 			return err
@@ -736,7 +740,12 @@ func validateCompletion(completion Completion) error {
 	return nil
 }
 
-func applyCompletion(dispatch *Dispatch, step *SagaStep, saga *SagaInstance, completion Completion) error {
+func terminalOutcomeMayMaskPriorUnknown(completion Completion) bool {
+	return completion.Outcome == invocation.OutcomePermanentFailure || completion.Outcome == invocation.OutcomeStaleFence ||
+		(completion.Outcome == invocation.OutcomeRetryableKnownNotCommitted && completion.Exhausted)
+}
+
+func applyCompletion(dispatch *Dispatch, step *SagaStep, saga *SagaInstance, completion Completion, priorUnresolved bool) error {
 	dispatch.LastOutcome = completion.Outcome
 	dispatch.LastError = completion.Error
 	dispatch.LeaseOwner = ""
@@ -746,6 +755,17 @@ func applyCompletion(dispatch *Dispatch, step *SagaStep, saga *SagaInstance, com
 	dispatch.UpdatedAt = completion.Now
 	saga.Revision++
 	saga.UpdatedAt = completion.Now
+	if priorUnresolved {
+		// The current outcome is recorded as observed, but it cannot settle a
+		// possible commit from an earlier attempt with the same identity.
+		dispatch.State = DispatchBlockedUnknown
+		if dispatch.Direction == invocation.DirectionCompensation {
+			saga.State = SagaBlockedCompensation
+		} else {
+			saga.State = SagaBlockedUnknown
+		}
+		return nil
+	}
 	switch completion.Outcome {
 	case invocation.OutcomeSuccess:
 		dispatch.State = DispatchSucceeded

@@ -166,6 +166,15 @@ func TestDispatcherDefaultAndValidOptions(t *testing.T) {
 	}
 }
 
+func TestDispatcherZeroInitialBackoffUsesShortMaximum(t *testing.T) {
+	worker, err := NewDispatcher(NewInMemoryOutboxStore(), nil, invocationExecutorFunc(func(context.Context, invocation.Request) invocation.Outcome {
+		return invocation.Outcome{Class: invocation.OutcomeSuccess}
+	}), DispatcherOptions{Owner: "worker", MaxAttempts: 1, MaxBackoff: time.Millisecond})
+	require.NoError(t, err)
+	require.Equal(t, time.Millisecond, worker.options.InitialBackoff)
+	require.Equal(t, time.Millisecond, worker.options.MaxBackoff)
+}
+
 func TestDispatcherRejectsInvalidOptions(t *testing.T) {
 	for _, options := range []DispatcherOptions{
 		{Owner: "worker", LeaseDuration: -1},

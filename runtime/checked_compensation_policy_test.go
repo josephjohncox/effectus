@@ -153,6 +153,51 @@ func TestCheckedCompensationDoesNotExceedInverseAttemptCap(t *testing.T) {
 	require.Len(t, calls, 3, "terminal replay must not exceed the inverse attempt cap")
 }
 
+func TestCheckedCompensationAcceptsZeroInitialWithShortMaximumBackoff(t *testing.T) {
+	env := ir.Environment{Verbs: map[string]ir.VerbContract{
+		"Charge":     {ResultType: "bool", InverseVerb: "UndoCharge"},
+		"Fail":       {ResultType: "bool", InverseVerb: "UndoFail"},
+		"UndoCharge": {ResultType: "bool", RetryPolicy: ir.RetryPolicy{MaxAttempts: 2, MaxBackoffMillis: 1}},
+		"UndoFail":   {ResultType: "bool"},
+	}}
+	checked := compileCompensatingPolicyTest(t, env, "rule \"compensate\" priority 1 { when { true } then {\nCharge()\nFail()\n} }")
+	var calls []string
+	executor := recoveryExecutorFunc(func(_ context.Context, request invocation.Request) invocation.Outcome {
+		calls = append(calls, request.Verb)
+		switch request.Verb {
+		case "Fail":
+			return invocation.Outcome{Class: invocation.OutcomePermanentFailure, Err: errors.New("forward step failed")}
+		case "UndoCharge":
+			if request.Metadata.Saga.Attempt == 1 {
+				return invocation.Outcome{Class: invocation.OutcomeRetryableKnownNotCommitted, Err: errors.New("inverse was not committed")}
+			}
+		}
+		return invocation.Outcome{Class: invocation.OutcomeSuccess, Result: true}
+	})
+	store, ledger := schema.NewInMemoryOutboxStore(), schema.NewInMemoryExecutionLedger()
+	engine := languageEngine(t, languageGeneration(t, env, checked, map[string]invocation.Executor{
+		"Charge": executor, "Fail": executor, "UndoCharge": executor, "UndoFail": executor,
+	}), store, ledger)
+	admission := &Admission{ExecutionID: "inverse-short-maximum-backoff", TenantNamespace: "tenant", Ruleset: "language", Version: "1", Facts: map[string]any{}}
+	_, err := engine.Execute(t.Context(), ExecuteRequest{Admission: admission, WaitMode: WaitAccepted})
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	worker := &RecoveryWorker{Engine: engine, Store: ledger, Owner: "inverse-short-maximum-backoff-recovery", BatchSize: 1, LeaseDuration: time.Second}
+	processed, err := worker.RunOnce(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, processed)
+	require.NoError(t, ctx.Err())
+	require.Equal(t, []string{"Charge", "Fail", "UndoCharge", "UndoCharge"}, calls)
+	sagaID := schema.StableSagaID(admission.ExecutionID, "compensate")
+	saga, err := store.GetSaga(ctx, sagaID)
+	require.NoError(t, err)
+	require.Equal(t, schema.SagaCompensated, saga.State)
+	record, err := ledger.GetExecution(ctx, admission.ExecutionID)
+	require.NoError(t, err)
+	require.Equal(t, schema.ExecutionFailed, record.State)
+}
+
 func TestCheckedCompensationUnknownOutcomeUsesInverseIdempotencyOnRecovery(t *testing.T) {
 	for _, test := range []struct {
 		name          string

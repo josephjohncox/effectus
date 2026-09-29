@@ -84,14 +84,37 @@ func TestPostgresDispatcherClosesPreviouslyQueuedInverseAtNewAttemptCap(t *testi
 	require.NoError(t, MigrateSagaV2(ctx, db))
 	store, err := NewPostgresOutboxStore(db)
 	require.NoError(t, err)
-	for _, outcome := range []invocation.OutcomeClass{
-		invocation.OutcomeRetryableKnownNotCommitted,
-		invocation.OutcomeUnknown,
+	for _, test := range []struct {
+		name     string
+		outcomes []invocation.OutcomeClass
+	}{
+		{"known", []invocation.OutcomeClass{invocation.OutcomeRetryableKnownNotCommitted}},
+		{"unknown", []invocation.OutcomeClass{invocation.OutcomeUnknown}},
+		{"earlier unknown followed by known", []invocation.OutcomeClass{invocation.OutcomeUnknown, invocation.OutcomeRetryableKnownNotCommitted}},
 	} {
-		t.Run(string(outcome), func(t *testing.T) {
+		t.Run(test.name, func(t *testing.T) {
 			sagaID := "exhausted-inverse-" + uuid.NewString()
 			cleanupSagaIntegration(t, db, sagaID)
-			assertQueuedInverseAtAttemptCap(t, store, sagaID, outcome)
+			assertQueuedInverseAtAttemptCap(t, store, sagaID, test.outcomes)
+		})
+	}
+}
+
+func TestPostgresDispatcherPreservesEarlierUnknownAfterTerminalRetry(t *testing.T) {
+	db := openSagaIntegrationDB(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	require.NoError(t, MigrateSagaV2(ctx, db))
+	store, err := NewPostgresOutboxStore(db)
+	require.NoError(t, err)
+	for _, outcome := range []invocation.OutcomeClass{
+		invocation.OutcomeRetryableKnownNotCommitted,
+		invocation.OutcomePermanentFailure,
+	} {
+		t.Run(string(outcome), func(t *testing.T) {
+			sagaID := "mixed-outcomes-" + uuid.NewString()
+			cleanupSagaIntegration(t, db, sagaID)
+			assertTerminalRetryPreservesEarlierUnknown(t, store, sagaID, outcome)
 		})
 	}
 }

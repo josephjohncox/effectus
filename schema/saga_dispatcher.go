@@ -16,9 +16,10 @@ import (
 
 // DispatcherOptions control one durable dispatch worker. Zero values select a
 // 30s lease, invocation timeout of 3/4 of the lease, eight attempts, 1s initial
-// backoff, and 1m maximum backoff. Negative durations are invalid. An explicit
-// invocation timeout must be shorter than the lease; initial backoff must not
-// exceed maximum backoff. Jitter never exceeds that maximum.
+// backoff, and 1m maximum backoff. If only the maximum is set below 1s, the
+// default initial backoff is capped to that maximum. Negative durations are
+// invalid. An explicit invocation timeout must be shorter than the lease;
+// initial backoff must not exceed maximum backoff. Jitter never exceeds it.
 type DispatcherOptions struct {
 	Owner                 string
 	RequestID             string
@@ -64,11 +65,11 @@ func NewDispatcher(store OutboxStore, provider fencing.Provider, executor invoca
 	if options.MaxAttempts == 0 {
 		options.MaxAttempts = 8
 	}
-	if options.InitialBackoff <= 0 {
-		options.InitialBackoff = time.Second
-	}
 	if options.MaxBackoff <= 0 {
 		options.MaxBackoff = time.Minute
+	}
+	if options.InitialBackoff <= 0 {
+		options.InitialBackoff = min(time.Second, options.MaxBackoff)
 	}
 	if options.InitialBackoff > options.MaxBackoff {
 		return nil, fmt.Errorf("initial backoff must not exceed maximum backoff")
@@ -211,13 +212,10 @@ func (dispatcher *Dispatcher) completeExhaustedClaim(ctx context.Context, dispat
 		return dispatch, err
 	}
 	outcome := invocation.OutcomeUnknown
-	message := fmt.Sprintf("retry budget %d exhausted before invocation; previous outcome is unknown", dispatcher.options.MaxAttempts)
-	if len(attempts) >= 2 {
-		previous := attempts[len(attempts)-2]
-		if previous.Attempt == dispatch.Attempt-1 && !previous.CompletedAt.IsZero() && previous.Outcome == invocation.OutcomeRetryableKnownNotCommitted {
-			outcome = invocation.OutcomeRetryableKnownNotCommitted
-			message = fmt.Sprintf("retry budget %d exhausted before invocation after known non-commit", dispatcher.options.MaxAttempts)
-		}
+	message := fmt.Sprintf("retry budget %d exhausted before invocation; prior effect remains uncertain", dispatcher.options.MaxAttempts)
+	if priorAttemptsKnownNotCommitted(attempts, dispatch.Attempt) {
+		outcome = invocation.OutcomeRetryableKnownNotCommitted
+		message = fmt.Sprintf("retry budget %d exhausted before invocation after known non-commit", dispatcher.options.MaxAttempts)
 	}
 	if err := dispatcher.store.CompleteDispatch(completionCtx, Completion{
 		DispatchID: dispatch.ID, Attempt: dispatch.Attempt, LeaseToken: dispatch.LeaseToken,
