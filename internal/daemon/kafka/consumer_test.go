@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	segmentio "github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/require"
@@ -15,6 +16,45 @@ type scriptedGroup struct {
 	next   func(context.Context, int32) (*segmentio.Generation, error)
 	calls  atomic.Int32
 	closed atomic.Bool
+}
+
+type offsetCommitterFunc func(map[string]map[int]int64) error
+
+func (commit offsetCommitterFunc) CommitOffsets(offsets map[string]map[int]int64) error {
+	return commit(offsets)
+}
+
+func TestConsumerGroupCommitTimeoutUsesConfiguredCoordinatorTimeout(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		commitTimeout time.Duration
+		want          time.Duration
+	}{
+		{name: "default", want: 10 * time.Second},
+		{name: "configured", commitTimeout: 175 * time.Millisecond, want: 175 * time.Millisecond},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config, err := normalizeConfig(&Config{
+				SourceID: "source", Brokers: []string{"broker:9092"},
+				Topic: "facts", ConsumerGroup: "effectus", CommitTimeout: test.commitTimeout,
+			})
+			require.NoError(t, err)
+			require.Equal(t, test.want, consumerGroupConfig(config).Timeout)
+		})
+	}
+}
+
+func TestGenerationCommitterPreservesSuccessfulCommitAfterContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	committer := generationCommitter{generation: offsetCommitterFunc(func(offsets map[string]map[int]int64) error {
+		require.Equal(t, map[string]map[int]int64{"facts": {2: 43}}, offsets)
+		cancel()
+		return nil
+	})}
+
+	require.NoError(t, committer.Commit(ctx, kafkaMessage(42)))
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
 }
 
 func (group *scriptedGroup) Next(ctx context.Context) (*segmentio.Generation, error) {
