@@ -317,7 +317,8 @@ The response does not supply an `ETag` header. Read the explicit digest fields i
 
 ## Errors and retry decisions
 
-Handler errors use one lowercase `error` string, without internal SQL, destination, or wrapped-cause details:
+Handler errors use one lowercase `error` string, without internal SQL, destination, or wrapped-cause details.
+A declared fact with the wrong type reports its path and expected type, for example `fact "order.risk_score" must be int`; it does not echo the rejected value.
 
 <!-- http-example: identity-error -->
 ```json

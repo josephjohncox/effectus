@@ -77,7 +77,7 @@ services:
     tmpfs:
       - /data:mode=1777
     volumes:
-      - ../../out/standalone_executor/bundle.json:/config/bundle.json:ro
+      - ../../out/standalone_executor/${COMPOSE_PROJECT_NAME:-standalone_executor}/bundle.json:/config/bundle.json:ro
 
 volumes:
   postgres-data:

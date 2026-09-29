@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	goruntime "runtime"
 
 	"github.com/josephjohncox/effectus/bundle"
 	"github.com/josephjohncox/effectus/embedded"
@@ -84,23 +84,29 @@ func main() {
 	}
 }
 
-// sharedOrderReviewArtifacts uses the source location, not the process working
-// directory, so `go run ./examples/embedded_orders` reads the one shared demo.
+// The example runs from the repository root, examples/, or this package's
+// directory. None of those paths depends on runtime.Caller source filenames,
+// which become module paths when Go builds with -trimpath.
 func sharedOrderReviewArtifacts() ([]byte, []byte, error) {
-	_, file, _, ok := goruntime.Caller(0)
-	if !ok {
-		return nil, nil, fmt.Errorf("resolve embedded example source path")
+	for _, root := range []string{
+		filepath.Join("examples", "order_review"),
+		"order_review",
+		filepath.Join("..", "order_review"),
+	} {
+		rule, err := os.ReadFile(filepath.Join(root, "rules", "order_review.eff"))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("read shared order-review rule: %w", err)
+		}
+		scenario, err := os.ReadFile(filepath.Join(root, "data", "order.json"))
+		if err != nil {
+			return nil, nil, fmt.Errorf("read shared order-review scenario: %w", err)
+		}
+		return rule, scenario, nil
 	}
-	root := filepath.Join(filepath.Dir(file), "..", "order_review")
-	rule, err := os.ReadFile(filepath.Join(root, "rules", "order_review.eff"))
-	if err != nil {
-		return nil, nil, fmt.Errorf("read shared order-review rule: %w", err)
-	}
-	scenario, err := os.ReadFile(filepath.Join(root, "data", "order.json"))
-	if err != nil {
-		return nil, nil, fmt.Errorf("read shared order-review scenario: %w", err)
-	}
-	return rule, scenario, nil
+	return nil, nil, fmt.Errorf("shared order-review files are unavailable; run from the repository root or examples directory")
 }
 
 func fail(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }

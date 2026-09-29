@@ -1477,6 +1477,8 @@ github.com/josephjohncox/effectus/runtime	method Engine.Generation() *Generation
 github.com/josephjohncox/effectus/runtime	method Engine.GenerationView() *GenerationView
 github.com/josephjohncox/effectus/runtime	method Engine.SetObserver(observer Observer)
 github.com/josephjohncox/effectus/runtime	method EngineExecutionService.ExecuteRuleset(ctx context.Context, request *effectusv1.ExecutionRequest) (*effectusv1.ExecutionResponse, error)
+github.com/josephjohncox/effectus/runtime	method FactValidationError.Error() string
+github.com/josephjohncox/effectus/runtime	method FactValidationError.Unwrap() error
 github.com/josephjohncox/effectus/runtime	method GRPCAuthenticatorFunc.Authenticate(ctx context.Context, method string) (context.Context, error)
 github.com/josephjohncox/effectus/runtime	method Generation.Checked() *ir.Checked
 github.com/josephjohncox/effectus/runtime	method Generation.Close() error
@@ -1508,6 +1510,7 @@ github.com/josephjohncox/effectus/runtime	type EngineExecutionService struct{Uni
 github.com/josephjohncox/effectus/runtime	type EngineExecutionServiceOptions struct{RulesetName string; Version string}
 github.com/josephjohncox/effectus/runtime	type ExecuteRequest struct{Admission *Admission; ResumeExecutionID string; WaitMode WaitMode; RecoveryLease *schema.ExecutionLease}
 github.com/josephjohncox/effectus/runtime	type ExecuteResult struct{ExecutionID string; GenerationDigest string; State string; DurablyAccepted bool; Completed bool}
+github.com/josephjohncox/effectus/runtime	type FactValidationError struct{Path string; ExpectedType string}
 github.com/josephjohncox/effectus/runtime	type GRPCAuthenticator interface{Authenticatefunc(context.Context, string) (context.Context, error)}
 github.com/josephjohncox/effectus/runtime	type GRPCAuthenticatorFunc func(context.Context, string) (context.Context, error)
 github.com/josephjohncox/effectus/runtime	type Generation struct{}

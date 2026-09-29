@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 
@@ -24,6 +25,10 @@ func httpErrorStatus(err error) (int, string) {
 		default:
 			return http.StatusConflict, "execution is blocked"
 		}
+	}
+	var fact *runtime.FactValidationError
+	if errors.As(err, &fact) {
+		return http.StatusBadRequest, fmt.Sprintf("fact %q must be %s", fact.Path, fact.ExpectedType)
 	}
 	switch {
 	case errors.Is(err, errHTTPBodyTooLarge):

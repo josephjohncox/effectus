@@ -38,7 +38,7 @@ func prepareAdmission(input *Admission) (*Admission, error) {
 func semanticAdmissionHash(admission *Admission, environment ir.Environment) (string, error) {
 	facts, err := normalizedWorkflowFacts(environment, admission.Facts)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrInvalidExecuteRequest, err)
+		return "", fmt.Errorf("%w: %w", ErrInvalidExecuteRequest, err)
 	}
 	// Flattening retains aggregate objects for lookup. Undeclared intermediate
 	// objects are redundant in the identity view; declared objects remain
