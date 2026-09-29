@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -54,14 +55,23 @@ func (HTTPResolver) Resolve(_ context.Context, descriptor Descriptor) (Executor,
 	if _, err := policy.validateURL(descriptor.Reference()); err != nil {
 		return nil, nil, err
 	}
+	client, transport := policy.client(timeout, descriptor.Headers())
 	executor, err := NewHTTPExecutor(HTTPExecutor{
 		URL: descriptor.Reference(), Method: method, Headers: descriptor.Headers(),
-		Client: policy.client(timeout, descriptor.Headers()), MaxResponseBytes: maxResponseBytes,
+		Client: client, MaxResponseBytes: maxResponseBytes,
 	})
 	if err != nil {
+		transport.CloseIdleConnections()
 		return nil, nil, err
 	}
-	return &describedHTTPExecutor{HTTPExecutor: executor, descriptor: descriptor}, nil, nil
+	return &describedHTTPExecutor{HTTPExecutor: executor, descriptor: descriptor}, httpTransportCloser{transport}, nil
+}
+
+type httpTransportCloser struct{ transport *http.Transport }
+
+func (closer httpTransportCloser) Close() error {
+	closer.transport.CloseIdleConnections()
+	return nil
 }
 
 type describedHTTPExecutor struct {
@@ -95,9 +105,9 @@ func (policy httpNetworkPolicy) validateURL(raw string) (*url.URL, error) {
 	return parsed, nil
 }
 
-func (policy httpNetworkPolicy) client(timeout time.Duration, sensitiveHeaders map[string]string) *http.Client {
+func (policy httpNetworkPolicy) client(timeout time.Duration, sensitiveHeaders map[string]string) (*http.Client, *http.Transport) {
 	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
-	transport := &http.Transport{ForceAttemptHTTP2: true, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+	transport := &http.Transport{ForceAttemptHTTP2: true, IdleConnTimeout: 90 * time.Second, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)
 		if err != nil {
 			return nil, err
@@ -106,13 +116,8 @@ func (policy httpNetworkPolicy) client(timeout time.Duration, sensitiveHeaders m
 		if err != nil {
 			return nil, fmt.Errorf("resolve invocation HTTP host: %w", err)
 		}
-		if len(addresses) == 0 {
-			return nil, fmt.Errorf("invocation HTTP host has no addresses")
-		}
-		for _, candidate := range addresses {
-			if !policy.allowedIP(candidate.IP) {
-				return nil, fmt.Errorf("invocation HTTP host resolved to a disallowed address")
-			}
+		if err := policy.validateResolvedIPs(addresses); err != nil {
+			return nil, err
 		}
 		var last error
 		for _, candidate := range addresses {
@@ -147,7 +152,19 @@ func (policy httpNetworkPolicy) client(timeout time.Duration, sensitiveHeaders m
 			}
 		}
 		return nil
-	}}
+	}}, transport
+}
+
+func (policy httpNetworkPolicy) validateResolvedIPs(addresses []net.IPAddr) error {
+	if len(addresses) == 0 {
+		return fmt.Errorf("invocation HTTP host has no addresses")
+	}
+	for _, candidate := range addresses {
+		if !policy.allowedIP(candidate.IP) {
+			return fmt.Errorf("invocation HTTP host resolved to a disallowed address")
+		}
+	}
+	return nil
 }
 
 func sameHTTPOrigin(left, right *url.URL) bool {
@@ -166,9 +183,81 @@ func sameHTTPOrigin(left, right *url.URL) bool {
 	return port(left) == port(right)
 }
 
+// The default policy follows the IANA IPv4 and IPv6 Special-Purpose Address
+// Registries' Globally Reachable status. Broad protocol-assignment blocks
+// need the more-specific exceptions below; transition addresses that can
+// embed private IPv4 destinations remain denied.
+var httpNonPublicIPv4 = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("127.0.0.0/8"),
+	netip.MustParsePrefix("169.254.0.0/16"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("192.88.99.0/24"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+}
+
+var httpPublicSpecialIPv4 = []netip.Prefix{
+	netip.MustParsePrefix("192.0.0.9/32"),
+	netip.MustParsePrefix("192.0.0.10/32"),
+}
+
+// Keep IPv6 translation prefixes outside 2000::/3 blocked: their embedded
+// IPv4 destination can be private even when the prefix is globally reachable.
+var httpPublicIPv6 = netip.MustParsePrefix("2000::/3")
+
+var httpNonPublicIPv6 = []netip.Prefix{
+	netip.MustParsePrefix("2001::/23"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("2002::/16"),
+	netip.MustParsePrefix("3fff::/20"),
+}
+
+var httpPublicSpecialIPv6 = []netip.Prefix{
+	netip.MustParsePrefix("2001:1::1/128"),
+	netip.MustParsePrefix("2001:1::2/128"),
+	netip.MustParsePrefix("2001:1::3/128"),
+	netip.MustParsePrefix("2001:3::/32"),
+	netip.MustParsePrefix("2001:4:112::/48"),
+	netip.MustParsePrefix("2001:20::/28"),
+	netip.MustParsePrefix("2001:30::/28"),
+}
+
 func (policy httpNetworkPolicy) allowedIP(ip net.IP) bool {
 	if ip == nil || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() {
 		return false
 	}
-	return policy.allowPrivate || (!ip.IsPrivate() && !ip.IsLoopback())
+	address, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	if policy.allowPrivate {
+		return true
+	}
+	address = address.Unmap()
+	if address.Is6() && !httpPublicIPv6.Contains(address) {
+		return false
+	}
+	blocked, exceptions := httpNonPublicIPv6, httpPublicSpecialIPv6
+	if address.Is4() {
+		blocked, exceptions = httpNonPublicIPv4, httpPublicSpecialIPv4
+	}
+	for _, prefix := range blocked {
+		if prefix.Contains(address) {
+			for _, exception := range exceptions {
+				if exception.Contains(address) {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	return true
 }
