@@ -254,7 +254,18 @@ func (store *PostgresOutboxStore) CompleteDispatch(ctx context.Context, completi
 	if err != nil {
 		return err
 	}
-	if err := applyCompletion(dispatch, step, saga, completion); err != nil {
+	priorUnresolved := false
+	if terminalOutcomeMayMaskPriorUnknown(completion) {
+		var previous, known int64
+		if err := tx.QueryRowContext(ctx, `
+			SELECT count(*), count(*) FILTER (WHERE outcome = $3 AND completed_at IS NOT NULL)
+			FROM effectus_saga_attempts WHERE dispatch_id = $1 AND attempt < $2
+		`, dispatch.ID, dispatch.Attempt, invocation.OutcomeRetryableKnownNotCommitted).Scan(&previous, &known); err != nil {
+			return err
+		}
+		priorUnresolved = uint64(previous) != dispatch.Attempt-1 || known != previous
+	}
+	if err := applyCompletion(dispatch, step, saga, completion, priorUnresolved); err != nil {
 		return err
 	}
 	updateResult, err := tx.ExecContext(ctx, `
@@ -305,7 +316,7 @@ func (store *PostgresOutboxStore) CompleteDispatch(ctx context.Context, completi
 	if attemptRows != 1 {
 		return ErrStaleLease
 	}
-	if dispatch.Direction == invocation.DirectionForward && (completion.Outcome == invocation.OutcomePermanentFailure ||
+	if dispatch.Direction == invocation.DirectionForward && !priorUnresolved && (completion.Outcome == invocation.OutcomePermanentFailure ||
 		(completion.Outcome == invocation.OutcomeRetryableKnownNotCommitted && completion.Exhausted)) {
 		if err := startCompensationPostgres(ctx, tx, saga, completion.Now); err != nil {
 			return err

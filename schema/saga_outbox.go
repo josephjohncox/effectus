@@ -169,3 +169,23 @@ func cloneDispatch(dispatch *Dispatch) *Dispatch {
 	copy.FencingGrants = append([]invocation.FencingGrant(nil), dispatch.FencingGrants...)
 	return &copy
 }
+
+// A later known non-commit cannot resolve an earlier unknown result. This
+// predicate includes the current claimed attempt, whose outcome is still empty.
+func priorAttemptsKnownNotCommitted(attempts []DispatchAttempt, currentAttempt uint64) bool {
+	if uint64(len(attempts)) != currentAttempt {
+		return false
+	}
+	for index, attempt := range attempts {
+		if attempt.Attempt != uint64(index+1) {
+			return false
+		}
+		if attempt.Attempt == currentAttempt {
+			continue
+		}
+		if attempt.CompletedAt.IsZero() || attempt.Outcome != invocation.OutcomeRetryableKnownNotCommitted {
+			return false
+		}
+	}
+	return true
+}
