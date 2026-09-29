@@ -14,12 +14,11 @@ install:
 
 [private]
 _generate-tools:
-	@set -eu; mkdir -p .tools/bin; GOBIN="$PWD/.tools/bin" go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11; GOBIN="$PWD/.tools/bin" go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.0; GOBIN="$PWD/.tools/bin" go install github.com/bufbuild/buf/cmd/buf@v1.50.0; GOBIN="$PWD/.tools/bin" go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.29.0
+	@set -eu; mkdir -p .tools/bin; GOBIN="$PWD/.tools/bin" go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11; GOBIN="$PWD/.tools/bin" go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.0; GOBIN="$PWD/.tools/bin" go install github.com/bufbuild/buf/cmd/buf@v1.50.0
 
 # Build generated code and both command-line programs.
 build: _generate-tools
 	PATH="$PWD/.tools/bin:$PATH" buf generate --template buf.gen.go.yaml
-	cd runtime && PATH="$OLDPWD/.tools/bin:$PATH" sqlc generate
 	go build -o bin/effectusc ./cmd/effectusc
 	go build -o bin/effectusd ./cmd/effectusd
 

@@ -4,7 +4,7 @@
 
 Use the Go version and toolchain specified in `go.mod`.
 Install `just` for the repository workflows.
-`just install` downloads Go dependencies and installs the pinned Buf, Go protobuf, gRPC, and SQLC generators into `.tools/bin`.
+`just install` downloads Go dependencies and installs the pinned Buf, Go protobuf, and gRPC generators into `.tools/bin`.
 It does not install `golangci-lint`, MkDocs, Docker, Node.js, or npm.
 
 Run commands from the repository root in a POSIX shell:
@@ -37,7 +37,7 @@ They do not fetch remote URLs.
 
 | Command | Work |
 | --- | --- |
-| `just build` | Generate Go protobuf and SQLC bindings, then build `bin/effectusc` and `bin/effectusd`. |
+| `just build` | Generate Go protobuf bindings, then build `bin/effectusc` and `bin/effectusd`. |
 | `just test` | Run root-module Go tests. |
 | `just test-modules` | Test every reviewed Go module. |
 | `just test-examples` | Check shared scenarios, embedded onboarding, tutorial dialects, and the live Go gRPC client. |
@@ -80,20 +80,10 @@ For release review, also compare against the relevant release baseline.
 
 ## SQL changes and durable migrations
 
-`runtime/sqlc.yaml` reads `runtime/queries` and `runtime/migrations` and writes `runtime/internal/db`.
-Regenerate those bindings after changing their inputs:
-
-```bash
-(cd runtime && ../.tools/bin/sqlc generate)
-```
-
-`just build` runs the same SQLC generation step.
-Do not edit generated bindings instead of their source queries.
 No SQL formatter or separate SQL Just recipes are configured.
 
 The durable daemon store uses `schema.MigrateSagaV2` and `schema.ValidateSagaV2`.
-Those migrations are separate from the legacy schema used for SQLC bindings.
-Changing inline durable-store SQL does not imply that SQLC generates it.
+The durable migrations live in `schema/migrations`; review them alongside any inline durable-store SQL changes.
 Test durable schema changes against an explicit disposable PostgreSQL database.
 
 ## PostgreSQL integration tests

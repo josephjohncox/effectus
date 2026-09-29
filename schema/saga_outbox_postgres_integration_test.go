@@ -11,10 +11,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/josephjohncox/effectus/invocation"
 	"github.com/josephjohncox/effectus/schema/fencing"
+	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )
 
@@ -146,8 +145,8 @@ func TestPostgresStopFinalizationSerializesWithClaims(t *testing.T) {
 		probeErr := db.QueryRowContext(probeCtx, `SELECT dispatch_id FROM effectus_saga_outbox WHERE dispatch_id = $1 FOR UPDATE NOWAIT`, dispatch.ID).Scan(&lockedID)
 		probeCancel()
 		if probeErr != nil {
-			var pgErr *pgconn.PgError
-			require.True(t, errors.As(probeErr, &pgErr) && pgErr.Code == "55P03", "unexpected lock probe error: %v", probeErr)
+			var state interface{ SQLState() string }
+			require.True(t, errors.As(probeErr, &state) && state.SQLState() == "55P03", "unexpected lock probe error: %v", probeErr)
 			break // finalizer holds the outbox row while waiting on the saga row
 		}
 		if time.Now().After(deadline) {
@@ -303,7 +302,7 @@ func openSagaIntegrationDB(t *testing.T) *sql.DB {
 	if dsn == "" {
 		t.Skip("DB_DSN is required for PostgreSQL saga integration tests")
 	}
-	db, err := sql.Open("pgx", dsn)
+	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
 	require.NoError(t, db.PingContext(t.Context()))
 	t.Cleanup(func() { _ = db.Close() })
