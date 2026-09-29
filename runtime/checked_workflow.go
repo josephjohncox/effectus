@@ -19,19 +19,31 @@ import (
 	"github.com/josephjohncox/effectus/invocation"
 	"github.com/josephjohncox/effectus/ir"
 	"github.com/josephjohncox/effectus/schema"
+	"github.com/josephjohncox/effectus/schema/fencing"
 	"github.com/josephjohncox/effectus/schema/workflow"
 )
 
 type checkedWorkflowInvocationExecutor struct {
 	generation *Generation
 	store      workflow.OutboxStore
+	planID     string
 }
 
 func (executor checkedWorkflowInvocationExecutor) RetryUnknownOutcome(request invocation.Request) bool {
-	if executor.generation == nil || executor.generation.Checked() == nil {
+	if executor.generation == nil || executor.generation.Checked() == nil || executor.planID == "" {
+		return false
+	}
+	if request.Metadata.Saga.Direction == invocation.DirectionCompensation {
+		contract, ok := checkedCompensationContract(executor.generation, executor.planID, request.Metadata.Saga.EffectID, request.Verb, request.ContractHash)
+		return ok && contract.IdempotencyPolicy == ir.IdempotencySinkGuaranteed
+	}
+	if request.Metadata.Saga.Direction != invocation.DirectionForward {
 		return false
 	}
 	for _, plan := range executor.generation.Checked().CloneArtifact().Plans {
+		if plan.Id != executor.planID {
+			continue
+		}
 		for _, step := range plan.Steps {
 			if step.Id == request.Metadata.Saga.EffectID && step.Verb == request.Verb && step.ContractHash == request.ContractHash {
 				return step.IdempotencyPolicy == effectusv1.IdempotencyPolicy_IDEMPOTENCY_POLICY_SINK_GUARANTEED
@@ -40,12 +52,41 @@ func (executor checkedWorkflowInvocationExecutor) RetryUnknownOutcome(request in
 	}
 	return false
 }
+
+// The checked step freezes the inverse verb and hash; the matching generation
+// environment freezes its retry and idempotency policies.
+func checkedCompensationContract(generation *Generation, planID, effectID, verb, contractHash string) (ir.VerbContract, bool) {
+	if generation == nil || generation.Checked() == nil || planID == "" {
+		return ir.VerbContract{}, false
+	}
+	for _, plan := range generation.Checked().CloneArtifact().Plans {
+		if plan.Id != planID {
+			continue
+		}
+		for _, step := range plan.Steps {
+			if step.Id != effectID || step.Compensation == nil || step.Compensation.InverseVerb != verb || step.Compensation.InverseContractHash != contractHash {
+				continue
+			}
+			contract, ok := generation.Environment().Verbs[verb]
+			if !ok {
+				return ir.VerbContract{}, false
+			}
+			hash, err := ir.ContractHash(contract)
+			return contract, err == nil && hash == contractHash
+		}
+	}
+	return ir.VerbContract{}, false
+}
+
 func (executor checkedWorkflowInvocationExecutor) Invoke(ctx context.Context, request invocation.Request) invocation.Outcome {
 	saga, err := executor.store.GetSaga(ctx, request.Metadata.Saga.SagaID)
 	if err != nil {
 		return invocation.Outcome{Class: invocation.OutcomeUnknown, Err: err}
 	}
 	if executor.generation == nil || executor.generation.Checked() == nil || saga.PlanDigest != executor.generation.Checked().Digest() {
+		return invocation.Outcome{Class: invocation.OutcomePermanentFailure, Err: schema.ErrIdentityConflict}
+	}
+	if executor.planID != "" && saga.PlanID != executor.planID {
 		return invocation.Outcome{Class: invocation.OutcomePermanentFailure, Err: schema.ErrIdentityConflict}
 	}
 	if request.Metadata.Saga.Direction == invocation.DirectionCompensation {
@@ -133,7 +174,7 @@ func (engine *Engine) executeCheckedWorkflow(ctx context.Context, generation *Ge
 				stepOptions.InitialBackoff = time.Duration(policy.InitialBackoffMillis) * time.Millisecond
 				stepOptions.MaxBackoff = time.Duration(policy.MaxBackoffMillis) * time.Millisecond
 			}
-			dispatcher, err := schema.NewDispatcher(engine.workflowStore, engine.workflowFencing, checkedWorkflowInvocationExecutor{generation: generation, store: engine.workflowStore}, stepOptions)
+			dispatcher, err := schema.NewDispatcher(engine.workflowStore, engine.workflowFencing, checkedWorkflowInvocationExecutor{generation: generation, store: engine.workflowStore, planID: plan.Id}, stepOptions)
 			if err != nil {
 				return fmt.Errorf("create checked workflow dispatcher: %w", err)
 			}
@@ -146,7 +187,7 @@ func (engine *Engine) executeCheckedWorkflow(ctx context.Context, generation *Ge
 			completed, err := dispatchCheckedWorkflowStep(ctx, dispatcher, engine.workflowStore, dispatch.ID)
 			if err != nil {
 				if plan.ExecutionPolicy == effectusv1.ExecutionPolicy_EXECUTION_POLICY_DURABLE_COMPENSATING {
-					if compensationErr := driveCheckedCompensation(ctx, dispatcher, engine.workflowStore, sagaID); compensationErr != nil {
+					if compensationErr := driveCheckedCompensation(ctx, generation, plan.Id, dispatcherOptions, engine.workflowFencing, engine.workflowStore, sagaID); compensationErr != nil {
 						return errors.Join(fmt.Errorf("plan %q step %q: %w", plan.Id, step.Id, err), compensationErr)
 					}
 				} else {
@@ -243,7 +284,7 @@ func dispatchCheckedWorkflowStep(ctx context.Context, dispatcher *schema.Dispatc
 	}
 }
 
-func driveCheckedCompensation(ctx context.Context, dispatcher *schema.Dispatcher, store workflow.OutboxStore, sagaID string) error {
+func driveCheckedCompensation(ctx context.Context, generation *Generation, planID string, options schema.DispatcherOptions, provider fencing.Provider, store workflow.OutboxStore, sagaID string) error {
 	for {
 		saga, err := store.GetSaga(ctx, sagaID)
 		if err != nil {
@@ -278,6 +319,21 @@ func driveCheckedCompensation(ctx context.Context, dispatcher *schema.Dispatcher
 			case <-timer.C:
 			}
 			continue
+		}
+		contract, ok := checkedCompensationContract(generation, planID, candidate.EffectID, candidate.Verb, candidate.ContractHash)
+		if !ok {
+			return fmt.Errorf("%w: compensation dispatch %q does not match checked plan %q", schema.ErrIdentityConflict, candidate.ID, planID)
+		}
+		inverseOptions := options
+		inverseOptions.MaxAttempts = uint64(contract.RetryPolicy.MaxAttempts)
+		if inverseOptions.MaxAttempts == 0 {
+			inverseOptions.MaxAttempts = 1
+		}
+		inverseOptions.InitialBackoff = time.Duration(contract.RetryPolicy.InitialBackoffMillis) * time.Millisecond
+		inverseOptions.MaxBackoff = time.Duration(contract.RetryPolicy.MaxBackoffMillis) * time.Millisecond
+		dispatcher, err := schema.NewDispatcher(store, provider, checkedWorkflowInvocationExecutor{generation: generation, store: store, planID: planID}, inverseOptions)
+		if err != nil {
+			return fmt.Errorf("create checked compensation dispatcher: %w", err)
 		}
 		_, err = dispatcher.Dispatch(ctx, candidate.ID)
 		if err != nil && !errors.Is(err, schema.ErrNoDispatch) {
