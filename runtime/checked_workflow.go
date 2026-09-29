@@ -67,7 +67,7 @@ func checkedCompensationContract(generation *Generation, planID, effectID, verb,
 			if step.Id != effectID || step.Compensation == nil || step.Compensation.InverseVerb != verb || step.Compensation.InverseContractHash != contractHash {
 				continue
 			}
-			contract, ok := generation.Environment().Verbs[verb]
+			contract, ok := generation.environment.Verbs[verb]
 			if !ok {
 				return ir.VerbContract{}, false
 			}

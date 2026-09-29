@@ -77,6 +77,25 @@ func TestPostgresOutboxLeaseCASAndReplay(t *testing.T) {
 	require.Len(t, attempts, 2)
 }
 
+func TestPostgresDispatcherClosesPreviouslyQueuedInverseAtNewAttemptCap(t *testing.T) {
+	db := openSagaIntegrationDB(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	require.NoError(t, MigrateSagaV2(ctx, db))
+	store, err := NewPostgresOutboxStore(db)
+	require.NoError(t, err)
+	for _, outcome := range []invocation.OutcomeClass{
+		invocation.OutcomeRetryableKnownNotCommitted,
+		invocation.OutcomeUnknown,
+	} {
+		t.Run(string(outcome), func(t *testing.T) {
+			sagaID := "exhausted-inverse-" + uuid.NewString()
+			cleanupSagaIntegration(t, db, sagaID)
+			assertQueuedInverseAtAttemptCap(t, store, sagaID, outcome)
+		})
+	}
+}
+
 func TestPostgresSerialSagaWaitsForEarlierRetry(t *testing.T) {
 	db := openSagaIntegrationDB(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)

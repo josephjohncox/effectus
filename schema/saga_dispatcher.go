@@ -99,6 +99,9 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, targetDispatchID str
 	if err != nil {
 		return nil, err
 	}
+	if dispatch.Attempt > dispatcher.options.MaxAttempts {
+		return dispatcher.completeExhaustedClaim(ctx, dispatch, leaseDeadline)
+	}
 	leases, grants, err := dispatcher.acquireFences(ctx, dispatch)
 	if err != nil {
 		// No external call occurred, so this outcome is known not committed.
@@ -195,6 +198,34 @@ func (dispatcher *Dispatcher) Dispatch(ctx context.Context, targetDispatchID str
 		return dispatch, err
 	}
 	return dispatcher.store.GetDispatch(ctx, dispatch.ID)
+}
+
+// A persisted retry_wait can predate a smaller pinned retry budget. The claim
+// is durable, but no new fence or external invocation is allowed past the cap.
+// Preserve uncertainty if the previous attempt was unknown or incomplete.
+func (dispatcher *Dispatcher) completeExhaustedClaim(ctx context.Context, dispatch *Dispatch, deadline time.Time) (*Dispatch, error) {
+	completionCtx, cancel := dispatcher.dispositionContext(ctx, deadline)
+	defer cancel()
+	attempts, err := dispatcher.store.ListAttempts(completionCtx, dispatch.ID)
+	if err != nil {
+		return dispatch, err
+	}
+	outcome := invocation.OutcomeUnknown
+	message := fmt.Sprintf("retry budget %d exhausted before invocation; previous outcome is unknown", dispatcher.options.MaxAttempts)
+	if len(attempts) >= 2 {
+		previous := attempts[len(attempts)-2]
+		if previous.Attempt == dispatch.Attempt-1 && !previous.CompletedAt.IsZero() && previous.Outcome == invocation.OutcomeRetryableKnownNotCommitted {
+			outcome = invocation.OutcomeRetryableKnownNotCommitted
+			message = fmt.Sprintf("retry budget %d exhausted before invocation after known non-commit", dispatcher.options.MaxAttempts)
+		}
+	}
+	if err := dispatcher.store.CompleteDispatch(completionCtx, Completion{
+		DispatchID: dispatch.ID, Attempt: dispatch.Attempt, LeaseToken: dispatch.LeaseToken,
+		Outcome: outcome, Error: message, Now: dispatcher.now().UTC(), Exhausted: true,
+	}); err != nil {
+		return dispatch, err
+	}
+	return dispatcher.store.GetDispatch(completionCtx, dispatch.ID)
 }
 
 func (dispatcher *Dispatcher) acquireFences(ctx context.Context, dispatch *Dispatch) ([]fencing.Lease, []invocation.FencingGrant, error) {
