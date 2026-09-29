@@ -14,7 +14,7 @@
 
 - `just` or `just --list` shows all available workflows.
 - `just install` installs the pinned generators into `.tools/bin`. Add that directory to `PATH` for direct tool commands, `just fmt`, and `just lint`.
-- `just build` generates Go protobuf bindings and runtime SQLC bindings, then builds `bin/effectusc` and `bin/effectusd`.
+- `just build` generates Go protobuf bindings, then builds `bin/effectusc` and `bin/effectusd`.
 - `just test` runs Go unit tests. Use `go test -coverprofile=coverage.out ./...` for coverage.
 - `just test-examples` checks shared scenarios, embedded onboarding, the list/flow tutorial, and live Go gRPC authentication/TLS. Python requires the explicit interpreter setting in `docs/CLIENT_EXAMPLES.md`. A skipped Python gate is not Python validation.
 - `just lint` runs `golangci-lint` plus `buf lint` for protobufs.
@@ -28,8 +28,7 @@
 - Go: format with `go fmt` (tabs); prefer MixedCaps for exported identifiers and keep package/file naming consistent with existing modules.
 - Protobuf: format with `buf format`; messages/enums use CamelCase, fields use snake_case.
 - For Go protobuf generation, run `.tools/bin/buf generate --template buf.gen.go.yaml` with `.tools/bin` on `PATH`.
-- SQLC reads `runtime/queries` and `runtime/migrations` through `runtime/sqlc.yaml`. Run `(cd runtime && ../.tools/bin/sqlc generate)` after changing those inputs.
-- The daemon's durable store migrations use `schema.MigrateSagaV2`, not the legacy SQLC schema. No SQL formatter or separate SQL Just recipes are configured.
+- The daemon's durable store migrations use `schema.MigrateSagaV2`. No SQL formatter or separate SQL Just recipes are configured.
 
 ## Testing Guidelines
 

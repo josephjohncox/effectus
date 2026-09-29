@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/josephjohncox/effectus/invocation"
 	"github.com/josephjohncox/effectus/schema"
+	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,7 +23,7 @@ func TestPostgresCheckedBytesLiteralAtomicAdmissionAndReplay(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	db, err := sql.Open("pgx", dsn)
+	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
 	db.SetMaxOpenConns(2)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
