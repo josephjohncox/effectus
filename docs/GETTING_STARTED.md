@@ -68,6 +68,8 @@ Install these host tools before you run the acceptance script:
 - Python 3
 - Go 1.26 or later; use the patched toolchain pinned in `go.mod`
 
+Run the durable script as a non-root user. The daemon container uses that user's UID to read the generated bundle without making its executor token public on the host.
+
 Buf is not required. The script checks every prerequisite and checks the Docker daemon before it creates resources.
 
 Run the durable path:
@@ -82,7 +84,7 @@ examples/standalone_executor/scripts/run.sh
 
 The script performs these checks:
 
-1. It creates `out/standalone_executor`.
+1. It creates `out/standalone_executor/<project>/bundle.json`, where `<project>` is `EFFECTUS_DEMO_PROJECT` or `standalone_executor` by default.
 2. It creates a `bundle.SourceBundle` from the shared rule and executor descriptor.
 3. It includes the HTTP executor descriptors in the source bundle.
 4. It builds the current `effectusd` image.
@@ -203,7 +205,7 @@ The script rejects equal ports and values outside the range `1` through `65535`.
 
 ### The bundle file is missing
 
-Run the complete script from the repository checkout. The script creates `out/standalone_executor` before it starts Compose.
+Run the complete script from the repository checkout. The script creates a project-specific bundle under `out/standalone_executor` before it starts Compose.
 
 Do not run `docker compose up` before the bundle exists.
 

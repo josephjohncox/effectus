@@ -23,6 +23,21 @@ type ArtifactResolver interface {
 }
 type ArtifactResolverFunc func(context.Context, ledger.ExecutionArtifact) (*Generation, error)
 
+// FactValidationError identifies a declared fact that cannot be normalized to
+// its declared type. HTTP callers may report Path and ExpectedType without
+// exposing the rejected value or the underlying normalization error.
+type FactValidationError struct {
+	Path         string
+	ExpectedType string
+	cause        error
+}
+
+func (err *FactValidationError) Error() string {
+	return fmt.Sprintf("fact %q: %v", err.Path, err.cause)
+}
+
+func (err *FactValidationError) Unwrap() error { return err.cause }
+
 func (f ArtifactResolverFunc) ResolveGeneration(ctx context.Context, artifact ledger.ExecutionArtifact) (*Generation, error) {
 	return f(ctx, artifact)
 }
@@ -125,7 +140,7 @@ func validateAdmissionFactTypes(environment ir.Environment, facts map[string]any
 		}
 		normalized, err := ir.NormalizeValue(environment, environment.Facts[path], value)
 		if err != nil {
-			return fmt.Errorf("fact %q: %w", path, err)
+			return &FactValidationError{Path: path, ExpectedType: environment.Facts[path], cause: err}
 		}
 		facts[path] = normalized
 	}

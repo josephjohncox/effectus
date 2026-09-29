@@ -125,6 +125,30 @@ func TestHTTPDecoderPreservesFullIntegerText(t *testing.T) {
 	require.Equal(t, json.Number("9223372036854775807"), body.Facts["n"])
 }
 
+func TestHTTPDeclaredFactTypeErrorNamesFactWithoutEchoingValue(t *testing.T) {
+	d, _, closeDaemon := newHTTPContractDaemon(t)
+	defer closeDaemon()
+	handler := d.httpHandler("token")
+	for _, test := range []struct {
+		path string
+		body string
+	}{
+		{path: "/v1/dry-run", body: `{"facts":{"order.risk":"secret-input","order.id":"one"}}`},
+		{path: "/v1/execute", body: `{"namespace":"tenant","facts":{"order.risk":"secret-input","order.id":"one"}}`},
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+			request.Header.Set("Authorization", "Bearer token")
+			request.Header.Set(invocation.HeaderIdempotencyKey, "wrong-fact-type")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+			require.JSONEq(t, `{"error":"fact \"order.risk\" must be int"}`, response.Body.String())
+			require.NotContains(t, response.Body.String(), "secret-input")
+		})
+	}
+}
+
 func TestHTTPNamespaceAndUniverseIdentity(t *testing.T) {
 	d, _, close := newHTTPContractDaemon(t)
 	defer close()

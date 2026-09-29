@@ -32,7 +32,7 @@ The business executor stores the idempotency key and argument hash with the revi
 
 A conflicting replay returns a permanent failure. An unknown database commit returns an unknown outcome.
 
-The bundle generator creates immutable HTTP executor descriptors and writes the actual demo token only to the generated bundle under `out/standalone_executor`.
+The bundle generator creates immutable HTTP executor descriptors and writes the actual demo token only to `out/standalone_executor/<project>/bundle.json`. Each Compose project uses its own bundle.
 
 ## Production changes
 

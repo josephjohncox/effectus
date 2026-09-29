@@ -16,7 +16,7 @@ export EFFECTUS_DEMO_GID="${EFFECTUS_DEMO_GID:-$(id -g)}"
 EFFECTUS_IMAGE="${EFFECTUS_IMAGE:-effectus-demo-current}"
 export EFFECTUS_IMAGE
 COMPOSE=(docker compose -f "$EXAMPLE_DIR/docker-compose.yml")
-BUNDLE="$ROOT_DIR/out/standalone_executor/bundle.json"
+BUNDLE="$ROOT_DIR/out/standalone_executor/$COMPOSE_PROJECT_NAME/bundle.json"
 ORDER_SCENARIO="$ROOT_DIR/examples/order_review/data/order.json"
 ORDER_REQUEST=""
 IDEMPOTENCY_KEY=""
@@ -52,6 +52,12 @@ for command in docker curl python3 go id; do
   command -v "$command" >/dev/null 2>&1 || fail "missing required command: $command"
 done
 [[ -n "${BASH_VERSION:-}" ]] || fail "run this script with Bash"
+[[ "$COMPOSE_PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]] ||
+  fail "EFFECTUS_DEMO_PROJECT must start with a lowercase letter or digit and contain only lowercase letters, digits, underscores, or hyphens"
+[[ "$EFFECTUS_DEMO_UID" =~ ^[1-9][0-9]*$ ]] ||
+  fail "run the durable demo as a non-root user"
+[[ "$EFFECTUS_DEMO_GID" =~ ^[0-9]+$ ]] ||
+  fail "EFFECTUS_DEMO_GID must be a nonnegative integer"
 docker compose version >/dev/null 2>&1 || fail "Docker Compose is not available"
 docker info >/dev/null 2>&1 || fail "the Docker daemon is not available"
 
@@ -64,10 +70,6 @@ validate_port() {
 }
 validate_port EFFECTUS_DEMO_HTTP_PORT "$EFFECTUS_DEMO_HTTP_PORT"
 validate_port EXECUTOR_DEMO_HTTP_PORT "$EXECUTOR_DEMO_HTTP_PORT"
-[[ "$EFFECTUS_DEMO_UID" =~ ^[1-9][0-9]*$ ]] ||
-  fail "run the durable demo as a non-root user"
-[[ "$EFFECTUS_DEMO_GID" =~ ^[0-9]+$ ]] ||
-  fail "EFFECTUS_DEMO_GID must be a nonnegative integer"
 [[ "$EFFECTUS_DEMO_HTTP_PORT" != "$EXECUTOR_DEMO_HTTP_PORT" ]] ||
   fail "EFFECTUS_DEMO_HTTP_PORT and EXECUTOR_DEMO_HTTP_PORT must be different"
 
